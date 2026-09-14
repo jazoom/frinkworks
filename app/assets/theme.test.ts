@@ -3,7 +3,7 @@ import { beforeEach, expect, test, vi } from "vitest";
 import { DEFAULT_THEME, initThemeSelector } from "./theme";
 
 beforeEach(() => {
-    document.documentElement.dataset.theme = DEFAULT_THEME;
+    delete document.documentElement.dataset.theme;
     document.body.replaceChildren();
 });
 
@@ -12,6 +12,7 @@ function themeForm(theme: string): HTMLFormElement {
     form.innerHTML = `
         <div data-active-theme="${theme}"></div>
         <select data-theme-select name="theme">
+            <option value="system">System preference</option>
             <option value="springfield">Springfield</option>
             <option value="evergreen-terrace">Evergreen Terrace</option>
             <option value="leftorium">Leftorium</option>
@@ -34,14 +35,14 @@ test("the selector uses the server-rendered theme", () => {
     );
 });
 
-test("an invalid server-rendered theme defaults to Springfield", () => {
+test("an invalid server-rendered theme defaults to the system preference", () => {
     const form = themeForm("unknown");
 
     initThemeSelector(form);
 
-    expect(document.documentElement.dataset.theme).toBe("springfield");
+    expect(document.documentElement.dataset.theme).toBeUndefined();
     expect(form.querySelector<HTMLSelectElement>("select")!.value).toBe(
-        "springfield",
+        DEFAULT_THEME,
     );
 });
 

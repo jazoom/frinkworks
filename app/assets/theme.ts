@@ -1,8 +1,9 @@
 import type { IslandInstance } from "hypergraft/browser";
 
-export const DEFAULT_THEME = "springfield";
+export const DEFAULT_THEME = "system";
 
 export const THEMES = [
+    "system",
     "springfield",
     "evergreen-terrace",
     "leftorium",
@@ -24,11 +25,15 @@ function activeTheme(root: HTMLElement): Theme {
 }
 
 function applyTheme(page: HTMLElement, theme: Theme): void {
-    if (page.dataset.theme === theme) {
+    if ((page.dataset.theme ?? DEFAULT_THEME) === theme) {
         return;
     }
     page.classList.add("theme-switching");
-    page.dataset.theme = theme;
+    if (theme === "system") {
+        delete page.dataset.theme;
+    } else {
+        page.dataset.theme = theme;
+    }
     void page.offsetWidth;
     page.classList.remove("theme-switching");
 }

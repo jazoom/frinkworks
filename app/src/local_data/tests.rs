@@ -496,7 +496,7 @@ fn startup_reset_leaves_no_provider_project_agent_run_or_saved_theme() {
     );
     assert_eq!(
         Preferences::open(root.join("preferences.json")).theme(),
-        Theme::Springfield
+        Theme::System
     );
 }
 

@@ -2,42 +2,22 @@
 {% let csp_nonce = "nonce"|crate::template_filters::csp_nonce -%}
 {% block body %}
   <a class="skip-link" href="#connect-main">Skip to main content</a>
-  <div class="connect-frame">
-    <aside class="connect-index" aria-label="Setup">
-      <a href="/connect" data-graft class="app-brand">
-        <img
-          src="/static/images/logo.svg"
-          alt=""
-          width="68"
-          height="49"
-          class="powerplant-mark"
-        />
-        <span>
-          <strong>Power Plant</strong>
-          <small>Local conversation workspace</small>
-        </span>
-      </a>
-      <div class="connect-intro">
-        <h1>Connect your model.</h1>
-        <p>
-          Use your own provider access. Power Plant stores the connection on
-          this machine and runs agent tools in an isolated sandbox.
-        </p>
-        <ol aria-label="Setup route">
-          <li><span>1</span>Connect a model</li>
-          <li><span>2</span>Start a conversation</li>
-          <li><span>3</span>Send a message</li>
-        </ol>
-      </div>
-      <p class="connect-local"><i aria-hidden="true"></i>No product account</p>
-    </aside>
-    <div class="connect-file">
-      <header class="app-file-bar" aria-label="Provider storage location">
-        <span class="app-local-badge"
-          >Provider access stays on this machine</span
+  <div class="connect-frame min-h-dvh px-4 pt-6 pb-12 sm:px-6 sm:pt-14">
+    <div class="mx-auto w-full max-w-[35rem]">
+      <header class="mb-7 flex px-2 sm:px-0">
+        <a
+          href="/connect"
+          data-graft
+          class="connect-brand inline-flex items-center gap-3"
         >
+          <img src="/static/images/logo.svg" alt="" width="44" height="34" />
+          <strong>Power Plant</strong>
+        </a>
       </header>
       <div id="connect-main" tabindex="-1">{{ content|safe }}</div>
+      <p class="text-quiet mt-6 px-4 text-center text-[13px]">
+        Power Plant stores your key or plan login on this machine.
+      </p>
     </div>
   </div>
 {% endblock %}

@@ -47,12 +47,7 @@ async fn show(
     if state.local_data.is_pending() {
         return render_reset_status_page(&state, graft);
     }
-    let page = SettingsPage::new(
-        state.preferences.theme(),
-        state.preferences.show_thinking(),
-        &state.vault,
-        &state.environments,
-    );
+    let page = SettingsPage::new(state.preferences.theme(), &state.environments);
     match graft {
         PageGraft::Document => responses::chat_page_response(page::TITLE, &state, &page),
         PageGraft::Navigation => Ok(hypergraft::outcome::page_patch(

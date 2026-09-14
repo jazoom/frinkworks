@@ -20,7 +20,9 @@ The same page offers a confirmed local data reset. Reset records a request. The 
 
 ## Content and constraints
 
-Theme is the first setting. The selector offers five colour themes. Springfield is the default.
+Theme is the first setting. The selector offers System preference and five colour themes.
+
+System preference is the default. It uses Springfield for light mode and Sector 7-G for dark mode. An explicit theme choice overrides the system preference.
 
 Presets and Environments have native links from Settings. Their management pages remain separate from the primary work navigation.
 

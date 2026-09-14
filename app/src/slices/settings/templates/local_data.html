@@ -1,25 +1,20 @@
-<div>
-  <h2 id="local-data-heading">Local data</h2>
-  <div
-    id="local-data-description"
-    class="text-quiet mt-1 max-w-[60ch] space-y-2 text-sm"
-  >
-    <p>Reset removes these items from this machine:</p>
-    <ul class="list-disc pl-5">
-      <li>Provider connections and preferences</li>
-      <li>Projects and agents</li>
-      <li>Environments and workflows</li>
-      <li>Runs and artefacts</li>
-    </ul>
-    <p>
-      Project folders outside the Power Plant data directory stay unchanged.
-    </p>
-  </div>
-  {% if let Some(message) = reset_error %}
-    <p class="text-error mt-2 text-sm" role="alert">{{ message }}</p>
-  {% endif %}
+<div
+  id="local-data-description"
+  class="text-quiet max-w-[60ch] space-y-2 text-sm"
+>
+  <p>Reset removes these items from this machine:</p>
+  <ul class="list-disc pl-5">
+    <li>Provider connections and preferences</li>
+    <li>Projects and agents</li>
+    <li>Environments and workflows</li>
+    <li>Runs and artefacts</li>
+  </ul>
+  <p>Project folders outside the Power Plant data directory stay unchanged.</p>
 </div>
-<div class="settings-control">
+{% if let Some(message) = reset_error %}
+  <p class="text-error text-sm" role="alert">{{ message }}</p>
+{% endif %}
+<div class="flex max-w-md flex-col items-start gap-4">
   <label class="flex items-start gap-2 text-sm" for="local-data-confirmation">
     <input
       id="local-data-confirmation"

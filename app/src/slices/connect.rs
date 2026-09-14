@@ -8,17 +8,18 @@ use std::time::Duration;
 
 use axum::{
     Form, Router,
-    extract::State,
+    extract::{Query, State, rejection::QueryRejection},
     http::StatusCode,
     response::Response,
     routing::{get, post},
 };
 use hypergraft::{GraftRequest, PatchGraft, PatchStatus};
+use serde::Deserialize;
 
 use crate::{
     error::AppResult,
     plan_login::PendingPlan,
-    providers::{ProviderConnection, ProviderError},
+    providers::{ProviderConnection, ProviderError, ProviderKind},
     responses,
     sessions::{self, OptionalSession},
     state::AppState,
@@ -43,7 +44,23 @@ pub(super) fn router() -> Router<AppState> {
         .route("/connect/forget", post(forget))
 }
 
-async fn show(State(state): State<AppState>, graft: GraftRequest) -> AppResult<Response> {
+#[derive(Deserialize)]
+struct ConnectQuery {
+    provider: Option<ProviderKind>,
+    plan: Option<ProviderKind>,
+}
+
+async fn show(
+    State(state): State<AppState>,
+    graft: GraftRequest,
+    query: Result<Query<ConnectQuery>, QueryRejection>,
+) -> AppResult<Response> {
+    let Ok(Query(query)) = query else {
+        return Ok(responses::no_store_status_response(
+            StatusCode::BAD_REQUEST,
+            "Bad request",
+        ));
+    };
     if graft == GraftRequest::Patch {
         let previous = state.plan_login.snapshot();
         if previous
@@ -55,6 +72,9 @@ async fn show(State(state): State<AppState>, graft: GraftRequest) -> AppResult<R
                 .wait_until_changed(previous, PLAN_HOLD)
                 .await;
         }
+        if query.plan.is_some_and(|kind| state.vault.contains(kind)) {
+            return Ok(responses::command_navigation("/conversations"));
+        }
     }
     render(
         &state,
@@ -64,6 +84,7 @@ async fn show(State(state): State<AppState>, graft: GraftRequest) -> AppResult<R
             &state.vault,
             state.plan_login.snapshot(),
             sandbox_missing(&state).await,
+            query.provider,
         ),
     )
 }
@@ -183,6 +204,7 @@ async fn start_plan(
             &state.vault,
             state.plan_login.snapshot(),
             sandbox_missing(&state).await,
+            Some(kind),
         ),
     )
 }
@@ -305,6 +327,7 @@ async fn forget(
             &state.vault,
             state.plan_login.snapshot(),
             sandbox_missing(&state).await,
+            None,
         ),
     )
 }

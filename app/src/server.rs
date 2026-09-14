@@ -51,11 +51,8 @@ pub(crate) async fn run(log_level: tracing::Level) -> Result<(), Box<dyn std::er
         .map_err(|error| format!("startup error: {error}"))?;
     tokio::spawn(sessions::purge_expired_sessions(state.clone()));
     tokio::spawn(models::models_dev::refresh_worker(state.clone()));
-    tracing::info!(
-        environment = ?state.config.environment(),
-        public_origin = %state.config.public_origin(),
-        "Power Plant starting"
-    );
+    let environment = state.config.environment();
+    let public_origin = state.config.public_origin().to_owned();
     let app = build_router(state, static_dir.clone());
     #[cfg(feature = "dev")]
     let live_reload =
@@ -65,7 +62,11 @@ pub(crate) async fn run(log_level: tracing::Level) -> Result<(), Box<dyn std::er
     #[cfg(feature = "dev")]
     let app = app.layer(live_reload);
     let listener = tokio::net::TcpListener::bind(&bind_address).await?;
-    tracing::info!(bind_address, "Power Plant listening");
+    tracing::info!(
+        environment = ?environment,
+        bind_address,
+        "Power Plant is available at {public_origin}"
+    );
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<std::net::SocketAddr>(),

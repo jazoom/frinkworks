@@ -247,6 +247,36 @@ pub(super) async fn text(response: axum::response::Response) -> String {
 }
 
 #[tokio::test]
+async fn the_conversation_document_binds_the_thinking_visibility_patch_target() {
+    let state = test_state();
+    state.preferences.set_show_thinking(true).expect("thinking");
+    let token = connected(&state);
+
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri("/conversations/new")
+                .header(header::COOKIE, cookie(&token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("settings");
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let text = String::from_utf8(body.to_vec()).unwrap();
+
+    let thinking_start = text.find("id=\"thinking-visibility\"").expect("thinking");
+    let thinking_end = text[thinking_start..]
+        .find("</form>")
+        .map(|offset| thinking_start + offset)
+        .expect("thinking form");
+    let thinking_section = &text[thinking_start..thinking_end];
+    assert!(thinking_section.contains("action=\"/thinking-visibility\""));
+    assert!(thinking_section.contains("name=\"show_thinking\""));
+    assert!(thinking_section.contains("checked"));
+}
+
+#[tokio::test]
 async fn candidate_review_uses_immutable_selection_without_source_approval() {
     let mut state = test_state();
     let backend = crate::providers::tests::ScriptedBackend::accept();

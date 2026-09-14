@@ -132,12 +132,16 @@ export function initWorkspace(
             else link.removeAttribute("aria-current");
         });
         const section = root.querySelector<HTMLElement>(
-            ".workspace-catalogue[data-section]",
+            ".workspace-catalogue[data-section], .provider-page[data-section]",
         )?.dataset.section;
         root.querySelectorAll<HTMLAnchorElement>(
             ".workspace-navigation > a, .workspace-resources a",
         ).forEach((link) => {
-            if (section && link.pathname === `/${section}`)
+            if (
+                section &&
+                (link.pathname === `/${section}` ||
+                    link.dataset.nav === section)
+            )
                 link.setAttribute("aria-current", "page");
             else link.removeAttribute("aria-current");
         });

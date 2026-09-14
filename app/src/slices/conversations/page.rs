@@ -526,6 +526,8 @@ pub(super) struct ConversationDetailView {
     pub(super) title: String,
     pub(super) state: ConversationPageState,
     pub(super) error: &'static str,
+    show_thinking: bool,
+    thinking_visibility_error: Option<&'static str>,
     pub(super) messages: Vec<MessageView>,
     pub(super) companion_html: String,
     pub(super) companion_kind: &'static str,
@@ -667,6 +669,8 @@ impl ConversationDetailView {
             directories.push(view);
         }
         Self {
+            show_thinking: state.preferences.show_thinking(),
+            thinking_visibility_error: None,
             heading: "New conversation".to_owned(),
             document_title: "New conversation | Power Plant".to_owned(),
             title: form.title,
@@ -1050,6 +1054,8 @@ impl ConversationDetailView {
         let messages = visible_messages(record, message_budget);
         let omitted_messages = record.messages.len() - messages.len();
         Self {
+            show_thinking: sources.preferences.show_thinking(),
+            thinking_visibility_error: None,
             heading: record.title.clone(),
             document_title: format!("{} | Power Plant", record.title),
             title: title.to_owned(),

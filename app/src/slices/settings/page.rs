@@ -17,18 +17,10 @@ pub(super) struct SettingsPage {
     theme: &'static str,
     themes: &'static [Theme],
     error: Option<&'static str>,
-    show_thinking: bool,
-    thinking_visibility_error: Option<&'static str>,
     catalogue_status: Option<&'static str>,
     catalogue_error: Option<&'static str>,
     reset_error: Option<&'static str>,
-    providers: Vec<ProviderEntry>,
     environments: Vec<EnvironmentEntry>,
-}
-
-pub(super) struct ProviderEntry {
-    pub(super) label: String,
-    pub(super) method: String,
 }
 
 pub(super) struct EnvironmentEntry {
@@ -39,31 +31,15 @@ pub(super) struct EnvironmentEntry {
 impl SettingsPage {
     pub(super) fn new(
         theme: Theme,
-        show_thinking: bool,
-        vault: &crate::vault::ProviderVault,
         environments: &crate::environments::EnvironmentCatalogue,
     ) -> Self {
         Self {
             theme: theme.as_str(),
             themes: Theme::ALL,
             error: None,
-            show_thinking,
-            thinking_visibility_error: None,
             catalogue_status: None,
             catalogue_error: None,
             reset_error: None,
-            providers: vault
-                .providers()
-                .into_iter()
-                .map(|(kind, auth)| ProviderEntry {
-                    label: kind.label().to_owned(),
-                    method: match auth {
-                        crate::providers::AuthMethod::ApiKey => "API key",
-                        crate::providers::AuthMethod::Plan => "Plan login",
-                    }
-                    .to_owned(),
-                })
-                .collect(),
             environments: environments
                 .list()
                 .into_iter()

@@ -18,6 +18,7 @@ mod tests;
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum Theme {
     #[default]
+    System,
     Springfield,
     EvergreenTerrace,
     Leftorium,
@@ -27,6 +28,7 @@ pub(crate) enum Theme {
 
 impl Theme {
     pub(crate) const ALL: &[Self] = &[
+        Self::System,
         Self::Springfield,
         Self::EvergreenTerrace,
         Self::Leftorium,
@@ -36,6 +38,7 @@ impl Theme {
 
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
+            Self::System => "system",
             Self::Springfield => "springfield",
             Self::EvergreenTerrace => "evergreen-terrace",
             Self::Leftorium => "leftorium",
@@ -46,6 +49,7 @@ impl Theme {
 
     pub(crate) const fn label(self) -> &'static str {
         match self {
+            Self::System => "System preference",
             Self::Springfield => "Springfield",
             Self::EvergreenTerrace => "Evergreen Terrace",
             Self::Leftorium => "Leftorium",

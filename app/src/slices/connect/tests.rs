@@ -471,7 +471,8 @@ async fn an_api_key_error_targets_the_key_control() {
     assert!(text.contains("Enter an API key."));
     assert_field_target(&text, "connect-key", "sk-secret-key");
     assert!(text.contains(r#"value="xai""#));
-    assert!(has_checked_control(&text));
+    assert!(!has_checked_control(&text));
+    assert!(text.contains("Connect to xAI (Grok)"));
 }
 
 #[tokio::test]
@@ -598,7 +599,15 @@ fn pending_state() -> AppState {
 }
 
 async fn connect_get(state: AppState, kind: Option<&str>) -> axum::http::Response<Body> {
-    let mut request = Request::builder().uri("/connect");
+    connect_get_at(state, "/connect", kind).await
+}
+
+async fn connect_get_at(
+    state: AppState,
+    uri: &str,
+    kind: Option<&str>,
+) -> axum::http::Response<Body> {
+    let mut request = Request::builder().uri(uri);
     if let Some(kind) = kind {
         request = request
             .header(hypergraft::GRAFT_REQUEST, kind)
@@ -708,18 +717,84 @@ async fn empty_vault_offers_both_plan_logins_and_every_api_key_provider() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let text = String::from_utf8(body.to_vec()).unwrap();
-    assert!(text.contains("Connect a provider"));
-    assert!(!text.contains("<h1>Providers</h1>"));
-    assert!(text.contains("Sign in with ChatGPT"));
-    assert!(text.contains("Sign in with SuperGrok"));
-    assert!(text.contains(r#"name="provider" value="openai-codex""#));
-    assert!(text.contains(r#"name="provider" value="xai""#));
-    assert!(text.contains(r#"value="synthetic""#));
-    assert!(text.contains(r#"value="openrouter""#));
-    assert!(text.contains(r#"value="deepseek""#));
-    assert_eq!(text.matches(r#"type="radio""#).count(), 5);
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(text.contains("Which provider will you use?"));
+    assert!(text.contains("ChatGPT plan or API key"));
+    assert!(text.contains("SuperGrok plan or API key"));
+    for kind in ProviderKind::ALL {
+        assert!(text.contains(&format!("href=\"/connect?provider={}\"", kind.as_str())));
+    }
+    assert!(!text.contains(r#"name="api_key""#));
     assert!(!text.contains("Connected providers"));
     assert!(!text.contains("Continue to conversations"));
+}
+
+#[tokio::test]
+async fn provider_selection_supports_documents_navigation_and_patches() {
+    for (kind, target) in [
+        (None, None),
+        (Some("navigation"), Some("connect-main")),
+        (Some("patch"), Some("connect-card")),
+    ] {
+        let response = connect_get_at(test_state(), "/connect?provider=openai-codex", kind).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        if let Some(target) = target {
+            assert!(text.contains(&format!("target=\"{target}\"")));
+        } else {
+            assert!(text.contains("<!doctype html>"));
+        }
+        assert_eq!(
+            text.matches(r#"name="provider" value="openai-codex""#)
+                .count(),
+            2
+        );
+        assert!(!text.contains(r#"name="provider" value="xai""#));
+    }
+}
+
+#[tokio::test]
+async fn malformed_provider_queries_fail_without_echoing_input() {
+    for query in [
+        "provider=unknown-secret",
+        "provider=xai&provider=deepseek",
+        "plan=unknown-secret",
+    ] {
+        for kind in [None, Some("navigation"), Some("patch")] {
+            let response = connect_get_at(test_state(), &format!("/connect?{query}"), kind).await;
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+            let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            assert_eq!(body, "Bad request");
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_plan_poll_preserves_the_selected_provider() {
+    let response = connect_get_at(
+        pending_state(),
+        "/connect?provider=deepseek&plan=xai",
+        Some("patch"),
+    )
+    .await;
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let text = String::from_utf8(body.to_vec()).unwrap();
+    assert!(text.contains(r#"name="provider" value="deepseek""#));
+    assert!(!text.contains(r#"name="provider" value="xai""#));
+    assert!(text.contains(PLAN_CODE));
+}
+
+#[tokio::test]
+async fn a_completed_plan_poll_navigates_to_conversations() {
+    let state = test_state();
+    store_provider(&state, SECRET_KEY);
+    let response = connect_get_at(state, "/connect?provider=xai&plan=xai", Some("patch")).await;
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let text = String::from_utf8(body.to_vec()).unwrap();
+    assert!(text.contains(r#"navigate="/conversations""#));
+    assert!(!text.contains(SECRET_KEY));
 }
 
 #[tokio::test]
@@ -730,17 +805,12 @@ async fn stored_provider_hides_its_own_plan_login_and_key_option() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let text = String::from_utf8(body.to_vec()).unwrap();
-    assert!(text.contains("<h1>Providers</h1>"));
-    assert!(text.contains("Continue to conversations"));
-    assert!(text.contains("Connected providers"));
-    assert!(text.contains("Sign in with ChatGPT"));
-    assert!(!text.contains("Sign in with SuperGrok"));
-    assert!(text.contains(r#"name="provider" value="openai-codex""#));
-    assert!(text.contains(r#"value="synthetic""#));
-    assert!(text.contains(r#"value="openrouter""#));
-    assert!(text.contains(r#"value="deepseek""#));
-    // The stored provider keeps one hidden forget target and no plan or radio option.
-    assert_eq!(text.matches(r#"value="xai""#).count(), 1);
-    assert_eq!(text.matches(r#"type="radio""#).count(), 4);
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(text.contains(r#"action="/connect/forget""#));
+    for provider in ["openai-codex", "synthetic", "openrouter", "deepseek"] {
+        assert!(text.contains(&format!(r#"href="/connect?provider={provider}""#)));
+    }
+    assert!(!text.contains(r#"href="/connect?provider=xai""#));
+    assert_eq!(text.matches(r#"name="provider" value="xai""#).count(), 1);
     assert!(!text.contains(SECRET_KEY));
 }

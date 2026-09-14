@@ -119,13 +119,17 @@
         </div>
       </header>
       <div
-        class="workspace-toolbar flex items-center justify-between gap-2 px-6 py-2"
+        class="workspace-toolbar flex flex-wrap items-center justify-between gap-2 px-6 py-2"
       >
-        <span class="text-quiet inline-flex items-center gap-2 text-xs"
-          ><svg class="workspace-icon" aria-hidden="true">
-            <use href="/static/images/workspace-icons.svg#chat" /></svg
-          >Conversation</span
+        <form
+          id="thinking-visibility"
+          method="post"
+          action="/thinking-visibility"
+          data-graft
+          data-island="thinking-visibility"
         >
+          {% include "chat/templates/thinking_visibility.html" %}
+        </form>
         <div class="flex items-center gap-2">
           {% if let Some(saved) = self.saved() %}
             <a
@@ -148,6 +152,8 @@
                   aria-controls="conversation-work"
                   aria-expanded="false"
                   class="btn btn-ghost btn-sm"
+                  ><svg class="workspace-icon" aria-hidden="true">
+                    <use href="/static/images/workspace-icons.svg#grid" /></svg
                   >Current work</a
                 >
               {% endif %}
@@ -159,6 +165,9 @@
                 aria-controls="conversation-work"
                 aria-expanded="false"
               >
+                <svg class="workspace-icon" aria-hidden="true">
+                  <use href="/static/images/workspace-icons.svg#grid" />
+                </svg>
                 Current work
               </button>
             {% endif %}
@@ -338,6 +347,7 @@
         tabindex="-1"
         class="chat-transcript"
         aria-label="Messages"
+        data-show-thinking="{% if show_thinking %}true{% else %}false{% endif %}"
         aria-live="polite"
       >
         {% if let Some(saved) = self.saved() %}

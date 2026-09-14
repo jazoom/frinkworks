@@ -151,7 +151,7 @@ fn invalid_model_preferences_default_without_rewriting_the_file() {
         crate::storage::write_private(&path, &bytes).unwrap();
         let reader = Preferences::open(path.clone());
         assert!(reader.values().models.is_empty(), "{value}");
-        assert_eq!(reader.theme(), Theme::Springfield);
+        assert_eq!(reader.theme(), Theme::System);
         assert_eq!(fs::read(&path).unwrap(), bytes);
     }
 }
@@ -233,7 +233,7 @@ fn thinking_visibility_survives_a_new_store_instance() {
 
     let reader = Preferences::open(path);
     assert!(reader.show_thinking());
-    assert_eq!(reader.theme(), Theme::Springfield);
+    assert_eq!(reader.theme(), Theme::System);
 }
 
 #[test]
@@ -255,10 +255,10 @@ fn preference_updates_preserve_other_values() {
 }
 
 #[test]
-fn missing_or_invalid_files_default_to_light() {
+fn missing_or_invalid_files_default_to_the_system_preference() {
     let dir = tempfile::tempdir().expect("dir");
     let path = dir.path().join("preferences.json");
-    assert_eq!(Preferences::open(path.clone()).theme(), Theme::Springfield);
+    assert_eq!(Preferences::open(path.clone()).theme(), Theme::System);
 
     for bytes in [
         b"not json".as_slice(),
@@ -267,7 +267,7 @@ fn missing_or_invalid_files_default_to_light() {
         br#"{"version":1,"theme":"sector-7-g","show_thinking":true,"selected_provider":null,"models":[],"removed-field":true}"#,
     ] {
         fs::write(&path, bytes).expect("write invalid preferences");
-        assert_eq!(Preferences::open(path.clone()).theme(), Theme::Springfield);
+        assert_eq!(Preferences::open(path.clone()).theme(), Theme::System);
     }
 }
 

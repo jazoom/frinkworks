@@ -1,5 +1,8 @@
 <!doctype html>
-<html lang="en-AU" data-theme="{{ theme }}">
+<html
+  lang="en-AU"
+  {% if theme != "system" %}data-theme="{{ theme }}"{% endif %}
+>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />

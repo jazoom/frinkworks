@@ -55,7 +55,7 @@ watchexec --restart \
   --watch app/askama.toml \
   --watch app/Cargo.toml \
   --watch Cargo.lock \
-  -- cargo run -p powerplant --quiet --features dev
+  -- cargo run -p powerplant --features dev
 """
 
 [tasks.format]

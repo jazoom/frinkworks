@@ -126,39 +126,16 @@ async fn the_initial_document_renders_the_saved_theme_and_selection() {
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let text = String::from_utf8(body.to_vec()).unwrap();
 
-    assert!(text.contains("<html lang=\"en-AU\" data-theme=\"evergreen-terrace\">"));
+    let root = text
+        .split_once("<html")
+        .unwrap()
+        .1
+        .split_once('>')
+        .unwrap()
+        .0;
+    assert!(root.contains("data-theme=\"evergreen-terrace\""));
     assert!(text.contains("data-active-theme=\"evergreen-terrace\""));
     assert_eq!(text.matches("selected").count(), 1);
-}
-
-#[tokio::test]
-async fn the_settings_document_binds_the_thinking_visibility_patch_target() {
-    let state = test_state();
-    state.preferences.set_show_thinking(true).expect("thinking");
-    let token = connected(&state);
-
-    let response = app(&state)
-        .oneshot(
-            Request::builder()
-                .uri("/settings")
-                .header(header::COOKIE, cookie(&token))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .expect("settings");
-    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    let text = String::from_utf8(body.to_vec()).unwrap();
-
-    let thinking_start = text.find("id=\"thinking-visibility\"").expect("thinking");
-    let thinking_end = text[thinking_start..]
-        .find("</form>")
-        .map(|offset| thinking_start + offset)
-        .expect("thinking form");
-    let thinking_section = &text[thinking_start..thinking_end];
-    assert!(thinking_section.contains("action=\"/thinking-visibility\""));
-    assert!(thinking_section.contains("name=\"show_thinking\""));
-    assert!(thinking_section.contains("checked"));
 }
 
 #[tokio::test]
@@ -189,11 +166,11 @@ async fn an_unknown_theme_is_rejected_without_changing_the_preference() {
         .await
         .expect("theme patch");
     assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(state.preferences.theme(), Theme::Springfield);
+    assert_eq!(state.preferences.theme(), Theme::System);
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let text = String::from_utf8(body.to_vec()).unwrap();
     assert!(text.contains("Choose a listed theme."));
-    assert!(text.contains("data-active-theme=\"springfield\""));
+    assert!(text.contains("data-active-theme=\"system\""));
 }
 
 fn theme_request(token: &str, theme: &str) -> Request<Body> {

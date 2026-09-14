@@ -63,6 +63,10 @@ The approved reference is `docs/ui-overhaul/reference/`. The conversation, plans
 
 Springfield uses pale green paper and sunshine actions. Thin rules separate the transcript, companion and controls.
 
+The default setting follows the system preference. Light mode uses Springfield. Dark mode uses Sector 7-G.
+
+An explicit theme choice overrides the system preference. The Settings selector can restore the system preference.
+
 The five themes retain distinct palettes:
 
 - Springfield uses olive and pale green.
@@ -85,7 +89,9 @@ IBM Plex Sans carries the interface. IBM Plex Mono identifies paths and code.
 
 Conversation text has a maximum measure of 70 characters. Page titles remain compact. Result headings identify the next decision.
 
-Catalogue and setup forms retain their existing type scale. The workspace's smaller metadata is not a new standard for all form text.
+Catalogue forms retain their existing type scale. The workspace's smaller metadata is not a new standard for all form text.
+
+First-use chooser headings use 30px, and connection headings use 28px. Narrow screens use 28px and 26px respectively. Introductory text uses 15px.
 
 ## Layout
 
@@ -219,7 +225,13 @@ Run details retain the owning conversation and parent loop links. Evidence pages
 
 Catalogue pages retain ruled records and inline editors. Workflow pages retain process previews, phase selectors and explicit run consent.
 
-First-time provider connection retains its standalone introduction. Later provider management uses the shared shell.
+First-time provider connection starts with a focused provider chooser in a compact branded form.
+
+The provider choice precedes the connection form. Method descriptions align right on wider screens and sit below provider names on narrow screens.
+
+Provider links use `/connect?provider=…` with native navigation fallback. Change provider returns to the chooser. API-only forms omit the redundant introductory sentence.
+
+Pending plan sign-in and validation errors remain within the form. Successful plan polling navigates to conversations. Later provider management retains the shared shell.
 
 ## Validation boundary
 

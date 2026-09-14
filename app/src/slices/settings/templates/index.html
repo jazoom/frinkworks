@@ -25,59 +25,23 @@
     >
   </header>
   <div
-    class="[&>section]:border-base-300 min-h-0 flex-1 overflow-y-auto px-11 pt-[34px] pb-[70px] max-[700px]:px-5 max-[700px]:pt-6 [&>section]:my-[30px] [&>section]:max-w-[850px] [&>section]:border-t [&>section]:pt-[25px]"
+    class="min-h-0 flex-1 overflow-y-auto px-11 pt-8 pb-[70px] max-[700px]:px-5 max-[700px]:pt-6"
   >
-    <p class="page-description">
-      Preferences for this computer. Task-specific settings stay with each
-      conversation.
-    </p>
-
     <section
       class="catalogue-settings-section"
       aria-labelledby="settings-appearance"
     >
-      <h2 id="settings-appearance">Appearance</h2>
+      <h2 id="settings-appearance">Theme</h2>
       <form
         id="theme-setting"
         method="post"
         action="/settings/theme"
         data-graft
         data-island="theme-selector"
-        class="mt-4"
+        class="catalogue-settings-stack"
       >
         {% include "settings/templates/theme.html" %}
       </form>
-    </section>
-
-    <section
-      class="catalogue-settings-section"
-      aria-labelledby="settings-providers"
-    >
-      <h2 id="settings-providers">Model connections</h2>
-      {% if providers.is_empty() %}
-        <p>No provider is connected on this computer.</p>
-      {% else %}
-        <ul
-          class="library-list [&>li]:border-base-300 [&>li]:flex [&>li]:items-start [&>li]:justify-between [&>li]:gap-6 [&>li]:border-b [&>li]:py-[21px]"
-        >
-          {% for provider in providers %}
-            <li class="library-row">
-              <div class="min-w-0">
-                <h3 class="break-words">{{ provider.label }}</h3>
-                <p>{{ provider.method }}</p>
-              </div>
-              <span class="status-pill">Connected</span>
-            </li>
-          {% endfor %}
-        </ul>
-      {% endif %}
-      <p>
-        Provider keys stay on this computer. Removal happens on the Providers
-        page with an explicit Forget action per provider.
-      </p>
-      <a href="/connect" data-graft class="btn btn-outline btn-sm"
-        >Open providers</a
-      >
     </section>
 
     <section
@@ -101,32 +65,9 @@
           {% endfor %}
         </ul>
       {% endif %}
-      <p>Preparation starts no task.</p>
       <a href="/environments" data-graft class="btn btn-outline btn-sm"
         >Manage environments</a
       >
-    </section>
-
-    <section
-      class="catalogue-settings-section"
-      aria-labelledby="thinking-details-heading"
-    >
-      <h2 id="thinking-details-heading">Thinking details</h2>
-      <p>
-        Choose whether to show thinking details in conversations. This choice
-        stays on this machine and never changes model effort.
-      </p>
-      <form
-        id="thinking-visibility"
-        method="post"
-        action="/thinking-visibility"
-        data-graft
-        data-island="thinking-visibility"
-        class="mt-4"
-        aria-labelledby="thinking-details-heading"
-      >
-        {% include "chat/templates/thinking_visibility.html" %}
-      </form>
     </section>
 
     <section
@@ -139,7 +80,7 @@
         method="post"
         action="/settings/model-catalogue/refresh"
         data-graft
-        class="mt-4"
+        class="catalogue-settings-stack"
       >
         {% include "settings/templates/model_catalogue.html" %}
       </form>
@@ -156,12 +97,17 @@
       >
     </section>
 
-    <section class="catalogue-settings-section" aria-label="Local data reset">
+    <section
+      class="catalogue-settings-section catalogue-settings-danger"
+      aria-labelledby="local-data-heading"
+    >
+      <h2 id="local-data-heading">Local data</h2>
       <form
         id="local-data-reset"
         method="post"
         action="/settings/local-data/reset"
         data-graft
+        class="catalogue-settings-stack"
       >
         {% include "settings/templates/local_data.html" %}
       </form>

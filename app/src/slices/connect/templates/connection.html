@@ -1,0 +1,159 @@
+{% if let Some(provider) = selected_provider %}
+  <a
+    href="/connect"
+    data-graft
+    class="text-quiet mb-6 inline-flex min-h-10 items-center gap-2 text-[13px]"
+  >
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      aria-hidden="true"
+    >
+      <path d="m14 5-7 7 7 7" />
+    </svg>
+    Change provider
+  </a>
+  <div class="mb-3 flex items-start gap-3">
+    <span
+      class="provider-logo provider-logo-{{ provider.value }} mt-1 shrink-0"
+      aria-hidden="true"
+    ></span>
+    <h1 class="text-[26px] sm:text-[28px]">Connect to {{ provider.label }}</h1>
+  </div>
+  {% if let Some(plan) = provider.plan %}
+    <p class="text-quiet text-[15px]">
+      Use your {{ plan }} plan or an API key.
+    </p>
+  {% endif %}
+{% else if providers.is_empty() %}
+  <h1 class="text-[28px] sm:text-[30px]">Your providers are connected</h1>
+{% else %}
+  <h1 class="text-[28px] sm:text-[30px]">
+    {% if has_stored_providers %}Connect another provider{% else %}Which
+    provider will you use?{% endif %}
+  </h1>
+  <p class="text-quiet mt-3 text-[15px]">
+    Choose your provider, then connect with a supported plan or API key.
+  </p>
+{% endif %}
+
+{% if sandbox_missing != "" %}
+  <div class="alert alert-warning mt-6" role="status">
+    <p>{{ sandbox_missing }}</p>
+  </div>
+{% endif %}
+{% include "connect/templates/error.html" %}
+{% include "connect/templates/pending.html" %}
+
+<div
+  id="connect-provider"
+  tabindex="-1"
+  {% if let Some(error) = error %}{% if error.is_provider() %}
+    aria-invalid="true" aria-describedby="connect-errors"
+  {% endif %}{% endif %}
+>
+  {% if let Some(provider) = selected_provider %}
+    <div class="mt-7 pb-4">
+      {% if let Some(plan) = provider.plan %}
+        <form
+          id="connect-plan"
+          data-graft
+          method="post"
+          action="/connect/plan"
+          {% if let Some(error) = error %}{% if error.is_plan() %}
+            aria-invalid="true" aria-describedby="connect-errors"
+          {% endif %}{% endif %}
+        >
+          <input type="hidden" name="provider" value="{{ provider.value }}" />
+          <button class="btn btn-primary w-full" type="submit">
+            Sign in with {{ plan }}
+          </button>
+        </form>
+        <div class="connect-or my-5 flex items-center gap-4 text-[13px]">
+          or use an API key
+        </div>
+      {% endif %}
+      <form data-graft method="post" action="/connect" autocomplete="off">
+        <input type="hidden" name="provider" value="{{ provider.value }}" />
+        <label for="connect-key" class="mb-2 block text-sm font-semibold"
+          >{{ provider.label }} API key</label
+        >
+        <input
+          id="connect-key"
+          class="input input-bordered w-full font-mono"
+          name="api_key"
+          type="password"
+          autocomplete="new-password"
+          required
+          maxlength="4096"
+          {% if let Some(error) = error %}{% if error.is_api_key() %}
+            aria-invalid="true" aria-describedby="connect-errors"
+          {% endif %}{% endif %}
+        />
+        <button
+          class="btn {% if provider.plan.is_some() %}btn-outline{% else %}btn-primary{% endif %} mt-4 w-full"
+          type="submit"
+        >
+          Connect with API key
+        </button>
+      </form>
+    </div>
+  {% else if !providers.is_empty() %}
+    <div
+      id="connect-plan"
+      tabindex="-1"
+      {% if let Some(error) = error %}{% if error.is_plan() %}
+        aria-invalid="true" aria-describedby="connect-errors"
+      {% endif %}{% endif %}
+    >
+      <ul class="border-base-300 mt-6 border-t">
+        {% for provider in providers %}
+          <li class="border-base-300 border-b last:border-b-0">
+            <a
+              href="/connect?provider={{ provider.value }}"
+              data-graft
+              class="btn btn-ghost connect-provider-choice flex min-h-[76px] w-full items-center gap-4 px-1 py-3.5 text-left min-[560px]:min-h-[70px]"
+            >
+              <span
+                class="provider-logo provider-logo-{{ provider.value }} shrink-0"
+                aria-hidden="true"
+              ></span>
+              <span
+                class="flex min-w-0 flex-1 flex-col gap-0.5 min-[560px]:flex-row min-[560px]:items-center min-[560px]:justify-between min-[560px]:gap-4"
+              >
+                <strong class="text-base font-semibold"
+                  >{{ provider.label }}</strong
+                >
+                <span
+                  class="text-quiet text-[13px] font-normal min-[560px]:text-right"
+                  >{% if let Some(plan) = provider.plan %}
+                    {{ plan }}
+                    plan or API key
+                  {% else %}
+                    API key
+                  {% endif %}</span
+                >
+              </span>
+              <svg
+                class="shrink-0"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                aria-hidden="true"
+              >
+                <path d="m9 5 7 7-7 7" />
+              </svg>
+            </a>
+          </li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+</div>

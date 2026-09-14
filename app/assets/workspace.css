@@ -32,12 +32,31 @@
     --workspace-selected: #294136;
     --workspace-cover-rule: #30473c;
 }
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme]) {
+        --color-base-100: #2c263e;
+        --color-base-200: #39304e;
+        --color-base-300: #584e6c;
+        --color-base-content: #f1edf6;
+        --color-primary: #d3e767;
+        --color-primary-content: #29311d;
+        --color-error: #f5ad9e;
+        --workspace-canvas: #242032;
+        --workspace-cover: #1c1828;
+        --workspace-cover-text: #f1edf6;
+        --workspace-cover-muted: #c3b7d1;
+        --workspace-muted: #c2b7cf;
+        --workspace-selected: #453957;
+        --workspace-cover-rule: #483c5d;
+    }
+}
 [data-theme="leftorium"] {
     --color-base-100: #fcfbf8;
     --color-base-200: #efeee8;
     --color-base-300: #d7d6cc;
     --color-base-content: #36382f;
     --color-error: #a63b32;
+    --color-error-content: #fcfbf8;
     --workspace-canvas: #f5f4f0;
     --workspace-cover: #e9e8df;
     --workspace-cover-text: #35392e;
@@ -107,9 +126,6 @@
 body {
     background: var(--workspace-canvas);
 }
-[data-theme="leftorium"] .connect-intro :is(h1, li span) {
-    color: var(--workspace-cover-text);
-}
 .alert-error {
     color: var(--color-base-content);
     background: color-mix(
@@ -121,6 +137,11 @@ body {
 }
 .alert-error .link {
     color: inherit;
+}
+.alert-info {
+    color: var(--color-base-content);
+    background: var(--powerplant-info-wash);
+    border-color: var(--powerplant-info-border);
 }
 .workspace-icon {
     width: 16px;
@@ -151,7 +172,7 @@ body {
     font-size: 14px;
     line-height: 1.55;
 }
-.app-frame .btn {
+.app-frame .btn:not(.connect-provider-choice) {
     min-height: 36px;
     height: auto;
     padding: 7px 12px;
@@ -488,21 +509,44 @@ body:has(.workspace-catalogue) .app-frame {
     width: 13px;
     height: 13px;
 }
+.catalogue-settings-section {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 16px;
+    max-width: 850px;
+}
+.catalogue-settings-section + .catalogue-settings-section {
+    margin-top: 24px;
+    padding-top: 24px;
+    border-top: 1px solid var(--color-base-300);
+}
+.catalogue-settings-section + .catalogue-settings-danger {
+    margin-top: 32px;
+    padding-top: 32px;
+}
 .catalogue-settings-section > h2 {
-    margin-bottom: 10px;
+    margin: 0;
     font-size: 18px;
     font-weight: 600;
 }
 .catalogue-settings-section .library-list {
+    align-self: stretch;
+    width: 100%;
     border-top: 0;
 }
 .catalogue-settings-section > p {
-    margin-top: 12px;
+    margin: 0;
+    max-width: 60ch;
     color: var(--workspace-muted);
     font-size: 13px;
 }
-.catalogue-settings-section > .btn {
-    margin-top: 17px;
+.catalogue-settings-stack {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 16px;
+    width: 100%;
 }
 .status-pill {
     display: inline-block;

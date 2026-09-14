@@ -1,0 +1,35 @@
+{% if let Some(pending) = pending %}
+  <div
+    id="connect-plan-status"
+    class="alert alert-info mt-6 block space-y-3"
+    data-island="connect-plan"
+    data-plan-active="{% if pending.active %}true{% else %}false{% endif %}"
+  >
+    <h2 class="font-semibold">Finish sign-in</h2>
+    <p>{{ pending.provider_label }}</p>
+    {% if let Some(message) = pending.error %}
+      <div class="alert alert-error" role="alert"><p>{{ message }}</p></div>
+    {% else %}
+      <p>
+        Open the provider link and enter this code. This page will update
+        automatically when sign-in is complete.
+      </p>
+      <p>
+        <a
+          href="{{ pending.verification_uri }}"
+          class="link break-all"
+          rel="noreferrer"
+          target="_blank"
+          >{{ pending.verification_uri }}</a
+        >
+      </p>
+      <p class="font-mono text-xl tracking-wide">{{ pending.user_code }}</p>
+      <form data-graft method="get" action="/connect" hidden>
+        <input type="hidden" name="plan" value="{{ pending.provider_value }}" />
+        {% if let Some(provider) = selected_provider %}
+          <input type="hidden" name="provider" value="{{ provider.value }}" />
+        {% endif %}
+      </form>
+    {% endif %}
+  </div>
+{% endif %}

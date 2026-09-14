@@ -225,8 +225,11 @@ async fn tool_free_activation_reaches_useful_chat_without_a_runtime() {
 
     let (status, _, text) = send(&state, document("/connect", None)).await;
     assert_eq!(status, StatusCode::OK);
+    assert!(text.contains("href=\"/connect?provider=xai\""));
+    let (status, _, text) = send(&state, document("/connect?provider=xai", None)).await;
+    assert_eq!(status, StatusCode::OK);
     assert!(text.contains("action=\"/connect\""));
-    assert!(text.contains("Connect a model"));
+    assert!(text.contains("Connect to xAI (Grok)"));
 
     let (status, headers, text) = send(
         &state,

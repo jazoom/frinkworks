@@ -1,20 +1,13 @@
-<div data-active-theme="{{ theme }}">
-  <h3 id="theme-heading">Theme</h3>
-  <p id="theme-description" class="text-quiet mt-1 max-w-[60ch] text-sm">
-    Choose how Power Plant looks. This choice stays on this machine.
-  </p>
-  {% if let Some(message) = error %}
-    <p class="text-error mt-2 text-sm" role="alert">{{ message }}</p>
-  {% endif %}
-</div>
-<div class="settings-control">
+{% if let Some(message) = error %}
+  <p class="text-error text-sm" role="alert">{{ message }}</p>
+{% endif %}
+<div class="settings-control max-w-xs" data-active-theme="{{ theme }}">
   <select
     id="theme-select"
     name="theme"
     class="select"
     data-theme-select
-    aria-labelledby="theme-heading"
-    aria-describedby="theme-description"
+    aria-labelledby="settings-appearance"
   >
     {% for option in themes %}
       <option
