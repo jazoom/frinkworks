@@ -731,26 +731,41 @@ async fn empty_vault_offers_both_plan_logins_and_every_api_key_provider() {
 
 #[tokio::test]
 async fn provider_selection_supports_documents_navigation_and_patches() {
-    for (kind, target) in [
-        (None, None),
-        (Some("navigation"), Some("connect-main")),
-        (Some("patch"), Some("connect-card")),
-    ] {
-        let response = connect_get_at(test_state(), "/connect?provider=openai-codex", kind).await;
-        assert_eq!(response.status(), StatusCode::OK);
-        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let text = String::from_utf8(body.to_vec()).unwrap();
-        if let Some(target) = target {
-            assert!(text.contains(&format!("target=\"{target}\"")));
-        } else {
-            assert!(text.contains("<!doctype html>"));
+    for stored in [false, true] {
+        let page_target = if stored { "chat-main" } else { "connect-main" };
+        for (kind, target) in [
+            (None, None),
+            (Some("navigation"), Some(page_target)),
+            (Some("patch"), Some("connect-card")),
+        ] {
+            let state = test_state();
+            if stored {
+                store_provider(&state, SECRET_KEY);
+            }
+            let response = connect_get_at(state, "/connect?provider=openai-codex", kind).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            let text = String::from_utf8(body.to_vec()).unwrap();
+            if let Some(target) = target {
+                assert!(text.contains(&format!("target=\"{target}\"")));
+            } else {
+                assert!(text.contains("<!doctype html>"));
+            }
+            assert_eq!(
+                text.matches(r#"id="connect-card""#).count(),
+                usize::from(kind != Some("patch"))
+            );
+            assert_eq!(
+                text.matches(r#"name="provider" value="openai-codex""#)
+                    .count(),
+                2
+            );
+            assert_eq!(
+                text.matches(r#"name="provider" value="xai""#).count(),
+                usize::from(stored)
+            );
+            assert!(!text.contains(SECRET_KEY));
         }
-        assert_eq!(
-            text.matches(r#"name="provider" value="openai-codex""#)
-                .count(),
-            2
-        );
-        assert!(!text.contains(r#"name="provider" value="xai""#));
     }
 }
 

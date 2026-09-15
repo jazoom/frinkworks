@@ -44,40 +44,6 @@ fn named(name: &str) -> WorkflowDefinition {
     test_named_definition(name)
 }
 
-#[test]
-fn task_loop_label_does_not_rewrite_user_names_or_pinned_definitions() {
-    let directory = tempfile::tempdir().unwrap();
-    let catalogue = WorkflowCatalogue::open_with_seeds(
-        directory.path().join("workflows.json"),
-        &[WorkflowSeed {
-            key: SeedKey::parse(crate::workflows::seeds::RALPH_TASK_LOOP_V1).unwrap(),
-            definition: named("Ralph task loop"),
-        }],
-    )
-    .unwrap();
-    let record = catalogue.list().remove(0);
-    let version = record.definition_version;
-    assert_eq!(catalogue.display_name(&record), "Task loop");
-    assert_eq!(
-        catalogue.get(&record.id).unwrap().definition.name(),
-        "Ralph task loop"
-    );
-    assert_eq!(
-        catalogue.get(&record.id).unwrap().definition_version,
-        version
-    );
-    let edited = catalogue
-        .update(&record.id, record.revision, named("My process"))
-        .unwrap();
-    let renamed = catalogue
-        .update(&edited.id, edited.revision, named("Ralph task loop"))
-        .unwrap();
-    assert_eq!(catalogue.display_name(&renamed), "Ralph task loop");
-    let custom = WorkflowCatalogue::in_memory();
-    let authored = custom.create(named("Ralph task loop")).unwrap();
-    assert_eq!(custom.display_name(&authored), "Ralph task loop");
-}
-
 fn write_catalogue(path: &std::path::Path, json: &str) {
     std::fs::write(path, json).expect("write");
 }

@@ -193,14 +193,24 @@ async fn a_chat_document_enhances_resource_navigation() {
         .expect("catalogue");
     assert_eq!(response.status(), axum::http::StatusCode::OK);
     let text = body_text(response).await;
-    let connect_tags: Vec<&str> = text
-        .split("<a ")
-        .filter(|chunk| chunk.contains("href=\"/resources\""))
-        .map(|chunk| chunk.split('>').next().expect("tag"))
-        .collect();
-    assert!(!connect_tags.is_empty());
-    for tag in connect_tags {
-        assert!(tag.contains("data-graft"));
+    for path in [
+        "/workflows",
+        "/presets",
+        "/environments",
+        "/connect",
+        "/projects",
+        "/agents",
+        "/settings",
+    ] {
+        let tags: Vec<&str> = text
+            .split("<a ")
+            .map(|chunk| chunk.split('>').next().expect("tag"))
+            .filter(|tag| tag.contains(&format!("href=\"{path}\"")))
+            .collect();
+        assert!(!tags.is_empty(), "{path}");
+        for tag in tags {
+            assert!(tag.contains("data-graft"), "{path}");
+        }
     }
 }
 

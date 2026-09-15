@@ -175,7 +175,7 @@ fn production_seed_keys_are_stable() {
             "implement-with-approval-v1",
             "implement-and-review-v1",
             "plan-then-implement-v1",
-            "ralph-task-loop-v1",
+            "task-loop-v1",
         ]
     );
 }

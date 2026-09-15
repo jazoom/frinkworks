@@ -5,7 +5,7 @@ use crate::projects::ProjectId;
 use crate::tests::test_environment_id;
 use crate::workflows::definition::PinnedWorkflowDefinition;
 use crate::workflows::run::{RunKind, RunSource};
-use crate::workflows::seeds::ralph_task_loop_definition;
+use crate::workflows::seeds::task_loop_definition;
 use crate::workflows::{ArtefactId, RunId};
 
 impl TaskLoopStore {
@@ -28,7 +28,7 @@ fn snapshot() -> TaskListSnapshot {
 }
 
 pub(crate) fn loop_record() -> TaskLoop {
-    let definition = ralph_task_loop_definition(test_environment_id());
+    let definition = task_loop_definition(test_environment_id());
     let list = snapshot();
     let parsed = crate::workflows::task_list::parse(&list.markdown).expect("tasks");
     TaskLoop::create(
@@ -40,7 +40,7 @@ pub(crate) fn loop_record() -> TaskLoop {
         "Implement each remaining task.".to_owned(),
         PinnedWorkflowDefinition::pin(None, definition),
         Vec::new(),
-        crate::tests::test_environment_set(&ralph_task_loop_definition(test_environment_id())),
+        crate::tests::test_environment_set(&task_loop_definition(test_environment_id())),
         list,
         parsed
             .eligible_tasks()

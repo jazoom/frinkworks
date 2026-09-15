@@ -1,23 +1,16 @@
-<main
-  data-section="{{ section }}"
-  data-context-detail
-  class="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-6 px-5 py-8 sm:px-8"
->
-  <div class="page-intro">
-    <div>
-      <h1>{{ title }}</h1>
-      <p>{{ lead }}</p>
-    </div>
-    {% if back_href != "" %}
-      <a
-        href="{{ back_href }}"
-        data-graft
-        class="link link-hover mt-3 whitespace-nowrap sm:mt-0"
-      >
-        {{ back_label }}
-      </a>
-    {% endif %}
-  </div>
+{% extends "layout/catalogue.html" %}
+{% block section %}{{ section }}{% endblock %}
+{% block context %}data-context-detail{% endblock %}
+{% block heading %}{{ title }}{% endblock %}
+{% block description %}<p>{{ lead }}</p>{% endblock %}
+{% block actions %}
+  {% if back_href != "" %}
+    <a href="{{ back_href }}" data-graft class="link link-hover"
+      >{{ back_label }}</a
+    >
+  {% endif %}
+{% endblock %}
+{% block catalogue_content %}
   <div id="agent-form">
     {% block agent_form %}
       <form
@@ -403,4 +396,4 @@
       {% endif %}
     {% endblock %}
   </div>
-</main>
+{% endblock %}

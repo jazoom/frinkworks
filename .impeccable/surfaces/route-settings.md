@@ -24,7 +24,7 @@ Theme is the first setting. The selector offers System preference and five colou
 
 System preference is the default. It uses Springfield for light mode and Sector 7-G for dark mode. An explicit theme choice overrides the system preference.
 
-Presets and Environments have native links from Settings. Their management pages remain separate from the primary work navigation.
+Presets and Environments have direct sidebar links. Settings contains no resource catalogue or generic return link to conversations.
 
 Springfield, Evergreen Terrace, Leftorium, Stonecutters and Sector 7-G form one Springfield-inspired collection.
 

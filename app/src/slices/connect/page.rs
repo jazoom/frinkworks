@@ -150,7 +150,7 @@ impl ConnectViewModel {
 }
 
 #[derive(Template)]
-#[template(path = "connect/templates/connect.html", block = "card_contents")]
+#[template(path = "connect/templates/card.html")]
 pub(super) struct ConnectCardContents<'a> {
     providers: &'a [ProviderOption],
     selected_provider: Option<&'a ProviderOption>,

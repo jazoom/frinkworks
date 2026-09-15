@@ -60,7 +60,7 @@ test("the context identifies a nested project desk", () => {
     const island = initAppContext(root);
 
     expect(root.querySelector("ol")?.textContent).toContain(
-        "WorkProjectsWorkshopAgent: Ada",
+        "ResourcesProjectsWorkshopAgent: Ada",
     );
     const links = [...root.querySelectorAll<HTMLAnchorElement>("ol a")];
     expect(links.map((link) => link.pathname)).toEqual([

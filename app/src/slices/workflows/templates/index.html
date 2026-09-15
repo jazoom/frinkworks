@@ -1,20 +1,61 @@
-<main
-  data-section="workflows"
-  class="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-8 px-5 py-8 sm:px-8"
->
-  <div class="page-intro">
-    <div>
-      <h1>Workflows</h1>
-      <p>
-        Choose a starter process or build a reusable flow from ordered steps.
-      </p>
-    </div>
-    {% if !workflows.is_empty() %}
-      <a href="/workflows/new" data-graft class="btn btn-primary btn-sm"
-        >New workflow</a
+{% extends "layout/catalogue.html" %}
+{% block section %}workflows{% endblock %}
+{% block context %}
+  {% if let Some((id, _)) = context %}data-conversation-url="/conversations/{{ id }}"{% endif %}
+{% endblock %}
+{% block heading %}Workflows{% endblock %}
+{% block description %}
+  <p>Choose a starter process or build a reusable flow from ordered steps.</p>
+{% endblock %}
+{% block actions %}
+  {% if !workflows.is_empty() %}
+    <a href="/workflows/new" data-graft class="btn btn-primary btn-sm"
+      >New workflow</a
+    >
+  {% endif %}
+{% endblock %}
+{% block catalogue_content %}
+  {% if let Some((id, title)) = context %}
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <p class="text-quiet">For conversation: {{ title }}</p>
+      <a href="/conversations/{{ id }}" data-graft class="btn btn-ghost btn-sm"
+        >Back to conversation</a
       >
-    {% endif %}
-  </div>
+    </div>
+  {% endif %}
+  {% if !error.is_empty() %}
+    <p class="alert alert-error" role="alert">{{ error }}</p>
+  {% endif %}
+  {% if !selected_workflow.is_empty() %}
+    <section class="file-section space-y-3">
+      <h2 class="text-lg font-semibold">Use {{ selected_workflow }}</h2>
+      <p>Choose a conversation.</p>
+      <p>This opens workflow setup. It starts no work.</p>
+      <ul class="record-list">
+        {% for (title, href) in destinations %}
+          <li class="record-row">
+            <span>{{ title }}</span>
+            <a href="{{ href }}" data-graft class="btn btn-outline btn-sm"
+              >Open workflow setup</a
+            >
+          </li>
+        {% else %}
+          <li>
+            <p>
+              No conversations exist yet. Create a conversation before you use
+              this workflow.
+            </p>
+            <a
+              href="/conversations/new"
+              data-graft
+              class="btn btn-outline btn-sm"
+              >New conversation</a
+            >
+          </li>
+        {% endfor %}
+      </ul>
+    </section>
+  {% endif %}
 
   {% if !unavailable_starters.is_empty() %}
     <section class="alert alert-warning" role="status">
@@ -48,7 +89,7 @@
   {% else %}
     <ul class="record-list">
       {% for workflow in workflows %}
-        <li class="record-row">
+        <li class="record-row items-start">
           <div>
             <a
               href="/workflows/{{ workflow.id }}/configuration"
@@ -57,23 +98,38 @@
               >{{ workflow.name }}</a
             >
             <p class="text-quiet mt-1 text-sm">{{ workflow.summary }}</p>
-            {% let process_phases = workflow.process_phases %}
-            {% include "workflows/templates/process.html" %}
-            <dl class="mt-4 grid gap-1 text-xs sm:grid-cols-[7rem_1fr]">
-              <dt class="text-quiet">Effects</dt>
-              <dd>{{ workflow.effects }}</dd>
-              <dt class="text-quiet">Required inputs</dt>
-              <dd>{{ workflow.inputs }}</dd>
-              <dt class="text-quiet">Approval stops</dt>
-              <dd>{{ workflow.approvals }}</dd>
-            </dl>
-            <p class="text-quiet mt-2 text-xs">
-              {{ workflow.roles }} roles · {{ workflow.steps }} steps
-            </p>
           </div>
-          <span class="text-quiet text-xs">{{ workflow.updated }}</span>
+          <div class="flex shrink-0 flex-col items-end gap-3">
+            <a
+              href="{{ workflow.use_href }}"
+              data-graft
+              class="btn btn-outline btn-sm"
+              >Use workflow</a
+            >
+            <span class="text-quiet text-xs">{{ workflow.updated }}</span>
+          </div>
+          <details class="collapse-arrow collapse col-span-full rounded-none">
+            <summary class="collapse-title min-h-0 py-2 pl-0 text-sm">
+              Process details
+            </summary>
+            <div class="collapse-content px-0">
+              {% let process_phases = workflow.process_phases %}
+              {% include "workflows/templates/process.html" %}
+              <dl class="mt-4 grid gap-1 text-xs sm:grid-cols-[7rem_1fr]">
+                <dt class="text-quiet">Effects</dt>
+                <dd>{{ workflow.effects }}</dd>
+                <dt class="text-quiet">Required inputs</dt>
+                <dd>{{ workflow.inputs }}</dd>
+                <dt class="text-quiet">Approval stops</dt>
+                <dd>{{ workflow.approvals }}</dd>
+              </dl>
+              <p class="text-quiet mt-2 text-xs">
+                {{ workflow.roles }} roles · {{ workflow.steps }} steps
+              </p>
+            </div>
+          </details>
         </li>
       {% endfor %}
     </ul>
   {% endif %}
-</main>
+{% endblock %}

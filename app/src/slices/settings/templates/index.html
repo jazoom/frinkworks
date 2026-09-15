@@ -20,9 +20,6 @@
       </button>
       <h1>Settings</h1>
     </div>
-    <a href="/conversations" data-graft class="btn btn-ghost btn-sm"
-      >Back to conversations</a
-    >
   </header>
   <div
     class="min-h-0 flex-1 overflow-y-auto px-11 pt-8 pb-[70px] max-[700px]:px-5 max-[700px]:pt-6"
@@ -46,32 +43,6 @@
 
     <section
       class="catalogue-settings-section"
-      aria-labelledby="settings-environments"
-    >
-      <h2 id="settings-environments">Environments</h2>
-      {% if environments.is_empty() %}
-        <p>No sandbox environments are registered.</p>
-      {% else %}
-        <ul
-          class="library-list [&>li]:border-base-300 [&>li]:flex [&>li]:items-start [&>li]:justify-between [&>li]:gap-6 [&>li]:border-b [&>li]:py-[21px]"
-        >
-          {% for environment in environments %}
-            <li class="library-row">
-              <div class="min-w-0">
-                <h3 class="break-words">{{ environment.name }}</h3>
-              </div>
-              <span class="status-pill">{{ environment.readiness }}</span>
-            </li>
-          {% endfor %}
-        </ul>
-      {% endif %}
-      <a href="/environments" data-graft class="btn btn-outline btn-sm"
-        >Manage environments</a
-      >
-    </section>
-
-    <section
-      class="catalogue-settings-section"
       aria-labelledby="settings-catalogue-heading"
     >
       <h2 id="settings-catalogue-heading">Model catalogue</h2>
@@ -84,17 +55,6 @@
       >
         {% include "settings/templates/model_catalogue.html" %}
       </form>
-    </section>
-
-    <section
-      class="catalogue-settings-section"
-      aria-labelledby="settings-presets"
-    >
-      <h2 id="settings-presets">Presets</h2>
-      <p>Reusable settings without changing existing conversations.</p>
-      <a href="/presets" data-graft class="btn btn-outline btn-sm"
-        >Manage presets</a
-      >
     </section>
 
     <section

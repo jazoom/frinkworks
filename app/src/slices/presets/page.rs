@@ -58,6 +58,9 @@ pub(super) struct PresetsPage {
     job_active: bool,
     show_form: bool,
     error: &'static str,
+    context: Option<(String, String)>,
+    selected_preset: String,
+    destinations: Vec<(String, String)>,
 }
 
 impl PresetsPage {
@@ -232,7 +235,49 @@ impl PresetsPage {
             job_active: false,
             show_form,
             error,
+            context: None,
+            selected_preset: String::new(),
+            destinations: Vec::new(),
         }
+    }
+
+    pub(super) fn with_destination(
+        mut self,
+        state: &AppState,
+        conversation: &str,
+        preset: &str,
+    ) -> Self {
+        self.context = crate::conversations::ConversationId::parse(conversation)
+            .and_then(|id| state.conversations.get(&id))
+            .map(|record| (record.id.as_hex(), record.title));
+        if preset.is_empty() {
+            return self;
+        }
+        let Some(preset) =
+            crate::presets::PresetId::parse(preset).and_then(|id| state.presets.get(&id))
+        else {
+            self.error = "That preset is no longer available. Choose another.";
+            return self;
+        };
+        self.selected_preset = preset.name;
+        if self.context.is_none() {
+            let mut conversations = state.conversations.list();
+            conversations.sort_by_key(|record| std::cmp::Reverse(record.updated_at_ms));
+            self.destinations = conversations
+                .into_iter()
+                .map(|record| {
+                    (
+                        record.title,
+                        format!(
+                            "/presets?conversation={}&preset={}",
+                            record.id.as_hex(),
+                            preset.id.as_hex()
+                        ),
+                    )
+                })
+                .collect();
+        }
+        self
     }
 
     fn model_form(&self) -> &'static str {

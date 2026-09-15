@@ -8,7 +8,6 @@ pub(crate) struct AttentionPage {
     previous: String,
     next: String,
     back_href: String,
-    back_label: &'static str,
 }
 
 struct Decision {
@@ -42,19 +41,13 @@ impl AttentionPage {
         } else {
             String::new()
         };
-        let (back_href, back_label) = match context {
-            Some(id) => (
-                format!("/conversations/{}", id.as_hex()),
-                "Back to conversation",
-            ),
-            None => ("/conversations".to_owned(), "Back to conversations"),
-        };
+        let back_href =
+            context.map_or_else(String::new, |id| format!("/conversations/{}", id.as_hex()));
         Self {
             decisions: decisions.into_iter().skip(page * 30).take(30).collect(),
             previous,
             next,
             back_href,
-            back_label,
         }
     }
 }

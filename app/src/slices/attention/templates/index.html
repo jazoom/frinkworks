@@ -20,9 +20,11 @@
       </button>
       <h1>Needs your attention</h1>
     </div>
-    <a href="{{ back_href }}" data-graft class="btn btn-ghost btn-sm"
-      >{{ back_label }}</a
-    >
+    {% if !back_href.is_empty() %}
+      <a href="{{ back_href }}" data-graft class="btn btn-ghost btn-sm"
+        >Back to conversation</a
+      >
+    {% endif %}
   </header>
   <div
     class="min-h-0 flex-1 overflow-y-auto px-11 pt-[34px] pb-[70px] max-[700px]:px-5 max-[700px]:pt-6"

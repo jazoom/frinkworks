@@ -180,21 +180,6 @@ impl WorkflowCatalogue {
             .cloned()
     }
 
-    pub(crate) fn display_name(&self, record: &WorkflowRecord) -> String {
-        // Only the untouched seeded record receives the new label. Stored definitions and run snapshots stay immutable.
-        if record.revision == 1
-            && record.definition.name() == "Ralph task loop"
-            && self.lock().applied_seeds.iter().any(|seed| {
-                seed.workflow_id == record.id
-                    && seed.key.as_str() == super::seeds::RALPH_TASK_LOOP_V1
-            })
-        {
-            "Task loop".to_owned()
-        } else {
-            record.definition.name().to_owned()
-        }
-    }
-
     pub(crate) fn unavailable_starters(&self) -> Vec<String> {
         self.unavailable_starters.clone()
     }

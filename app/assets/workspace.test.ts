@@ -111,13 +111,68 @@ test.each(["plan", "plans", "plan-request", "workflow"])(
     },
 );
 
+test.each([false, true])(
+    "current work navigation opens after a companion replacement (new detail: %s)",
+    (replaceDetail) => {
+        vi.stubGlobal("matchMedia", () => ({
+            matches: false,
+            addEventListener() {},
+        }));
+        const root = document.createElement("div");
+        root.innerHTML = `<section id="conversation-detail"><a data-graft data-work-toggle href="/conversations/one?work=true">Current work</a><aside id="conversation-work" data-work-active="true"><section id="workflow-detail"></section><button data-work-close>Close</button></aside></section>`;
+        document.body.append(root);
+        const controller = new AbortController();
+        const island = initWorkspace(root, { signal: controller.signal });
+        root.querySelector<HTMLButtonElement>("[data-work-close]")!.click();
+        const link =
+            root.querySelector<HTMLAnchorElement>("[data-work-toggle]")!;
+        const click = new MouseEvent("click", {
+            bubbles: true,
+            cancelable: true,
+        });
+        link.dispatchEvent(click);
+        expect(click.defaultPrevented).toBe(false);
+        expect(
+            root.querySelector<HTMLElement>("#conversation-work")!.hidden,
+        ).toBe(true);
+        if (replaceDetail) {
+            root.innerHTML = `<section id="conversation-detail"><button data-work-toggle>Current work</button><aside id="conversation-work" data-work-active="false"></aside></section>`;
+        } else {
+            root.querySelector("#workflow-detail")!.remove();
+            root.querySelector<HTMLElement>(
+                "#conversation-work",
+            )!.dataset.workActive = "false";
+        }
+        island.reconcile?.({
+            cause: "location",
+            detail: {
+                url: "/conversations/one?work=true",
+                cause: "link-navigation",
+            },
+        });
+        const work = root.querySelector<HTMLElement>("#conversation-work")!;
+        expect(work.hidden).toBe(false);
+        island.reconcile?.({
+            cause: "live-patch",
+            detail: {
+                form: document.createElement("form"),
+                url: "/live",
+                targetIds: ["conversation-detail"],
+            },
+        });
+        expect(work.hidden).toBe(false);
+        island.destroy();
+        controller.abort();
+    },
+);
+
 test("Escape closes navigation before the companion and restores the menu trigger", () => {
     vi.stubGlobal("matchMedia", () => ({
         matches: true,
         addEventListener() {},
     }));
     const root = document.createElement("div");
-    root.innerHTML = `<button data-workspace-menu aria-expanded="false">Menu</button><aside id="workspace-index"><a href="/resources">Resources</a></aside><section id="conversation-detail"><section id="transcript"></section><aside id="conversation-work" data-work-active="true"></aside></section>`;
+    root.innerHTML = `<button data-workspace-menu aria-expanded="false">Menu</button><aside id="workspace-index"><a href="/workflows">Workflows</a></aside><section id="conversation-detail"><section id="transcript"></section><aside id="conversation-work" data-work-active="true"></aside></section>`;
     document.body.append(root);
     const controller = new AbortController();
     const island = initWorkspace(root, {

@@ -197,25 +197,7 @@ function revealConversationSetting(target: HTMLElement, focus = true) {
             : 0;
 }
 
-// The empty transcript example fills the composer only. It submits nothing
-// and creates no record or directory access. The prompt stays editable.
-const EXAMPLE_PROMPT =
-    "Make connection errors more helpful. Keep my message if a request fails, and give me a clear next step.";
-
 document.addEventListener("click", (event) => {
-    const example =
-        event.target instanceof Element
-            ? event.target.closest<HTMLElement>("[data-example-prompt]")
-            : null;
-    if (example) {
-        const message = document.getElementById("composer-message");
-        if (message instanceof HTMLTextAreaElement) {
-            message.value = EXAMPLE_PROMPT;
-            message.dispatchEvent(new Event("input", { bubbles: true }));
-            message.focus();
-        }
-        return;
-    }
     const shortcut =
         event.target instanceof Element
             ? event.target.closest<HTMLElement>("[data-settings-section]")

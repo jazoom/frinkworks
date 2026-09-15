@@ -40,7 +40,7 @@ Preset application replaces the conversation settings after a full preview. It d
 
 A preset retains descriptive source provenance. Later source changes do not alter conversations or workflow phases that already copied its values.
 
-Settings links to Presets at `/presets`. The page supports explicit creation, revision-bound edits and revision-bound deletion.
+The sidebar links directly to Presets at `/presets`. The page supports explicit creation, revision-bound edits and revision-bound deletion.
 
 The preset editor shares instruction, tool and environment presentation with conversations. Model and thinking effort use catalogue dropdowns with model-specific effort choices and Not available for models without adjustable effort. A catalogue-listed model needs a supported effort and an empty value never selects a default. Preset edits request access but authorise no execution or sensitive access.
 
@@ -134,21 +134,17 @@ The decision view uses pages of thirty entries. Refresh decisions reads the curr
 
 History links the newest fifty runs and task loops to their owning conversations. Child runs retain parent links and immutable evidence.
 
-Settings also links to Environments.
+The sidebar links directly to Workflows, Presets, Environments and Providers. Settings stays separate below those resources.
 
-Workflows and presets opens `/resources`. Each workflow offers Use workflow and each preset offers Preview setup.
+Workflows at `/workflows` offers Use workflow beside the authoring controls. Presets at `/presets` offers Preview setup beside the revision-bound editors.
 
 An optional conversation identifier carries the destination from a conversation. Valid context hands off to that record. Any other value keeps resource selection on the canonical page beside a destination chooser. The chooser never selects a conversation automatically. If no conversations exist, the page offers New conversation and explains that setup resumes after the user saves a conversation.
 
 Resource navigation creates no record and starts no workflow. It grants no access. Workflow handoff opens the existing setup flow with the selected workflow. Preset handoff opens the destination conversation where the existing session-bound preview command runs before the explicit Apply action. Stale resource identities report an error without substitution.
 
-The shared resource page links to the existing catalogues:
+More resources in the sidebar contains Projects and Agents. The sidebar has no local status footer.
 
-- Workflows and their authoring controls.
-- Presets and their revision-bound editors.
-- Providers and environment preparation.
-- Projects and saved agents.
-- Machine-wide settings.
+Catalogue headers omit generic return links to conversations. A validated conversation context retains its specific return link.
 
 Directory filters in conversation and run history provide work discovery without additional access grants. Conversation history also offers a title search that trims and matches without case sensitivity.
 

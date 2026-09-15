@@ -14,7 +14,7 @@ pub(crate) const REVIEW_CURRENT_CODE_V1: &str = "review-current-code-v1";
 pub(crate) const IMPLEMENT_WITH_APPROVAL_V1: &str = "implement-with-approval-v1";
 pub(crate) const IMPLEMENT_AND_REVIEW_V1: &str = "implement-and-review-v1";
 pub(crate) const PLAN_THEN_IMPLEMENT_V1: &str = "plan-then-implement-v1";
-pub(crate) const RALPH_TASK_LOOP_V1: &str = "ralph-task-loop-v1";
+pub(crate) const TASK_LOOP_V1: &str = "task-loop-v1";
 
 #[cfg(test)]
 pub(crate) const ONE_AGENT_V1: &str = "one-agent-v1";
@@ -78,10 +78,7 @@ pub(crate) fn production_seeds(default_environment: EnvironmentId) -> Vec<Workfl
             PLAN_THEN_IMPLEMENT_V1,
             plan_then_implement_definition(default_environment),
         ),
-        (
-            RALPH_TASK_LOOP_V1,
-            ralph_task_loop_definition(default_environment),
-        ),
+        (TASK_LOOP_V1, task_loop_definition(default_environment)),
     ]
     .into_iter()
     .map(|(key, definition)| WorkflowSeed {
@@ -271,7 +268,7 @@ pub(crate) fn plan_then_implement_definition(
     )
 }
 
-pub(crate) fn ralph_task_loop_definition(default_environment: EnvironmentId) -> WorkflowDefinition {
+pub(crate) fn task_loop_definition(default_environment: EnvironmentId) -> WorkflowDefinition {
     let roles = vec![
         role(
             "implementer",

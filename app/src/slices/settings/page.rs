@@ -20,19 +20,10 @@ pub(super) struct SettingsPage {
     catalogue_status: Option<&'static str>,
     catalogue_error: Option<&'static str>,
     reset_error: Option<&'static str>,
-    environments: Vec<EnvironmentEntry>,
-}
-
-pub(super) struct EnvironmentEntry {
-    pub(super) name: String,
-    pub(super) readiness: String,
 }
 
 impl SettingsPage {
-    pub(super) fn new(
-        theme: Theme,
-        environments: &crate::environments::EnvironmentCatalogue,
-    ) -> Self {
+    pub(super) fn new(theme: Theme) -> Self {
         Self {
             theme: theme.as_str(),
             themes: Theme::ALL,
@@ -40,19 +31,6 @@ impl SettingsPage {
             catalogue_status: None,
             catalogue_error: None,
             reset_error: None,
-            environments: environments
-                .list()
-                .into_iter()
-                .map(|record| EnvironmentEntry {
-                    readiness: if record.ready_preparation.is_some() {
-                        "Ready"
-                    } else {
-                        "Not prepared"
-                    }
-                    .to_owned(),
-                    name: record.name,
-                })
-                .collect(),
         }
     }
 }

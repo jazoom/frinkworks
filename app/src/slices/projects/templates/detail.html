@@ -1,30 +1,28 @@
-<main
-  data-section="projects"
-  data-context-detail
-  data-context-current-href="/projects/{{ project_id }}"
-  class="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-8 px-5 py-8 sm:px-8"
->
-  <div class="page-intro">
-    <div>
-      <h1>{{ name }}</h1>
-      <p class="text-quiet font-mono text-xs break-all">{{ path }}</p>
-    </div>
-    <div class="flex flex-wrap gap-2">
-      <a
-        href="/conversations/new?project={{ project_id }}"
-        data-graft
-        class="btn btn-primary btn-sm"
-        >New conversation</a
-      >
-      <a
-        href="/projects/{{ project_id }}/configuration"
-        data-graft
-        class="btn btn-ghost btn-sm"
-        >Rename</a
-      >
-    </div>
+{% extends "layout/catalogue.html" %}
+{% block section %}projects{% endblock %}
+{% block context %}data-context-detail
+data-context-current-href="/projects/{{ project_id }}"{% endblock %}
+{% block heading %}{{ name }}{% endblock %}
+{% block description %}
+  <p class="font-mono break-all">{{ path }}</p>
+{% endblock %}
+{% block actions %}
+  <div class="flex flex-wrap gap-2">
+    <a
+      href="/conversations/new?project={{ project_id }}"
+      data-graft
+      class="btn btn-primary btn-sm"
+      >New conversation</a
+    >
+    <a
+      href="/projects/{{ project_id }}/configuration"
+      data-graft
+      class="btn btn-ghost btn-sm"
+      >Rename</a
+    >
   </div>
-
+{% endblock %}
+{% block catalogue_content %}
   {% if error != "" %}
     <div class="alert alert-error" role="alert" tabindex="-1">
       <p>{{ error }}</p>
@@ -102,4 +100,4 @@
       >Start project work</a
     >
   </section>
-</main>
+{% endblock %}

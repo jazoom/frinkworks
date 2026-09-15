@@ -221,6 +221,10 @@ struct Selection {
     edit: String,
     #[serde(default)]
     new: String,
+    #[serde(default)]
+    conversation: String,
+    #[serde(default)]
+    preset: String,
 }
 
 async fn show(
@@ -249,7 +253,8 @@ async fn show(
         }),
         error,
         show_form,
-    );
+    )
+    .with_destination(&state, &query.conversation, &query.preset);
     match graft {
         PageGraft::Document => responses::chat_page_response("Presets", &state, &page),
         PageGraft::Navigation => Ok(hypergraft::outcome::page_patch(

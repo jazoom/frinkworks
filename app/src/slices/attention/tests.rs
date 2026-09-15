@@ -159,8 +159,7 @@ async fn contextual_attention_validates_identifiers_and_preserves_context() {
     let plain = super::page::AttentionPage::new(&state, 0, None)
         .render()
         .unwrap();
-    assert!(plain.contains(">Back to conversations<"));
-    assert!(plain.contains("href=\"/conversations\""));
+    assert!(!plain.contains(">Back to conversation<"));
     assert!(plain.contains(&owner));
     assert!(plain.contains(&gate_href));
 
@@ -170,7 +169,6 @@ async fn contextual_attention_validates_identifiers_and_preserves_context() {
     let fallback = super::page::AttentionPage::new(&state, 0, Some(unknown))
         .render()
         .unwrap();
-    assert!(fallback.contains(">Back to conversations<"));
     assert!(!fallback.contains(">Back to conversation<"));
     assert!(fallback.contains(&gate_href));
 
@@ -183,26 +181,19 @@ async fn contextual_attention_validates_identifiers_and_preserves_context() {
         .with_state(state.clone());
     let cookie = format!("powerplant_session={token}");
     let conversation = parent.conversation_id.as_hex();
-    for (uri, back_label, back_href) in [
-        (
-            format!("/attention?conversation={conversation}"),
-            ">Back to conversation<",
-            owner.clone(),
-        ),
+    for (uri, has_context) in [
+        (format!("/attention?conversation={conversation}"), true),
         (
             "/attention?conversation=not-a-conversation-id".to_owned(),
-            ">Back to conversations<",
-            "/conversations".to_owned(),
+            false,
         ),
         (
             "/attention?conversation=https%3A%2F%2Fexample.com%2Fevil".to_owned(),
-            ">Back to conversations<",
-            "/conversations".to_owned(),
+            false,
         ),
         (
             "/attention?conversation=0123456789abcdef0123456789abcdef".to_owned(),
-            ">Back to conversations<",
-            "/conversations".to_owned(),
+            false,
         ),
     ] {
         for kind in [None, Some("navigation")] {
@@ -225,8 +216,12 @@ async fn contextual_attention_validates_identifiers_and_preserves_context() {
                     .to_vec(),
             )
             .unwrap();
-            assert!(body.contains(back_label), "{uri}");
-            assert!(body.contains(&back_href), "{uri}");
+            assert_eq!(
+                body.contains(">Back to conversation<"),
+                has_context,
+                "{uri}"
+            );
+            assert!(body.contains(&owner), "{uri}");
             assert!(body.contains(&gate_href), "{uri}");
             assert!(!body.contains("example.com/evil"), "{uri}");
         }

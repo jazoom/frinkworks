@@ -1937,7 +1937,7 @@ fn attach_parent_loop(fixture: &GateFixture) -> crate::workflows::TaskLoopId {
     use crate::workflows::task_loop::{TaskListSnapshot, TaskLoopItem, TaskOutcome};
     let markdown = "# Tasks\n\n- [ ] First task\n- [ ] Second task\n".to_owned();
     let definition =
-        crate::workflows::seeds::ralph_task_loop_definition(crate::tests::test_environment_id());
+        crate::workflows::seeds::task_loop_definition(crate::tests::test_environment_id());
     let loop_id = crate::workflows::TaskLoopId::generate().expect("loop");
     let record = crate::workflows::TaskLoop::create(
         loop_id,

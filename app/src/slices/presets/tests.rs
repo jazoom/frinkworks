@@ -6,6 +6,53 @@ use axum::{
 };
 use tower::ServiceExt;
 
+#[test]
+fn preset_destinations_validate_identity_without_application_or_preview_tokens() {
+    use askama::Template;
+    let state = crate::tests::test_state(crate::config::RuntimeConfig::development());
+    let conversation = state
+        .conversations
+        .create("Destination".to_owned())
+        .unwrap();
+    let preset = state
+        .presets
+        .create(
+            "Reusable",
+            form().settings(None).unwrap(),
+            PresetProvenance::Draft,
+        )
+        .unwrap();
+    for (context, valid) in [
+        (conversation.id.as_hex(), true),
+        (String::new(), false),
+        ("0123456789abcdef0123456789abcdef".to_owned(), false),
+        ("https://example.com/evil".to_owned(), false),
+    ] {
+        let page = page::PresetsPage::new(&state, PresetForm::default(), "", false)
+            .with_destination(&state, &context, &preset.id.as_hex())
+            .render()
+            .unwrap();
+        assert_eq!(page.contains(">Back to conversation<"), valid);
+        assert!(page.contains("Preview Reusable"));
+        assert!(page.contains(&conversation.id.as_hex()));
+        assert!(!page.contains("example.com"));
+        assert!(!page.contains("name=\"preset_preview\""));
+        assert!(!page.contains("settings/presets/preview"));
+        assert!(!page.contains("settings/presets/apply"));
+    }
+    let stale = page::PresetsPage::new(&state, PresetForm::default(), "", false)
+        .with_destination(&state, "", "0123456789abcdef0123456789abcdef")
+        .render()
+        .unwrap();
+    assert!(stale.contains("That preset is no longer available."));
+    assert!(!stale.contains("Choose this conversation"));
+    assert_eq!(state.conversations.list().len(), 1);
+    assert_eq!(
+        state.conversations.get(&conversation.id).unwrap().revision,
+        conversation.revision
+    );
+}
+
 #[tokio::test]
 async fn routes_support_navigation_and_patch_commands_only() {
     let state = crate::tests::test_state(crate::config::RuntimeConfig::development());

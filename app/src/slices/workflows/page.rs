@@ -51,6 +51,7 @@ pub(super) struct CatalogueItem {
     pub(super) roles: usize,
     pub(super) steps: usize,
     pub(super) updated: String,
+    pub(super) use_href: String,
     pub(super) process_phases: Vec<ProcessPhase>,
 }
 
@@ -59,15 +60,59 @@ pub(super) struct CatalogueItem {
 pub(super) struct CatalogueView {
     pub(super) workflows: Vec<CatalogueItem>,
     pub(super) unavailable_starters: Vec<String>,
+    context: Option<(String, String)>,
+    selected_workflow: String,
+    destinations: Vec<(String, String)>,
+    error: &'static str,
 }
 
 impl CatalogueView {
-    pub(super) fn from_records_with_starters(
-        records: &[WorkflowRecord],
-        unavailable_starters: Vec<String>,
-    ) -> Self {
+    pub(super) fn new(state: &crate::state::AppState, query: &super::Selection) -> Self {
+        let context = crate::conversations::ConversationId::parse(&query.conversation)
+            .and_then(|id| state.conversations.get(&id))
+            .map(|record| (record.id.as_hex(), record.title));
+        let selection = crate::workflows::WorkflowSelection::parse(query.workflow.trim());
+        let selected = selection
+            .as_ref()
+            .and_then(|selection| state.workflows.resolve(selection).ok());
+        let error = if !query.workflow.is_empty() && selected.is_none() {
+            "That workflow is no longer available. Choose another."
+        } else {
+            ""
+        };
+        let selected_workflow = selected
+            .as_ref()
+            .map(|record| record.pinned.definition.name().to_owned())
+            .unwrap_or_default();
+        let mut conversations = state.conversations.list();
+        conversations.sort_by_key(|record| std::cmp::Reverse(record.updated_at_ms));
+        let destinations =
+            selection
+                .filter(|_| selected.is_some())
+                .map_or_else(Vec::new, |selection| {
+                    conversations
+                        .into_iter()
+                        .filter(|record| {
+                            context
+                                .as_ref()
+                                .is_none_or(|(id, _)| record.id.as_hex() == *id)
+                        })
+                        .map(|record| {
+                            (
+                                record.title,
+                                format!(
+                                    "/conversations/{}/workflow?workflow={}",
+                                    record.id.as_hex(),
+                                    selection.as_token()
+                                ),
+                            )
+                        })
+                        .collect()
+                });
         Self {
-            workflows: records
+            workflows: state
+                .workflows
+                .list()
                 .iter()
                 .map(|record| CatalogueItem {
                     id: record.id.as_hex(),
@@ -79,10 +124,25 @@ impl CatalogueView {
                     roles: record.definition.roles().len(),
                     steps: record.definition.steps().len(),
                     updated: format_time(record.updated_at_ms),
+                    use_href: {
+                        let token = crate::workflows::WorkflowSelection {
+                            workflow_id: record.id,
+                            definition_version: record.definition_version,
+                        }
+                        .as_token();
+                        context.as_ref().map_or_else(
+                            || format!("/workflows?workflow={token}"),
+                            |(id, _)| format!("/conversations/{id}/workflow?workflow={token}"),
+                        )
+                    },
                     process_phases: summary::process_overview(&record.definition),
                 })
                 .collect(),
-            unavailable_starters,
+            unavailable_starters: state.workflows.unavailable_starters(),
+            context,
+            selected_workflow,
+            destinations,
+            error,
         }
     }
 }

@@ -1,13 +1,8 @@
-<main
-  data-section="projects"
-  class="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-6 px-5 py-8 sm:px-8"
->
-  <div class="page-intro">
-    <div>
-      <h1>{{ title }}</h1>
-      <p>{{ lead }}</p>
-    </div>
-  </div>
+{% extends "layout/catalogue.html" %}
+{% block section %}projects{% endblock %}
+{% block heading %}{{ title }}{% endblock %}
+{% block description %}<p>{{ lead }}</p>{% endblock %}
+{% block catalogue_content %}
   <div id="project-form" class="flex flex-col gap-4">
     {% block project_form %}
       {% if error != "" %}
@@ -96,4 +91,4 @@
       {% endif %}
     {% endblock %}
   </div>
-</main>
+{% endblock %}

@@ -37,11 +37,7 @@
             >
               {% block conversation_heading %}{{ heading }}{% endblock conversation_heading %}
             </h1>
-            {% if self.is_new() %}
-              <p class="text-quiet text-xs">
-                Nothing is saved until your first message
-              </p>
-            {% else %}
+            {% if !self.is_new() %}
               <p class="text-quiet text-xs">
                 {{ self.subtitle_directory() }} / Conversation
               </p>
@@ -146,7 +142,7 @@
             {% if !companion_html.is_empty() %}
               {% if let Some(saved) = self.saved() %}
                 <a
-                  href="/conversations/{{ saved.id }}"
+                  href="/conversations/{{ saved.id }}?work=true"
                   data-graft
                   data-work-toggle
                   aria-controls="conversation-work"
@@ -528,23 +524,11 @@
           <div class="empty-conversation m-auto max-w-xl px-6 py-8 text-center">
             <img src="/static/images/logo.svg" width="70" height="50" alt="" />
             <h2 class="text-2xl font-semibold text-balance sm:text-3xl">
-              What do you want to change?
+              Talk with your agent
             </h2>
             <p class="text-quiet mt-3">
-              Describe the task. The conversation keeps your discussion, work
-              and decisions together.
-            </p>
-            <button
-              type="button"
-              class="btn btn-outline mt-7 font-normal"
-              data-example-prompt
-            >
-              <svg class="workspace-icon" aria-hidden="true">
-                <use href="/static/images/workspace-icons.svg#arrow" /></svg
-              >Try the error message example
-            </button>
-            <p class="empty-footnote text-quiet mt-4 text-xs">
-              You can start with a question. Directory access is optional.
+              Have a general chat, or give directory access first if you want to
+              work on a project.
             </p>
           </div>
         {% endif %}

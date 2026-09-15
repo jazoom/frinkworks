@@ -1,22 +1,20 @@
-<main
-  data-section="agents"
-  class="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-8 px-5 py-8 sm:px-8"
->
-  <div class="page-intro">
-    <div>
-      <h1>Agents</h1>
-      <p>
-        Agents define reusable model preferences, instructions and authority
-        ceilings.
-      </p>
-    </div>
-    {% if !agents.is_empty() %}
-      <a href="/agents/new" data-graft class="btn btn-primary btn-sm"
-        >New agent</a
-      >
-    {% endif %}
-  </div>
-
+{% extends "layout/catalogue.html" %}
+{% block section %}agents{% endblock %}
+{% block heading %}Agents{% endblock %}
+{% block description %}
+  <p>
+    Agents define reusable model preferences, instructions and authority
+    ceilings.
+  </p>
+{% endblock %}
+{% block actions %}
+  {% if !agents.is_empty() %}
+    <a href="/agents/new" data-graft class="btn btn-primary btn-sm"
+      >New agent</a
+    >
+  {% endif %}
+{% endblock %}
+{% block catalogue_content %}
   {% if error != "" %}
     <div class="alert alert-error" role="alert" tabindex="-1">
       <p>{{ error }}</p>
@@ -93,4 +91,4 @@
       </ul>
     </section>
   {% endif %}
-</main>
+{% endblock %}

@@ -26,6 +26,12 @@ A local developer chooses or edits a repeatable process before a model run start
 
 ## Hierarchy
 
+The sidebar links directly to the workflow catalogue. Each workflow offers Use workflow beside its configuration link. Process details stay collapsed until requested.
+
+A validated conversation context selects the destination. Without context, Use workflow opens a conversation chooser on the canonical catalogue GET.
+
+The chooser starts no work and grants no access. Invalid or stale workflow identities report an error without substitution.
+
 The ordered process appears before configuration fields.
 
 Run once and For each task appear before phase settings. A repeated group shows per-task phases once.

@@ -1,61 +1,27 @@
-<main
-  data-section="providers"
-  class="provider-page connect-first-use {% if has_stored_providers %}
-    mx-auto max-w-[640px] flex-1 px-5 py-8 sm:px-8
-  {% endif %} w-full"
->
-  <section id="connect-card" data-island="connect-errors">
-    {% block card_contents %}
-      <div
-        class="connect-sheet border-base-300 rounded-[3px] border px-5 pt-6 pb-3 sm:px-8 sm:pt-7"
-      >
-        {% include "connect/templates/connection.html" %}
-      </div>
-      {% if has_stored_providers %}
-        <section
-          class="mt-10 px-5 sm:px-8"
-          aria-labelledby="connected-providers-title"
-        >
-          <h2 id="connected-providers-title" class="text-base font-semibold">
-            Connected providers
-          </h2>
-          <ul class="record-list mt-3">
-            {% for provider in stored %}
-              <li class="record-row">
-                <span class="flex min-w-0 items-center gap-3">
-                  <span
-                    class="provider-logo provider-logo-{{ provider.value }} shrink-0"
-                    aria-hidden="true"
-                  ></span>
-                  <span>
-                    <span class="block font-medium">{{ provider.label }}</span>
-                    <span class="text-quiet text-sm"
-                      >{{ provider.method }}</span
-                    >
-                  </span>
-                </span>
-                <form data-graft method="post" action="/connect/forget">
-                  <input
-                    type="hidden"
-                    name="provider"
-                    value="{{ provider.value }}"
-                  />
-                  <button
-                    class="btn btn-ghost btn-sm"
-                    type="submit"
-                    aria-label="Forget {{ provider.label }}"
-                  >
-                    Forget
-                  </button>
-                </form>
-              </li>
-            {% endfor %}
-          </ul>
-        </section>
-        <p class="text-quiet pt-4 pb-3 text-center text-[13px]">
-          Power Plant stores your key or plan login on this machine.
-        </p>
-      {% endif %}
-    {% endblock %}
+{% extends "layout/catalogue.html" %}
+{% block catalogue_page %}
+  {% if has_stored_providers %}
+    {{ super() }}
+  {% else %}
+    <main data-section="providers" class="connect-first-use w-full">
+      <section id="connect-card" data-island="connect-errors">
+        {% include "connect/templates/card.html" %}
+      </section>
+    </main>
+  {% endif %}
+{% endblock %}
+{% block section %}providers{% endblock %}
+{% block heading %}Providers{% endblock %}
+{% block description %}
+  <p>Power Plant stores your key or plan login on this machine.</p>
+{% endblock %}
+{% block content_width %}max-w-2xl{% endblock %}
+{% block catalogue_content %}
+  <section
+    id="connect-card"
+    data-island="connect-errors"
+    class="connect-first-use"
+  >
+    {% include "connect/templates/card.html" %}
   </section>
-</main>
+{% endblock %}

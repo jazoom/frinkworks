@@ -1,19 +1,17 @@
-<main
-  data-section="environments"
-  class="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-8 px-5 py-8 sm:px-8"
->
-  <div class="page-intro">
-    <div>
-      <h1>Environments</h1>
-      <p>Prepare the software that agents use inside isolated sandboxes.</p>
-    </div>
-    {% if !environments.is_empty() %}
-      <a href="/environments/new" data-graft class="btn btn-primary btn-sm"
-        >New environment</a
-      >
-    {% endif %}
-  </div>
-
+{% extends "layout/catalogue.html" %}
+{% block section %}environments{% endblock %}
+{% block heading %}Environments{% endblock %}
+{% block description %}
+  <p>Prepare the software that agents use inside isolated sandboxes.</p>
+{% endblock %}
+{% block actions %}
+  {% if !environments.is_empty() %}
+    <a href="/environments/new" data-graft class="btn btn-primary btn-sm"
+      >New environment</a
+    >
+  {% endif %}
+{% endblock %}
+{% block catalogue_content %}
   {% if environments.is_empty() %}
     <section class="file-section space-y-3">
       <h2 class="text-lg font-semibold">Create your first environment</h2>
@@ -52,4 +50,4 @@
       {% endfor %}
     </ul>
   {% endif %}
-</main>
+{% endblock %}

@@ -1,3 +1,15 @@
+{% macro heading(title, selected) %}
+  {% if has_stored_providers %}
+    <h2 class="text-lg font-semibold">{{ title }}</h2>
+  {% else %}
+    <h1
+      class="{% if selected %}text-[26px] sm:text-[28px]{% else %}text-[28px]
+      sm:text-[30px]{% endif %}"
+    >
+      {{ title }}
+    </h1>
+  {% endif %}
+{% endmacro %}
 {% if let Some(provider) = selected_provider %}
   <a
     href="/connect"
@@ -22,7 +34,7 @@
       class="provider-logo provider-logo-{{ provider.value }} mt-1 shrink-0"
       aria-hidden="true"
     ></span>
-    <h1 class="text-[26px] sm:text-[28px]">Connect to {{ provider.label }}</h1>
+    {{ heading("Connect to {}"|format(provider.label), true) }}
   </div>
   {% if let Some(plan) = provider.plan %}
     <p class="text-quiet text-[15px]">
@@ -30,12 +42,13 @@
     </p>
   {% endif %}
 {% else if providers.is_empty() %}
-  <h1 class="text-[28px] sm:text-[30px]">Your providers are connected</h1>
+  {{ heading("Your providers are connected", false) }}
 {% else %}
-  <h1 class="text-[28px] sm:text-[30px]">
-    {% if has_stored_providers %}Connect another provider{% else %}Which
-    provider will you use?{% endif %}
-  </h1>
+  {% if has_stored_providers %}
+    {{ heading("Connect another provider", false) }}
+  {% else %}
+    {{ heading("Which provider will you use?", false) }}
+  {% endif %}
   <p class="text-quiet mt-3 text-[15px]">
     Choose your provider, then connect with a supported plan or API key.
   </p>

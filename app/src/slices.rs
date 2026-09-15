@@ -12,7 +12,6 @@ mod execution_settings;
 mod human_gates;
 mod presets;
 mod projects;
-mod resources;
 mod settings;
 mod workflow_runs;
 mod workflows;
@@ -26,7 +25,6 @@ pub(crate) fn router() -> Router<AppState> {
     Router::new()
         .merge(connect::router())
         .merge(attention::router())
-        .merge(resources::router())
         .merge(conversations::router())
         .merge(projects::router())
         .merge(agents::router())

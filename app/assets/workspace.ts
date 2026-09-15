@@ -23,7 +23,7 @@ export function initWorkspace(
     };
     const headerResize = new ResizeObserver(positionPanels);
 
-    function sync() {
+    function sync(openWork = false) {
         root.querySelectorAll<HTMLElement>(
             ".prose pre, .chat-prose pre",
         ).forEach((pre) => {
@@ -92,6 +92,7 @@ export function initWorkspace(
         previousPlan = plan;
         if (active && !previousActivity) workOpen = true;
         previousActivity = active;
+        if (openWork) workOpen = true;
         if (work) work.hidden = !workOpen;
         // The review strip only applies while Current work stays closed.
         root.querySelectorAll<HTMLElement>("[data-attention-strip]").forEach(
@@ -132,8 +133,13 @@ export function initWorkspace(
             else link.removeAttribute("aria-current");
         });
         const section = root.querySelector<HTMLElement>(
-            ".workspace-catalogue[data-section], .provider-page[data-section]",
+            "#chat-main > [data-section]",
         )?.dataset.section;
+        if (section === "projects" || section === "agents") {
+            root.querySelector<HTMLDetailsElement>(
+                ".workspace-resources details",
+            )?.setAttribute("open", "");
+        }
         root.querySelectorAll<HTMLAnchorElement>(
             ".workspace-navigation > a, .workspace-resources a",
         ).forEach((link) => {
@@ -203,7 +209,7 @@ export function initWorkspace(
         } else if (notice) notice.hidden = true;
     }
 
-    // The sidebar keeps native /attention, /resources and History fallbacks.
+    // The sidebar keeps native catalogue fallbacks.
     // On a conversation those links carry that record so the destination can
     // return without inferring an identity.
     function syncAttentionLink() {
@@ -222,15 +228,16 @@ export function initWorkspace(
                 ? `/attention?conversation=${encodeURIComponent(id)}`
                 : "/attention",
         );
-        const resources = root.querySelector<HTMLAnchorElement>(
-            "[data-resources-link]",
-        );
-        resources?.setAttribute(
-            "href",
-            id
-                ? `/resources?conversation=${encodeURIComponent(id)}`
-                : "/resources",
-        );
+        for (const section of ["workflows", "presets"]) {
+            root.querySelector<HTMLAnchorElement>(
+                `[data-${section}-link]`,
+            )?.setAttribute(
+                "href",
+                id
+                    ? `/${section}?conversation=${encodeURIComponent(id)}`
+                    : `/${section}`,
+            );
+        }
         const history = root.querySelector<HTMLAnchorElement>(
             "[data-history-link]",
         );
@@ -371,7 +378,7 @@ export function initWorkspace(
                 setupTrigger.getAttribute("popovertargetaction") !== "hide"
             )
                 setupReturnFocus = setupTrigger;
-            if (target?.closest("[data-work-toggle]")) {
+            if (target?.closest("button[data-work-toggle]")) {
                 returnFocus = target.closest<HTMLElement>("[data-work-toggle]");
                 workOpen = !workOpen;
                 root.querySelector<HTMLElement>(
@@ -527,8 +534,8 @@ export function initWorkspace(
         },
         { signal },
     );
-    mobile.addEventListener("change", sync, { signal });
-    sync();
+    mobile.addEventListener("change", () => sync(), { signal });
+    sync(new URL(location.href).searchParams.get("work") === "true");
     return {
         reconcile(context) {
             if (
@@ -552,7 +559,13 @@ export function initWorkspace(
                     )?.hidePopover();
                 }
             }
-            sync();
+            sync(
+                context.cause === "location" &&
+                    context.detail.cause !== "command-patch-replacement" &&
+                    new URL(context.detail.url, location.href).searchParams.get(
+                        "work",
+                    ) === "true",
+            );
         },
         destroy() {
             headerResize.disconnect();

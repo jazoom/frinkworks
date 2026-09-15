@@ -32,9 +32,9 @@ A local developer opens a project and starts work in an independent conversation
 
 The desktop product index groups routes into Work, History and System.
 
-Work contains Conversations and Workflows. History contains Runs. System contains Providers and Settings.
+Conversations remain the primary work destination. History contains Runs.
 
-Settings links to Presets and Environments. Projects and Agents no longer appear in primary navigation.
+The sidebar links directly to Workflows, Presets, Environments and Providers. More resources contains Projects and Agents. Settings stays separate below those resources.
 
 Conversations is the main work destination. The brand mark and the first index link go to `/conversations`. Providers uses `/connect` with full-page native navigation.
 
@@ -86,7 +86,7 @@ No project access: the conversation page labels each attachment as context only.
 
 The mobile shell uses a compact masthead and a primary row of Conversations, Workflows, Runs and More.
 
-More contains Providers and Settings.
+The mobile menu uses the same resource links as the desktop sidebar.
 
 The More control is a native details disclosure with a DaisyUI menu. Every destination is a real link.
 

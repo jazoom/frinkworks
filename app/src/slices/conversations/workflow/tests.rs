@@ -556,7 +556,7 @@ async fn task_loop_launch_accepts_a_whole_list_without_a_task_index() {
     );
     let workflow = state
         .workflows
-        .create(workflows::seeds::ralph_task_loop_definition(
+        .create(workflows::seeds::task_loop_definition(
             crate::tests::test_environment_id(),
         ))
         .expect("workflow");
@@ -908,7 +908,7 @@ async fn launch_sheet_supports_document_navigation_and_selection_preview() {
         .with_state(state.clone());
     let workflow = state
         .workflows
-        .create(workflows::seeds::ralph_task_loop_definition(
+        .create(workflows::seeds::task_loop_definition(
             crate::tests::test_environment_id(),
         ))
         .expect("workflow");

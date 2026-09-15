@@ -6,7 +6,7 @@ mod tests;
 
 use axum::{
     Form, Router,
-    extract::{DefaultBodyLimit, Path, State},
+    extract::{DefaultBodyLimit, Path, Query, State},
     response::Response,
     routing::{get, post},
 };
@@ -15,7 +15,7 @@ use hypergraft::{PageGraft, PatchGraft, PatchStatus};
 use crate::{
     error::AppResult,
     responses,
-    sessions::RequiredSession,
+    sessions::{OptionalSession, RequiredSession},
     state::AppState,
     workflows::{CatalogueError, WorkflowId, WorkflowRecord},
 };
@@ -41,12 +41,20 @@ pub(super) fn router() -> Router<AppState> {
         .layer(DefaultBodyLimit::max(forms::MAXIMUM_FORM_BYTES))
 }
 
+#[derive(Default, serde::Deserialize)]
+#[serde(default)]
+struct Selection {
+    conversation: String,
+    workflow: String,
+}
+
 async fn catalogue(
     State(state): State<AppState>,
-    _session: RequiredSession,
+    _session: OptionalSession,
     graft: PageGraft,
+    Query(query): Query<Selection>,
 ) -> AppResult<Response> {
-    render_catalogue(&state, graft)
+    render_catalogue(&state, graft, &query)
 }
 
 async fn new_workflow(
@@ -459,13 +467,8 @@ fn status_for(error: CatalogueError) -> PatchStatus {
     }
 }
 
-fn render_catalogue(state: &AppState, graft: PageGraft) -> AppResult<Response> {
-    let records = state.workflows.list();
-    let mut view =
-        CatalogueView::from_records_with_starters(&records, state.workflows.unavailable_starters());
-    for (item, record) in view.workflows.iter_mut().zip(&records) {
-        item.name = state.workflows.display_name(record);
-    }
+fn render_catalogue(state: &AppState, graft: PageGraft, query: &Selection) -> AppResult<Response> {
+    let view = CatalogueView::new(state, query);
     match graft {
         PageGraft::Document => {
             let mut response = responses::chat_page_response(page::INDEX_TITLE, state, &view)?;

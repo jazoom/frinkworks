@@ -1978,7 +1978,7 @@
     }
 
     .connect-first-use .connect-sheet {
-        background: var(--powerplant-paper);
+        background: var(--workspace-canvas);
     }
 
     .connect-first-use h1 {

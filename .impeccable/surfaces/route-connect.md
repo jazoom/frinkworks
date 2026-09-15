@@ -17,7 +17,9 @@ The focused provider chooser has right-aligned method descriptions on wider scre
 
 ## Layout and flow
 
-A compact form sits below the Power Plant mark and wordmark. The form has no introductory sidebar or product tagline.
+The standalone page places a compact form below the Power Plant mark and wordmark. The form has no introductory sidebar or product tagline.
+
+Both versions use the resource page background. In-app Providers uses the shared catalogue header with the storage note beneath its title.
 
 The chooser exposes every available provider. Method descriptions sit below provider names on narrow screens.
 
@@ -37,7 +39,9 @@ A successful connection leads to conversations. Later provider management retain
 
 Both layouts share the provider chooser and connection form.
 
-Connected providers appear outside the bordered connection panel, with a larger gap and a separate Forget control for each provider.
+In-app connection controls sit directly on the content background, without a separate panel. Connected providers appear beneath the controls with a separate Forget control for each provider.
+
+The standalone form retains its border. Both versions share the provider controls and command patch content.
 
 The chooser omits connected providers. When every provider is connected, the page retains the connected-provider list without an empty chooser.
 

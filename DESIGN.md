@@ -125,15 +125,21 @@ New conversation remains prominent. The index contains up to twelve server-deriv
 
 The sidebar search filters those recent titles live as plain text. The catalogue link beside it stays the native fallback. The filter survives live replacement of recent records.
 
-Needs your attention carries the positive server decision count. The live projection refreshes the count with the recent list. Recent records show state dots. Untouched saved records read Draft. Responsive idle records read Ready. Review, completion and cancellation transitions stay live. The footer keeps its local state dot.
+Needs your attention carries the positive server decision count. The live projection refreshes the count with the recent list. Recent records show state dots. Untouched saved records read Draft. Responsive idle records read Ready. Review, completion and cancellation transitions stay live.
 
 Conversation pages carry their own header with the mobile menu trigger. The separate location bar stays for catalogue pages that need navigation and execution status.
 
-Needs your attention lists real unresolved decisions with owning context links. An optional conversation identifier selects the return destination only: valid context shows Back to conversation, while any other value shows Back to conversations. Refresh and decision pages preserve valid context, and every decision stays visible. History connects conversations to runs, task loops and evidence.
+Needs your attention lists real unresolved decisions with owning context links. An optional conversation identifier selects the return destination only: valid context shows Back to conversation, while any other value omits the return link. Refresh and decision pages preserve valid context, and every decision stays visible. History connects conversations to runs, task loops and evidence.
 
-Workflows and presets opens the shared resource page. Ruled sections distinguish reusable processes from complete settings snapshots, with Use workflow on processes and Preview setup on settings. An optional conversation identifier selects the destination only. Valid context shows Back to conversation and direct handoffs to that record, while any other value opens a destination chooser on the same page. Stale workflow or preset identities report an error without substitution. The breadcrumb group reads Library.
+The sidebar resource group links directly to Workflows, Presets, Environments and Providers. More resources contains Projects and Agents. Settings stays separate below the group.
 
-The resource page retains destinations for providers, environments, projects and saved agents. No catalogue capability disappears.
+The sidebar has no local status footer. Catalogue headers omit generic return links to conversations.
+
+Workflows and Presets each combine use and management on their canonical page. An optional conversation identifier selects the destination only.
+
+Valid context retains Back to conversation. Without valid context, the selected resource offers a conversation chooser on its own page.
+
+Stale workflow or preset identities report an error without substitution. Resource navigation starts no work and grants no access. The breadcrumb group reads Resources.
 
 ### Transcript and composer
 
@@ -145,7 +151,7 @@ Jump to latest appears when the reader leaves the transcript end. New output doe
 
 ### Conversation header
 
-The header shows the directory name followed by Conversation, or Nothing is saved until your first message on a draft. Saved records without directory context read No directory / Conversation. Actions run Plans, Setup, then Conversation actions. Conversation actions holds the independent draft copy with its settings note, rename and deletion behind an explicit confirmation. Plans carries its count only when plans or task lists exist. Current work appears only while work is non-idle and its companion is closed. A Needs your review strip opens Current work without approval when a decision waits. Narrow screens wrap the actions below a long title because production keeps readable text labels where the mock uses compact icon buttons.
+New conversations show the title without an explanatory subtitle. Saved conversations retain the directory name followed by Conversation. Saved records without directory context read No directory / Conversation. Actions run Plans, Setup, then Conversation actions. Conversation actions holds the independent draft copy with its settings note, rename and deletion behind an explicit confirmation. Plans carries its count only when plans or task lists exist. Current work appears only while work is non-idle and its companion is closed. A Needs your review strip opens Current work without approval when a decision waits. Narrow screens wrap the actions below a long title because production keeps readable text labels where the mock uses compact icon buttons.
 
 ### Current work
 
@@ -211,7 +217,7 @@ Forms above 256 KiB retain a standalone representation at the same canonical URL
 
 ### History and resources
 
-History and resources use a 24-pixel title and 14-pixel body text. Thin rules and pale secondary controls match the workspace material.
+Resource catalogues and their forms use the shared catalogue layout. Their 18-pixel titles sit in a full-width header, with explanatory text beneath them. The content uses the same background and inset as Settings. Thin rules separate records, and the header stays above the content scroll area.
 
 Decision entries link to conversations and exact gate pages. The decision list contains no approval form.
 
@@ -231,7 +237,11 @@ The provider choice precedes the connection form. Method descriptions align righ
 
 Provider links use `/connect?provider=…` with native navigation fallback. Change provider returns to the chooser. API-only forms omit the redundant introductory sentence.
 
-Pending plan sign-in and validation errors remain within the form. Successful plan polling navigates to conversations. Later provider management retains the shared shell.
+Pending plan sign-in and validation errors remain within the form. Successful plan polling navigates to conversations.
+
+In-app Providers uses the shared catalogue header and content background. The storage note sits beneath the page title. Connection controls sit directly on the content background, with connected providers beneath them.
+
+The standalone page uses the same background and retains its compact bordered form. Both versions share the provider chooser and connection controls.
 
 ## Validation boundary
 

@@ -1,17 +1,15 @@
-<main
-  data-section="projects"
-  class="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-8 px-5 py-8 sm:px-8"
->
-  <div class="page-intro">
-    <div>
-      <h1>Projects</h1>
-      <p>Manage project references for your conversations.</p>
-    </div>
-    <a href="/projects/new" data-graft class="btn btn-primary btn-sm"
-      >New project</a
-    >
-  </div>
-
+{% extends "layout/catalogue.html" %}
+{% block section %}projects{% endblock %}
+{% block heading %}Projects{% endblock %}
+{% block description %}
+  <p>Manage project references for your conversations.</p>
+{% endblock %}
+{% block actions %}
+  <a href="/projects/new" data-graft class="btn btn-primary btn-sm"
+    >New project</a
+  >
+{% endblock %}
+{% block catalogue_content %}
   {% if projects.is_empty() %}
     <section aria-label="No projects" class="file-section space-y-3">
       <h2 class="text-lg font-semibold">No projects yet</h2>
@@ -55,4 +53,4 @@
       {% endfor %}
     </ul>
   {% endif %}
-</main>
+{% endblock %}

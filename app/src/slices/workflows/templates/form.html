@@ -1,13 +1,11 @@
-<main
-  data-section="workflows"
-  class="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 px-5 py-8 sm:px-8"
->
-  <div class="page-intro">
-    <div>
-      <h1>{{ title }}</h1>
-      <p>Build a reusable task flow from roles, steps and review rules.</p>
-    </div>
-  </div>
+{% extends "layout/catalogue.html" %}
+{% block section %}workflows{% endblock %}
+{% block heading %}{{ title }}{% endblock %}
+{% block description %}
+  <p>Build a reusable task flow from roles, steps and review rules.</p>
+{% endblock %}
+{% block content_width %}max-w-5xl{% endblock %}
+{% block catalogue_content %}
   <div id="workflow-form">
     {% block workflow_form %}
       <form
@@ -1625,4 +1623,4 @@
       {% endif %}
     {% endblock %}
   </div>
-</main>
+{% endblock %}

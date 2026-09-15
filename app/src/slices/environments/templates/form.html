@@ -1,13 +1,10 @@
-<main
-  data-section="environments"
-  class="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-6 px-5 py-8 sm:px-8"
->
-  <div class="page-intro">
-    <div>
-      <h1>{{ title }}</h1>
-      <p>Configure the container image and setup script for agent sandboxes.</p>
-    </div>
-  </div>
+{% extends "layout/catalogue.html" %}
+{% block section %}environments{% endblock %}
+{% block heading %}{{ title }}{% endblock %}
+{% block description %}
+  <p>Configure the container image and setup script for agent sandboxes.</p>
+{% endblock %}
+{% block catalogue_content %}
   <div id="environment-form">
     {% block environment_form %}
       <form
@@ -147,4 +144,4 @@
   {% if show_status %}
     <div id="environment-preparation">{{ status_html|safe }}</div>
   {% endif %}
-</main>
+{% endblock %}

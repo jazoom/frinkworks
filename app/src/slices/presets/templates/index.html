@@ -1,17 +1,67 @@
-<main
-  data-section="settings"
-  class="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-8 px-5 py-8 sm:px-8"
->
-  <header class="page-intro">
-    <div>
-      <a href="/settings" data-graft class="link text-sm">Settings</a>
-      <h1>Presets</h1>
-      <p>Reusable settings, independent from conversations and runs.</p>
-    </div>
-    <a href="/presets?new=1" data-graft class="btn btn-sm">New preset</a>
-  </header>
+{% extends "layout/catalogue.html" %}
+{% block section %}presets{% endblock %}
+{% block context %}
+  {% if let Some((id, _)) = context %}data-conversation-url="/conversations/{{ id }}"{% endif %}
+{% endblock %}
+{% block heading %}Presets{% endblock %}
+{% block description %}
+  <p>A preset stores reusable settings, not permission to execute.</p>
+{% endblock %}
+{% block actions %}
+  <a href="/presets?new=1" data-graft class="btn btn-sm">New preset</a>
+{% endblock %}
+{% block catalogue_content %}
   {% if !error.is_empty() %}
     <p role="alert" class="alert alert-error">{{ error }}</p>
+  {% endif %}
+  {% if let Some((id, title)) = context %}
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <p class="text-quiet">For conversation: {{ title }}</p>
+      <a href="/conversations/{{ id }}" data-graft class="btn btn-ghost btn-sm"
+        >Back to conversation</a
+      >
+    </div>
+  {% endif %}
+  {% if !selected_preset.is_empty() %}
+    <section class="file-section space-y-3">
+      <h2 class="text-lg font-semibold">Preview {{ selected_preset }}</h2>
+      {% if let Some((id, title)) = context %}
+        <p>Open {{ title }}.</p>
+        <p>
+          Choose Setup, then Presets, then Preview setup for
+          {{ selected_preset }}.
+        </p>
+        <a
+          href="/conversations/{{ id }}"
+          data-graft
+          class="btn btn-outline btn-sm"
+          >Open conversation</a
+        >
+      {% else %}
+        <p>Choose a conversation for the preset preview.</p>
+        <ul class="record-list">
+          {% for (title, href) in destinations %}
+            <li class="record-row">
+              <span>{{ title }}</span>
+              <a href="{{ href }}" data-graft class="btn btn-outline btn-sm"
+                >Choose this conversation</a
+              >
+            </li>
+          {% else %}
+            <li>
+              <p>No conversations exist yet.</p>
+              <a
+                href="/conversations/new"
+                data-graft
+                class="btn btn-outline btn-sm"
+                >New conversation</a
+              >
+            </li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+      <p>The preset preview never applies settings automatically.</p>
+    </section>
   {% endif %}
   <section aria-label="Saved presets" class="divide-base-300 divide-y">
     {% for record in records %}
@@ -25,37 +75,45 @@
           >
           <p class="text-quiet text-sm">{{ record.source }}</p>
         </div>
-        <details>
-          <summary class="btn btn-ghost btn-sm">Delete…</summary>
-          <form
-            id="preset-delete-{{ record.id }}"
-            method="post"
-            action="/presets/delete"
+        <div class="flex flex-wrap items-start gap-2">
+          <a
+            href="/presets?preset={{ record.id }}{% if let Some((id, _)) = context %}&conversation={{ id }}{% endif %}"
             data-graft
-            class="mt-3 space-y-2"
+            class="btn btn-outline btn-sm"
+            >Preview setup</a
           >
-            <input
-              type="hidden"
-              name="preset_id"
-              value="{{ record.id }}"
-            /><input
-              type="hidden"
-              name="revision"
-              value="{{ record.revision }}"
-            />
-            <p class="text-sm">
-              Delete {{ record.name }}? Existing copies remain unchanged.
-            </p>
-            <button
-              id="preset-delete-submit-{{ record.id }}"
-              aria-disabled="false"
-              class="btn btn-error btn-sm"
-              type="submit"
+          <details>
+            <summary class="btn btn-ghost btn-sm">Delete…</summary>
+            <form
+              id="preset-delete-{{ record.id }}"
+              method="post"
+              action="/presets/delete"
+              data-graft
+              class="mt-3 space-y-2"
             >
-              Delete preset
-            </button>
-          </form>
-        </details>
+              <input
+                type="hidden"
+                name="preset_id"
+                value="{{ record.id }}"
+              /><input
+                type="hidden"
+                name="revision"
+                value="{{ record.revision }}"
+              />
+              <p class="text-sm">
+                Delete {{ record.name }}? Existing copies remain unchanged.
+              </p>
+              <button
+                id="preset-delete-submit-{{ record.id }}"
+                aria-disabled="false"
+                class="btn btn-error btn-sm"
+                type="submit"
+              >
+                Delete preset
+              </button>
+            </form>
+          </details>
+        </div>
       </article>
     {% else %}
       <p class="text-quiet">
@@ -316,4 +374,4 @@
       </form>
     </section>
   {% endif %}
-</main>
+{% endblock %}

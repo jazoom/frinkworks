@@ -1181,7 +1181,7 @@ fn host_overrides_cannot_bypass_required_candidate_approval() {
         definition.with_conversation_settings(&defaults),
         Err(DefinitionError::WriteStrategy)
     );
-    let commit = crate::workflows::seeds::ralph_task_loop_definition(test_environment_id());
+    let commit = crate::workflows::seeds::task_loop_definition(test_environment_id());
     assert_eq!(
         commit.with_conversation_settings(&defaults),
         Err(DefinitionError::WriteStrategy)

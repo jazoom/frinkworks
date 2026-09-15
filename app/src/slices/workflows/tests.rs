@@ -628,17 +628,92 @@ async fn oversized_forms_are_rejected_before_row_allocation() {
 }
 
 #[tokio::test]
-async fn anonymous_workflow_requests_redirect_to_connect() {
+async fn anonymous_workflow_authoring_requests_redirect_to_connect() {
     let state = test_state();
     let cases = [
-        ("GET", "/workflows", None, false),
-        ("GET", "/workflows", Some("navigation"), true),
+        ("GET", "/workflows/new", None, false),
+        ("GET", "/workflows/new", Some("navigation"), true),
         ("POST", "/workflows", None, false),
         ("POST", "/workflows", Some("patch"), true),
     ];
     for (method, uri, graft, enhanced) in cases {
         assert_connect_redirect(&state, method, uri, graft, enhanced).await;
     }
+}
+
+#[tokio::test]
+async fn workflow_selection_is_non_mutating_and_validates_context_without_a_provider() {
+    let state = test_state();
+    let conversation = state
+        .conversations
+        .create("Destination".to_owned())
+        .unwrap();
+    let workflow = state
+        .workflows
+        .create(one_agent_definition(crate::tests::test_environment_id()))
+        .unwrap();
+    let selection = crate::workflows::WorkflowSelection {
+        workflow_id: workflow.id,
+        definition_version: workflow.definition_version,
+    }
+    .as_token();
+    let unknown = "0123456789abcdef0123456789abcdef";
+    for (context, valid) in [
+        (conversation.id.as_hex(), true),
+        (String::new(), false),
+        (unknown.to_owned(), false),
+        ("https%3A%2F%2Fexample.com%2Fevil".to_owned(), false),
+    ] {
+        for kind in [None, Some("navigation"), Some("patch")] {
+            let mut request = Request::builder().uri(format!(
+                "/workflows?conversation={context}&workflow={selection}"
+            ));
+            if let Some(kind) = kind {
+                request = request
+                    .header(hypergraft::GRAFT_REQUEST, kind)
+                    .header(header::ACCEPT, hypergraft::MEDIA_TYPE);
+            }
+            let response = app(&state)
+                .oneshot(request.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            if kind == Some("patch") {
+                assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
+                continue;
+            }
+            assert_eq!(response.status(), axum::http::StatusCode::OK);
+            let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            let body = String::from_utf8(body.to_vec()).unwrap();
+            assert_eq!(body.contains(">Back to conversation<"), valid);
+            assert!(body.contains(&format!(
+                "/conversations/{}/workflow?workflow={selection}",
+                conversation.id.as_hex()
+            )));
+            assert!(!body.contains("example.com"));
+        }
+    }
+    for token in ["invalid".to_owned(), format!("{unknown}:1")] {
+        let response = app(&state)
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/workflows?workflow={token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = String::from_utf8(body.to_vec()).unwrap();
+        assert!(body.contains("That workflow is no longer available."));
+        assert!(!body.contains("/workflow?workflow="));
+    }
+    assert_eq!(state.conversations.list().len(), 1);
+    assert_eq!(state.workflows.list().len(), 1);
+    assert!(state.workflow_runs.summaries().is_empty());
+    assert_eq!(
+        state.conversations.get(&conversation.id).unwrap(),
+        conversation
+    );
 }
 
 async fn assert_connect_redirect(

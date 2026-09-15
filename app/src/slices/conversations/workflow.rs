@@ -1264,9 +1264,9 @@ async fn launch_view(
     let mut ranked: Vec<_> = records
         .into_iter()
         .map(|record| {
-            let display = state.workflows.display_name(&record);
-            let rank = starter_rank(&display);
-            (rank, display.to_lowercase(), record)
+            let name = record.definition.name();
+            let rank = starter_rank(name);
+            (rank, name.to_lowercase(), record)
         })
         .collect();
     ranked.sort_by(|left, right| {
@@ -1338,8 +1338,8 @@ async fn launch_view(
             let definition = resolved_policy.as_ref().unwrap_or(&record.definition);
             WorkflowOption {
                 token: selection.as_token(),
-                name: state.workflows.display_name(record),
-                summary: starter_summary(state.workflows.display_name(record).as_str())
+                name: record.definition.name().to_owned(),
+                summary: starter_summary(record.definition.name())
                     .unwrap_or_else(|| workflows::summary::process_summary(definition)),
                 process_phases: workflows::summary::process_overview(definition),
                 approvals: workflows::summary::approval_stops(definition),
@@ -2194,28 +2194,26 @@ async fn preview_phase_access(
     Ok(())
 }
 
-fn starter_rank(display_name: &str) -> usize {
-    match display_name {
+fn starter_rank(name: &str) -> usize {
+    match name {
         "Plan a change" => 1,
         "Review current code" => 2,
         "Implement with approval" => 3,
         "Implement and review" => 4,
         "Plan then implement" => 5,
-        "Task loop" | "Ralph task loop" => 6,
+        "Task loop" => 6,
         _ => usize::MAX,
     }
 }
 
-fn starter_summary(display_name: &str) -> Option<String> {
-    match display_name {
+fn starter_summary(name: &str) -> Option<String> {
+    match name {
         "Plan a change" => Some("A focused plan for the proposed change."),
         "Review current code" => Some("An assessment with actionable feedback."),
         "Implement with approval" => Some("Prepare a change for your review."),
         "Implement and review" => Some("A fresh reviewer inspects the change before you decide."),
         "Plan then implement" => Some("Approve a plan before implementation starts."),
-        "Task loop" | "Ralph task loop" => {
-            Some("Complete each remaining task with a fresh context.")
-        }
+        "Task loop" => Some("Complete each remaining task with a fresh context."),
         _ => None,
     }
     .map(str::to_owned)
