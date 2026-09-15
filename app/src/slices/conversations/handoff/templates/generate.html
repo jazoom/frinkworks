@@ -1,0 +1,70 @@
+<form
+  data-graft
+  method="post"
+  action="/conversations/{{ source_id }}/handoff/generate"
+  class="mt-4 space-y-4"
+>
+  <input type="hidden" name="revision" value="{{ revision }}" />
+  {% if can_transfer %}
+    <fieldset class="fieldset space-y-3">
+      <legend class="fieldset-legend">Prepared changes</legend>
+      <label class="flex items-start gap-3"
+        ><input
+          class="radio"
+          type="radio"
+          name="choice"
+          value="continue-prepared"
+          {% if continue_prepared %}checked{% endif %}
+        /><span
+          >Continue these exact prepared changes<span
+            class="text-quiet block text-sm"
+            >The original baseline and remaining workflow decisions stay
+            intact.</span
+          ></span
+        ></label
+      >
+      <label class="flex items-start gap-3"
+        ><input
+          class="radio"
+          type="radio"
+          name="choice"
+          value="context-only"
+          {% if !continue_prepared %}checked{% endif %}
+        /><span
+          >Carry context only<span class="text-quiet block text-sm"
+            >Isolated changes stay in this conversation. The destination uses
+            current directory files.</span
+          ></span
+        ></label
+      >
+    </fieldset>
+  {% else %}
+    <input type="hidden" name="choice" value="context-only" />
+  {% endif %}
+  <label class="flex flex-col gap-2" for="handoff-focus">
+    <span class="font-semibold"
+      >Instructions for the handoff
+      <span class="text-quiet font-normal">(optional)</span></span
+    >
+    <textarea
+      id="handoff-focus"
+      name="focus"
+      class="textarea textarea-bordered min-h-24 w-full"
+      rows="3"
+      maxlength="32768"
+      placeholder="For example, explain the failed approach and the next step."
+    >
+{{ focus }}</textarea>
+  </label>
+  <p class="text-quiet text-sm">
+    Generation sends the conversation context to the selected provider. It runs
+    no tools and creates no conversation.
+  </p>
+  <button
+    class="btn btn-primary"
+    type="submit"
+    {% if busy || model.is_empty() %}disabled{% endif %}
+  >
+    Generate handoff prompt
+  </button>
+</form>

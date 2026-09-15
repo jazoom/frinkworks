@@ -394,7 +394,11 @@ fn private_workspace_uses_the_copied_settings_without_a_live_preset_ceiling() {
             Vec::new(),
         )
         .unwrap();
-    let authority = resolve_project_free_authority(&record, &state.agents).unwrap();
+    let authority = crate::execution::ProjectFreeAuthority::from_settings(
+        record.revision,
+        &record.model.as_ref().unwrap().settings,
+    )
+    .unwrap();
     assert_eq!(authority.network, NetworkAccess::Public);
     assert_eq!(authority.tools, vec![ToolId::Run, ToolId::Write]);
     assert!(authority.policy.grants().is_empty());
@@ -476,9 +480,7 @@ fn resolving_a_conversation_materialises_each_secondary_project_by_id() {
         network: NetworkAccess::None,
         model: None,
         directory_approvals: Vec::new(),
-        source_review: None,
-        plan_reviews: Vec::new(),
-        review_context: None,
+
         source_candidate_review: None,
         candidate_reviews: Vec::new(),
         candidate_review_context: None,

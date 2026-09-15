@@ -53,6 +53,7 @@ pub(super) struct GatePage {
     pub(super) binary: bool,
     pub(super) text_too_large: bool,
     pub(super) awaiting: bool,
+    pub(super) needs_recovery: bool,
     pub(super) error: &'static str,
     pub(super) run_kind: &'static str,
     pub(super) project_id: String,
@@ -235,7 +236,7 @@ impl GatePage {
                 gate.candidate.id.as_hex(),
                 gate.diff_base.id.as_hex()
             ),
-            revision: gate.revision.get(),
+            revision: run.decision_revision(gate).get(),
             total,
             range: if start == end {
                 "No changed paths".to_owned()
@@ -252,6 +253,7 @@ impl GatePage {
             binary,
             text_too_large,
             awaiting: gate.state == crate::workflows::gates::HumanGateState::AwaitingDecision,
+            needs_recovery: false,
             error,
             run_kind: run.kind.as_str(),
             project_id: run.project_id.map(|id| id.as_hex()).unwrap_or_default(),

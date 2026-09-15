@@ -26,7 +26,7 @@ impl WorkflowRun {
 use super::{
     ActionKind, AttemptCleanupRecord, AttemptId, AttemptRecord, AttemptResult, AttemptSandboxKind,
     AttemptSandboxRecord, AttemptState, EscalationReason, FailureCategory, ReviewRoute, RunState,
-    TaskSelection, TransitionError, WorkflowRun,
+    TransitionError, WorkflowRun,
 };
 use crate::agents::{AccessMode, ToolId};
 use crate::tests::{test_agent_capabilities, test_command_capabilities};
@@ -596,6 +596,7 @@ fn attempt_ordinals_count_repeated_step_attempts() {
         apply_transaction: None,
         commit_transaction: None,
         commit_result: None,
+        direct_changes: None,
     };
     let second = AttemptRecord {
         id: AttemptId::generate().expect("attempt"),
@@ -623,6 +624,7 @@ fn attempt_ordinals_count_repeated_step_attempts() {
         apply_transaction: None,
         commit_transaction: None,
         commit_result: None,
+        direct_changes: None,
     };
     assert_eq!(next_ordinal_for(&[], &step), 1);
     assert_eq!(next_ordinal_for(std::slice::from_ref(&first), &step), 2);
@@ -1048,6 +1050,7 @@ fn durable_commit_transactions_preserve_every_review_reference() {
         apply_transaction: None,
         commit_transaction: None,
         commit_result: None,
+        direct_changes: None,
     };
     let transaction = crate::workflows::commit::CommitTransaction {
         state: crate::workflows::commit::CommitTransactionState::Prepared,
@@ -1110,6 +1113,7 @@ fn durable_commit_transactions_record_an_approved_human_decision() {
         apply_transaction: None,
         commit_transaction: None,
         commit_result: None,
+        direct_changes: None,
     };
     let transaction = crate::workflows::commit::CommitTransaction {
         state: crate::workflows::commit::CommitTransactionState::Prepared,
@@ -1483,88 +1487,6 @@ fn quick_task_run(kind: super::RunKind) -> WorkflowRun {
         pinned,
         environments,
     )
-}
-
-#[test]
-fn selected_tasks_require_implementation_and_human_code_approval() {
-    let definition = crate::workflows::seeds::implement_and_review_definition(
-        crate::tests::test_environment_id(),
-    );
-    assert!(super::supports_task_execution(&definition));
-    assert!(
-        definition
-            .with_commit_policy(crate::workflows::definition::CommitPolicy::AutomaticAfterReview)
-            .is_err()
-    );
-    let read_only = crate::workflows::seeds::review_current_code_definition(
-        crate::tests::test_environment_id(),
-    );
-    assert!(!super::supports_task_execution(&read_only));
-}
-
-#[test]
-fn selected_task_pins_an_unchecked_item_from_its_exact_task_list() {
-    let mut run = quick_task_run(super::RunKind::Configured);
-    let task_list = "# Tasks\n\nShared context.\n\n- [ ] Implement this task.\n";
-    let selection = TaskSelection {
-        document_id: crate::conversations::DocumentId::generate().expect("document"),
-        revision: 1,
-        content_hash: crate::workflows::artefacts::ObjectHash::of(task_list.as_bytes()).as_str(),
-        index: 0,
-        task_markdown: "- [ ] Implement this task.\n".to_owned(),
-        task_list: task_list.to_owned(),
-    };
-    for invalid in [
-        TaskSelection {
-            revision: 0,
-            ..selection.clone()
-        },
-        TaskSelection {
-            index: 1,
-            ..selection.clone()
-        },
-        TaskSelection {
-            content_hash: crate::workflows::artefacts::ObjectHash::of(b"other").as_str(),
-            ..selection.clone()
-        },
-        TaskSelection {
-            task_markdown: "another task".to_owned(),
-            ..selection.clone()
-        },
-        TaskSelection {
-            task_list: "# Tasks\n\n- [x] Done.\n".to_owned(),
-            task_markdown: "- [x] Done.\n".to_owned(),
-            content_hash: crate::workflows::artefacts::ObjectHash::of(b"# Tasks\n\n- [x] Done.\n")
-                .as_str(),
-            ..selection.clone()
-        },
-    ] {
-        assert_eq!(
-            run.set_task_selection(invalid.clone()),
-            Err(TransitionError::Invalid)
-        );
-        assert!(super::task_selection_from_file(super::task_selection_to_file(&invalid)).is_err());
-    }
-    run.set_task_selection(selection.clone())
-        .expect("selection");
-    assert_eq!(
-        run.set_task_selection(selection),
-        Err(TransitionError::Invalid)
-    );
-    let mut changed = run.clone();
-    reach_quick_task_gate(&mut changed, b"changed-tree", true);
-    assert_eq!(
-        changed.complete_unchanged_task(),
-        Err(TransitionError::Invalid)
-    );
-    reach_quick_task_gate(&mut run, b"initial-tree", true);
-    run.complete_unchanged_task().expect("no change");
-    assert!(run.completed_without_changes());
-    assert_eq!(
-        WorkflowRun::from_file(run.to_file()).expect("round trip"),
-        run
-    );
-    assert!(run.gates.is_empty());
 }
 
 fn candidate_artefact(

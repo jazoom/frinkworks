@@ -1,12 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { commandBlockReason } from "hypergraft/browser";
 import { initConversation } from "./conversation";
-
-vi.mock("hypergraft/browser", async (original) => ({
-    ...(await original<object>()),
-    commandBlockReason: vi.fn(),
-}));
 
 describe.each(["new", "saved"])("%s conversation", (state) => {
     let controller: AbortController;
@@ -15,7 +9,6 @@ describe.each(["new", "saved"])("%s conversation", (state) => {
     afterEach(() => {
         controller.abort();
         island.destroy?.();
-        vi.mocked(commandBlockReason).mockReset();
         vi.unstubAllGlobals();
     });
 
@@ -382,98 +375,6 @@ describe.each(["new", "saved"])("%s conversation", (state) => {
         ).toBe(state === "new" ? "Other" : "Alpha");
         if (state === "saved") expect(value("revision")).toBe("3");
     });
-
-    if (state === "new") {
-        test.each([
-            "applied-patch",
-            "uncertain-unsafe-result",
-            "invalid-draft",
-            "detached-form",
-        ] as const)(
-            "deferred Send respects settlement and current form validity: %s",
-            (scenario) => {
-                const outcome =
-                    scenario === "uncertain-unsafe-result"
-                        ? scenario
-                        : "applied-patch";
-                const root = document.querySelector("#conversation-detail")!;
-                root.insertAdjacentHTML(
-                    "beforeend",
-                    `
-                    <form id="conversation-model-preference" aria-busy="true">
-                        <input name="provider"><input name="model"><input name="thinking">
-                    </form>
-                    <p id="conversation-send-status" role="status"></p>
-                `,
-                );
-                const preference = root.querySelector<HTMLFormElement>(
-                    "#conversation-model-preference",
-                )!;
-                const composer = root.querySelector<HTMLFormElement>(
-                    "#conversation-composer",
-                )!;
-                composer.insertAdjacentHTML(
-                    "beforeend",
-                    '<button name="action" value="send">Send</button>',
-                );
-                const button =
-                    composer.querySelector<HTMLButtonElement>("button")!;
-                const sent: FormData[] = [];
-                const onSubmit = (event: SubmitEvent) => {
-                    if (event.defaultPrevented) return;
-                    event.preventDefault();
-                    sent.push(new FormData(composer, event.submitter));
-                };
-                document.addEventListener("submit", onSubmit, {
-                    signal: controller.signal,
-                });
-                vi.mocked(commandBlockReason).mockReturnValue(
-                    "pending-command",
-                );
-                composer.requestSubmit(button);
-                composer.requestSubmit(button);
-                select("provider", "two");
-                expect(sent).toHaveLength(0);
-                if (scenario === "invalid-draft") {
-                    const message =
-                        composer.querySelector<HTMLTextAreaElement>(
-                            "textarea",
-                        )!;
-                    message.required = true;
-                    message.value = "";
-                }
-                if (scenario === "detached-form") composer.remove();
-                preference.removeAttribute("aria-busy");
-                vi.mocked(commandBlockReason).mockReturnValue(
-                    outcome === "applied-patch"
-                        ? undefined
-                        : "uncertain-command",
-                );
-                dispatchEvent(
-                    new CustomEvent("hypergraft:requestsettled", {
-                        detail: {
-                            requestKind: "patch",
-                            form: preference,
-                            url: "/conversations/new/model",
-                            outcome,
-                            ...(outcome === "applied-patch"
-                                ? {
-                                      status: 422,
-                                      targetIds: ["conversation-model-status"],
-                                  }
-                                : {}),
-                        },
-                    }),
-                );
-                expect(sent).toHaveLength(scenario === "applied-patch" ? 1 : 0);
-                if (scenario === "applied-patch") {
-                    expect(sent[0]!.get("action")).toBe("send");
-                    expect(sent[0]!.get("model")).toBe("Other");
-                    expect(sent[0]!.get("message")).toBe("Unsent text");
-                }
-            },
-        );
-    }
 
     if (state === "new")
         test("the retained island adopts saved form ownership after the first-message patch", () => {

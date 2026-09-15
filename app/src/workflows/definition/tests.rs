@@ -8,6 +8,21 @@ impl super::WorkflowDefinition {
     }
 }
 
+#[test]
+fn stored_definitions_reject_removed_execution_modes_and_document_inputs() {
+    let definition = test_named_definition("One step");
+    let original = serde_json::to_value(definition.to_file()).unwrap();
+    for mode in ["once", "task-list"] {
+        let mut value = original.clone();
+        value["execution-mode"] = serde_json::json!(mode);
+        assert!(serde_json::from_value::<DefinitionFile>(value).is_err());
+    }
+    let mut value = original;
+    value["steps"][0]["inputs"][0]["source"] =
+        serde_json::json!({"source": "launch-input", "input": "saved-plan"});
+    assert!(WorkflowDefinition::from_file_bytes(&serde_json::to_vec(&value).unwrap()).is_err());
+}
+
 pub(crate) fn test_environment_id() -> EnvironmentId {
     EnvironmentId::parse("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").expect("test env")
 }
@@ -1154,62 +1169,4 @@ fn obsolete_on_success_fields_are_rejected() {
         WorkflowDefinition::from_file_bytes(&bytes).err(),
         Some(DefinitionError::Format)
     );
-}
-
-fn host_settings() -> crate::execution::ExecutionSettings {
-    crate::execution::ExecutionSettings::new(
-        crate::providers::ModelSelection::new(
-            crate::providers::ProviderKind::Xai,
-            "grok-4.6".to_owned(),
-            None,
-        )
-        .unwrap(),
-        String::new(),
-        vec![ToolId::Run],
-        test_environment_id(),
-    )
-    .unwrap()
-    .with_location(crate::execution::ToolLocation::Host)
-}
-
-#[test]
-fn host_overrides_cannot_bypass_required_candidate_approval() {
-    let defaults = host_settings();
-    let definition =
-        crate::workflows::seeds::implement_and_review_definition(test_environment_id());
-    assert_eq!(
-        definition.with_conversation_settings(&defaults),
-        Err(DefinitionError::WriteStrategy)
-    );
-    let commit = crate::workflows::seeds::task_loop_definition(test_environment_id());
-    assert_eq!(
-        commit.with_conversation_settings(&defaults),
-        Err(DefinitionError::WriteStrategy)
-    );
-}
-
-#[test]
-fn host_diagnostic_task_loop_is_valid() {
-    let mut step = agent_step("diagnose");
-    step.inputs.clear();
-    if let StepAction::Agent(action) = &mut step.action {
-        action.candidate_authority = CandidateAuthority::ReadOnly;
-        action.required_outputs = vec![RequiredOutput {
-            key: OutputKey::parse(ASSISTANT_REPLY).expect("output"),
-            kind: OutputKind::AssistantReply,
-        }];
-        action.settings = ModelStepSettings::Override(Box::new(
-            crate::execution::SettingsOverrides::all(host_settings()),
-        ));
-    }
-    let definition = WorkflowDefinition::from_parts_with_mode(
-        "Diagnose each task".to_owned(),
-        test_environment_id(),
-        vec![role()],
-        vec![step],
-        ExecutionMode::TaskList,
-    )
-    .expect("host loop");
-    assert!(definition.supports_task_execution());
-    assert!(!definition.steps()[0].is_sandbox_backed());
 }

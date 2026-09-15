@@ -37,7 +37,6 @@ fn escaped_history_keeps_the_latest_message_within_the_patch_bound() {
             environments: &state.environments,
             environment_snapshots: &state.environment_snapshots,
             projects: &[],
-            documents: &[],
             presets: &[],
         },
         &[],
@@ -80,7 +79,6 @@ fn network_form_preserves_domains_without_a_live_preset_ceiling() {
             environments: &state.environments,
             environment_snapshots: &state.environment_snapshots,
             projects: &[],
-            documents: &[],
             presets: &[],
         },
         &[],
@@ -103,54 +101,6 @@ fn dense_markup_uses_escaped_text_with_bounded_nodes() {
     assert!(html.matches('<').count() <= 64);
     assert!(!html.contains("<script>"));
     assert!(html.contains("&lt;script&gt;"));
-}
-
-#[test]
-fn document_actions_keep_the_selected_revision_identity_after_a_correction() {
-    let state = crate::tests::test_state(RuntimeConfig::development());
-    let mut record = state.conversations.create("Documents".to_owned()).unwrap();
-    let content = "# Tasks\n- [ ] First task\n";
-    let document = state
-        .documents
-        .create_task_list_from_text(&record, "Tasks".to_owned(), content.to_owned(), None)
-        .unwrap();
-    let hash = document.current().content_hash.as_str();
-    let document = state
-        .documents
-        .revise(
-            &document.id,
-            1,
-            "Tasks".to_owned(),
-            "# Tasks\n- [ ] Replacement\n".to_owned(),
-            None,
-        )
-        .unwrap();
-    let view = PlanDocumentPage::from_document(&document, 1, content.to_owned(), 0, "");
-    assert_eq!(view.document_revision, 1);
-    assert_eq!(view.current_revision, 2);
-    assert!(view.action_href.contains(&format!(
-        "task_document={}&task_revision=1&task_hash={hash}",
-        document.id
-    )));
-    assert!(view.review_href.ends_with("?revision=1"));
-    record.messages.push(ConversationMessage {
-        role: MessageRole::User,
-        text: "A later message".to_owned(),
-        status: MessageStatus::Complete,
-        error: None,
-        request: None,
-    });
-    let token = super::super::tests::connected(&state);
-    let session = super::super::tests::session_id(&token);
-    let transcript = super::super::detail_view(&state, session, &record, &record.title, "");
-    assert!(transcript.messages[0].html.contains("First task"));
-    assert!(!transcript.messages[0].html.contains("Replacement"));
-    assert_eq!(transcript.messages[1].index, 0);
-    assert!(
-        view.tasks[0]
-            .run_href
-            .contains(&format!("task_revision=1&task_hash={hash}&task_index=0"))
-    );
 }
 
 #[test]
@@ -193,7 +143,6 @@ fn candidate_review_escapes_untrusted_file_contents() {
             environments: &state.environments,
             environment_snapshots: &state.environment_snapshots,
             projects: &[],
-            documents: &[],
             presets: &[],
         },
         &[],
@@ -202,8 +151,6 @@ fn candidate_review_escapes_untrusted_file_contents() {
         &title,
         "",
         Some(gate),
-        None,
-        Vec::new(),
         None,
         Vec::new(),
     );
@@ -228,14 +175,7 @@ fn partial_progress_view() -> WorkflowProgressView {
         current_step: "Apply changes".to_owned(),
         result: "Worker activity stays in the run record.",
         task_progress: String::new(),
-        loop_id: String::new(),
-        command_token: String::new(),
-        can_pause: false,
-        can_continue: false,
-        can_retry: false,
-        can_stop: false,
-        pause_requested: false,
-        awaiting_gate: false,
+
         conversation_id: "ccc".to_owned(),
         apply_run_id: "aaa".to_owned(),
         apply_attempt_id: "bbb".to_owned(),
@@ -268,55 +208,4 @@ fn partial_progress_links_the_exact_attempt_and_settlement_identity() {
     assert!(html.contains("name=\"attempt\""));
     assert!(html.contains("value=\"bbb\""));
     assert!(html.contains("value=\"recovered\""));
-}
-
-#[test]
-fn failed_loop_retains_the_exact_child_application_evidence() {
-    use crate::workflows::apply::{ApplyTransaction, ApplyTransactionState};
-    use crate::workflows::task_loop::{TaskLoopState, TaskOutcome};
-    let state = crate::tests::test_state(RuntimeConfig::development());
-    let token = super::super::tests::connected(&state);
-    super::super::tests::awaiting_gate(&state);
-    let run = state.workflow_runs.active_runs().remove(0);
-    let conversation = state
-        .conversations
-        .get(&run.conversation_id.unwrap())
-        .unwrap();
-    let mut parent = crate::workflows::task_loop::tests::loop_record();
-    parent.conversation_id = conversation.id;
-    parent.state = TaskLoopState::Failed;
-    parent.tasks[0].child_id = Some(run.id);
-    parent.tasks[0].outcome = TaskOutcome::Failed;
-    let attempt = run.attempts[0].id;
-    state
-        .workflow_runs
-        .mutate(&run.id, |child| {
-            child.parent_loop = Some(parent.id);
-            child.state = crate::workflows::run::RunState::Failed;
-            child.attempts[0].apply_transaction = Some(ApplyTransaction {
-                state: ApplyTransactionState::Recovered,
-                roots: Vec::new(),
-                baseline: child.gates[0].diff_base.clone(),
-                candidate: child.gates[0].candidate.clone(),
-                approval: child.gates[0].candidate.clone(),
-            });
-            Ok(())
-        })
-        .unwrap();
-    state.task_loops.create(parent).unwrap();
-    let view = super::super::detail_view(
-        &state,
-        super::super::tests::session_id(&token),
-        &conversation,
-        &conversation.title,
-        "",
-    );
-    let progress = view.saved().unwrap().workflow_progress.as_ref().unwrap();
-    assert!(progress.apply_partial);
-    assert_eq!(progress.apply_run_id, run.id.as_hex());
-    assert_eq!(progress.apply_attempt_id, attempt.as_hex());
-    assert_eq!(
-        progress.apply_resolve_href,
-        format!("/runs/{}/attempts/{attempt}/changes", run.id)
-    );
 }

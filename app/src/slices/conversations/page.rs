@@ -10,7 +10,7 @@ use crate::{
     agents::AgentRecord,
     conversations::{
         ConversationMessage, ConversationModelConfiguration, ConversationRecord,
-        MAXIMUM_PROJECT_ASSOCIATIONS, MessageRole, MessageStatus, PlanDocument, PlanSource,
+        MAXIMUM_PROJECT_ASSOCIATIONS, MessageRole, MessageStatus,
     },
     environments::{EnvironmentCatalogue, EnvironmentId, EnvironmentSnapshotRepository},
     models::models_dev::ModelsDevCatalogue,
@@ -22,12 +22,6 @@ use crate::{
 };
 
 pub(super) const CATALOGUE_TITLE: &str = "Conversations | Power Plant";
-
-#[derive(Template)]
-#[template(source = "{{ message }}", ext = "html")]
-pub(super) struct ModelSelectionStatus<'a> {
-    pub(super) message: &'a str,
-}
 
 pub(super) struct ConversationListItem {
     pub(super) title: String,
@@ -103,10 +97,7 @@ pub(super) struct PendingCodeGateView {
 }
 
 #[derive(Template)]
-#[template(
-    path = "conversations/templates/index.html",
-    block = "conversation_catalogue"
-)]
+#[template(path = "conversations/templates/index.html")]
 pub(super) struct CatalogueView {
     pub(super) conversations: Vec<ConversationListItem>,
     pub(super) directories: Vec<HistoryDirectoryOption>,
@@ -205,79 +196,9 @@ pub(super) fn history_directory_key(grant: &crate::execution::DirectoryGrant) ->
     )
 }
 
-pub(super) struct ReviewProjectOption {
-    pub(super) id: String,
-    pub(super) name: String,
-    pub(super) access: &'static str,
-    pub(super) selected: bool,
-}
-
 #[derive(Template)]
 #[template(
-    path = "conversations/templates/index.html",
-    block = "plan_review_page"
-)]
-pub(super) struct PlanReviewView {
-    pub(super) document_title: String,
-    pub(super) source_title: String,
-    pub(super) source_id: String,
-    pub(super) source_revision: String,
-    pub(super) document_id: String,
-    pub(super) document_revision: u32,
-    pub(super) content_hash: String,
-    pub(super) content_html: String,
-    pub(super) brief: String,
-    pub(super) reviewer_summary: String,
-    pub(super) model_picker: ModelPicker,
-    pub(super) presets: Vec<PresetOption>,
-    pub(super) read_only_projects: Vec<ReviewProjectOption>,
-    pub(super) error: &'static str,
-}
-
-#[derive(Template)]
-#[template(
-    path = "conversations/templates/index.html",
-    block = "plan_review_detail"
-)]
-pub(super) struct PlanReviewContents<'a> {
-    pub(super) source_title: &'a str,
-    pub(super) source_id: &'a str,
-    pub(super) source_revision: &'a str,
-    pub(super) document_id: &'a str,
-    pub(super) document_revision: u32,
-    pub(super) content_hash: &'a str,
-    pub(super) content_html: &'a str,
-    pub(super) brief: &'a str,
-    pub(super) reviewer_summary: &'a str,
-    pub(super) model_picker: &'a ModelPicker,
-    pub(super) presets: &'a [PresetOption],
-    pub(super) read_only_projects: &'a [ReviewProjectOption],
-    pub(super) error: &'static str,
-}
-
-impl PlanReviewView {
-    pub(super) fn contents(&self) -> PlanReviewContents<'_> {
-        PlanReviewContents {
-            source_title: &self.source_title,
-            source_id: &self.source_id,
-            source_revision: &self.source_revision,
-            document_id: &self.document_id,
-            document_revision: self.document_revision,
-            content_hash: &self.content_hash,
-            content_html: &self.content_html,
-            brief: &self.brief,
-            reviewer_summary: &self.reviewer_summary,
-            model_picker: &self.model_picker,
-            presets: &self.presets,
-            read_only_projects: &self.read_only_projects,
-            error: self.error,
-        }
-    }
-}
-
-#[derive(Template)]
-#[template(
-    path = "conversations/templates/index.html",
+    path = "conversations/templates/candidate_review.html",
     block = "candidate_review_page"
 )]
 pub(super) struct CandidateReviewView {
@@ -298,7 +219,7 @@ pub(super) struct CandidateReviewView {
 
 #[derive(Template)]
 #[template(
-    path = "conversations/templates/index.html",
+    path = "conversations/templates/candidate_review.html",
     block = "candidate_review_detail"
 )]
 pub(super) struct CandidateReviewContents<'a> {
@@ -344,27 +265,6 @@ pub(super) struct MessageView {
     pub(super) status: &'static str,
     pub(super) error: String,
     pub(super) streaming: bool,
-    pub(super) saveable_plan: bool,
-    pub(super) plan_request_href: String,
-}
-
-pub(super) struct PlanDocumentView {
-    pub(super) title: String,
-    pub(super) kind: String,
-    pub(super) task_list: bool,
-    pub(super) revision: u32,
-    pub(super) provenance: String,
-    pub(super) open_href: String,
-    pub(super) remove_href: String,
-}
-
-pub(super) struct ConversationLinkView {
-    pub(super) title: String,
-    pub(super) plan_title: String,
-    pub(super) href: String,
-    pub(super) plan_href: String,
-    pub(super) plan_revision: u32,
-    pub(super) content_hash: String,
 }
 
 pub(super) struct CandidateReviewLinkView {
@@ -388,14 +288,7 @@ pub(super) struct WorkflowProgressView {
     pub(super) current_step: String,
     pub(super) result: &'static str,
     pub(super) task_progress: String,
-    pub(super) loop_id: String,
-    pub(super) command_token: String,
-    pub(super) can_pause: bool,
-    pub(super) can_continue: bool,
-    pub(super) can_retry: bool,
-    pub(super) can_stop: bool,
-    pub(super) pause_requested: bool,
-    pub(super) awaiting_gate: bool,
+
     pub(super) conversation_id: String,
     pub(super) apply_run_id: String,
     pub(super) apply_attempt_id: String,
@@ -416,7 +309,6 @@ pub(super) struct ModelSources<'a> {
     pub(super) environments: &'a EnvironmentCatalogue,
     pub(super) environment_snapshots: &'a EnvironmentSnapshotRepository,
     pub(super) projects: &'a [ProjectRecord],
-    pub(super) documents: &'a [PlanDocument],
     pub(super) presets: &'a [crate::presets::PresetRecord],
 }
 
@@ -526,13 +418,14 @@ pub(super) struct ConversationDetailView {
     pub(super) title: String,
     pub(super) state: ConversationPageState,
     pub(super) error: &'static str,
+    pub(super) notice: &'static str,
     show_thinking: bool,
     thinking_visibility_error: Option<&'static str>,
     pub(super) messages: Vec<MessageView>,
     pub(super) companion_html: String,
     pub(super) companion_kind: &'static str,
     pub(super) companion_title: String,
-    pub(super) plan_actions_omitted: bool,
+
     pub(super) omitted_messages: usize,
     model_picker: ModelPicker,
     pub(super) presets: Vec<PresetOption>,
@@ -551,6 +444,10 @@ pub(super) struct ConversationDetailView {
     pub(super) consent_direct: bool,
     pub(super) consent_sensitive: bool,
     pub(super) draft_nonce: String,
+    pub(super) prepared_run: String,
+    pub(super) handoff_settings: String,
+    pub(super) handoff_approved: bool,
+    pub(super) prepared_recovery: Option<super::handoff::recovery::RecoveryView>,
     pub(super) draft_preset_reference: String,
     pub(super) consent_reference: String,
     pub(super) instructions: String,
@@ -586,12 +483,11 @@ pub(super) struct SavedConversationState {
     pub(super) job_id: String,
     pub(super) cursor: u64,
     pub(super) pending_gate: Option<PendingCodeGateView>,
-    pub(super) plans: Vec<PlanDocumentView>,
-    pub(super) source_review: Option<ConversationLinkView>,
-    pub(super) linked_reviews: Vec<ConversationLinkView>,
+
     pub(super) source_candidate_review: Option<CandidateReviewLinkView>,
     pub(super) linked_candidate_reviews: Vec<CandidateReviewLinkView>,
     pub(super) workflow_progress: Option<WorkflowProgressView>,
+    pub(super) direct_results: Vec<crate::slices::workflow_runs::DirectChangesView>,
 }
 impl ConversationDetailView {
     pub(super) fn from_new(
@@ -600,6 +496,11 @@ impl ConversationDetailView {
         form: super::new::NewForm,
         error: &'static str,
     ) -> Self {
+        let handoff_settings = super::handoff::transfer::draft_run(state, session, &form)
+            .ok()
+            .flatten()
+            .map(|run| super::handoff::transfer::settings_text(&run))
+            .unwrap_or_default();
         let selected_tools = form.tool_values();
         let host_identity = crate::execution::HostIdentity::current();
         let location_host = form.location == crate::execution::ToolLocation::Host.as_str();
@@ -719,11 +620,12 @@ impl ConversationDetailView {
                 message: form.message,
             },
             error,
+            notice: "",
             messages: Vec::new(),
             companion_html: String::new(),
-            companion_kind: "plan",
+            companion_kind: "activity",
             companion_title: String::new(),
-            plan_actions_omitted: false,
+
             omitted_messages: 0,
             attached_projects: Vec::new(),
             directories,
@@ -736,6 +638,10 @@ impl ConversationDetailView {
             consent_sensitive,
             consent_reviewed,
             draft_nonce: form.draft_nonce,
+            prepared_run: form.prepared_run,
+            handoff_settings,
+            handoff_approved: form.handoff_approval == "continue-prepared",
+            prepared_recovery: None,
             draft_preset_reference: form.preset_preview,
             consent_reference: form.consent_reference,
             instructions: form.instructions.clone(),
@@ -807,7 +713,9 @@ impl ConversationDetailView {
 
     fn needs_review(&self) -> bool {
         self.saved().is_some_and(|saved| {
-            saved.pending_gate.is_some() || self.pending_host_command.is_some()
+            saved.pending_gate.is_some()
+                || self.pending_host_command.is_some()
+                || self.prepared_recovery.is_some()
         })
     }
 
@@ -855,7 +763,6 @@ impl ConversationDetailView {
             && self.saved().is_none_or(|saved| {
                 saved.workflow_progress.is_none()
                     && saved.pending_gate.is_none()
-                    && saved.source_review.is_none()
                     && saved.source_candidate_review.is_none()
             })
     }
@@ -881,8 +788,6 @@ impl ConversationDetailView {
             None,
             None,
             Vec::new(),
-            None,
-            Vec::new(),
         )
     }
 
@@ -896,8 +801,7 @@ impl ConversationDetailView {
         title: &str,
         error: &'static str,
         pending_gate: Option<PendingCodeGateView>,
-        source_review: Option<ConversationLinkView>,
-        linked_reviews: Vec<ConversationLinkView>,
+
         source_candidate_review: Option<CandidateReviewLinkView>,
         linked_candidate_reviews: Vec<CandidateReviewLinkView>,
     ) -> Self {
@@ -954,13 +858,6 @@ impl ConversationDetailView {
                     .and_then(|configuration| configuration.preset.as_ref())
                     .is_some_and(|preset| preset.id == record.id),
             })
-            .collect();
-        let plans: Vec<_> = sources
-            .documents
-            .iter()
-            .filter(|document| document.associated_conversation == Some(record.id))
-            .filter(|document| !matches!(&document.revisions[0].source, PlanSource::Action { plan: Some(plan), .. } if sources.documents.iter().any(|parent| parent.id == plan.document_id)))
-            .map(plan_document_view)
             .collect();
         let attached_projects = record
             .projects
@@ -1047,11 +944,18 @@ impl ConversationDetailView {
         let host_approval_automatic =
             configuration.is_some_and(|model| model.settings.host_approval.automatic());
         let host_identity = crate::execution::HostIdentity::current();
-        // Plan controls and the escaped model catalogue share the transcript envelope.
-        let message_budget = (672_usize * 1024)
-            .saturating_sub(plans.len() * 3072)
-            .saturating_sub(ammonia::clean_text(&model_picker.catalogue).len());
-        let messages = visible_messages(record, message_budget);
+        // The escaped model catalogue shares the transcript envelope.
+        let message_budget =
+            (672_usize * 1024).saturating_sub(ammonia::clean_text(&model_picker.catalogue).len());
+        let mut messages = visible_messages(record, message_budget);
+        if pending_gate.is_some()
+            || job.is_some_and(|job| job.status == JobStatus::AwaitingDecision)
+        {
+            for message in messages.iter_mut().filter(|message| message.streaming) {
+                message.status = "Awaiting your decision";
+                message.streaming = false;
+            }
+        }
         let omitted_messages = record.messages.len() - messages.len();
         Self {
             show_thinking: sources.preferences.show_thinking(),
@@ -1062,9 +966,10 @@ impl ConversationDetailView {
             error,
             messages,
             companion_html: String::new(),
-            companion_kind: "plan",
+            companion_kind: "activity",
             companion_title: String::new(),
-            plan_actions_omitted: false,
+            notice: "",
+
             omitted_messages,
             model_available: selection.is_some(),
             model_picker,
@@ -1109,6 +1014,10 @@ impl ConversationDetailView {
             consent_direct: false,
             consent_sensitive: false,
             draft_nonce: String::new(),
+            prepared_run: String::new(),
+            handoff_settings: String::new(),
+            handoff_approved: false,
+            prepared_recovery: None,
             draft_preset_reference: String::new(),
             consent_reference: String::new(),
             instructions: configuration
@@ -1158,12 +1067,11 @@ impl ConversationDetailView {
                 job_id,
                 cursor,
                 pending_gate,
-                plans,
-                source_review,
-                linked_reviews,
+
                 source_candidate_review,
                 linked_candidate_reviews,
                 workflow_progress: None,
+                direct_results: Vec::new(),
             })),
         }
     }
@@ -1418,6 +1326,39 @@ impl ConversationDetailView {
             gate: switch_gate,
         });
         self.settings_open = true;
+        self
+    }
+
+    pub(super) fn with_prepared_recovery(
+        mut self,
+        state: &crate::state::AppState,
+        session: crate::sessions::SessionId,
+        record: &ConversationRecord,
+    ) -> Self {
+        self.prepared_recovery =
+            super::handoff::recovery::RecoveryView::for_conversation(state, session, record);
+        self
+    }
+
+    pub(super) fn with_direct_results(
+        mut self,
+        state: &crate::state::AppState,
+        conversation: crate::conversations::ConversationId,
+    ) -> Self {
+        if let ConversationPageState::Saved(saved) = &mut self.state
+            && let Some(run) = state.workflow_runs.for_conversation(&conversation).first()
+        {
+            saved.direct_results = run
+                .attempts
+                .iter()
+                .rev()
+                .filter(|attempt| attempt.direct_changes.is_some())
+                .take(4)
+                .map(|attempt| {
+                    crate::slices::workflow_runs::DirectChangesView::new(run, attempt, state, 0)
+                })
+                .collect();
+        }
         self
     }
 
@@ -1695,14 +1636,7 @@ pub(super) fn workflow_progress(run: &WorkflowRun) -> WorkflowProgressView {
             .unwrap_or_else(|| "Finished".to_owned()),
         result: workflow_result_label(&run.state),
         task_progress: String::new(),
-        loop_id: String::new(),
-        command_token: String::new(),
-        can_pause: false,
-        can_continue: false,
-        can_retry: false,
-        can_stop: false,
-        pause_requested: false,
-        awaiting_gate: false,
+
         conversation_id: run
             .conversation_id
             .map(|id| id.as_hex())
@@ -1720,131 +1654,21 @@ pub(super) fn workflow_progress(run: &WorkflowRun) -> WorkflowProgressView {
     }
 }
 
-pub(super) fn loop_progress(
-    record: &crate::workflows::TaskLoop,
-    awaiting_gate: bool,
-) -> WorkflowProgressView {
-    loop_progress_with_child(record, awaiting_gate, None)
-}
-
-pub(super) fn loop_progress_with_child(
-    record: &crate::workflows::TaskLoop,
-    awaiting_gate: bool,
-    child: Option<&WorkflowRun>,
-) -> WorkflowProgressView {
-    let (apply_run_id, apply_attempt_id, apply_state, apply_resolve_href) = child
-        .map(apply_attempt_presentation)
-        .unwrap_or((String::new(), String::new(), "", String::new()));
-    // An uncertain child blocks continuation and retry until recovery finishes.
-    let child_uncertain = child.is_some_and(|run| run.apply_is_uncertain());
-    WorkflowProgressView {
-        run_href: format!("/runs/loops/{}", record.id.as_hex()),
-        name: record.pinned.definition.name().to_owned(),
-        state: record.state.as_label(),
-        current_step: record.progress_label(),
-        result: loop_result_label(&record.state),
-        task_progress: record.progress_label(),
-        loop_id: record.id.as_hex(),
-        command_token: record.command_token(),
-        can_pause: matches!(
-            record.state,
-            crate::workflows::task_loop::TaskLoopState::Active { .. }
-                | crate::workflows::task_loop::TaskLoopState::AwaitingChild { .. }
-        ),
-        can_continue: record.allows_continue() && !child_uncertain,
-        can_retry: record.allows_retry() && !child_uncertain,
-        can_stop: !record.state.is_terminal(),
-        pause_requested: record.pause_requested(),
-        awaiting_gate,
-        conversation_id: record.conversation_id.as_hex(),
-        apply_outcomes: child.map(apply_outcomes).unwrap_or_default(),
-        apply_run_id,
-        apply_attempt_id,
-        apply_state,
-        apply_resolve_href,
-        apply_partial: child.is_some_and(|run| run.apply_is_known_partial()),
-        apply_uncertain: child_uncertain,
-        apply_complete: child.is_some_and(|run| run.apply_is_complete()),
-        settlement_eligible: false,
-        run_terminal: record.state.is_terminal(),
-    }
-}
-
-fn loop_result_label(state: &crate::workflows::task_loop::TaskLoopState) -> &'static str {
-    match state {
-        crate::workflows::task_loop::TaskLoopState::Completed => {
-            "Open the parent run for each task's file application, commit or host execution result."
-        }
-        crate::workflows::task_loop::TaskLoopState::Blocked => {
-            "The task loop is unavailable until reconciliation finishes. Earlier file changes and host command effects remain."
-        }
-        crate::workflows::task_loop::TaskLoopState::Cancelled
-        | crate::workflows::task_loop::TaskLoopState::Stopped => {
-            "The task loop stopped. Earlier file changes and host command effects remain. Stop does not reverse them."
-        }
-        crate::workflows::task_loop::TaskLoopState::Interrupted
-        | crate::workflows::task_loop::TaskLoopState::Failed => {
-            "The current task stopped. Retry starts a fresh attempt from the recorded task base. It does not resume the earlier transcript."
-        }
-        crate::workflows::task_loop::TaskLoopState::AwaitingChild { .. } => {
-            "A task waits for a human decision. The conversation stays reserved."
-        }
-        crate::workflows::task_loop::TaskLoopState::PauseRequested { .. } => {
-            "A pause waits until the current task settles. Pause is not approval."
-        }
-        crate::workflows::task_loop::TaskLoopState::Paused => {
-            "The loop is paused after a completed task. Continue starts the next pending task."
-        }
-        _ => "Each task uses a fresh worker context. Earlier worker transcripts stay excluded.",
-    }
-}
-
 fn activity_source_lines(
     state: &crate::state::AppState,
     conversation_id: &crate::conversations::ConversationId,
 ) -> (String, String, String) {
-    let latest_loop = state
-        .task_loops
-        .for_conversation(conversation_id)
-        .into_iter()
-        .next();
     let latest_run = state
         .workflow_runs
         .for_conversation(conversation_id)
         .into_iter()
         .next();
-    let (brief, task, environments) = match (latest_loop, latest_run) {
-        (Some(parent), run)
-            if run
-                .as_ref()
-                .is_none_or(|run| parent.created_at_ms >= run.created_at_ms) =>
-        {
-            let child = parent
-                .occupied_child()
-                .and_then(|child| state.workflow_runs.get(&child));
-            (
-                parent.launch_brief.clone(),
-                format!(
-                    "Task list revision {} · {} {}",
-                    parent.task_list.revision,
-                    parent.task_list.content_hash.as_str(),
-                    parent.progress_label()
-                ),
-                child.map_or(parent.environments.clone(), |run| run.environments.clone()),
-            )
-        }
-        (_, Some(run)) => {
-            let task = run
-                .task_selection
-                .as_ref()
-                .map_or_else(String::new, |selection| {
-                    format!(
-                        "Task {} from task-list revision {}",
-                        selection.index, selection.revision
-                    )
-                });
-            (run.launch_brief.clone(), task, run.environments.clone())
-        }
+    let (brief, task, environments) = match latest_run {
+        Some(run) => (
+            run.launch_brief.clone(),
+            String::new(),
+            run.environments.clone(),
+        ),
         _ => return (String::new(), String::new(), String::new()),
     };
     let environment_line = if environments.environments.is_empty() {
@@ -1899,7 +1723,7 @@ pub(super) fn pending_code_gate(
     Some(PendingCodeGateView {
         run_id: run.id.as_hex(),
         gate_id: gate.id.as_hex(),
-        revision: gate.revision.get().to_string(),
+        revision: run.decision_revision(gate).get().to_string(),
         candidate: diff.target.as_str().to_owned(),
         diff_base: diff.base.as_str().to_owned(),
         diff_href: format!("/runs/{}/gates/{}", run.id.as_hex(), gate.id.as_hex()),
@@ -1990,14 +1814,7 @@ fn visible_messages(record: &ConversationRecord, byte_budget: usize) -> Vec<Mess
     let mut messages = Vec::new();
     let mut bytes = 0;
     for (index, message) in record.messages.iter().enumerate().rev() {
-        let mut view = message_view(index, message);
-        if view.saveable_plan {
-            view.plan_request_href = format!(
-                "/conversations/{}/plans/request?mode=from&message_index={}",
-                record.id.as_hex(),
-                index
-            );
-        }
+        let view = message_view(index, message);
         bytes += view.html.len() + 2048;
         if bytes > byte_budget || messages.len() >= 64 {
             break;
@@ -2029,10 +1846,6 @@ fn message_view(index: usize, message: &ConversationMessage) -> MessageView {
         },
         error: message_error(message),
         streaming: message.status == MessageStatus::Pending,
-        saveable_plan: !user
-            && message.status == MessageStatus::Complete
-            && !message.text.trim().is_empty(),
-        plan_request_href: String::new(),
     }
 }
 
@@ -2044,60 +1857,6 @@ pub(super) fn message_error(message: &ConversationMessage) -> String {
     } else {
         String::new()
     }
-}
-
-pub(super) fn plan_document_view(document: &PlanDocument) -> PlanDocumentView {
-    let revision = document.current();
-    PlanDocumentView {
-        title: document.title.clone(),
-        kind: document.kind.label().to_owned(),
-        task_list: document.kind == crate::conversations::DocumentKind::TaskList,
-        revision: revision.revision,
-        provenance: source_label(&revision.source),
-        open_href: format!(
-            "/plans/{}?revision={}",
-            document.id.as_hex(),
-            revision.revision
-        ),
-        remove_href: format!(
-            "/conversations/{}/plans/{}/remove",
-            document
-                .associated_conversation
-                .expect("associated plan document")
-                .as_hex(),
-            document.id.as_hex()
-        ),
-    }
-}
-
-#[derive(Template)]
-#[template(path = "conversations/templates/plans.html", block = "plans_list")]
-pub(super) struct PlansListContents<'a> {
-    pub(super) revision: &'a str,
-    pub(super) plans: &'a [PlanDocumentView],
-    pub(super) error: &'a str,
-    pub(super) job_locked: bool,
-    pub(super) create_href: &'a str,
-    pub(super) paste_href: &'a str,
-}
-
-#[derive(Template)]
-#[template(path = "conversations/templates/plans.html", block = "plan_request")]
-pub(super) struct PlanRequestContents<'a> {
-    pub(super) revision: &'a str,
-    pub(super) mode: &'a str,
-    pub(super) title: &'a str,
-    pub(super) request: &'a str,
-    pub(super) markdown: &'a str,
-    pub(super) message_index: &'a str,
-    pub(super) show_source: bool,
-    pub(super) source_heading: &'a str,
-    pub(super) source_text: &'a str,
-    pub(super) error: &'a str,
-    pub(super) back_href: &'a str,
-    pub(super) form_action: &'a str,
-    pub(super) task_action: &'a str,
-    pub(super) submit_label: &'a str,
 }
 
 #[derive(Template)]
@@ -2122,25 +1881,10 @@ pub(super) struct ActivityContents<'a> {
     pub(super) apply_resolve_href: &'a str,
 }
 
-#[derive(Template)]
-#[template(path = "conversations/templates/plan_action.html")]
-struct PlanActionView {
-    task_list: bool,
-    deferred: bool,
-    label: &'static str,
-    title: String,
-    html: String,
-    href: String,
-    provenance: String,
-    revision: u32,
-    hash: String,
-}
-
 impl ConversationDetailView {
     pub(super) fn with_companion(mut self, html: String, kind: &'static str) -> Self {
         let budget = (672_usize * 1024)
             .saturating_sub(html.len())
-            .saturating_sub(self.saved().map_or(0, |saved| saved.plans.len()) * 3072)
             .saturating_sub(ammonia::clean_text(&self.model_picker.catalogue).len());
         let mut bytes = 0;
         let count = self
@@ -2170,75 +1914,6 @@ impl ConversationDetailView {
         let mut titled = self.with_companion(html, kind);
         titled.companion_title = title.to_owned();
         titled
-    }
-
-    pub(super) fn command_locked(&self) -> bool {
-        self.job_active || self.session_busy
-    }
-
-    /// The Plans list occupies the companion beside the transcript. Its
-    /// header and footer stay outside the content scroll area.
-    pub(super) fn render_plans_list(&self, error: &str) -> Result<String, askama::Error> {
-        use askama::Template;
-        let saved = self.saved().expect("saved plans conversation");
-        PlansListContents {
-            revision: &saved.revision,
-            plans: &saved.plans,
-            error,
-            job_locked: self.command_locked(),
-            create_href: &format!("/conversations/{}/plans/request?mode=create", saved.id),
-            paste_href: &format!("/conversations/{}/plans/request?mode=paste", saved.id),
-        }
-        .render()
-    }
-
-    /// A plan request companion keeps the exact source message and needs an
-    /// explicit submission. Cancellation returns to Plans with no model call.
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn render_plan_request(
-        &self,
-        mode: &str,
-        title: &str,
-        request: &str,
-        markdown: &str,
-        message_index: &str,
-        source_heading: &str,
-        source_text: &str,
-        error: &str,
-    ) -> Result<String, askama::Error> {
-        use askama::Template;
-        let saved = self.saved().expect("saved plan request conversation");
-        let (form_action, submit_label) = match mode {
-            "paste" => (
-                format!("/conversations/{}/plans/text", saved.id),
-                "Add plan",
-            ),
-            "from" => (
-                format!("/conversations/{}/plans/from-message", saved.id),
-                "Create plan",
-            ),
-            _ => (
-                format!("/conversations/{}/plans/request", saved.id),
-                "Create plan",
-            ),
-        };
-        PlanRequestContents {
-            revision: &saved.revision,
-            mode,
-            title,
-            request,
-            markdown,
-            message_index,
-            show_source: !source_text.is_empty(),
-            source_heading,
-            source_text,
-            error,
-            back_href: &format!("/conversations/{}/plans", saved.id),
-            form_action: &form_action,
-            task_action: &format!("/conversations/{}/tasks", saved.id),
-            submit_label,
-        }
-        .render()
     }
 
     pub(super) fn render_activity(
@@ -2294,598 +1969,6 @@ impl ConversationDetailView {
             apply_resolve_href: &progress.apply_resolve_href,
         }
         .render()
-    }
-
-    pub(super) fn with_plan_actions(
-        mut self,
-        state: &crate::state::AppState,
-        record: &ConversationRecord,
-    ) -> Self {
-        let mut actions = Vec::new();
-        for document in state.documents.action_documents(record.id) {
-            for revision in &document.revisions {
-                let PlanSource::Action {
-                    conversation_id,
-                    message_index,
-                    title,
-                    assistant,
-                    previous,
-                    plan,
-                } = &revision.source
-                else {
-                    continue;
-                };
-                if *conversation_id != record.id
-                    || !self
-                        .messages
-                        .iter()
-                        .any(|message| message.index == *message_index as usize)
-                {
-                    continue;
-                }
-                let Ok(content) = state.documents.content(&document, revision.revision) else {
-                    continue;
-                };
-                // Ordinary actions render their complete original contents.
-                // The transcript budget below defers oversized actions to
-                // their pinned revision instead of excerpting them.
-                let html = reply_html(&content);
-                let href = format!("/plans/{}?revision={}", document.id, revision.revision);
-                let view = PlanActionView {
-                    deferred: false,
-                    task_list: document.kind == crate::conversations::DocumentKind::TaskList,
-                    label: if plan.is_some() {
-                        "Created a task breakdown"
-                    } else if previous.is_some() {
-                        "Revised the plan"
-                    } else if *assistant {
-                        "Created a plan"
-                    } else {
-                        "Added a plan"
-                    },
-                    title: title.clone(),
-                    html,
-                    href,
-                    provenance: source_label(&revision.source),
-                    revision: revision.revision,
-                    hash: revision.content_hash.as_str(),
-                };
-                actions.push((
-                    revision.created_at_ms,
-                    *message_index as usize + usize::from(!assistant),
-                    *assistant,
-                    view,
-                ));
-            }
-        }
-        for document in state.documents.list_for_conversation(record.id) {
-            if document.kind != crate::conversations::DocumentKind::TaskList {
-                continue;
-            }
-            let Some(revision) = document.revisions.first() else {
-                continue;
-            };
-            let anchor = match &revision.source {
-                PlanSource::SubmittedText {
-                    conversation_id,
-                    message_count,
-                    ..
-                } if *conversation_id == record.id => *message_count as usize,
-                PlanSource::ConversationMessage {
-                    conversation_id,
-                    message_index,
-                    ..
-                } if *conversation_id == record.id => {
-                    let index = *message_index as usize;
-                    if !self.messages.iter().any(|message| message.index == index) {
-                        continue;
-                    }
-                    index + 1
-                }
-                _ => continue,
-            };
-            let Ok(content) = state.documents.content(&document, revision.revision) else {
-                continue;
-            };
-            // Standalone task saves keep their SubmittedText or
-            // ConversationMessage provenance. The transcript action only
-            // presents that immutable revision without a plan association.
-            let view = PlanActionView {
-                deferred: false,
-                task_list: true,
-                label: "Added tasks",
-                title: document.revision_title(revision.revision).to_owned(),
-                html: reply_html(&content),
-                href: format!("/plans/{}?revision={}", document.id, revision.revision),
-                provenance: source_label(&revision.source),
-                revision: revision.revision,
-                hash: revision.content_hash.as_str(),
-            };
-            actions.push((revision.created_at_ms, anchor, false, view));
-        }
-        actions.sort_by_key(|(time, _, _, _)| *time);
-        let mut budget = 128 * 1024usize;
-        let mut selected = Vec::new();
-        for (_, index, assistant, view) in actions.into_iter().rev() {
-            let Ok(full) = view.render() else {
-                continue;
-            };
-            if full.len() <= budget {
-                budget -= full.len();
-                selected.push((index, assistant, full));
-            } else {
-                // Bounded delivery keeps the transcript within the Hypergraft
-                // envelope. Deferred contents stay available at the pinned
-                // revision link inside the fallback. Fallbacks that no longer
-                // fit are dropped so the transcript retains its bound.
-                let mut fallback = view;
-                fallback.deferred = true;
-                fallback.html = String::new();
-                let Ok(html) = fallback.render() else {
-                    continue;
-                };
-                if html.len() <= budget {
-                    budget -= html.len();
-                    selected.push((index, assistant, html));
-                }
-                self.plan_actions_omitted = true;
-            }
-        }
-        for (action_index, (index, assistant, html)) in selected.into_iter().rev().enumerate() {
-            if !assistant {
-                // The saved message boundary keeps actions before later replies.
-                let position = self
-                    .messages
-                    .iter()
-                    .position(|message| {
-                        message.index >= index && message.index < record.messages.len()
-                    })
-                    .unwrap_or(self.messages.len());
-                self.messages.insert(
-                    position,
-                    MessageView {
-                        index: record.messages.len() + action_index,
-                        user: true,
-                        html,
-                        status: "",
-                        error: String::new(),
-                        streaming: false,
-                        saveable_plan: false,
-                        plan_request_href: String::new(),
-                    },
-                );
-                continue;
-            }
-            if let Some(message) = self
-                .messages
-                .iter_mut()
-                .find(|message| message.index == index)
-            {
-                message.html.push_str(&html);
-            }
-        }
-        self
-    }
-}
-
-fn source_label(source: &PlanSource) -> String {
-    match source {
-        PlanSource::ConversationMessage { message_index, .. } => {
-            format!("Assistant message {}", message_index + 1)
-        }
-        PlanSource::Action {
-            assistant,
-            previous,
-            plan,
-            ..
-        } => {
-            let author = if !*assistant {
-                "User action"
-            } else if plan.is_some() {
-                "Assistant · create_task_breakdown"
-            } else if previous.is_some() {
-                "Assistant · revise_plan"
-            } else {
-                "Assistant · create_plan"
-            };
-            if let Some(plan) = plan {
-                format!(
-                    "{author} · Source plan {} revision {}",
-                    plan.document_id, plan.revision
-                )
-            } else if let Some(previous) = previous {
-                format!("{author} · Revision of {}", previous.revision)
-            } else {
-                author.to_owned()
-            }
-        }
-        PlanSource::SubmittedText { .. } => "Submitted document text".to_owned(),
-        PlanSource::DirectoryFile { path, .. } => format!("Imported file: {path}"),
-        PlanSource::Correction { previous } => {
-            format!("Correction of revision {}", previous.revision)
-        }
-    }
-}
-
-pub(super) struct TaskListItemView {
-    pub(super) index: u32,
-    pub(super) checked: bool,
-    pub(super) markdown: String,
-    pub(super) run_href: String,
-}
-
-pub(super) struct PlanPageRevision {
-    pub(super) revision: u32,
-    pub(super) provenance: String,
-    pub(super) open_href: String,
-    pub(super) export_href: String,
-}
-
-#[derive(Template)]
-#[template(path = "conversations/templates/plan.html", block = "plan_page")]
-pub(super) struct PlanDocumentPage {
-    pub(super) conversation_revision: u32,
-    pub(super) action_href: String,
-    pub(super) implementation_href: String,
-    pub(super) breakdowns: Vec<PlanDocumentView>,
-    pub(super) outdated: bool,
-    pub(super) review_href: String,
-    pub(super) document_title: String,
-    pub(super) title: String,
-    pub(super) document_id: String,
-    pub(super) document_revision: u32,
-    pub(super) current_revision: u32,
-    pub(super) provenance: String,
-    pub(super) content_hash: String,
-    pub(super) content: String,
-    pub(super) content_html: String,
-    pub(super) revisions: Vec<PlanPageRevision>,
-    pub(super) back_href: String,
-    pub(super) plans_href: String,
-    pub(super) associated: bool,
-    pub(super) task_count: usize,
-    pub(super) eligible_task_count: usize,
-    pub(super) tasks: Vec<TaskListItemView>,
-    pub(super) section: usize,
-    pub(super) sections: usize,
-    pub(super) section_prev: String,
-    pub(super) section_next: String,
-    pub(super) error: &'static str,
-}
-
-#[derive(Template)]
-#[template(path = "conversations/templates/plan.html", block = "plan_detail")]
-pub(super) struct PlanDocumentContents<'a> {
-    pub(super) conversation_revision: u32,
-    pub(super) action_href: &'a str,
-    pub(super) implementation_href: &'a str,
-    pub(super) breakdowns: &'a [PlanDocumentView],
-    pub(super) outdated: bool,
-    pub(super) review_href: &'a str,
-    pub(super) title: &'a str,
-    pub(super) document_id: &'a str,
-    pub(super) document_revision: u32,
-    pub(super) current_revision: u32,
-    pub(super) provenance: &'a str,
-    pub(super) content_hash: &'a str,
-    pub(super) content: &'a str,
-    pub(super) content_html: &'a str,
-    pub(super) revisions: &'a [PlanPageRevision],
-    pub(super) back_href: &'a str,
-    pub(super) plans_href: &'a str,
-    pub(super) associated: bool,
-    pub(super) task_count: usize,
-    pub(super) eligible_task_count: usize,
-    pub(super) tasks: &'a [TaskListItemView],
-    pub(super) section: usize,
-    pub(super) sections: usize,
-    pub(super) section_prev: &'a str,
-    pub(super) section_next: &'a str,
-    pub(super) error: &'static str,
-}
-
-impl PlanDocumentPage {
-    pub(super) fn from_document(
-        document: &PlanDocument,
-        revision: u32,
-        content: String,
-        section: usize,
-        error: &'static str,
-    ) -> Self {
-        let selected = document
-            .revision(revision)
-            .unwrap_or_else(|| document.current());
-        let revisions = document
-            .revisions
-            .iter()
-            .rev()
-            .map(|item| PlanPageRevision {
-                revision: item.revision,
-                provenance: source_label(&item.source),
-                open_href: format!("/plans/{}?revision={}", document.id.as_hex(), item.revision),
-                export_href: format!(
-                    "/plans/{}/export?revision={}",
-                    document.id.as_hex(),
-                    item.revision
-                ),
-            })
-            .collect();
-        let associated = document.associated_conversation.is_some();
-        let task_list = (document.kind == crate::conversations::DocumentKind::TaskList)
-            .then(|| crate::workflows::task_list::parse(&content).ok())
-            .flatten();
-        let task_count = task_list.as_ref().map_or(0, |list| list.tasks.len());
-        let eligible_task_count = task_list
-            .as_ref()
-            .map_or(0, |list| list.eligible_tasks().count());
-        let back_href = document.associated_conversation.map_or_else(
-            || "/conversations".to_owned(),
-            |id| format!("/conversations/{id}"),
-        );
-        let plans_href = document.associated_conversation.map_or_else(
-            || "/conversations".to_owned(),
-            |id| format!("/conversations/{id}/plans"),
-        );
-        // Sections share the full Markdown parser context, including reference links.
-        // An oversized block uses escaped text rather than partial Markdown.
-        // Task display demotes the saved heading so the page keeps one h1.
-        // The stored revision and the pinned export retain the exact source.
-        let display_preamble = task_list
-            .as_ref()
-            .map(|list| demote_task_heading(&list.preamble));
-        let preview_source = display_preamble.as_deref().unwrap_or(content.as_str());
-        let (chunks, plain) = plan_sections(preview_source);
-        let sections = chunks.len().max(1);
-        let section = section.min(sections.saturating_sub(1));
-        let section_text = chunks.get(section).cloned().unwrap_or_default();
-        let section_href = |index: usize| {
-            if index == 0 {
-                format!(
-                    "/plans/{}?revision={}",
-                    document.id.as_hex(),
-                    selected.revision
-                )
-            } else {
-                format!(
-                    "/plans/{}?revision={}&section={}",
-                    document.id.as_hex(),
-                    selected.revision,
-                    index
-                )
-            }
-        };
-        let content_html = if plain {
-            plain_html(&section_text)
-        } else {
-            let start: usize = chunks.iter().take(section).map(String::len).sum();
-            let end = start + section_text.len();
-            let events = crate::markdown::parser(preview_source)
-                .into_offset_iter()
-                .filter(|(_, range)| range.start >= start && range.end <= end)
-                .map(|(event, _)| event);
-            let mut html = String::new();
-            pulldown_cmark::html::push_html(&mut html, events);
-            bounded_reply_html(ammonia::clean(&html), &section_text)
-        };
-        Self {
-            conversation_revision: 0,
-            implementation_href: String::new(),
-            breakdowns: Vec::new(),
-            outdated: false,
-            action_href: document.associated_conversation.map_or_else(String::new, |id| {
-                if document.kind == crate::conversations::DocumentKind::TaskList {
-                    format!("/conversations/{id}/workflow?task_document={}&task_revision={}&task_hash={}", document.id, selected.revision, selected.content_hash.as_str())
-                } else {
-                    format!("/conversations/{id}/plans/{}/tasks", document.id)
-                }
-            }),
-            review_href: document.associated_conversation.map_or_else(String::new, |id| format!("/conversations/{id}/plans/{}/review?revision={}", document.id, selected.revision)),
-            document_title: format!(
-                "{} | {} | Power Plant",
-                document.title,
-                document.kind.label()
-            ),
-            title: document.revision_title(selected.revision).to_owned(),
-            document_id: document.id.as_hex(),
-            document_revision: selected.revision,
-            current_revision: document.current_revision(),
-            provenance: source_label(&selected.source),
-            content_hash: selected.content_hash.as_str(),
-            content_html,
-            content,
-            revisions,
-            back_href,
-            plans_href,
-            associated,
-            task_count,
-            eligible_task_count,
-            section,
-            sections,
-            section_prev: if section > 0 {
-                section_href(section - 1)
-            } else {
-                String::new()
-            },
-            section_next: if section + 1 < sections {
-                section_href(section + 1)
-            } else {
-                String::new()
-            },
-            tasks: task_list.map_or_else(Vec::new, |list| {
-                list.tasks
-                    .into_iter()
-                    .map(|task| TaskListItemView {
-                        index: task.index,
-                        checked: task.checked,
-                        markdown: task.markdown,
-                        run_href: document.associated_conversation.map_or_else(String::new, |conversation| format!(
-                            "/conversations/{conversation}/workflow?task_document={}&task_revision={}&task_hash={}&task_index={}",
-                            document.id.as_hex(), selected.revision, selected.content_hash.as_str(), task.index
-                        )),
-                    })
-                    .collect()
-            }),
-            error,
-        }
-    }
-
-    pub(super) fn with_context(
-        mut self,
-        state: &crate::state::AppState,
-        document: &PlanDocument,
-    ) -> Self {
-        let selected = document
-            .revision(self.document_revision)
-            .expect("selected revision");
-        self.implementation_href = super::workflow::implementation_href(state, document, selected);
-        if let Some(owner) = document.associated_conversation {
-            self.conversation_revision = state
-                .conversations
-                .get(&owner)
-                .map_or(0, |record| record.revision);
-            self.breakdowns = state.documents.list_for_conversation(owner).iter().filter(|child| {
-                matches!(&child.revisions[0].source, PlanSource::Action { plan: Some(plan), .. } if plan.document_id == document.id)
-            }).map(|child| {
-                let mut view = plan_document_view(child);
-                if let PlanSource::Action { plan: Some(plan), .. } = &child.revisions[0].source {
-                    view.provenance = format!("Source plan revision {}{}", plan.revision, if plan.revision != document.current_revision() { " · Outdated for a new run" } else { "" });
-                }
-                view
-            }).collect();
-        }
-        if let PlanSource::Action {
-            plan: Some(plan), ..
-        } = &document.revisions[0].source
-        {
-            self.outdated = state.documents.get(&plan.document_id).is_none_or(|parent| {
-                parent.current_revision() != plan.revision
-                    || parent.associated_conversation.is_none()
-            });
-        }
-        self
-    }
-
-    pub(super) fn contents(&self) -> PlanDocumentContents<'_> {
-        PlanDocumentContents {
-            conversation_revision: self.conversation_revision,
-            action_href: &self.action_href,
-            implementation_href: &self.implementation_href,
-            breakdowns: &self.breakdowns,
-            outdated: self.outdated,
-            review_href: &self.review_href,
-            title: &self.title,
-            document_id: &self.document_id,
-            document_revision: self.document_revision,
-            current_revision: self.current_revision,
-            provenance: &self.provenance,
-            content_hash: &self.content_hash,
-            content: &self.content,
-            content_html: &self.content_html,
-            revisions: &self.revisions,
-            back_href: &self.back_href,
-            plans_href: &self.plans_href,
-            associated: self.associated,
-            task_count: self.task_count,
-            eligible_task_count: self.eligible_task_count,
-            tasks: &self.tasks,
-            section: self.section,
-            sections: self.sections,
-            section_prev: &self.section_prev,
-            section_next: &self.section_next,
-            error: self.error,
-        }
-    }
-}
-
-pub(super) const PLAN_SECTION_CHARS: usize = 24_000;
-
-pub(super) fn demote_task_heading(preamble: &str) -> String {
-    // Demote every level-one heading so the page keeps one h1.
-    let mut demoted = String::with_capacity(preamble.len() + preamble.lines().count());
-    for line in preamble.split_inclusive('\n') {
-        if line.starts_with("# ") && !line[2..].trim().is_empty() {
-            demoted.push('#');
-            demoted.push_str(line);
-        } else {
-            demoted.push_str(line);
-        }
-    }
-    demoted
-}
-
-pub(super) fn split_plan_sections(content: &str) -> Vec<String> {
-    plan_sections(content).0
-}
-
-fn plan_sections(content: &str) -> (Vec<String>, bool) {
-    let mut sections = Vec::new();
-    let mut start = 0;
-    let mut end = 0;
-    let mut depth = 0usize;
-    for (event, range) in crate::markdown::parser(content).into_offset_iter() {
-        match event {
-            pulldown_cmark::Event::Start(_) => depth += 1,
-            pulldown_cmark::Event::End(_) => depth -= 1,
-            _ => {}
-        }
-        if depth != 0 {
-            continue;
-        }
-        if range.end - end > PLAN_SECTION_CHARS {
-            return (split_plain_sections(content), true);
-        }
-        if range.end - start > PLAN_SECTION_CHARS {
-            sections.push(content[start..end].to_owned());
-            start = end;
-        }
-        end = range.end;
-    }
-    if content.len() - start > PLAN_SECTION_CHARS {
-        return (split_plain_sections(content), true);
-    }
-    sections.push(content[start..].to_owned());
-    (sections, false)
-}
-
-fn split_plain_sections(content: &str) -> Vec<String> {
-    if content.len() <= PLAN_SECTION_CHARS {
-        return vec![content.to_owned()];
-    }
-    let mut sections = Vec::new();
-    let mut current = String::new();
-    for line in content.split_inclusive('\n') {
-        // Escaped continuation preserves exact bytes and UTF-8 boundaries.
-        if line.len() > PLAN_SECTION_CHARS {
-            if !current.is_empty() {
-                sections.push(std::mem::take(&mut current));
-            }
-            let mut rest = line;
-            while rest.len() > PLAN_SECTION_CHARS {
-                let mut take = PLAN_SECTION_CHARS;
-                while take > 0 && !rest.is_char_boundary(take) {
-                    take -= 1;
-                }
-                if take == 0 {
-                    take = rest.chars().next().map_or(1, |cell| cell.len_utf8());
-                }
-                sections.push(rest[..take].to_owned());
-                rest = &rest[take..];
-            }
-            current.push_str(rest);
-            continue;
-        }
-        if !current.is_empty() && current.len() + line.len() > PLAN_SECTION_CHARS {
-            sections.push(std::mem::take(&mut current));
-        }
-        current.push_str(line);
-    }
-    if !current.is_empty() {
-        sections.push(current);
-    }
-    if sections.is_empty() {
-        vec![content.to_owned()]
-    } else {
-        sections
     }
 }
 

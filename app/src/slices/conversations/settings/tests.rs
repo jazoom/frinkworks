@@ -9,6 +9,93 @@ use crate::{
 use super::super::tests::{app, command, connected, document, test_state, text};
 
 #[tokio::test]
+async fn future_defaults_require_an_explicit_revision_bound_command_without_access_approval() {
+    let state = test_state();
+    let token = connected(&state);
+    let record = state
+        .conversations
+        .create("Defaults source".to_owned())
+        .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let mut grant = crate::execution::DirectoryGrant::from_selected(directory.path(), &[]).unwrap();
+    grant.access = crate::execution::DirectoryAccess::DirectWrite;
+    let mut settings = crate::execution::ExecutionSettings::new(
+        ModelSelection::new(
+            ProviderKind::Xai,
+            "grok-4.6".to_owned(),
+            state
+                .models_dev
+                .effective_effort(ProviderKind::Xai, "grok-4.6", None),
+        )
+        .unwrap(),
+        "Use concise explanations.".to_owned(),
+        vec![ToolId::Read],
+        super::super::default_environment(&state).unwrap(),
+    )
+    .unwrap();
+    settings.directories.push(grant.clone());
+    let record = state
+        .conversations
+        .update_execution_settings(&record.id, record.revision, settings.clone())
+        .unwrap();
+    let record = state
+        .conversations
+        .record_directory_approval(
+            &record.id,
+            record.revision,
+            crate::conversations::DirectoryApproval::for_grant(&settings, &grant),
+        )
+        .unwrap();
+    let path = format!("/conversations/{}/settings/defaults", record.id);
+    let fields = format!("revision={}", record.revision);
+    let mut native = command(&path, &token, &fields);
+    native.headers_mut().remove("graft-request");
+    assert_eq!(
+        app(&state).oneshot(native).await.unwrap().status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        app(&state)
+            .oneshot(command(&path, &token, "revision=0"))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CONFLICT
+    );
+    assert!(state.preferences.conversation_defaults().is_none());
+    assert_eq!(
+        app(&state)
+            .oneshot(command(&path, &token, &fields))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        state.preferences.conversation_defaults(),
+        Some(settings.clone())
+    );
+    assert_eq!(state.conversations.get(&record.id), Some(record.clone()));
+    let body = text(
+        app(&state)
+            .oneshot(document("/conversations/new", &token))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(body.contains("Use concise explanations."));
+    assert!(body.contains("Pending approval"));
+    assert_eq!(state.conversations.list().len(), 1);
+    let mut replacement = settings.clone();
+    replacement.instructions = "Local exception.".to_owned();
+    state
+        .conversations
+        .update_execution_settings(&record.id, record.revision, replacement)
+        .unwrap();
+    assert_eq!(state.preferences.conversation_defaults(), Some(settings));
+}
+
+#[tokio::test]
 async fn settings_update_validates_the_complete_form_and_revision() {
     let state = test_state();
     let token = connected(&state);
@@ -43,6 +130,7 @@ async fn settings_update_validates_the_complete_form_and_revision() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body.contains("data-settings-open=\"true\""));
     let updated = state.conversations.get(&record.id).unwrap();
+    assert!(state.preferences.conversation_defaults().is_none());
     let settings = &updated.model.as_ref().unwrap().settings;
     assert_eq!(settings.instructions, "Answer with concise evidence.");
     assert_eq!(settings.environment, environment.id);
@@ -614,210 +702,6 @@ async fn host_approval_policy_needs_fresh_consent_and_does_not_settle_pending_co
 }
 
 #[tokio::test]
-async fn execution_mode_switch_requires_sandbox_readiness_and_fresh_consent() {
-    let state = test_state();
-    let token = connected(&state);
-    let session = super::super::tests::session_id(&token);
-    let effort = state
-        .models_dev
-        .effective_effort(ProviderKind::Xai, "grok-4.6", None)
-        .unwrap();
-    let directory = tempfile::tempdir().unwrap();
-    let mut grant = crate::execution::DirectoryGrant::from_selected(directory.path(), &[]).unwrap();
-    grant.access = crate::execution::DirectoryAccess::DirectWrite;
-    let (unready, _) = state
-        .environments
-        .create(crate::environments::EnvironmentDraft {
-            name: "Not prepared".to_owned(),
-            oci_image: "docker.io/library/alpine:3.20".to_owned(),
-            setup_script: String::new(),
-        })
-        .unwrap();
-    let settings = crate::execution::ExecutionSettings::new(
-        ModelSelection::new(
-            ProviderKind::Xai,
-            "grok-4.6".to_owned(),
-            Some(effort.clone()),
-        )
-        .unwrap(),
-        String::new(),
-        vec![ToolId::Run],
-        unready.id,
-    )
-    .unwrap()
-    .with_directories(vec![grant.clone()])
-    .unwrap()
-    .with_location(crate::execution::ToolLocation::Host)
-    .with_host_approval(crate::execution::HostApprovalPolicy::Automatic);
-    let record = state
-        .conversations
-        .create("Switch consent".to_owned())
-        .unwrap();
-    let record = state
-        .conversations
-        .update_execution_settings(&record.id, record.revision, settings.clone())
-        .unwrap();
-    let request = state
-        .access_consent
-        .request_host_conversation(session, record.id, &settings)
-        .unwrap();
-    state
-        .access_consent
-        .approve_host_conversation(&request, session, record.id, &settings)
-        .unwrap();
-    assert!(
-        state
-            .access_consent
-            .authorised_host_conversation(session, record.id, &settings)
-    );
-
-    let owner = session;
-    let job = state
-        .sessions
-        .begin_conversation_job(&owner, record.id, 1)
-        .unwrap();
-    state
-        .conversations
-        .begin_message_with_model(
-            &record.id,
-            record.revision,
-            record.model.clone(),
-            job.id(),
-            "Question".to_owned(),
-        )
-        .unwrap();
-    let active = state.conversations.get(&record.id).unwrap();
-    let preview_path = format!("/conversations/{}/settings/environment", active.id);
-
-    let response = app(&state)
-        .oneshot(command(
-            &preview_path,
-            &token,
-            &format!(
-                "revision={}&location=sandbox&host_approval=ask-each-time&environment={}",
-                active.revision, unready.id
-            ),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::CONFLICT);
-    assert!(text(response).await.contains("not ready"));
-    assert_eq!(
-        state
-            .conversations
-            .get(&active.id)
-            .unwrap()
-            .model
-            .as_ref()
-            .unwrap()
-            .settings
-            .location,
-        crate::execution::ToolLocation::Host
-    );
-
-    let response = app(&state)
-        .oneshot(command(
-            &preview_path,
-            &token,
-            &format!(
-                "revision={}&location=host&host_approval=ask-each-time&environment={}",
-                active.revision, unready.id
-            ),
-        ))
-        .await
-        .unwrap();
-    let status = response.status();
-    let body = text(response).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(body.contains("Stop task and switch"));
-    assert!(body.contains("Host command approval changes from"));
-    assert!(body.contains("Work location"));
-    assert!(body.contains(&directory.path().display().to_string()));
-    assert!(body.contains("Direct write"));
-    assert!(body.contains("needs new approval"));
-    assert_eq!(
-        state
-            .conversations
-            .get(&active.id)
-            .unwrap()
-            .model
-            .as_ref()
-            .unwrap()
-            .settings
-            .host_approval,
-        crate::execution::HostApprovalPolicy::Automatic
-    );
-
-    job.finish(crate::sessions::JobStatus::Cancelled, None);
-    state
-        .sessions
-        .finish_conversation_job(&owner, active.id, job.id());
-    state
-        .conversations
-        .settle_message(
-            &active.id,
-            job.id(),
-            String::new(),
-            crate::conversations::MessageStatus::Interrupted,
-            None,
-        )
-        .unwrap();
-    let idle = state.conversations.get(&active.id).unwrap();
-    let path = format!("/conversations/{}/settings", idle.id);
-    let response = app(&state)
-        .oneshot(command(
-            &path,
-            &token,
-            &format!(
-                "revision={}&provider=xai&model=grok-4.6&thinking={}&location=host&tool_run=run&host_approval=ask-each-time&environment={}",
-                idle.revision,
-                effort.as_str(),
-                unready.id
-            ),
-        ))
-        .await
-        .unwrap();
-    let status = response.status();
-    let body = text(response).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(state.conversations.get(&idle.id).unwrap().model, idle.model);
-    let response = app(&state)
-        .oneshot(command(
-            &preview_path,
-            &token,
-            &format!(
-                "revision={}&environment={}&location=host&host_approval=ask-each-time&confirm=true",
-                idle.revision, unready.id
-            ),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = text(response).await;
-    let updated = state.conversations.get(&idle.id).unwrap();
-    let stored = updated.model.as_ref().unwrap().settings.clone();
-    assert_eq!(
-        stored.host_approval,
-        crate::execution::HostApprovalPolicy::AskEachTime
-    );
-    assert!(
-        !state
-            .access_consent
-            .authorised_host_conversation(session, updated.id, &stored)
-    );
-    assert!(body.contains("Pending approval"));
-
-    for path in [&preview_path, &path] {
-        let response = app(&state).oneshot(command(path, &token, &format!(
-            "revision={}&provider=xai&model=grok-4.6&thinking={}&location=sandbox&tool_run=run&environment={}&confirm=true",
-            updated.revision, effort.as_str(), unready.id,
-        ))).await.unwrap();
-        assert!(!response.status().is_success());
-        assert_eq!(state.conversations.get(&updated.id).unwrap(), updated);
-    }
-}
-
-#[tokio::test]
 async fn strategy_switch_binds_existing_roots_and_waits_for_cancelled_commands() {
     let mut state = test_state();
     let home = tempfile::tempdir().unwrap();
@@ -991,7 +875,6 @@ async fn explicit_empty_tool_selection_persists_without_default_substitution() {
     assert_eq!(status, StatusCode::OK, "{body}");
     let updated = state.conversations.get(&record.id).unwrap();
     assert!(updated.model.as_ref().unwrap().settings.tools.is_empty());
-    assert!(body.contains("Review setup changes"));
     assert!(body.contains("Cancel setup changes"));
     let invalid = format!(
         "revision={}&provider=xai&model=grok-4.6&thinking=invalid&instructions=Concise+replies",

@@ -310,7 +310,6 @@ fn sensitive_dispatch_requires_live_consent_and_the_original_directory() {
         turns: Vec::new(),
         job: crate::sessions::Job::new(crate::sessions::JobId::generate().unwrap(), run_id, 0),
         eligible_reply: std::sync::Arc::new(std::sync::Mutex::new(String::new())),
-        task_loop: None,
     };
     assert!(super::confirm_run_authority(&state, &job).is_err());
     let request = state
@@ -733,7 +732,6 @@ fn fixing_publication_fixture() -> (
         turns: Vec::new(),
         job: crate::sessions::Job::new(crate::sessions::JobId::generate().expect("job"), run_id, 0),
         eligible_reply: std::sync::Arc::new(std::sync::Mutex::new(String::new())),
-        task_loop: None,
     };
     (
         state,
@@ -931,7 +929,6 @@ fn interruption_failure_restores_current_and_unprocessed_jobs() {
                 0,
             ),
             eligible_reply: std::sync::Arc::new(std::sync::Mutex::new(String::new())),
-            task_loop: None,
         };
         assert!(state.gate_continuations.insert(job));
     }
@@ -981,7 +978,6 @@ fn final_gate_completion_settles_the_session_job_successfully() {
         turns: Vec::new(),
         job: begun.job.clone(),
         eligible_reply: std::sync::Arc::new(std::sync::Mutex::new(String::new())),
-        task_loop: None,
     };
 
     super::settle_completed_job(&state, &workflow);
@@ -1330,6 +1326,7 @@ fn completed_output_attempt(
         apply_transaction: None,
         commit_transaction: None,
         commit_result: None,
+        direct_changes: None,
     }
 }
 
@@ -1887,7 +1884,6 @@ fn test_job(
         turns: Vec::new(),
         job: crate::sessions::Job::new(crate::sessions::JobId::generate().expect("job"), run_id, 0),
         eligible_reply: std::sync::Arc::new(std::sync::Mutex::new(String::new())),
-        task_loop: None,
     }
 }
 
@@ -2223,7 +2219,6 @@ fn gate_ready_fixture(
         turns: begun.turns,
         job: begun.job,
         eligible_reply: std::sync::Arc::new(std::sync::Mutex::new("No files changed.".to_owned())),
-        task_loop: None,
     };
     (state, job, session_id, key)
 }
@@ -2235,104 +2230,6 @@ async fn execute_gate_run(state: crate::state::AppState, job: crate::workflows::
         .expect("lease");
     let execution = state.workflow_execution.acquire().expect("execution");
     super::execute_run(state, job, Some(lease), execution).await;
-}
-
-#[test]
-fn child_settlement_retains_parent_ownership_until_the_last_task() {
-    use crate::workflows::task_loop::tests::{completed_child, loop_record, source};
-    let (state, mut workflow, _, _) = gate_ready_fixture(
-        crate::workflows::RunKind::QuickTask,
-        GateCandidate::Unchanged,
-    );
-    let conversation = state
-        .conversations
-        .create("Loop".to_owned())
-        .expect("conversation");
-    let token = crate::sessions::generate_session_token().expect("session");
-    state.sessions.insert(token.id());
-    let job = state
-        .sessions
-        .begin_conversation_job(&token.id(), conversation.id, 1)
-        .expect("job");
-    state
-        .conversations
-        .begin_message_with_model(
-            &conversation.id,
-            conversation.revision,
-            None,
-            job.id(),
-            "Implement".to_owned(),
-        )
-        .expect("message");
-    let mut parent = loop_record();
-    parent.conversation_id = conversation.id;
-    let parent = state.task_loops.create(parent).expect("parent");
-    let (parent, first, _) = state
-        .task_loops
-        .reserve_next_child(&parent.id, 0)
-        .expect("first");
-    state
-        .task_loops
-        .mark_dispatched(&parent.id, first)
-        .expect("dispatch");
-    state
-        .workflow_runs
-        .create(completed_child(&parent, first, source(1)))
-        .expect("child");
-    workflow.run_id = first;
-    workflow.task_loop = Some(parent.id);
-    workflow.conversation_id = Some(conversation.id);
-    workflow.session_id = token.id();
-    workflow.project_id = parent.project_id;
-    workflow.agent_id = parent.agent_id;
-    workflow.job = job;
-    let lease = state.workflow_execution.acquire().expect("execution");
-    assert!(!super::finish_driven_job(
-        &state,
-        &mut workflow,
-        crate::sessions::JobStatus::Completed,
-        None
-    ));
-    assert_ne!(workflow.run_id, first);
-    assert!(state.sessions.busy(&token.id()));
-    assert_eq!(
-        state
-            .conversations
-            .get(&conversation.id)
-            .expect("conversation")
-            .active_job,
-        Some(workflow.job.id())
-    );
-    assert!(state.workflow_execution.acquire().is_err());
-    let parent = state.task_loops.get(&parent.id).expect("parent");
-    let second = completed_child(&parent, workflow.run_id, source(2));
-    state
-        .workflow_runs
-        .mutate(&second.id, |run| {
-            *run = second.clone();
-            Ok(())
-        })
-        .expect("complete second");
-    assert!(super::finish_driven_job(
-        &state,
-        &mut workflow,
-        crate::sessions::JobStatus::Completed,
-        None
-    ));
-    assert_eq!(
-        state.task_loops.get(&parent.id).expect("parent").state,
-        crate::workflows::task_loop::TaskLoopState::Completed
-    );
-    assert!(!state.sessions.busy(&token.id()));
-    assert_eq!(
-        state
-            .conversations
-            .get(&conversation.id)
-            .expect("conversation")
-            .active_job,
-        None
-    );
-    drop(lease);
 }
 
 #[test]
@@ -2469,73 +2366,4 @@ async fn execute_run_opens_a_gate_for_an_unchanged_configured_candidate() {
         snapshot.job.map(|job| job.status),
         Some(JobStatus::AwaitingDecision)
     );
-}
-
-#[test]
-fn recover_task_loops_does_not_start_model_work() {
-    let state = crate::tests::test_state(crate::config::RuntimeConfig::development());
-    let parent = crate::workflows::task_loop::tests::loop_record();
-    let parent = state.task_loops.create(parent).expect("loop");
-    let (parent, first_id, _) = state
-        .task_loops
-        .reserve_next_child(&parent.id, 0)
-        .expect("reserve");
-    state
-        .task_loops
-        .mark_dispatched(&parent.id, first_id)
-        .expect("dispatch");
-    let child = crate::workflows::task_loop::tests::completed_child(
-        &parent,
-        first_id,
-        crate::workflows::task_loop::tests::source(1),
-    );
-    state.workflow_runs.create(child).expect("child");
-    super::recover_task_loops(&state).expect("recover");
-    let parent = state.task_loops.get(&parent.id).expect("parent");
-    assert_eq!(
-        parent.state,
-        crate::workflows::task_loop::TaskLoopState::Paused
-    );
-    assert_eq!(parent.tasks[1].child_id, None);
-    assert!(state.workflow_execution.acquire().is_ok());
-}
-
-#[test]
-fn a_recovered_commit_does_not_run_again_for_a_task_loop_child() {
-    let state = crate::tests::test_state(crate::config::RuntimeConfig::development());
-    let parent = crate::workflows::task_loop::tests::loop_record();
-    let parent = state.task_loops.create(parent).expect("loop");
-    let (parent, first_id, _) = state
-        .task_loops
-        .reserve_next_child(&parent.id, 0)
-        .expect("reserve");
-    state
-        .task_loops
-        .mark_dispatched(&parent.id, first_id)
-        .expect("dispatch");
-    let child = crate::workflows::task_loop::tests::completed_child(
-        &parent,
-        first_id,
-        crate::workflows::task_loop::tests::source(1),
-    );
-    let commit = child.attempts[0]
-        .commit_result
-        .as_ref()
-        .map(|result| result.commit.clone());
-    state.workflow_runs.create(child).expect("child");
-    super::recover_commit_transactions(&state).expect("no active transaction");
-    super::recover_task_loops(&state).expect("recover loop");
-    super::recover_commit_transactions(&state).expect("second recovery");
-    let child = state.workflow_runs.get(&first_id).expect("child");
-    assert_eq!(
-        child.attempts[0]
-            .commit_result
-            .as_ref()
-            .map(|result| result.commit.clone()),
-        commit
-    );
-    assert_eq!(child.attempts.len(), 1);
-    let parent = state.task_loops.get(&parent.id).expect("parent");
-    assert_eq!(parent.tasks[0].child_id, Some(first_id));
-    assert_eq!(parent.tasks[1].child_id, None);
 }

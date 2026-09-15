@@ -33,6 +33,16 @@ pub(crate) enum CatalogueResetConflict {
     ConversationGrant,
     PresetGrant,
     WorkflowGrant,
+    DefaultDirectory,
+}
+
+pub(crate) struct ResetCatalogues<'a> {
+    pub(crate) projects: &'a ProjectStore,
+    pub(crate) agents: &'a AgentStore,
+    pub(crate) conversations: &'a ConversationStore,
+    pub(crate) presets: &'a crate::presets::PresetStore,
+    pub(crate) workflows: &'a crate::workflows::WorkflowCatalogue,
+    pub(crate) preferences: &'a crate::preferences::Preferences,
 }
 
 #[derive(Debug)]
@@ -51,6 +61,9 @@ impl CatalogueResetConflict {
                 "A conversation grant is inside the Power Plant data directory."
             }
             Self::PresetGrant => "A preset grant is inside the Power Plant data directory.",
+            Self::DefaultDirectory => {
+                "A directory in future defaults is inside the Power Plant data directory."
+            }
             Self::WorkflowGrant => {
                 "A workflow directory setting is inside the Power Plant data directory."
             }
@@ -146,11 +159,7 @@ impl LocalDataReset {
     pub(crate) async fn request_reset(
         &self,
         workflow_execution: &Arc<WorkflowExecution>,
-        projects: &ProjectStore,
-        agents: &AgentStore,
-        conversations: &ConversationStore,
-        presets: &crate::presets::PresetStore,
-        workflows: &crate::workflows::WorkflowCatalogue,
+        catalogues: ResetCatalogues<'_>,
     ) -> Result<ResetRequest, ResetError> {
         if self.is_pending() {
             return Ok(ResetRequest::Pending);
@@ -165,13 +174,27 @@ impl LocalDataReset {
             return Ok(ResetRequest::Pending);
         }
         if let Some(conflict) = self.catalogue_conflict(
-            &projects.list(),
-            &agents.list(),
-            &conversations.list(),
-            &presets.list(),
-            &workflows.list(),
+            &catalogues.projects.list(),
+            &catalogues.agents.list(),
+            &catalogues.conversations.list(),
+            &catalogues.presets.list(),
+            &catalogues.workflows.list(),
         ) {
             return Err(ResetError::Catalogue(conflict));
+        }
+        if catalogues
+            .preferences
+            .conversation_defaults()
+            .is_some_and(|settings| {
+                settings
+                    .directories
+                    .iter()
+                    .any(|grant| path_under_root(&self.root, &grant.host_path))
+            })
+        {
+            return Err(ResetError::Catalogue(
+                CatalogueResetConflict::DefaultDirectory,
+            ));
         }
         let mut inner = lock(&self.inner);
         let result = write_reset_marker(&self.root, &mut inner).map_err(ResetError::Persist)?;

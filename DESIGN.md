@@ -57,7 +57,7 @@ spacing:
 
 The conversation is the work destination. An olive index sits beside a pale transcript and an optional work companion.
 
-The approved reference is `docs/ui-overhaul/reference/`. The conversation, plans and workflow setup share its companion structure. Catalogue authoring remains a separate flow.
+The conversation and workflow setup share the companion structure. Catalogue authoring remains a separate flow.
 
 ## Colors
 
@@ -129,7 +129,7 @@ Needs your attention carries the positive server decision count. The live projec
 
 Conversation pages carry their own header with the mobile menu trigger. The separate location bar stays for catalogue pages that need navigation and execution status.
 
-Needs your attention lists real unresolved decisions with owning context links. An optional conversation identifier selects the return destination only: valid context shows Back to conversation, while any other value omits the return link. Refresh and decision pages preserve valid context, and every decision stays visible. History connects conversations to runs, task loops and evidence.
+Needs your attention lists real unresolved decisions with owning context links. An optional conversation identifier selects the return destination only: valid context shows Back to conversation, while any other value omits the return link. Refresh and decision pages preserve valid context, and every decision stays visible. History connects conversations to runs and evidence.
 
 The sidebar resource group links directly to Workflows, Presets, Environments and Providers. More resources contains Projects and Agents. Settings stays separate below the group.
 
@@ -151,7 +151,13 @@ Jump to latest appears when the reader leaves the transcript end. New output doe
 
 ### Conversation header
 
-New conversations show the title without an explanatory subtitle. Saved conversations retain the directory name followed by Conversation. Saved records without directory context read No directory / Conversation. Actions run Plans, Setup, then Conversation actions. Conversation actions holds the independent draft copy with its settings note, rename and deletion behind an explicit confirmation. Plans carries its count only when plans or task lists exist. Current work appears only while work is non-idle and its companion is closed. A Needs your review strip opens Current work without approval when a decision waits. Narrow screens wrap the actions below a long title because production keeps readable text labels where the mock uses compact icon buttons.
+New conversations show the title without an explanatory subtitle. Saved records identify their directory context beside the conversation title.
+
+The header offers Handoff, Setup and Conversation actions. Conversation actions contains an independent draft copy, rename and explicit deletion.
+
+Current work appears when work is non-idle and its companion is closed. A Needs your review strip opens the companion without approval.
+
+Narrow screens wrap the actions below a long title. All actions retain readable labels.
 
 ### Current work
 
@@ -173,39 +179,52 @@ Keep applied files and end task appears only when every transaction holds a know
 
 ### Setup
 
-Setup occupies the companion position. One native section selector reveals a group without removal of the other controls. The former hidden tabs are retired. The six sections, Model, Instructions and tools, Execution, Directories, Presets and Conversation details, are the approved production difference from the reference tab buttons. Genuinely new conversation, agent and preset forms select List, Read, Write and Run. An explicit empty tool choice stays empty after validation and on existing or copied records.
+Setup occupies the companion position. Its section controls retain unsaved values when the user changes sections.
 
-Setup submits through Review setup changes with Cancel setup changes. Requested values stay draft until the save or approval command succeeds. The execution-switch preview and its Stop task and switch, Discard changes and switch and Change execution settings settlement paths are unchanged.
+The visible sections are:
 
-Setup and Plans follow the actual header height. Long mobile titles remain visible above the open companion.
+- Model.
+- Files and execution.
+- Instructions.
+- Presets.
+
+New forms select the available tools by default. An explicit empty tool choice stays empty after validation and on copied records.
+
+Saved conversations submit through Save settings. New conversations offer Keep draft settings. Cancel setup changes retains its existing behaviour.
+
+A successful settings save shows a status message outside the scroll area. The message distinguishes local settings from future defaults.
+
+Use saved settings as future defaults is a separate explicit action. Its explanation distinguishes saved values from unsaved edits and access approval.
+
+The execution-switch preview retains its existing settlement paths. Requested values stay draft until the save or approval command succeeds.
+
+Setup and workflow companions follow the actual header height. Long mobile titles remain visible above the open companion.
 
 Section changes retain unsaved fields. Validation reveals affected controls before focus moves. Effective summaries change only after a successful settings command.
 
 Closure restores focus even after a command replaces the original trigger. Escape closes the navigation menu before the companion.
 
-### Plans
+### Handoff
 
-Plans opens a companion with native navigation fallback. A selected plan retains the conversation workspace and a canonical revision URL.
+The conversation header offers Handoff as a text link. Its canonical page keeps the selected theme and shared navigation.
 
-Explicit actions show their original contents in ruled transcript sections. Action details identify the author and immutable revision, rather than an inferred attachment.
+A focused page presents an optional instruction field before generation. The generated prompt appears in a labelled textarea with an explicit continuation action.
 
-Bounded delivery keeps the transcript and plan views within the Hypergraft response and node limits. Oversized transcript actions defer their complete contents to the pinned revision link. Oversized plan revisions use bounded continuation sections on the same canonical route with the complete pinned export unchanged. Sections retain complete Markdown blocks and share reference definitions. A block above the section limit uses escaped text across sections instead of partial Markdown. This bounded delivery is the production difference from the small mock examples.
+Prepare new conversation opens an unsent draft. It does not start the next agent.
 
-The plan companion separates its content scroll area from its action footer. Prepare implementation opens a workflow preview and starts no work.
+At a safe decision, the page offers exact prepared changes or context only. Neither choice applies, discards or reverses files.
 
-Revision controls accept a model request or supplied text. Earlier action titles and contents remain unchanged after either action.
+An exact-change draft displays pinned settings and explicit run-only approval. Send transfers ownership without another model call or gate decision.
 
-Task breakdowns stay under their source plan. Older breakdowns identify their source revision and show an outdated notice for new runs.
+An expired runtime displays Restore prepared changes in the owner companion. The candidate remains visible, but decision controls stay disabled until fresh consent restores execution.
 
-Standalone task imports remain distinct from plans. Export and independent review retain their canonical routes. A saved standalone list records an Added tasks transcript action. The task detail keeps one h1 title and demotes the saved Markdown heading for display without changing the stored revision or pinned export.
-
-On mobile, both Plans and a selected plan exclude the hidden conversation controls. Closure returns focus to a conversation control.
-
-Ordinary replies never become plans through text recognition. A plan action grants no execution authority.
+The handoff page uses the existing type scale and controls. It introduces no new palette or panel system.
 
 ### Workflow setup
 
-Workflow setup occupies the 400-pixel companion. Choose, inputs and review retain the brief and exact input selection through Back controls. The chooser lists Implement a saved plan first, then the six reference processes in reference order, then user-authored workflows. Implement a saved plan is the production difference from the six-process reference mock.
+Workflow setup occupies the 400-pixel companion. Choose, inputs and review retain the brief through Back controls.
+
+The chooser lists the five bundled sequences before user-authored workflows. There is no saved-plan selection or repeated task group.
 
 The content scrolls separately from the footer. The footer retains Back and the eligible next action.
 
@@ -225,7 +244,7 @@ The conversation catalogue pairs its directory filter with a title search. The q
 
 Run history filters by stored canonical directory identity. The filter applies before the fifty-record bound with newest matches first. Unavailable directories keep their labels. Run history stays run-centred as an approved difference from the reference conversation rows.
 
-Run details retain the owning conversation and parent loop links. Evidence pages retain their canonical run links.
+Run details retain the owning conversation. Evidence pages retain their canonical run links.
 
 ### Other surfaces
 
@@ -245,11 +264,17 @@ The standalone page uses the same background and retains its compact bordered fo
 
 ## Validation boundary
 
-[The final UI report](docs/ui-overhaul/MILESTONE-4.md) records capability destinations and state coverage. The approved reference remains unchanged.
+The implementation status and evidence boundary are in `docs/conversation-system.md`.
 
-Candidate review passed desktop and mobile accessibility audits in all five themes. Selected gradient controls retain incomplete contrast checks.
+Current browser checks cover desktop and mobile navigation with synthetic conversation data. Springfield and Sector 7-G retain their theme tokens.
 
-Browser evidence does not establish successful hosted execution or reviewed file application. Partial application and uncertain recovery retain automated coverage.
+The mobile handoff page passes the browser accessibility audit. This result does not establish accessibility for every execution state or theme.
+
+Browser checks cover ownership transfer, restart and explicit application to a real temporary file without a commit.
+
+A supplied prompt enters the real preparation endpoint. Synthetic records support direct-write previews and downloads.
+
+Browser evidence does not establish successful hosted-model generation or hosted agent execution.
 
 ## Do's and Don'ts
 
@@ -259,7 +284,7 @@ Browser evidence does not establish successful hosted execution or reviewed file
 - Keep native links for ordinary navigation.
 - Keep exact candidate and revision fields on consequential commands.
 - Keep effective access separate from unsaved settings.
-- Do not infer plans from reply text.
+- Keep plans and checklists as ordinary content.
 - Do not use title case for headings or controls.
 - Keep focus indicators visible.
 - Respect reduced-motion preferences.

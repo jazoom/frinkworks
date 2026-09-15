@@ -1,20 +1,10 @@
+pub(crate) fn required_inputs(_definition: &WorkflowDefinition) -> &'static str {
+    "Brief · Conversation settings"
+}
 use super::commands::SystemCommandId;
 use super::definition::{
-    CandidateAuthority, ExecutionMode, OutputKind, StepAction, StepDefinition, WorkflowDefinition,
+    CandidateAuthority, OutputKind, StepAction, StepDefinition, WorkflowDefinition,
 };
-
-pub(crate) const REPEATED_GROUP: &str = "Repeated for each remaining task";
-pub(crate) const REPEATED_GROUP_DETAIL: &str = "These phases run once for each remaining task. Power Plant does not copy them for every task. Conversation history and earlier worker transcripts stay out of each attempt.";
-
-pub(crate) fn required_inputs(definition: &WorkflowDefinition) -> &'static str {
-    if definition.execution_mode() == ExecutionMode::TaskList {
-        "Task brief · Target project · Task list"
-    } else if definition.launch_input_sources().is_empty() {
-        "Task brief · Conversation settings"
-    } else {
-        "Task brief · Conversation settings · Saved plan"
-    }
-}
 
 pub(crate) struct ProcessPhase {
     pub(crate) position: usize,
@@ -140,17 +130,6 @@ impl ProcessPhase {
     }
 }
 
-pub(crate) fn mark_repeated_group(phases: &mut [ProcessPhase]) {
-    if let Some(first) = phases.first_mut() {
-        first.group = REPEATED_GROUP.to_owned();
-        first.group_start = true;
-        first.group_detail = REPEATED_GROUP_DETAIL.to_owned();
-    }
-    for phase in phases.iter_mut().skip(1) {
-        phase.group = REPEATED_GROUP.to_owned();
-    }
-}
-
 pub(crate) fn revision_summary(human: bool, target: &str, attempt_limit: &str) -> String {
     let prefix = if human {
         "Approval stop. Request changes returns to"
@@ -161,7 +140,7 @@ pub(crate) fn revision_summary(human: bool, target: &str, attempt_limit: &str) -
 }
 
 pub(crate) fn process_overview(definition: &WorkflowDefinition) -> Vec<ProcessPhase> {
-    let mut phases: Vec<_> = definition
+    let phases: Vec<_> = definition
         .steps()
         .iter()
         .enumerate()
@@ -225,9 +204,7 @@ pub(crate) fn process_overview(definition: &WorkflowDefinition) -> Vec<ProcessPh
             phase
         })
         .collect();
-    if definition.execution_mode() == ExecutionMode::TaskList {
-        mark_repeated_group(&mut phases);
-    }
+
     phases
 }
 
@@ -286,7 +263,7 @@ fn format_revision(
 }
 
 pub(crate) fn process_summary(definition: &WorkflowDefinition) -> String {
-    let phases = definition
+    definition
         .steps()
         .iter()
         .map(|step| {
@@ -299,12 +276,7 @@ pub(crate) fn process_summary(definition: &WorkflowDefinition) -> String {
             format!("{} ({action})", step.name)
         })
         .collect::<Vec<_>>()
-        .join(" · ");
-    if definition.execution_mode() == ExecutionMode::TaskList {
-        format!("{phases} · {}", definition.execution_mode().label())
-    } else {
-        phases
-    }
+        .join(" · ")
 }
 
 pub(crate) fn code_effects(definition: &WorkflowDefinition) -> String {

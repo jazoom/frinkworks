@@ -1,0 +1,42 @@
+{% if unknown %}
+  <p role="status" class="mt-4">
+    The final snapshot is unavailable. Direct writes can remain. Power Plant
+    does not infer a result from current files.
+  </p>
+{% else %}
+  <p class="mt-4 text-sm">
+    {{ total }} changed {% if total == 1 %}file{% else %}files{% endif %}
+  </p>
+  <ul class="divide-base-300 mt-3 divide-y">
+    {% for file in files %}
+      <li class="min-w-0 py-4">
+        <details
+          class="collapse-arrow border-base-300 collapse rounded-none border"
+        >
+          <summary class="collapse-title min-h-11 font-mono text-sm break-all">
+            {{ file.path }} <span class="font-sans">· {{ file.status }}</span>
+          </summary>
+          <div class="collapse-content min-w-0">
+            <pre
+              tabindex="0"
+              class="bg-base-200 max-h-96 overflow-auto p-3 text-xs break-words whitespace-pre-wrap"
+            >
+{{ file.text }}</pre>
+            <div class="mt-3 flex flex-wrap gap-3">
+              {% if !file.before_href.is_empty() %}
+                <a href="{{ file.before_href }}" class="link text-sm"
+                  >Download before</a
+                >
+              {% endif %}
+              {% if !file.after_href.is_empty() %}
+                <a href="{{ file.after_href }}" class="link text-sm"
+                  >Download after</a
+                >
+              {% endif %}
+            </div>
+          </div>
+        </details>
+      </li>
+    {% endfor %}
+  </ul>
+{% endif %}

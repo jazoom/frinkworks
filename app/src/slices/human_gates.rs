@@ -55,7 +55,7 @@ fn ids(run: &str, gate: &str) -> Option<(RunId, GateId)> {
 
 async fn detail(
     State(state): State<AppState>,
-    _session: RequiredSession,
+    session: RequiredSession,
     graft: PageGraft,
     Path((run_id, gate_id)): Path<(String, String)>,
     Query(raw): Query<RawQuery>,
@@ -111,7 +111,7 @@ async fn detail(
             };
             (Some(diff), None)
         };
-    let Some(view) = page::GatePage::new(
+    let Some(mut view) = page::GatePage::new(
         &run,
         gate,
         diff,
@@ -128,6 +128,10 @@ async fn detail(
             "That diff page is not valid.",
         );
     };
+    if run.recoverable_gate() && !state.gate_continuations.available(&run.id, &session.0) {
+        view.needs_recovery = true;
+        view.awaiting = false;
+    }
     match graft {
         PageGraft::Document => {
             let mut response = responses::chat_page_response(page::TITLE, &state, &view)?;
@@ -238,7 +242,7 @@ async fn discard_and_switch(
     let Some((run_id, gate_id)) = ids(&run_raw, &gate_raw) else {
         return Ok(responses::command_navigation("/conversations"));
     };
-    let form = match forms::EnvironmentSwitchDecisionForm::parse(pairs) {
+    let mut form = match forms::EnvironmentSwitchDecisionForm::parse(pairs) {
         Ok(form) => form,
         Err(_) => {
             return command_error_target(
@@ -281,7 +285,7 @@ async fn discard_and_switch(
         .and_then(crate::workflows::artefacts::ArtefactRecord::candidate_hash)
         .map(|hash| hash.as_str());
     if conversation.revision != form.conversation_revision
-        || gate.revision != form.revision
+        || run.decision_revision(gate) != form.revision
         || gate.state != crate::workflows::gates::HumanGateState::AwaitingDecision
         || target.as_deref() != Some(form.candidate.as_str())
         || !form.conversation_surface
@@ -294,6 +298,7 @@ async fn discard_and_switch(
             "conversation-settings",
         );
     }
+    form.revision = gate.revision;
     let Some(current_settings) = conversation.model.as_ref() else {
         return command_error_target(
             graft,
@@ -388,9 +393,6 @@ async fn discard_and_switch(
             "That environment switch is stale. Reload the conversation.",
             "conversation-settings",
         );
-    }
-    if let Some(loop_id) = continuation.task_loop {
-        let _ = state.task_loops.cancel(&loop_id);
     }
     settle_cancelled_job(&state, &continuation);
     let Some(settled) = state.conversations.get(&conversation_id) else {
@@ -526,25 +528,26 @@ async fn decide(
     } else {
         "gate-detail"
     };
-    let form = match forms::DecisionForm::parse(pairs, matches!(action, DecisionAction::Revision)) {
-        Ok(form) => form,
-        Err(forms::FormError::Note) => {
-            return command_error_target(
-                graft,
-                PatchStatus::UnprocessableEntity,
-                "Enter a revision note.",
-                error_target,
-            );
-        }
-        Err(forms::FormError::Invalid) => {
-            return command_error_target(
-                graft,
-                PatchStatus::Conflict,
-                "That gate page is stale. Reload it.",
-                error_target,
-            );
-        }
-    };
+    let mut form =
+        match forms::DecisionForm::parse(pairs, matches!(action, DecisionAction::Revision)) {
+            Ok(form) => form,
+            Err(forms::FormError::Note) => {
+                return command_error_target(
+                    graft,
+                    PatchStatus::UnprocessableEntity,
+                    "Enter a revision note.",
+                    error_target,
+                );
+            }
+            Err(forms::FormError::Invalid) => {
+                return command_error_target(
+                    graft,
+                    PatchStatus::Conflict,
+                    "That gate page is stale. Reload it.",
+                    error_target,
+                );
+            }
+        };
     let Some(run) = state.workflow_runs.get(&run_id) else {
         return command_error_target(
             graft,
@@ -575,7 +578,7 @@ async fn decide(
         form.candidate.as_str()
     };
     if gate.state != crate::workflows::gates::HumanGateState::AwaitingDecision
-        || gate.revision != form.revision
+        || run.decision_revision(gate) != form.revision
         || target.as_deref() != Some(submitted_target)
         || !state.gate_continuations.available(&run_id, &session)
     {
@@ -587,6 +590,7 @@ async fn decide(
             form.conversation_surface,
         );
     }
+    form.revision = gate.revision;
     let diff = if plan_gate {
         if !matches!(action, DecisionAction::Cancel)
             && load_gate_plan(&run, gate, &state.workflow_artefacts).is_none()
@@ -749,12 +753,7 @@ async fn decide(
                 form.conversation_surface,
             );
         }
-        if continuation.task_loop.is_some() {
-            if let Some(loop_id) = continuation.task_loop {
-                let _ = state.task_loops.cancel(&loop_id);
-            }
-            settle_cancelled_job(&state, &continuation);
-        } else if run.kind == RunKind::QuickTask {
+        if run.kind == RunKind::QuickTask {
             settle_cancelled_job(&state, &continuation);
         } else {
             if let Some(key) = continuation.conversation_key() {
@@ -1068,23 +1067,7 @@ fn decision_record(
                 }
             }
             crate::workflows::definition::ArtefactSource::RunCurrentPlan => run.current_plan()?,
-            crate::workflows::definition::ArtefactSource::LaunchInput { source } => {
-                run.artefacts.iter().rev().find_map(|record| {
-                    matches!(
-                        &record.provenance.producer,
-                        crate::workflows::artefacts::ArtefactProducer::LaunchInput {
-                            source: stored,
-                            conversation_id,
-                            ..
-                        } if stored == source && run.conversation_id == Some(*conversation_id)
-                    )
-                    .then(|| crate::workflows::artefacts::ArtefactReference {
-                        id: record.id,
-                        kind: record.kind,
-                        artefact_hash: record.artefact_hash,
-                    })
-                })?
-            }
+
             crate::workflows::definition::ArtefactSource::StepOutput { step, output } => run
                 .attempts
                 .iter()
@@ -1234,12 +1217,6 @@ fn command_error_target(
 }
 
 fn decision_destination(run: &crate::workflows::WorkflowRun) -> String {
-    if let Some(loop_id) = run.parent_loop {
-        return match run.conversation_id {
-            Some(conversation) => format!("/conversations/{}", conversation.as_hex()),
-            None => format!("/runs/loops/{}", loop_id.as_hex()),
-        };
-    }
     match (run.kind, run.conversation_id) {
         (RunKind::QuickTask, Some(conversation)) => {
             format!("/conversations/{}", conversation.as_hex())
@@ -1266,6 +1243,8 @@ fn continuation_authority(
     if continuation.run_id != run.id
         || continuation.project_id != run.project_id
         || continuation.agent_id != run.agent_id
+        || continuation.conversation_id != run.conversation_id
+        || run.pending_handoff.is_some()
     {
         return ContinuationAuthority::Stale;
     }
@@ -1339,6 +1318,26 @@ fn continuation_authority(
         };
         if !project.host_path_is_available() {
             return ContinuationAuthority::Unavailable;
+        }
+        if let Some(snapshot) = &run.project_authority
+            && snapshot.approved(state, run, continuation.session_id)
+        {
+            if !snapshot
+                .resolve(state, run)
+                .is_ok_and(|authority| authority == *pinned)
+            {
+                return ContinuationAuthority::Stale;
+            }
+            return if pinned.grant_access.is_writable()
+                && !source_is_unchanged(state, run, &project)
+            {
+                ContinuationAuthority::Stale
+            } else {
+                ContinuationAuthority::Ready
+            };
+        }
+        if !run.ownership_history.is_empty() {
+            return ContinuationAuthority::Stale;
         }
         let current = match state.conversations.get(&conversation_id) {
             Some(record) => match crate::conversations::resolve_workflow_authority(

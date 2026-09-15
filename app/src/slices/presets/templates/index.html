@@ -8,7 +8,9 @@
   <p>A preset stores reusable settings, not permission to execute.</p>
 {% endblock %}
 {% block actions %}
-  <a href="/presets?new=1" data-graft class="btn btn-sm">New preset</a>
+  <a href="/presets?new=1" data-graft class="btn btn-primary btn-sm"
+    >New preset</a
+  >
 {% endblock %}
 {% block catalogue_content %}
   {% if !error.is_empty() %}

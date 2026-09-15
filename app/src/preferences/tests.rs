@@ -272,6 +272,38 @@ fn missing_or_invalid_files_default_to_the_system_preference() {
 }
 
 #[test]
+fn conversation_defaults_keep_theme_and_requested_settings_without_credentials() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("preferences.json");
+    let preferences = Preferences::open(path.clone());
+    preferences.set_theme(Theme::Sector7G).unwrap();
+    let settings = crate::execution::ExecutionSettings::new(
+        crate::providers::ModelSelection::new(ProviderKind::Xai, "grok-4.6".to_owned(), None)
+            .unwrap(),
+        "Use concise explanations.".to_owned(),
+        vec![crate::agents::ToolId::Run],
+        crate::tests::test_environment_id(),
+    )
+    .unwrap()
+    .with_location(crate::execution::ToolLocation::Host)
+    .with_host_approval(crate::execution::HostApprovalPolicy::Automatic);
+    preferences
+        .set_conversation_defaults(settings.clone())
+        .unwrap();
+    let reader = Preferences::open(path.clone());
+    assert_eq!(reader.theme(), Theme::Sector7G);
+    assert_eq!(reader.conversation_defaults(), Some(settings));
+    let persisted: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    assert_eq!(persisted["version"], 1);
+    assert!(persisted["conversation_defaults"].get("consent").is_none());
+    assert!(
+        persisted["conversation_defaults"]
+            .get("directory_approvals")
+            .is_none()
+    );
+}
+
+#[test]
 fn only_known_themes_parse() {
     for theme in Theme::ALL {
         assert_eq!(Theme::parse(theme.as_str()), Some(*theme));

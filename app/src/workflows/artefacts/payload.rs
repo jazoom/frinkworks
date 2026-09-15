@@ -102,25 +102,6 @@ pub(crate) fn encode_plan(
     encode(ArtefactKind::Plan, PLAN_SCHEMA, &payload)
 }
 
-// Task documents retain authored bytes, including line endings, for immutable source references.
-pub(crate) fn encode_plan_verbatim(
-    markdown: &str,
-    secret: Option<&str>,
-) -> Result<(Vec<u8>, ObjectHash, ArtefactHash), PayloadError> {
-    let _ = normalise_text(markdown, MAXIMUM_PLAN_BYTES, secret)?;
-    if markdown.len() > MAXIMUM_PLAN_BYTES {
-        return Err(PayloadError::Bound);
-    }
-    encode(
-        ArtefactKind::Plan,
-        PLAN_SCHEMA,
-        &PlanArtefact {
-            format_version: PLAN_SCHEMA,
-            markdown: markdown.to_owned(),
-        },
-    )
-}
-
 pub(crate) fn encode_review(
     candidate: CandidateHash,
     verdict: ReviewVerdict,

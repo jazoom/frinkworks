@@ -87,17 +87,7 @@
           {% if host_approval != "" %}
             <p class="mt-2 text-sm">Host commands: {{ host_approval }}</p>
           {% endif %}
-          {% if hierarchy != "" %}
-            <p class="mt-2 text-sm">
-              {% if parent_href != "" %}
-                <a href="{{ parent_href }}" data-graft class="link"
-                  >{{ hierarchy }}</a
-                >
-              {% else %}
-                {{ hierarchy }}
-              {% endif %}
-            </p>
-          {% endif %}
+
           {% if context_boundaries != "" %}
             <p class="text-quiet mt-2 text-sm">{{ context_boundaries }}</p>
           {% endif %}
@@ -140,27 +130,6 @@
               <dd>{{ command.step }}</dd>
             {% endif %}
           </dl>
-        </section>
-      {% endif %}
-
-      {% if let Some(task) = task_selection %}
-        <section
-          class="file-section mt-7 space-y-2"
-          aria-labelledby="task-selection-title"
-        >
-          <h2 id="task-selection-title" class="text-lg font-semibold">
-            Selected task
-          </h2>
-          <p class="text-sm">
-            Task {{ task.index }} from immutable task-list revision
-            {{ task.revision }}.
-          </p>
-          <p class="text-quiet text-xs break-all">
-            {{ task.document_id }} · {{ task.content_hash }}
-          </p>
-          <p class="text-quiet text-sm">
-            The diff and approval apply only to this task run.
-          </p>
         </section>
       {% endif %}
 
@@ -318,33 +287,6 @@
               </p>
             {% endif %}
           </section>
-
-          {% if !launch_inputs.is_empty() %}
-            <section class="border-base-300 border-t pt-5">
-              <h2 class="text-lg font-semibold">Launch inputs</h2>
-              <p class="text-quiet mt-1 text-sm">
-                These immutable inputs were copied into this run. Conversation
-                edits and later plan revisions cannot change them.
-              </p>
-              <ul class="border-base-300 mt-2 border-t">
-                {% for input in launch_inputs %}
-                  <li class="border-base-300 space-y-1 border-b py-3 text-sm">
-                    <a href="{{ input.href }}" data-graft class="link"
-                      >{{ input.source }} · Revision {{ input.revision }}</a
-                    >
-                    <p class="text-quiet font-mono text-xs break-all">
-                      Conversation {{ input.conversation_id }} · Document
-                      {{ input.document_id }}
-                    </p>
-                    <p class="text-quiet font-mono text-xs break-all">
-                      {{ input.content_bytes }} bytes · Content
-                      {{ input.content_hash }}
-                    </p>
-                  </li>
-                {% endfor %}
-              </ul>
-            </section>
-          {% endif %}
 
           <section class="border-base-300 border-t pt-5">
             <h2 class="text-lg font-semibold">Environments</h2>

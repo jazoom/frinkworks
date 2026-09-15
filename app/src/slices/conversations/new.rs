@@ -29,6 +29,8 @@ pub(super) struct NewForm {
     pub(super) directory_6: String,
     pub(super) directory_7: String,
     pub(super) draft_nonce: String,
+    pub(super) prepared_run: String,
+    pub(super) handoff_approval: String,
     pub(super) consent_reference: String,
     pub(super) pending_directory: String,
     pub(super) consent_request: String,
@@ -94,6 +96,9 @@ pub(super) async fn show(
             .map(|effort| effort.as_str().to_owned())
             .unwrap_or_default();
         form.model = provider.model;
+    }
+    if let Some(settings) = state.preferences.conversation_defaults() {
+        super::settings::copy_settings_to_draft(&mut form, &settings);
     }
     if !query.source.is_empty() {
         let Some(source) = load_conversation(&state, &query.source) else {
@@ -312,32 +317,6 @@ pub(super) fn settings_snapshot(
     }))
 }
 
-pub(super) async fn remember_model(
-    State(state): State<AppState>,
-    session: RequiredSession,
-    _graft: PatchGraft,
-    Form(mut form): Form<NewForm>,
-) -> AppResult<Response> {
-    form.preset.clear();
-    form.preset_preview.clear();
-    let (status, message) = match model(&state, session.0, &form) {
-        Ok(Some(model)) => match remember_selection(&state, model.settings.model) {
-            Ok(()) => (PatchStatus::Ok, ""),
-            Err(error) => (PatchStatus::UnprocessableEntity, error),
-        },
-        Ok(None) => (
-            PatchStatus::UnprocessableEntity,
-            "Choose a stored provider.",
-        ),
-        Err(error) => (PatchStatus::UnprocessableEntity, error),
-    };
-    Ok(hypergraft::outcome::children_patch(
-        status,
-        "conversation-model-status",
-        &page::ModelSelectionStatus { message },
-    )?)
-}
-
 pub(super) async fn save(
     State(state): State<AppState>,
     session: RequiredSession,
@@ -469,7 +448,13 @@ pub(super) async fn save(
             form,
         );
     }
-    if let Err(error) = super::preflight_execution(&state, session.0, None, &model).await {
+    let handoff_run = match super::handoff::transfer::preflight(&state, session.0, &form) {
+        Ok(run) => run,
+        Err(error) => return reject(PatchStatus::Conflict, error, form),
+    };
+    if handoff_run.is_none()
+        && let Err(error) = super::preflight_execution(&state, session.0, None, &model).await
+    {
         let super::StartMessageError::User(status, message) = error else {
             return Err(AppError::new(
                 "preflight first conversation message",
@@ -532,23 +517,27 @@ pub(super) async fn save(
             return reject(status_for(error), error.message(), form);
         }
     };
-    drop(permit);
-    let record =
-        match super::start_message(&state, session.0, record, 1, model, form.message.clone()).await
-        {
-            Ok(record) => record,
-            Err(super::StartMessageError::Internal(error)) => return Err(error),
-            Err(super::StartMessageError::User(status, error)) => {
-                let _ = state.conversations.delete(&id, 1);
-                return reject(status, error, form);
-            }
-        };
-    let warning = record
-        .model
-        .as_ref()
-        .and_then(|model| remember_selection(&state, model.settings.model.clone()).err())
-        .unwrap_or("");
-    let view = detail_view(&state, session.0, &record, &record.title, warning);
+    let start = if let Some(run) = handoff_run {
+        let result = super::handoff::transfer::finish(&state, session.0, record, &form, run);
+        drop(permit);
+        result.map_err(|error| super::StartMessageError::User(PatchStatus::Conflict, error))
+    } else {
+        drop(permit);
+        super::start_message(&state, session.0, record, 1, model, form.message.clone()).await
+    };
+    let record = match start {
+        Ok(record) => record,
+        Err(super::StartMessageError::Internal(error)) => return Err(error),
+        Err(super::StartMessageError::User(status, error)) => {
+            state
+                .conversations
+                .delete(&id, 1)
+                .map_err(|error| AppError::new("remove unstarted conversation", error))?;
+            state.access_consent.invalidate_conversation(id);
+            return reject(status, error, form);
+        }
+    };
+    let view = detail_view(&state, session.0, &record, &record.title, "");
     let mut patches = hypergraft::PatchSet::new();
     patches
         .children("conversation-detail", &view.contents())

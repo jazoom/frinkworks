@@ -15,9 +15,6 @@ pub(crate) fn test_state(config: RuntimeConfig) -> AppState {
     let environment_preparations =
         EnvironmentPreparationScheduler::idle(environments.clone(), environment_snapshots.clone());
     let workflow_artefacts = Arc::new(WorkflowArtefactRepository::in_memory());
-    let documents = Arc::new(crate::conversations::PlanDocumentStore::in_memory(
-        workflow_artefacts.clone(),
-    ));
     AppState {
         config: Arc::new(config),
         assets: Arc::new(AssetPaths {
@@ -35,7 +32,6 @@ pub(crate) fn test_state(config: RuntimeConfig) -> AppState {
         presets: Arc::new(crate::presets::PresetStore::in_memory()),
         agents: Arc::new(AgentStore::in_memory()),
         conversations: Arc::new(crate::conversations::ConversationStore::in_memory()),
-        documents,
         projects: Arc::new(ProjectStore::in_memory()),
         folder_picker: crate::execution::FolderPicker::scripted(),
         access_consent: Arc::new(crate::execution::AccessConsentStore::new()),
@@ -45,11 +41,11 @@ pub(crate) fn test_state(config: RuntimeConfig) -> AppState {
         agent_leases: Arc::new(AgentLeaseCoordinator::new()),
         workflows: Arc::new(WorkflowCatalogue::in_memory()),
         workflow_runs: Arc::new(WorkflowRunStore::in_memory()),
-        task_loops: Arc::new(crate::workflows::TaskLoopStore::in_memory()),
         workflow_evidence: Arc::new(crate::workflows::evidence::WorkflowEvidenceStore::in_memory()),
         workflow_artefacts,
         workflow_execution: Arc::new(WorkflowExecution::new()),
         gate_continuations: Arc::new(WorkflowContinuationRegistry::new()),
+        handoff_drafts: Arc::new(crate::workflows::handoff::HandoffDrafts::default()),
         workflow_workspaces: Arc::new(WorkflowWorkspaces::in_memory()),
         apply_journals: Arc::new(ApplyJournals::in_memory()),
         commit_journals: Arc::new(CommitJournals::in_memory()),

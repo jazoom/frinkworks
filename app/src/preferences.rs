@@ -75,6 +75,7 @@ struct PreferencesFile {
     #[serde(deserialize_with = "crate::storage::required_option")]
     selected_provider: Option<ProviderKind>,
     models: Vec<ProviderPreference>,
+    conversation_defaults: Option<crate::execution::ExecutionSettingsFile>,
 }
 
 #[derive(Clone, Default)]
@@ -83,6 +84,7 @@ struct PreferenceValues {
     show_thinking: bool,
     selected_provider: Option<ProviderKind>,
     models: Vec<ProviderPreference>,
+    conversation_defaults: Option<crate::execution::ExecutionSettings>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -242,6 +244,23 @@ impl Preferences {
         })
     }
 
+    pub(crate) fn conversation_defaults(&self) -> Option<crate::execution::ExecutionSettings> {
+        self.values().conversation_defaults
+    }
+
+    pub(crate) fn set_conversation_defaults(
+        &self,
+        settings: crate::execution::ExecutionSettings,
+    ) -> Result<(), PreferenceError> {
+        let settings = crate::execution::ExecutionSettings::from_file(settings.to_file())
+            .ok_or(PreferenceError)?;
+        self.update(|values| {
+            values.provider(settings.model.provider).selection = settings.model.clone();
+            values.selected_provider = Some(settings.model.provider);
+            values.conversation_defaults = Some(settings);
+        })
+    }
+
     pub(crate) fn forget_provider(&self, kind: ProviderKind) -> Result<(), PreferenceError> {
         self.update(|values| {
             values
@@ -329,6 +348,9 @@ fn load(path: &std::path::Path) -> PreferenceValues {
         show_thinking: file.show_thinking,
         selected_provider: file.selected_provider,
         models: file.models,
+        conversation_defaults: file
+            .conversation_defaults
+            .and_then(crate::execution::ExecutionSettings::from_file),
     };
     if values.is_valid() {
         values
@@ -348,6 +370,10 @@ fn persist(path: &std::path::Path, values: &PreferenceValues) -> Result<(), Pref
         show_thinking: values.show_thinking,
         selected_provider: values.selected_provider,
         models: values.models.clone(),
+        conversation_defaults: values
+            .conversation_defaults
+            .as_ref()
+            .map(crate::execution::ExecutionSettings::to_file),
     };
     let bytes = serde_json::to_vec_pretty(&file).map_err(|_| PreferenceError)?;
     let dir = path.parent().ok_or(PreferenceError)?;

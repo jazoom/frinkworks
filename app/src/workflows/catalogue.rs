@@ -54,6 +54,7 @@ pub(crate) enum CatalogueError {
     Random,
     Full,
     DuplicateName,
+
     Missing,
     Conflict,
     Revision,
@@ -92,6 +93,7 @@ impl CatalogueError {
             Self::Random => "Power Plant could not create a workflow identifier. Try again.",
             Self::Full => "The workflow catalogue is full.",
             Self::DuplicateName => "A workflow with that name already exists.",
+
             Self::Missing => "That workflow is no longer in the catalogue.",
             Self::Conflict => "That workflow changed in another tab. Reload it.",
             Self::Revision => "Power Plant could not store another edit of that workflow.",

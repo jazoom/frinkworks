@@ -61,7 +61,6 @@ opaque_id!(RunId);
 opaque_id!(AttemptId);
 opaque_id!(ArtefactId);
 opaque_id!(GateId);
-opaque_id!(TaskLoopId);
 
 impl WorkflowId {
     pub(crate) fn generate() -> Result<Self, IdError> {
@@ -88,12 +87,6 @@ impl ArtefactId {
 }
 
 impl GateId {
-    pub(crate) fn generate() -> Result<Self, IdError> {
-        Ok(Self(HexId::generate()?))
-    }
-}
-
-impl TaskLoopId {
     pub(crate) fn generate() -> Result<Self, IdError> {
         Ok(Self(HexId::generate()?))
     }

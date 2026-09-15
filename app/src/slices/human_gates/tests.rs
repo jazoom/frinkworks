@@ -626,7 +626,6 @@ fn awaiting_gate(kind: RunKind) -> GateFixture {
         eligible_reply: std::sync::Arc::new(std::sync::Mutex::new(
             "Here is the change.".to_owned(),
         )),
-        task_loop: None,
     });
     assert!(inserted);
     GateFixture {
@@ -644,6 +643,21 @@ fn awaiting_gate(kind: RunKind) -> GateFixture {
         diff_base_id,
         host,
     }
+}
+
+pub(crate) fn conversation_at_gate() -> (
+    AppState,
+    String,
+    sessions::SessionId,
+    crate::workflows::WorkflowRun,
+) {
+    let fixture = conversation_awaiting_gate();
+    let run = fixture
+        .state
+        .workflow_runs
+        .get(&fixture.run_id)
+        .expect("run");
+    (fixture.state, fixture.token, fixture.session, run)
 }
 
 fn conversation_awaiting_gate() -> GateFixture {
@@ -743,7 +757,6 @@ fn conversation_awaiting_gate() -> GateFixture {
                 eligible_reply: std::sync::Arc::new(std::sync::Mutex::new(
                     "Here is the change.".to_owned(),
                 )),
-                task_loop: None,
             })
     );
     fixture.token = session_token.raw().as_str().to_owned();
@@ -1917,164 +1930,6 @@ async fn a_gate_object_download_stays_available() {
     assert_eq!(
         response.headers().get(header::CONTENT_TYPE).unwrap(),
         "application/octet-stream"
-    );
-}
-
-pub(crate) fn loop_at_gate() -> (
-    AppState,
-    String,
-    sessions::SessionId,
-    crate::workflows::TaskLoop,
-) {
-    let fixture = conversation_awaiting_gate();
-    let id = attach_parent_loop(&fixture);
-    let record = fixture.state.task_loops.get(&id).expect("parent");
-    (fixture.state, fixture.token, fixture.session, record)
-}
-
-fn attach_parent_loop(fixture: &GateFixture) -> crate::workflows::TaskLoopId {
-    use crate::workflows::definition::PinnedWorkflowDefinition;
-    use crate::workflows::task_loop::{TaskListSnapshot, TaskLoopItem, TaskOutcome};
-    let markdown = "# Tasks\n\n- [ ] First task\n- [ ] Second task\n".to_owned();
-    let definition =
-        crate::workflows::seeds::task_loop_definition(crate::tests::test_environment_id());
-    let loop_id = crate::workflows::TaskLoopId::generate().expect("loop");
-    let record = crate::workflows::TaskLoop::create(
-        loop_id,
-        1,
-        fixture.conversation_id.expect("conversation"),
-        Some(fixture.project_id),
-        Some(fixture.agent_id),
-        "Implement each remaining task.".to_owned(),
-        PinnedWorkflowDefinition::pin(None, definition.clone()),
-        Vec::new(),
-        crate::tests::test_environment_set(&definition),
-        TaskListSnapshot {
-            document_id: crate::conversations::DocumentId::generate().expect("document"),
-            revision: 1,
-            content_hash: crate::workflows::artefacts::ObjectHash::of(markdown.as_bytes()).as_str(),
-            markdown: markdown.clone(),
-        },
-        vec![
-            TaskLoopItem {
-                index: 0,
-                markdown: "- [ ] First task\n".to_owned(),
-                child_id: None,
-                previous_child_ids: Vec::new(),
-                outcome: TaskOutcome::Pending,
-            },
-            TaskLoopItem {
-                index: 1,
-                markdown: "- [ ] Second task\n".to_owned(),
-                child_id: None,
-                previous_child_ids: Vec::new(),
-                outcome: TaskOutcome::Pending,
-            },
-        ],
-    )
-    .expect("loop");
-    fixture.state.task_loops.create(record).expect("store loop");
-    fixture
-        .state
-        .task_loops
-        .mutate(&loop_id, |record| {
-            record.tasks[0].child_id = Some(fixture.run_id);
-            record.tasks[0].outcome = TaskOutcome::Dispatched;
-            record.state = crate::workflows::task_loop::TaskLoopState::AwaitingChild {
-                task_index: 0,
-                child: fixture.run_id,
-            };
-            Ok(())
-        })
-        .expect("awaiting");
-    fixture
-        .state
-        .workflow_runs
-        .mutate(&fixture.run_id, |run| {
-            run.parent_loop = Some(loop_id);
-            Ok(())
-        })
-        .expect("parent");
-    let continuation = fixture
-        .state
-        .gate_continuations
-        .take(&fixture.run_id)
-        .expect("continuation");
-    let mut continuation = continuation;
-    continuation.task_loop = Some(loop_id);
-    assert!(fixture.state.gate_continuations.insert(continuation));
-    loop_id
-}
-
-#[tokio::test]
-async fn a_child_gate_keeps_the_parent_conversation_and_transfers_the_execution_lease() {
-    let fixture = conversation_awaiting_gate();
-    let loop_id = attach_parent_loop(&fixture);
-    let conversation = fixture.conversation_id.expect("conversation");
-    let response = post_decision(
-        &fixture,
-        "approve",
-        fixture.decision_body(&fixture.candidate),
-        None,
-    )
-    .await;
-    assert_eq!(response.status(), axum::http::StatusCode::OK);
-    assert!(
-        fixture
-            .state
-            .conversations
-            .get(&conversation)
-            .expect("conversation")
-            .active_job
-            .is_some()
-    );
-    assert!(
-        !fixture
-            .state
-            .task_loops
-            .get(&loop_id)
-            .expect("loop")
-            .state
-            .is_terminal()
-    );
-    assert!(fixture.state.workflow_execution.acquire().is_err());
-}
-
-#[tokio::test]
-async fn a_linked_review_can_use_the_session_while_a_parent_loop_awaits_a_child_gate() {
-    let mut fixture = conversation_awaiting_gate();
-    attach_parent_loop(&fixture);
-    let backend = crate::providers::tests::ScriptedBackend::accept();
-    fixture.state.chat = std::sync::Arc::new(crate::providers::ChatBackend::Scripted(backend));
-    let body = format!(
-        "run={}&candidate={}&diff_base={}&brief=Review+candidate&provider=xai&model=grok-4.6&thinking=medium",
-        fixture.run_id, fixture.candidate_id, fixture.diff_base_id,
-    );
-    let started = post_candidate_review(&fixture, body).await;
-    assert_eq!(started.status(), axum::http::StatusCode::OK);
-    assert!(
-        fixture
-            .state
-            .conversations
-            .get(&fixture.conversation_id.expect("source"))
-            .expect("source")
-            .active_job
-            .is_some()
-    );
-    assert!(fixture.state.sessions.busy(&fixture.session));
-    let rejected = post_decision(
-        &fixture,
-        "approve",
-        fixture.decision_body(&fixture.candidate),
-        None,
-    )
-    .await;
-    assert_eq!(rejected.status(), axum::http::StatusCode::CONFLICT);
-    assert!(
-        fixture
-            .state
-            .gate_continuations
-            .available(&fixture.run_id, &fixture.session)
     );
 }
 

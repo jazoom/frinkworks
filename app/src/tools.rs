@@ -169,7 +169,6 @@ pub(crate) struct HostRunSpec {
     pub(crate) run: Option<String>,
     pub(crate) step: Option<String>,
     pub(crate) attempt: Option<String>,
-    pub(crate) task_loop: Option<String>,
 }
 
 pub(crate) struct HostToolContext<'a> {
@@ -183,7 +182,6 @@ pub(crate) struct HostToolContext<'a> {
     pub(crate) run: Option<String>,
     pub(crate) step: Option<String>,
     pub(crate) attempt: Option<String>,
-    pub(crate) task_loop: Option<String>,
 }
 
 pub(crate) struct AgentToolContext<'a> {
@@ -570,12 +568,7 @@ fn validate_workflow_host_dispatch(
         .workflow_runs
         .get(&run_id)
         .ok_or("The workflow run is unavailable.")?;
-    let loop_id = host
-        .task_loop
-        .as_deref()
-        .and_then(crate::workflows::TaskLoopId::parse);
     if run.conversation_id != Some(host.conversation)
-        || run.parent_loop != loop_id
         || run
             .active_attempt()
             .and_then(|id| run.attempts.iter().find(|attempt| attempt.id == id))
@@ -603,19 +596,17 @@ fn validate_workflow_host_dispatch(
         host.conversation,
         host.settings,
     );
-    let loop_ok = host
-        .task_loop
-        .as_deref()
-        .and_then(crate::workflows::TaskLoopId::parse)
-        .is_some_and(|loop_id| {
-            host.state.access_consent.authorised_loop(
-                loop_id,
-                host.session,
-                host.conversation,
-                host.settings,
-            )
-        });
-    if !launch_ok && !loop_ok {
+    let ordinary_consent = run.kind == crate::workflows::RunKind::QuickTask
+        && record
+            .model
+            .as_ref()
+            .is_some_and(|model| model.settings == settings)
+        && host.state.access_consent.authorised_host_conversation(
+            host.session,
+            host.conversation,
+            &settings,
+        );
+    if !launch_ok && !ordinary_consent {
         return Err("Host access needs explicit approval for this run.");
     }
     Ok(())

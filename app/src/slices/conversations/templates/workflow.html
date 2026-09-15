@@ -127,198 +127,22 @@
                   </ol>
                 {% endif %}
               {% endfor %}
-              {% if !task_document.is_empty() && !requires_task_list %}
-                <input
-                  type="hidden"
-                  name="task_document"
-                  value="{{ task_document }}"
-                />
-                <input
-                  type="hidden"
-                  name="task_revision"
-                  value="{{ task_revision }}"
-                />
-                <input type="hidden" name="task_hash" value="{{ task_hash }}" />
-                <input
-                  type="hidden"
-                  name="task_index"
-                  value="{{ task_index }}"
-                />
-                <input
-                  type="hidden"
-                  name="preview_task_document"
-                  value="{{ task_document }}"
-                />
-                <input
-                  type="hidden"
-                  name="preview_task_revision"
-                  value="{{ task_revision }}"
-                />
-                <input
-                  type="hidden"
-                  name="preview_task_hash"
-                  value="{{ task_hash }}"
-                />
-                <input
-                  type="hidden"
-                  name="preview_task_index"
-                  value="{{ task_index }}"
-                />
-                <p class="alert alert-info text-sm">
-                  This run receives the complete pinned task list and works only
-                  on the assigned task. Code changes require human approval
-                  before commit.
-                </p>
-                <pre
-                  class="overflow-x-auto text-sm break-words whitespace-pre-wrap"
+              <label
+                class="field mt-[18px] flex flex-col gap-1.5"
+                for="workflow-brief"
+              >
+                <span>Brief</span>
+                <textarea
+                  id="workflow-brief"
+                  name="brief"
+                  class="textarea textarea-bordered"
+                  rows="5"
+                  maxlength="32768"
+                  placeholder="Describe the change, review or project inspection."
+                  required
                 >
-{{ task_preview }}</pre>
-              {% endif %}
-              {% if requires_task_list %}
-                <input
-                  type="hidden"
-                  name="preview_task_document"
-                  value="{{ task_document }}"
-                />
-                <section aria-labelledby="workflow-task-list-heading">
-                  <h3 id="workflow-task-list-heading">Task breakdown</h3>
-                  <p class="text-quiet">
-                    This process runs each remaining task as a child run. Each
-                    task starts from the code left by the previous task.
-                  </p>
-                  {% if !task_preview.is_empty() %}
-                    <details class="evidence">
-                      <summary>Pinned task list</summary>
-                      <pre class="overflow-x-auto text-sm whitespace-pre-wrap">
-{{ task_preview }}</pre>
-                    </details>
-                  {% endif %}
-                  {% if task_lists.is_empty() %}
-                    <p class="text-error text-sm">
-                      Save a task list in this conversation before you start.
-                    </p>
-                  {% else %}
-                    <fieldset class="flex flex-col gap-2">
-                      <legend class="text-sm font-semibold">Task list</legend>
-                      {% for list in task_lists %}
-                        <label class="flex gap-3">
-                          <input
-                            class="radio radio-sm mt-1"
-                            type="radio"
-                            name="task_document"
-                            value="{{ list.value }}"
-                            {% if list.selected %}checked{% endif %}
-                            required
-                          />
-                          <span>
-                            <span class="block font-medium"
-                              >{{ list.title }}</span
-                            >
-                            <span class="text-quiet text-sm"
-                              >Revision {{ list.revision }} ·
-                              {{ list.content_bytes }} bytes</span
-                            >
-                          </span>
-                        </label>
-                      {% endfor %}
-                    </fieldset>
-                  {% endif %}
-                </section>
-              {% endif %}
-              {% if requires_task_list %}
-                <input type="hidden" name="brief" value="{{ brief }}" />
-              {% else %}
-                <label
-                  class="field mt-[18px] flex flex-col gap-1.5"
-                  for="workflow-brief"
-                >
-                  <span>Task brief</span>
-                  <textarea
-                    id="workflow-brief"
-                    name="brief"
-                    class="textarea textarea-bordered"
-                    rows="5"
-                    maxlength="32768"
-                    placeholder="Describe the change, review or project inspection."
-                    required
-                  >
 {{ brief }}</textarea>
-                </label>
-              {% endif %}
-              {% if requires_plan || plan_optional %}
-                <section aria-labelledby="workflow-plan-heading">
-                  <h3 id="workflow-plan-heading">
-                    {% if requires_plan %}
-                      Saved plan input
-                    {% else %}
-                      Plan (optional)
-                    {% endif %}
-                  </h3>
-                  <p class="text-quiet">
-                    {% if requires_plan %}
-                      This workflow declares a saved plan input. Power Plant
-                      copies the selected immutable revision into the run before
-                      execution.
-                    {% else %}
-                      A selected plan becomes task direction for this run only.
-                      Later plan corrections cannot change this run.
-                    {% endif %}
-                  </p>
-                  {% for plan in plans %}
-                    {% if plan.selected %}
-                      <input
-                        type="hidden"
-                        name="preview_plan"
-                        value="{{ plan.value }}"
-                      />
-                    {% endif %}
-                  {% endfor %}
-                  {% if plans.is_empty() %}
-                    <p class="text-error text-sm">
-                      Save a plan in this conversation before you start.
-                    </p>
-                  {% else %}
-                    <label
-                      class="field mt-[18px] flex flex-col gap-1.5"
-                      for="workflow-plan"
-                    >
-                      <span
-                        >{% if requires_plan %}Plan revision{% else %}Plan{% endif %}</span
-                      >
-                      <select
-                        id="workflow-plan"
-                        name="plan"
-                        class="select select-bordered w-full"
-                        {% if requires_plan %}required{% endif %}
-                      >
-                        <option value="">
-                          {% if requires_plan %}
-                            Choose a saved plan
-                          {% else %}
-                            No plan
-                          {% endif %}
-                        </option>
-                        {% for plan in plans %}
-                          <option
-                            value="{{ plan.value }}"
-                            {% if plan.selected %}selected{% endif %}
-                          >
-                            {{ plan.title }} · Revision {{ plan.revision }} ·
-                            {{ plan.content_bytes }} bytes
-                          </option>
-                        {% endfor %}
-                      </select>
-                      {% for plan in plans %}
-                        {% if plan.selected && plan.content_hash != "" %}
-                          <small class="text-quiet font-mono break-all">
-                            Content {{ plan.content_hash }}
-                          </small>
-                        {% endif %}
-                      {% endfor %}
-                    </label>
-                  {% endif %}
-                </section>
-              {% endif %}
+              </label>
               {% if !commit_policies.is_empty() %}
                 <section aria-labelledby="workflow-commit-policy-heading">
                   <h3 id="workflow-commit-policy-heading">Commit policy</h3>
@@ -478,25 +302,12 @@
                   <div class="workflow-brief">
                     <strong>This run receives</strong>
                     <p>{{ brief }}</p>
-                    {% for plan in plans %}
-                      {% if plan.selected %}
-                        <p>{{ plan.title }} · revision {{ plan.revision }}</p>
-                      {% endif %}
-                    {% endfor %}
-                    {% for list in task_lists %}
-                      {% if list.selected %}
-                        <p>{{ list.title }} · revision {{ list.revision }}</p>
-                      {% endif %}
-                    {% endfor %}
-                    {% if !task_document.is_empty() && !requires_task_list %}
-                      <p>{{ task_preview }}</p>
-                    {% endif %}
                   </div>
                   <div class="notice">
                     <strong>Fresh context for each model phase</strong>
                     <p>
-                      The run receives this brief and the selected plan or task
-                      breakdown, not the full conversation history.
+                      The run receives this brief, not the full conversation
+                      history.
                     </p>
                   </div>
                   <dl

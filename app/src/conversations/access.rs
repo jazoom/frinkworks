@@ -201,18 +201,6 @@ fn resolve_authority_inner(
     Ok(Some(authority))
 }
 
-pub(crate) fn resolve_project_free_authority(
-    record: &crate::conversations::ConversationRecord,
-    _agents: &AgentStore,
-) -> Result<crate::execution::ProjectFreeAuthority, ConversationAccessError> {
-    let model = record
-        .model
-        .as_ref()
-        .ok_or(ConversationAccessError::Preset)?;
-    crate::execution::ProjectFreeAuthority::from_settings(record.revision, &model.settings)
-        .map_err(|_| ConversationAccessError::Path)
-}
-
 pub(crate) fn apply_settings_ceiling(
     base: &EffectiveAuthority,
     settings: &crate::execution::ExecutionSettings,

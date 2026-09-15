@@ -1,0 +1,253 @@
+{% block candidate_review_page %}
+  <main
+    data-section="conversations"
+    data-context-detail
+    class="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-6 px-5 py-8 sm:px-8"
+  >
+    <section
+      id="candidate-review-detail"
+      class="flex min-h-0 flex-1 flex-col gap-6"
+    >
+      {% block candidate_review_detail %}
+        <div class="page-intro">
+          <div>
+            <h1>Review a candidate</h1>
+            <p>
+              Start a fresh linked conversation with one immutable candidate and
+              its exact diff base.
+            </p>
+          </div>
+          <a
+            href="/runs/{{ run_id }}"
+            data-graft
+            class="link link-hover whitespace-nowrap"
+            >Back to source run</a
+          >
+        </div>
+        {% if error != "" %}
+          <div class="alert alert-error" role="alert" tabindex="-1">
+            <p>{{ error }}</p>
+          </div>
+        {% endif %}
+        <section
+          class="file-section space-y-4"
+          aria-labelledby="candidate-review-selection-heading"
+        >
+          <div>
+            <h2
+              id="candidate-review-selection-heading"
+              class="text-lg font-semibold"
+            >
+              Selected candidate
+            </h2>
+            <p class="text-quiet mt-1 max-w-[65ch] text-sm">
+              These references are immutable. Power Plant never falls back to
+              the current host worktree when they are unavailable.
+            </p>
+          </div>
+          <dl class="grid gap-2 text-sm sm:grid-cols-[9rem_1fr]">
+            <dt class="text-quiet">Source run</dt>
+            <dd>
+              <a href="/runs/{{ run_id }}" data-graft class="link link-hover"
+                >{{ source_title }}</a
+              >
+            </dd>
+            <dt class="text-quiet">Candidate artefact</dt>
+            <dd class="font-mono break-all">
+              {{ candidate_id }} · {{ candidate_hash }}
+            </dd>
+            <dt class="text-quiet">Diff base artefact</dt>
+            <dd class="font-mono break-all">
+              {{ diff_base_id }} · {{ diff_base_hash }}
+            </dd>
+          </dl>
+          <p class="text-sm">{{ instructions_summary }}</p>
+          <details class="file-disclosure">
+            <summary>Read selected candidate changes</summary>
+            <pre
+              class="mt-4 max-h-[32rem] overflow-auto text-sm whitespace-pre-wrap"
+            >
+{{ preview }}</pre>
+          </details>
+        </section>
+        <form
+          data-graft
+          method="post"
+          action="/conversations/candidate-review"
+          class="flex flex-col gap-6"
+        >
+          <input type="hidden" name="run" value="{{ run_id }}" />
+          <input type="hidden" name="candidate" value="{{ candidate_id }}" />
+          <input type="hidden" name="diff_base" value="{{ diff_base_id }}" />
+          <section
+            class="file-section space-y-4"
+            aria-labelledby="candidate-review-brief-heading"
+          >
+            <div>
+              <h2
+                id="candidate-review-brief-heading"
+                class="text-lg font-semibold"
+              >
+                Review brief
+              </h2>
+              <p class="text-quiet mt-1 max-w-[65ch] text-sm">
+                State what the reviewer must assess. The implementation
+                discussion and unrelated run artefacts stay outside the new
+                model context.
+              </p>
+            </div>
+            <label
+              class="flex max-w-3xl flex-col gap-1"
+              for="candidate-review-brief"
+            >
+              <span class="text-sm font-semibold">Task brief</span>
+              <textarea
+                id="candidate-review-brief"
+                name="brief"
+                class="textarea textarea-bordered min-h-32"
+                required
+                maxlength="32768"
+              >
+{{ brief }}</textarea>
+            </label>
+          </section>
+          <section
+            class="file-section space-y-4"
+            aria-labelledby="candidate-review-model-heading"
+          >
+            <div>
+              <h2
+                id="candidate-review-model-heading"
+                class="text-lg font-semibold"
+              >
+                Reviewer selection
+              </h2>
+              <p class="text-quiet mt-1 max-w-[65ch] text-sm">
+                The reviewer uses a new discussion context. Its reply is review
+                evidence only and cannot approve the source candidate.
+              </p>
+            </div>
+            <p class="text-sm">
+              <span class="font-medium">Selected reviewer:</span>
+              {{ reviewer_summary }}
+            </p>
+            {% if !presets.is_empty() %}
+              <label
+                class="flex max-w-xl flex-col gap-1"
+                for="candidate-review-preset"
+              >
+                <span class="text-sm">Reviewer preset</span>
+                <select
+                  id="candidate-review-preset"
+                  class="select select-bordered"
+                  name="preset"
+                >
+                  <option value="">Use direct model</option>
+                  {% for preset in presets %}
+                    <option
+                      value="{{ preset.id }}"
+                      {% if preset.selected %}selected{% endif %}
+                    >
+                      {{ preset.name }} — {{ preset.description }}
+                    </option>
+                  {% endfor %}
+                </select>
+                <span class="text-quiet text-xs"
+                  >Preset instructions apply to this reviewer only. Directory
+                  settings never grant source access.</span
+                >
+              </label>
+            {% endif %}
+            <div class="grid gap-4 sm:grid-cols-3" data-review-model-picker>
+              <label class="flex flex-col gap-1" for="candidate-review-provider"
+                ><span class="text-sm">Provider</span
+                ><select
+                  id="candidate-review-provider"
+                  class="select select-bordered"
+                  name="provider"
+                  required
+                  data-review-provider
+                >
+                  {% if let Some(provider) = model_picker.unavailable_provider %}
+                    <option value="{{ provider.as_str() }}" selected>
+                      Unavailable · {{ provider.label() }}
+                    </option>
+                  {% else if model_picker.providers.is_empty() %}
+                    <option value="" disabled>No connected providers</option>
+                  {% endif %}
+                  {% for provider in model_picker.providers %}
+                    <option
+                      value="{{ provider.value }}"
+                      {% if provider.selected %}selected{% endif %}
+                    >
+                      {{ provider.label }}
+                    </option>
+                  {% endfor %}
+                </select></label
+              >
+              <label class="flex flex-col gap-1" for="candidate-review-model"
+                ><span class="text-sm">Model</span
+                ><select
+                  id="candidate-review-model"
+                  class="select select-bordered"
+                  name="model"
+                  required
+                  data-review-model
+                >
+                  {% if model_picker.models.is_empty() && !model_picker.model_unavailable %}
+                    <option value="" disabled>No models available</option>
+                  {% endif %}
+                  {% if model_picker.model_unavailable %}
+                    <option value="{{ model_picker.model }}" selected>
+                      Unavailable · {{ model_picker.model }}
+                    </option>
+                  {% endif %}
+                  {% for model in model_picker.models %}
+                    <option
+                      value="{{ model.id }}"
+                      {% if model.id == model_picker.model %}selected{% endif %}
+                    >
+                      {{ model.id }}
+                    </option>
+                  {% endfor %}
+                </select></label
+              >
+              <label class="flex flex-col gap-1" for="candidate-review-thinking"
+                ><span class="text-sm">Thinking effort</span
+                ><select
+                  id="candidate-review-thinking"
+                  class="select select-bordered"
+                  name="thinking"
+                  data-review-thinking
+                >
+                  {% if model_picker.efforts.is_empty() %}
+                    <option value="">Not available</option>
+                  {% endif %}
+                  {% for effort in model_picker.efforts %}
+                    <option
+                      value="{{ effort.value }}"
+                      {% if effort.value == model_picker.thinking %}selected{% endif %}
+                    >
+                      {{ effort.label }}
+                    </option>
+                  {% endfor %}
+                </select></label
+              >
+            </div>
+            <template
+              data-review-model-catalogue="{{ model_picker.catalogue }}"
+            ></template>
+          </section>
+          <div class="flex flex-wrap items-center gap-3 border-t pt-5">
+            <button class="btn btn-primary" type="submit">
+              Start candidate review
+            </button>
+            <a href="/runs/{{ run_id }}" data-graft class="link link-hover"
+              >Cancel</a
+            >
+          </div>
+        </form>
+      {% endblock candidate_review_detail %}
+    </section>
+  </main>
+{% endblock candidate_review_page %}

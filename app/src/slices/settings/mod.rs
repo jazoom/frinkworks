@@ -135,11 +135,14 @@ async fn reset_local_data(
         .local_data
         .request_reset(
             &state.workflow_execution,
-            &state.projects,
-            &state.agents,
-            &state.conversations,
-            &state.presets,
-            &state.workflows,
+            crate::local_data::ResetCatalogues {
+                projects: &state.projects,
+                agents: &state.agents,
+                conversations: &state.conversations,
+                presets: &state.presets,
+                workflows: &state.workflows,
+                preferences: &state.preferences,
+            },
         )
         .await
     {

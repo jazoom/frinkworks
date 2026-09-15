@@ -7,7 +7,7 @@ afterEach(() => {
     vi.unstubAllGlobals();
 });
 
-test.each(["plan", "plans", "plan-request", "workflow"])(
+test.each(["activity", "workflow"])(
     "a %s companion excludes mobile conversation controls and releases them after a command patch",
     (kind) => {
         vi.stubGlobal("matchMedia", () => ({
@@ -15,7 +15,7 @@ test.each(["plan", "plans", "plan-request", "workflow"])(
             addEventListener() {},
         }));
         const root = document.createElement("div");
-        root.innerHTML = `<section id="conversation-detail"><a data-plans-toggle href="/conversations/example?plans=true">Plans</a><a data-workflow-toggle href="/conversations/example/workflow">Run a workflow</a><section id="transcript"></section><section id="conversation-composer-dock"></section><aside id="conversation-work" data-work-active="true"><section id="${kind}-detail"></section><button data-work-close>Close</button></aside></section>`;
+        root.innerHTML = `<section id="conversation-detail"><a data-work-toggle href="/conversations/example/activity">Activity</a><a data-workflow-toggle href="/conversations/example/workflow">Run a workflow</a><section id="transcript"></section><section id="conversation-composer-dock"></section><aside id="conversation-work" data-work-active="true"><section id="${kind}-detail"></section><button data-work-close>Close</button></aside></section>`;
         document.body.append(root);
         const controller = new AbortController();
         const island = initWorkspace(root, {
@@ -29,7 +29,7 @@ test.each(["plan", "plans", "plan-request", "workflow"])(
             root.querySelector(
                 kind === "workflow"
                     ? "[data-workflow-toggle]"
-                    : "[data-plans-toggle]",
+                    : "[data-work-toggle]",
             ),
         );
         root.querySelector(`#${kind}-detail`)!.remove();
@@ -45,7 +45,7 @@ test.each(["plan", "plans", "plan-request", "workflow"])(
     },
 );
 
-test.each(["plan", "plans", "plan-request", "workflow"])(
+test.each(["activity", "workflow"])(
     "explicit %s navigation reopens a closed retained companion, unlike patches",
     (kind) => {
         vi.stubGlobal("matchMedia", () => ({
@@ -53,7 +53,7 @@ test.each(["plan", "plans", "plan-request", "workflow"])(
             addEventListener() {},
         }));
         const root = document.createElement("div");
-        root.innerHTML = `<section id="conversation-detail"><section id="transcript"></section><aside id="conversation-work" data-work-active="true"><section id="plan-detail"></section><button data-work-close>Close</button></aside></section>`;
+        root.innerHTML = `<section id="conversation-detail"><section id="transcript"></section><aside id="conversation-work" data-work-active="true"><section id="activity-detail"></section><button data-work-close>Close</button></aside></section>`;
         document.body.append(root);
         const controller = new AbortController();
         const island = initWorkspace(root, { signal: controller.signal });
@@ -77,7 +77,10 @@ test.each(["plan", "plans", "plan-request", "workflow"])(
         });
         island.reconcile?.({
             cause: "location",
-            detail: { url: "/plans/one", cause: "command-patch-replacement" },
+            detail: {
+                url: "/conversations/one/activity",
+                cause: "command-patch-replacement",
+            },
         });
         island.reconcile?.({
             cause: "location",
@@ -91,14 +94,7 @@ test.each(["plan", "plans", "plan-request", "workflow"])(
         island.reconcile?.({
             cause: "location",
             detail: {
-                url:
-                    kind === "plan"
-                        ? "/plans/two"
-                        : kind === "workflow"
-                          ? "/conversations/one/workflow"
-                          : kind === "plans"
-                            ? "/conversations/one/plans"
-                            : "/conversations/one/plans/request?mode=create",
+                url: `/conversations/one/${kind}`,
                 cause: "link-navigation",
             },
         });

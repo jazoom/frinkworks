@@ -75,18 +75,7 @@ pub(crate) fn conversation_status(
             .for_conversation(&record.id)
             .into_iter()
             .next();
-        let parent = state
-            .task_loops
-            .for_conversation(&record.id)
-            .into_iter()
-            .next();
-        if let Some(parent) = parent.filter(|parent| {
-            latest
-                .as_ref()
-                .is_none_or(|run| parent.created_at_ms >= run.created_at_ms)
-        }) {
-            super::page::loop_progress(&parent, false).state
-        } else if let Some(run) = latest {
+        if let Some(run) = latest {
             super::page::workflow_progress(&run).state
         } else {
             idle_status(record.messages.last().map(|message| message.status))
@@ -113,14 +102,6 @@ pub(crate) fn conversation_meta(
         .into_iter()
         .next()
         .map(|run| run.pinned.definition.name().to_owned())
-        .or_else(|| {
-            state
-                .task_loops
-                .for_conversation(&record.id)
-                .into_iter()
-                .next()
-                .map(|parent| parent.pinned.definition.name().to_owned())
-        })
         .unwrap_or_else(|| "No runs yet".to_owned());
     format!("{directory} · {process}")
 }

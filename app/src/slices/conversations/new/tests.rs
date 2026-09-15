@@ -175,7 +175,7 @@ async fn copied_sensitive_access_requires_new_consent() {
 }
 
 #[tokio::test]
-async fn model_preference_changes_only_for_valid_patches_without_a_conversation() {
+async fn first_message_keeps_the_model_choice_local() {
     let state = test_state();
     state
         .vault
@@ -190,64 +190,31 @@ async fn model_preference_changes_only_for_valid_patches_without_a_conversation(
         .models_dev
         .effective_effort(ProviderKind::Deepseek, "deepseek-v4-pro", None)
         .unwrap();
-    let fields = format!(
-        "provider=deepseek&model=deepseek-v4-pro&thinking={}",
-        effort.as_str()
-    );
-    let mut native = command("/conversations/new/model", &token, &fields);
-    native.headers_mut().remove("graft-request");
+    let response = app(&state)
+        .oneshot(command(
+            "/conversations/new",
+            &token,
+            &format!(
+                "provider=deepseek&model=deepseek-v4-pro&thinking={}&action=send&message=Hello",
+                effort.as_str()
+            ),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let record = state.conversations.list().pop().unwrap();
     assert_eq!(
-        app(&state).oneshot(native).await.unwrap().status(),
-        StatusCode::BAD_REQUEST
-    );
-    assert_eq!(
-        app(&state)
-            .oneshot(document("/conversations/new/model", &token))
-            .await
-            .unwrap()
-            .status(),
-        StatusCode::METHOD_NOT_ALLOWED
+        record.model.unwrap().settings.model.model,
+        "deepseek-v4-pro"
     );
     let selected = state.preferences.selected_provider(&state.vault).unwrap();
-    assert_eq!(
-        (selected.kind, selected.model.as_str(), selected.thinking),
-        (ProviderKind::Xai, "grok-4.6", None)
-    );
-    for (fields, status) in [
-        (fields.as_str(), StatusCode::OK),
-        (
-            "provider=missing&model=bad",
-            StatusCode::UNPROCESSABLE_ENTITY,
-        ),
-        (
-            "provider=deepseek&model=unknown",
-            StatusCode::UNPROCESSABLE_ENTITY,
-        ),
-        (
-            "provider=deepseek&model=deepseek-v4-pro&thinking=invalid",
-            StatusCode::UNPROCESSABLE_ENTITY,
-        ),
-    ] {
-        let response = app(&state)
-            .oneshot(command("/conversations/new/model", &token, fields))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), status);
-        assert!(
-            text(response)
-                .await
-                .contains("target=\"conversation-model-status\"")
-        );
-        let selected = state.preferences.selected_provider(&state.vault).unwrap();
-        assert_eq!(selected.kind, ProviderKind::Deepseek);
-        assert_eq!(selected.model, "deepseek-v4-pro");
-        assert_eq!(selected.thinking.as_ref(), Some(&effort));
-        assert!(state.conversations.list().is_empty());
-    }
+    assert_eq!(selected.kind, ProviderKind::Xai);
+    assert_eq!(selected.model, "grok-4.6");
+    assert!(state.preferences.conversation_defaults().is_none());
 }
 
 #[tokio::test]
-async fn preference_write_failure_is_known_and_does_not_prevent_first_send() {
+async fn first_send_does_not_write_preferences() {
     let mut state = test_state();
     let dir = tempfile::tempdir().unwrap();
     state.preferences = std::sync::Arc::new(crate::preferences::Preferences::open(
@@ -260,16 +227,6 @@ async fn preference_write_failure_is_known_and_does_not_prevent_first_send() {
         .unwrap();
     let fields = format!("provider=xai&model=grok-4.6&thinking={}", effort.as_str());
     let response = app(&state)
-        .oneshot(command("/conversations/new/model", &token, &fields))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
-    let body = text(response).await;
-    assert!(body.contains("target=\"conversation-model-status\""));
-    assert!(body.contains("Power Plant cannot store the model preference."));
-    assert!(state.conversations.list().is_empty());
-
-    let response = app(&state)
         .oneshot(command(
             "/conversations/new",
             &token,
@@ -281,7 +238,7 @@ async fn preference_write_failure_is_known_and_does_not_prevent_first_send() {
     let record = state.conversations.list().pop().unwrap();
     let body = text(response).await;
     assert!(body.contains(&format!("location=\"/conversations/{}\"", record.id)));
-    assert!(body.contains("Power Plant cannot store the model preference."));
+    assert!(!body.contains("Power Plant cannot store the model preference."));
     assert_eq!(record.messages[0].text, "Hello");
 }
 
@@ -949,7 +906,12 @@ async fn host_first_message_runs_without_a_sandbox_runtime() {
         .unwrap();
     assert_eq!(created.status(), StatusCode::OK, "{}", text(created).await);
     assert_eq!(state.conversations.list().len(), 1);
-    assert!(state.workflow_runs.summaries().is_empty());
+    let run = state
+        .workflow_runs
+        .get(&state.workflow_runs.summaries()[0].id)
+        .unwrap();
+    assert_eq!(run.kind, crate::workflows::RunKind::QuickTask);
+    assert!(run.environments.environments.is_empty());
     let settings = state.conversations.list()[0]
         .model
         .as_ref()
@@ -1186,11 +1148,4 @@ async fn automatic_host_first_message_runs_without_command_approval() {
 
 fn host_consent_request(body: &str) -> String {
     hidden_named(body, "host_consent_request")
-}
-
-fn hidden_named(body: &str, name: &str) -> String {
-    let marker = format!("name=\"{name}\"");
-    let tail = &body[body.find(&marker).expect(name) + marker.len()..];
-    let value = &tail[tail.find("value=\"").expect("value") + 7..];
-    value[..value.find('"').expect("value end")].to_owned()
 }

@@ -7,21 +7,15 @@ use axum::{
 use tower::ServiceExt;
 
 #[tokio::test]
-async fn decisions_retain_child_gate_and_conversation_identity_without_commands() {
-    let (state, token, _, parent) = crate::slices::human_gates::tests::loop_at_gate();
-    let child = state
-        .workflow_runs
-        .active_runs()
-        .into_iter()
-        .find(|run| run.parent_loop == Some(parent.id))
-        .unwrap();
+async fn decisions_retain_gate_and_conversation_identity_without_commands() {
+    let (state, token, _, child) = crate::slices::human_gates::tests::conversation_at_gate();
     let gate = child
         .gates
         .iter()
         .find(|gate| gate.state == crate::workflows::gates::HumanGateState::AwaitingDecision)
         .unwrap();
     let gate_href = format!("/runs/{}/gates/{}", child.id.as_hex(), gate.id.as_hex());
-    let owner = format!("/conversations/{}", parent.conversation_id.as_hex());
+    let owner = format!("/conversations/{}", child.conversation_id.unwrap().as_hex());
     let app = crate::slices::router()
         .layer(from_fn_with_state(
             state.clone(),
@@ -82,8 +76,7 @@ async fn decisions_retain_child_gate_and_conversation_identity_without_commands(
     )
     .unwrap();
     assert!(body.contains(&owner));
-    assert!(body.contains(&format!("/runs/loops/{}", parent.id.as_hex())));
-    assert!(!body.contains(&format!("data-run-id=\"{}\"", child.id.as_hex())));
+    assert!(body.contains(&format!("data-run-id=\"{}\"", child.id.as_hex())));
     state
         .workflow_runs
         .mutate(&child.id, |run| {
@@ -95,7 +88,10 @@ async fn decisions_retain_child_gate_and_conversation_identity_without_commands(
         .render()
         .unwrap();
     assert!(!body.contains(&gate_href));
-    let record = state.conversations.get(&parent.conversation_id).unwrap();
+    let record = state
+        .conversations
+        .get(&child.conversation_id.unwrap())
+        .unwrap();
     let job = record.active_job.unwrap();
     let session = crate::sessions::generate_session_token().unwrap().id();
     state
@@ -133,14 +129,8 @@ async fn decisions_retain_child_gate_and_conversation_identity_without_commands(
 /// deleted identifiers fall back to the catalogue without reflection.
 #[tokio::test]
 async fn contextual_attention_validates_identifiers_and_preserves_context() {
-    let (state, token, _, parent) = crate::slices::human_gates::tests::loop_at_gate();
-    let owner = format!("/conversations/{}", parent.conversation_id.as_hex());
-    let child = state
-        .workflow_runs
-        .active_runs()
-        .into_iter()
-        .find(|run| run.parent_loop == Some(parent.id))
-        .unwrap();
+    let (state, token, _, child) = crate::slices::human_gates::tests::conversation_at_gate();
+    let owner = format!("/conversations/{}", child.conversation_id.unwrap().as_hex());
     let gate = child
         .gates
         .iter()
@@ -148,9 +138,10 @@ async fn contextual_attention_validates_identifiers_and_preserves_context() {
         .unwrap();
     let gate_href = format!("/runs/{}/gates/{}", child.id.as_hex(), gate.id.as_hex());
 
-    let contextual = super::page::AttentionPage::new(&state, 0, Some(parent.conversation_id))
-        .render()
-        .unwrap();
+    let contextual =
+        super::page::AttentionPage::new(&state, 0, Some(child.conversation_id.unwrap()))
+            .render()
+            .unwrap();
     assert!(contextual.contains(">Back to conversation<"));
     assert!(contextual.contains(&format!("href=\"{owner}\"")));
     assert!(contextual.contains(&owner));
@@ -180,7 +171,7 @@ async fn contextual_attention_validates_identifiers_and_preserves_context() {
         .layer(axum::middleware::from_fn(hypergraft::middleware::classify))
         .with_state(state.clone());
     let cookie = format!("powerplant_session={token}");
-    let conversation = parent.conversation_id.as_hex();
+    let conversation = child.conversation_id.unwrap().as_hex();
     for (uri, has_context) in [
         (format!("/attention?conversation={conversation}"), true),
         (

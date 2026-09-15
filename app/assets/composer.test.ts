@@ -61,7 +61,7 @@ test("navigation replaces the draft before a later conversation command patch", 
 });
 
 test.each([
-    "/plans/one?revision=1",
+    "/conversations/one/handoff",
     "/conversations/one/workflow",
     "/conversations/one",
 ])("same-conversation navigation to %s retains the draft", (url) => {

@@ -460,7 +460,6 @@
         margin: 0 auto;
         overflow: clip;
         border: 1px solid var(--powerplant-cover-rule);
-        background: var(--powerplant-paper);
         box-shadow: 0 1.1rem 3.4rem var(--powerplant-shadow-deep);
     }
 
@@ -520,7 +519,6 @@
         min-width: 0;
         min-height: 0;
         grid-template-rows: auto minmax(0, 1fr);
-        background: var(--powerplant-paper);
     }
 
     .app-file-bar {
@@ -658,7 +656,6 @@
         min-width: 0;
         min-height: 0;
         flex-direction: column;
-        background: var(--powerplant-paper);
     }
 
     .app-page > [data-section] {
@@ -1966,19 +1963,11 @@
 }
 
 @layer components {
-    .connect-frame {
-        background: var(--workspace-canvas);
-    }
-
     .connect-brand {
         color: var(--powerplant-ink);
         font-size: 21px;
         letter-spacing: -0.035em;
         text-decoration: none;
-    }
-
-    .connect-first-use .connect-sheet {
-        background: var(--workspace-canvas);
     }
 
     .connect-first-use h1 {

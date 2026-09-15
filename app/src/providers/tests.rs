@@ -494,13 +494,6 @@ mod scripted_fixture {
             }
         }
 
-        pub(crate) fn repeat_rounds(mut self, count: usize) -> Self {
-            if let Ok(Script::Rounds(rounds)) = &mut self.script {
-                *rounds = (0..count).flat_map(|_| rounds.clone()).collect();
-            }
-            self
-        }
-
         pub(crate) fn hang_watched(started: Arc<AtomicBool>, dropped: Arc<AtomicBool>) -> Self {
             Self {
                 verify_result: Ok(()),

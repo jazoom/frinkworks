@@ -144,7 +144,6 @@ pub(crate) fn reviewed_capture_exclusions(
         "workflow-commit-journals",
         "workflow-evidence",
         "workflow-runs",
-        "workflow-task-loops",
         "workflow-workspaces",
     ];
     let mut exclusions = ENGINE_PATHS

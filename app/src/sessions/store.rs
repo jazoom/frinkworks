@@ -25,6 +25,22 @@ pub(crate) struct SessionStore {
     clock: Clock,
 }
 
+pub(crate) struct CommandReservation {
+    store: Arc<SessionStore>,
+    session: SessionId,
+    token: JobId,
+}
+
+impl Drop for CommandReservation {
+    fn drop(&mut self) {
+        if let Some(session) = self.store.lock().get_mut(&self.session)
+            && session.active == Some(self.token)
+        {
+            session.active = None;
+        }
+    }
+}
+
 struct ConversationJob {
     job: Arc<Job>,
     session: SessionId,
@@ -130,6 +146,25 @@ impl SessionStore {
         live(&mut sessions, id, self.clock.now()).is_some_and(|session| session.active.is_some())
     }
 
+    pub(crate) fn reserve_command(
+        self: &Arc<Self>,
+        id: SessionId,
+    ) -> Result<CommandReservation, BeginTurnError> {
+        let token = JobId::generate().map_err(|_| BeginTurnError::JobId)?;
+        let mut sessions = self.lock();
+        let session =
+            live_mut(&mut sessions, &id, self.clock.now()).ok_or(BeginTurnError::MissingSession)?;
+        if session.active.is_some() {
+            return Err(BeginTurnError::Conflict);
+        }
+        session.active = Some(token);
+        Ok(CommandReservation {
+            store: self.clone(),
+            session: id,
+            token,
+        })
+    }
+
     pub(crate) fn snapshot(
         &self,
         id: &SessionId,
@@ -166,37 +201,6 @@ impl SessionStore {
         assistant_index: usize,
     ) -> Result<Arc<Job>, BeginTurnError> {
         let job_id = JobId::generate().map_err(|_| BeginTurnError::JobId)?;
-        let reservation = JobId::generate().map_err(|_| BeginTurnError::JobId)?;
-        let mut sessions = self.lock();
-        let session =
-            live_mut(&mut sessions, id, self.clock.now()).ok_or(BeginTurnError::MissingSession)?;
-        if session.active.is_some() || self.conversation_jobs().contains_key(&conversation_id) {
-            return Err(BeginTurnError::Conflict);
-        }
-        let job = Job::for_conversation(job_id, conversation_id, assistant_index);
-        self.conversation_jobs().insert(
-            conversation_id,
-            ConversationJob {
-                job: job.clone(),
-                session: *id,
-                reservation,
-            },
-        );
-        session.active = Some(reservation);
-        Ok(job)
-    }
-
-    pub(crate) fn attach_conversation_job(
-        &self,
-        id: &SessionId,
-        conversation_id: ConversationId,
-        job_id: JobId,
-        assistant_index: usize,
-    ) -> Result<Arc<Job>, BeginTurnError> {
-        if let Some(existing) = self.conversation_job(conversation_id, job_id) {
-            self.acquire_job_reservation(id, Some(conversation_id), job_id)?;
-            return Ok(existing);
-        }
         let reservation = JobId::generate().map_err(|_| BeginTurnError::JobId)?;
         let mut sessions = self.lock();
         let session =

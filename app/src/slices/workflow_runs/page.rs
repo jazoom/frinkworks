@@ -6,7 +6,7 @@ use crate::environments::EnvironmentCatalogue;
 use crate::projects::ProjectStore;
 use crate::state::AppState;
 use crate::workflows::summary::ProcessPhase;
-use crate::workflows::{LoopSummary, RunSummary, TaskLoop, WorkflowCatalogue, WorkflowRun};
+use crate::workflows::{RunSummary, WorkflowCatalogue, WorkflowRun};
 
 pub(super) const INDEX_TITLE: &str = "Runs | Power Plant";
 pub(super) const DETAIL_TITLE: &str = "Run | Power Plant";
@@ -111,6 +111,79 @@ pub(super) struct AttemptResultView {
     pub(super) tools: Vec<AttemptToolView>,
 }
 
+#[derive(Template)]
+#[template(path = "workflow_runs/templates/direct_changes.html")]
+pub(crate) struct DirectChangesView {
+    pub(crate) run_href: String,
+    pub(crate) conversation_href: String,
+    pub(crate) href: String,
+    pub(crate) unknown: bool,
+    pub(crate) total: usize,
+    pub(crate) files: Vec<DirectFileView>,
+    pub(crate) previous: Option<usize>,
+    pub(crate) next: Option<usize>,
+}
+
+pub(crate) struct DirectFileView {
+    pub(crate) path: String,
+    pub(crate) status: &'static str,
+    pub(crate) text: String,
+    pub(crate) before_href: String,
+    pub(crate) after_href: String,
+}
+
+impl DirectChangesView {
+    pub(crate) fn new(
+        run: &WorkflowRun,
+        attempt: &crate::workflows::run::AttemptRecord,
+        state: &crate::state::AppState,
+        start: usize,
+    ) -> Self {
+        let href = format!(
+            "/runs/{}/attempts/{}/changes",
+            run.id.as_hex(),
+            attempt.id.as_hex()
+        );
+        let diff = attempt
+            .direct_changes
+            .as_ref()
+            .and_then(|changes| changes.diff(state));
+        let page = diff
+            .as_ref()
+            .and_then(|diff| diff.manifest_page(start, 16).ok());
+        let mut budget = 128 * 1024;
+        let (total, files) = page.map(|(total, rows)| {
+            let files = rows.into_iter().enumerate().map(|(index, row)| {
+                let index = start + index;
+                let change = diff.as_ref().and_then(|diff| diff.change(index, &state.workflow_artefacts).ok());
+                let text = change.and_then(|change| change.text).map(|fragments| fragments.into_iter().map(|part| part.text).collect::<String>())
+                    .filter(|text| crate::markdown::escape_plain(text).len() <= budget)
+                    .inspect(|text| { budget -= crate::markdown::escape_plain(text).len(); })
+                    .unwrap_or_else(|| "The text preview is unavailable or exceeds the page limit. Download the recorded file for its exact content.".to_owned());
+                DirectFileView {
+                    path: format!("{}/{}", row.directory, row.path), status: row.status, text,
+                    before_href: if row.old.as_ref().is_some_and(|entry| entry.object.is_some()) { format!("{href}?file={index}&side=before") } else { String::new() },
+                    after_href: if row.new.as_ref().is_some_and(|entry| entry.object.is_some()) { format!("{href}?file={index}&side=after") } else { String::new() },
+                }
+            }).collect();
+            (total, files)
+        }).unwrap_or_default();
+        Self {
+            run_href: format!("/runs/{}", run.id.as_hex()),
+            conversation_href: run
+                .conversation_id
+                .map(|id| format!("/conversations/{}", id.as_hex()))
+                .unwrap_or_default(),
+            href,
+            unknown: diff.is_none(),
+            total,
+            files,
+            previous: (start > 0).then(|| start.saturating_sub(16)),
+            next: (start.saturating_add(16) < total).then(|| start + 16),
+        }
+    }
+}
+
 pub(super) struct AttemptChangeView {
     pub(super) href: String,
     pub(super) kind: String,
@@ -161,23 +234,6 @@ pub(super) struct PendingHostCommandView {
     pub(super) directory: String,
     pub(super) explanation: String,
     pub(super) step: String,
-}
-
-pub(super) struct TaskSelectionView {
-    pub(super) document_id: String,
-    pub(super) revision: String,
-    pub(super) content_hash: String,
-    pub(super) index: String,
-}
-
-pub(super) struct LaunchInputView {
-    pub(super) href: String,
-    pub(super) source: String,
-    pub(super) conversation_id: String,
-    pub(super) document_id: String,
-    pub(super) revision: String,
-    pub(super) content_hash: String,
-    pub(super) content_bytes: String,
 }
 
 pub(super) struct PinnedEnvironmentView {
@@ -247,11 +303,6 @@ impl RunIndexView {
                 }
             }
         }
-        for record in state.task_loops.list() {
-            for grant in loop_grants(&record) {
-                note_directory(grant);
-            }
-        }
         // An empty filter can use the truncated summaries. Any run beyond the
         // newest fifty cannot enter the newest fifty combined rows. A directory
         // filter must start from every stored identity before the bound.
@@ -279,28 +330,6 @@ impl RunIndexView {
                 (summary.created_at_ms, summary.id.as_hex(), row)
             })
             .collect();
-        rows.extend(
-            state
-                .task_loops
-                .summaries()
-                .into_iter()
-                .filter(|summary| {
-                    filter.is_empty()
-                        || state.task_loops.get(&summary.id).is_some_and(|record| {
-                            loop_grants(&record).any(|grant| run_directory_key(grant) == filter)
-                        })
-                })
-                .map(|summary| {
-                    let mut row = index_row_from_loop(&summary, &state.projects);
-                    let owner = state
-                        .task_loops
-                        .get(&summary.id)
-                        .map(|record| record.conversation_id);
-                    (row.conversation_href, row.conversation_title) =
-                        conversation_presentation(state, owner);
-                    (summary.created_at_ms, summary.id.as_hex(), row)
-                }),
-        );
         rows.sort_by(|left, right| right.0.cmp(&left.0).then(right.1.cmp(&left.1)));
         rows.truncate(50);
         let mut directories: Vec<_> = directories.into_values().collect();
@@ -318,16 +347,6 @@ pub(super) fn run_grants(
     run: &WorkflowRun,
 ) -> impl Iterator<Item = &crate::execution::DirectoryGrant> {
     run.phase_models
-        .iter()
-        .filter_map(|phase| phase.settings.as_ref())
-        .flat_map(|settings| &settings.directories)
-}
-
-pub(super) fn loop_grants(
-    record: &TaskLoop,
-) -> impl Iterator<Item = &crate::execution::DirectoryGrant> {
-    record
-        .phase_models
         .iter()
         .filter_map(|phase| phase.settings.as_ref())
         .flat_map(|settings| &settings.directories)
@@ -353,58 +372,11 @@ fn conversation_presentation(
     }
 }
 
-fn run_hierarchy(
-    run: &WorkflowRun,
-    parent: Option<&TaskLoop>,
-    current_step: &str,
-) -> (String, String, String) {
-    let context = if run.kind == crate::workflows::run::RunKind::QuickTask {
-        "Ordinary project messages retain conversation history. A requested revision starts with the original brief and explicit feedback, without the earlier transcript. Each attempt uses authorised root project instructions from its selected candidate."
-    } else {
-        "Each model phase and retry starts with the brief, declared artefacts and authorised root project instructions from its selected candidate. Explicit revision feedback can enter a fresh attempt. Conversation history and earlier worker transcripts stay excluded."
-    };
-    let Some(parent) = parent else {
-        return (String::new(), String::new(), context.to_owned());
-    };
-    let task = run
-        .task_selection
-        .as_ref()
-        .map(|task| format!("Task {}", task.index + 1))
-        .unwrap_or_else(|| "Task".to_owned());
-    let phase = if current_step.is_empty() {
-        "Phase".to_owned()
-    } else {
-        current_step.to_owned()
-    };
-    (
-        format!("/runs/loops/{}", parent.id.as_hex()),
-        format!("Parent task loop · {task} · {phase}"),
-        format!(
-            "This child is {task} of the parent loop. Each worker receives the complete task file but works only on its assigned task. {context} Completed code, not worker transcripts, reaches the next task."
-        ),
-    )
-}
-
 fn index_row_from_run(summary: &RunSummary, projects: &ProjectStore) -> IndexRow {
     let (_, project_name) = project_presentation(summary.project_id, projects);
     IndexRow {
         id: summary.id.as_hex(),
         href: format!("/runs/{}", summary.id.as_hex()),
-        conversation_href: String::new(),
-        conversation_title: String::new(),
-        project_name,
-        name: summary.name.clone(),
-        state: summary.state.clone(),
-        created: format_time(summary.created_at_ms),
-        current_step: active_step(&summary.state, &summary.current_step),
-    }
-}
-
-fn index_row_from_loop(summary: &LoopSummary, projects: &ProjectStore) -> IndexRow {
-    let (_, project_name) = project_presentation(summary.project_id, projects);
-    IndexRow {
-        id: summary.id.as_hex(),
-        href: format!("/runs/loops/{}", summary.id.as_hex()),
         conversation_href: String::new(),
         conversation_title: String::new(),
         project_name,
@@ -427,134 +399,6 @@ fn active_step(state: &str, current_step: &str) -> String {
 }
 
 #[derive(Template)]
-#[template(path = "workflow_runs/templates/loop.html")]
-pub(super) struct LoopDetailView {
-    pub(super) name: String,
-    pub(super) state: &'static str,
-    pub(super) created: String,
-    pub(super) progress: String,
-    pub(super) conversation_href: String,
-    pub(super) current_child_href: String,
-    pub(super) tasks: Vec<LoopTaskView>,
-    pub(super) loop_id: String,
-    pub(super) command_token: String,
-    pub(super) can_pause: bool,
-    pub(super) can_continue: bool,
-    pub(super) can_retry: bool,
-    pub(super) can_stop: bool,
-    pub(super) pause_requested: bool,
-    pub(super) awaiting_gate: bool,
-    pub(super) command_error: &'static str,
-    pub(super) conversation_surface: bool,
-    pub(super) process_phases: Vec<ProcessPhase>,
-    pub(super) hierarchy: String,
-    pub(super) context_boundaries: String,
-}
-
-pub(super) struct LoopTaskView {
-    pub(super) number: String,
-    pub(super) markdown: String,
-    pub(super) state: &'static str,
-    pub(super) href: String,
-    pub(super) previous_href: String,
-}
-
-#[derive(Template)]
-#[template(path = "workflow_runs/templates/loop_controls.html")]
-pub(super) struct LoopControlsView {
-    pub(super) loop_id: String,
-    pub(super) command_token: String,
-    pub(super) can_pause: bool,
-    pub(super) can_continue: bool,
-    pub(super) can_retry: bool,
-    pub(super) can_stop: bool,
-    pub(super) pause_requested: bool,
-    pub(super) awaiting_gate: bool,
-    pub(super) command_error: &'static str,
-    pub(super) conversation_surface: bool,
-}
-
-impl LoopDetailView {
-    pub(super) fn from_loop(record: &crate::workflows::TaskLoop, awaiting_gate: bool) -> Self {
-        let controls = loop_controls(record, awaiting_gate, "", false);
-        Self {
-            name: record.pinned.definition.name().to_owned(),
-            state: record.state.as_label(),
-            created: format_time(record.created_at_ms),
-            progress: record.progress_label(),
-            conversation_href: format!("/conversations/{}", record.conversation_id.as_hex()),
-            current_child_href: record.child_href(),
-            loop_id: controls.loop_id,
-            command_token: controls.command_token,
-            can_pause: controls.can_pause,
-            can_continue: controls.can_continue,
-            can_retry: controls.can_retry,
-            can_stop: controls.can_stop,
-            pause_requested: controls.pause_requested,
-            awaiting_gate: controls.awaiting_gate,
-            command_error: "",
-            conversation_surface: false,
-            process_phases: crate::workflows::summary::process_overview(&record.pinned.definition),
-            hierarchy: "Parent run · Task · Phase".to_owned(),
-            context_boundaries: "Each child receives the complete task file but works only on its assigned task. Each phase and retry uses a fresh context with declared artefacts and authorised root instructions from its selected candidate. Explicit revision feedback can enter a fresh attempt. The parent conversation and earlier worker transcripts stay excluded. Completed code reaches the next task.".to_owned(),
-            tasks: record
-                .tasks
-                .iter()
-                .map(|task| LoopTaskView {
-                    number: (task.index + 1).to_string(),
-                    markdown: task.markdown.clone(),
-                    state: match task.outcome {
-                        crate::workflows::TaskOutcome::Pending => "Pending",
-                        crate::workflows::TaskOutcome::Reserved
-                        | crate::workflows::TaskOutcome::Dispatched => "Active",
-                        crate::workflows::TaskOutcome::CompletedCommit => "Committed",
-                        crate::workflows::TaskOutcome::CompletedApplication => "Applied",
-                        crate::workflows::TaskOutcome::CompletedUnchanged => "Unchanged",
-                        crate::workflows::TaskOutcome::CompletedDirect => "Completed · direct host changes",
-                        crate::workflows::TaskOutcome::CompletedHost => "Completed · host commands",
-                        crate::workflows::TaskOutcome::Failed => "Failed",
-                        crate::workflows::TaskOutcome::Cancelled => "Cancelled",
-                    },
-                    href: task
-                        .child_id
-                        .map(|id| format!("/runs/{}", id.as_hex()))
-                        .unwrap_or_default(),
-                    previous_href: task
-                        .previous_child_ids
-                        .last()
-                        .map(|id| format!("/runs/{}", id.as_hex()))
-                        .unwrap_or_default(),
-                })
-                .collect(),
-        }
-    }
-}
-
-pub(super) fn loop_controls(
-    record: &crate::workflows::TaskLoop,
-    awaiting_gate: bool,
-    command_error: &'static str,
-    conversation_surface: bool,
-) -> LoopControlsView {
-    LoopControlsView {
-        loop_id: record.id.as_hex(),
-        command_token: record.command_token(),
-        can_pause: matches!(
-            record.state,
-            crate::workflows::task_loop::TaskLoopState::Active { .. }
-                | crate::workflows::task_loop::TaskLoopState::AwaitingChild { .. }
-        ),
-        can_continue: record.allows_continue(),
-        can_retry: record.allows_retry(),
-        can_stop: !record.state.is_terminal(),
-        pause_requested: record.pause_requested(),
-        awaiting_gate,
-        command_error,
-        conversation_surface,
-    }
-}
-
-#[derive(Template)]
 #[template(path = "workflow_runs/templates/detail.html")]
 pub(super) struct RunDetailView {
     pub(super) run_id: String,
@@ -572,12 +416,10 @@ pub(super) struct RunDetailView {
     pub(super) current_step: String,
     pub(super) steps: Vec<StepView>,
     pub(super) environments: Vec<PinnedEnvironmentView>,
-    pub(super) task_selection: Option<TaskSelectionView>,
-    pub(super) launch_inputs: Vec<LaunchInputView>,
+
     pub(super) attempts: Vec<AttemptView>,
     pub(super) artefacts: Vec<ArtefactRow>,
-    pub(super) parent_href: String,
-    pub(super) hierarchy: String,
+
     pub(super) context_boundaries: String,
     pub(super) process_phases: Vec<ProcessPhase>,
     pub(super) host_approval: String,
@@ -611,12 +453,10 @@ pub(super) struct RunDetailContents<'a> {
     pub(super) current_step: &'a str,
     pub(super) steps: &'a [StepView],
     pub(super) environments: &'a [PinnedEnvironmentView],
-    pub(super) task_selection: &'a Option<TaskSelectionView>,
-    pub(super) launch_inputs: &'a [LaunchInputView],
+
     pub(super) attempts: &'a [AttemptView],
     pub(super) artefacts: &'a [ArtefactRow],
-    pub(super) parent_href: &'a str,
-    pub(super) hierarchy: &'a str,
+
     pub(super) context_boundaries: &'a str,
     pub(super) process_phases: &'a [ProcessPhase],
     pub(super) host_approval: &'a str,
@@ -630,7 +470,6 @@ impl RunDetailView {
         environments: &EnvironmentCatalogue,
         projects: &ProjectStore,
         evidence: &crate::workflows::WorkflowEvidenceStore,
-        parent: Option<&TaskLoop>,
     ) -> Self {
         let (name_href, catalogue_note) = catalogue_presentation(run, workflows);
         let (project_href, mut project_name) = project_presentation(run.project_id, projects);
@@ -645,8 +484,11 @@ impl RunDetailView {
                 .join(", ");
         }
         let current_step = run.current_step_name().unwrap_or("").to_owned();
-        let (parent_href, hierarchy, context_boundaries) =
-            run_hierarchy(run, parent, &current_step);
+        let context_boundaries = if run.kind == crate::workflows::RunKind::QuickTask {
+            "Ordinary work retains conversation context. Revision attempts use the original brief, exact candidate and explicit feedback."
+        } else {
+            "Each model step uses the exact brief, declared inputs and authorised directory instructions. Other step transcripts stay excluded."
+        }.to_owned();
         Self {
             run_id: run.id.as_hex(),
             conversation_href: run.conversation_id.map(|id| format!("/conversations/{}", id.as_hex())).unwrap_or_default(),
@@ -670,12 +512,7 @@ impl RunDetailView {
             },
             created: format_time(run.created_at_ms),
             current_step,
-            task_selection: run.task_selection.as_ref().map(|task| TaskSelectionView {
-                document_id: task.document_id.as_hex(),
-                revision: task.revision.to_string(),
-                content_hash: task.content_hash.clone(),
-                index: (task.index + 1).to_string(),
-            }),
+
             steps: run
                 .pinned
                 .definition
@@ -796,7 +633,7 @@ impl RunDetailView {
                 })
                 .collect(),
             environments: pinned_environments(run, environments),
-            launch_inputs: launch_inputs(run),
+
             attempts: run
                 .attempts
                 .iter()
@@ -883,8 +720,6 @@ impl RunDetailView {
                 })
                 .collect(),
             artefacts: artefact_rows(run),
-            parent_href,
-            hierarchy,
             context_boundaries,
             process_phases: if run.kind == crate::workflows::run::RunKind::Configured {
                 crate::workflows::summary::process_overview(&run.pinned.definition)
@@ -943,12 +778,10 @@ impl RunDetailView {
             current_step: &self.current_step,
             steps: &self.steps,
             environments: &self.environments,
-            task_selection: &self.task_selection,
-            launch_inputs: &self.launch_inputs,
+
             attempts: &self.attempts,
             artefacts: &self.artefacts,
-            parent_href: &self.parent_href,
-            hierarchy: &self.hierarchy,
+
             context_boundaries: &self.context_boundaries,
             process_phases: &self.process_phases,
             host_approval: &self.host_approval,
@@ -1356,7 +1189,7 @@ fn next_candidate_hash(
             }
         },
         crate::workflows::definition::ArtefactSource::RunCurrentPlan => return None,
-        crate::workflows::definition::ArtefactSource::LaunchInput { .. } => return None,
+
         crate::workflows::definition::ArtefactSource::StepOutput { step, output } => {
             &run.attempts
                 .iter()
@@ -1391,39 +1224,6 @@ fn step_environment_label(
         environment.name,
         environment.snapshot.snapshot_digest.short_hex()
     )
-}
-
-fn launch_inputs(run: &WorkflowRun) -> Vec<LaunchInputView> {
-    run.artefacts
-        .iter()
-        .filter_map(|record| {
-            let crate::workflows::artefacts::ArtefactProducer::LaunchInput {
-                source,
-                conversation_id,
-                document_id,
-                revision,
-                content_hash,
-            } = &record.provenance.producer
-            else {
-                return None;
-            };
-            let content_bytes = match &record.summary {
-                crate::workflows::artefacts::ArtefactSummary::Plan { markdown_bytes } => {
-                    markdown_bytes.to_string()
-                }
-                _ => String::new(),
-            };
-            Some(LaunchInputView {
-                href: format!("/runs/{}/artefacts/{}", run.id.as_hex(), record.id.as_hex()),
-                source: source.label().to_owned(),
-                conversation_id: conversation_id.as_hex(),
-                document_id: document_id.as_hex(),
-                revision: revision.to_string(),
-                content_hash: content_hash.as_str(),
-                content_bytes,
-            })
-        })
-        .collect()
 }
 
 fn pinned_environments(

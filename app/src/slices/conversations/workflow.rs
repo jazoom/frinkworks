@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     agents::AccessMode,
-    conversations::{ConversationRecord, DocumentId, PlanRevisionReference},
+    conversations::ConversationRecord,
     error::{AppError, AppResult},
     projects::ProjectId,
     providers::{ModelSelection, ProviderKind, ThinkingEffort},
@@ -18,39 +18,32 @@ use crate::{
     state::AppState,
     workflows::{
         self, PhaseModelSelection, PinnedPreset, ResolveWorkflowError, WorkflowJob, WorkflowRun,
-        WorkflowSelection,
-        definition::{CommitPolicy, ExecutionMode, LaunchInputSource},
+        WorkflowSelection, definition::CommitPolicy,
     },
 };
 
 const TITLE_SUFFIX: &str = " | Power Plant";
 
 #[derive(Default, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub(super) struct WorkflowQuery {
     stage: String,
     workflow: String,
     target: String,
     brief: String,
     commit_policy: String,
-    plan: String,
-    task_document: String,
-    task_revision: String,
-    task_hash: String,
-    task_index: String,
     #[serde(default)]
     phase: Vec<String>,
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct WorkflowLaunchForm {
     revision: String,
     workflow: String,
     brief: String,
     #[serde(default)]
     target: String,
-    #[serde(default)]
-    plan: String,
     #[serde(default)]
     commit_policy: String,
     #[serde(default)]
@@ -59,24 +52,6 @@ pub(super) struct WorkflowLaunchForm {
     preview_target: String,
     #[serde(default)]
     preview_commit_policy: String,
-    #[serde(default)]
-    preview_plan: String,
-    #[serde(default)]
-    task_document: String,
-    #[serde(default)]
-    task_revision: String,
-    #[serde(default)]
-    task_hash: String,
-    #[serde(default)]
-    task_index: String,
-    #[serde(default)]
-    preview_task_document: String,
-    #[serde(default)]
-    preview_task_revision: String,
-    #[serde(default)]
-    preview_task_hash: String,
-    #[serde(default)]
-    preview_task_index: String,
     #[serde(default)]
     phase: Vec<String>,
     #[serde(default)]
@@ -97,39 +72,6 @@ struct TargetOption {
     name: String,
     access: String,
     selected: bool,
-}
-
-struct PlanOption {
-    value: String,
-    title: String,
-    revision: String,
-    content_hash: String,
-    content_bytes: String,
-    selected: bool,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "kebab-case")]
-struct PlanChoiceToken {
-    document: String,
-    revision: u32,
-    content_hash: String,
-    object_hash: String,
-    artefact_hash: String,
-}
-
-struct SelectedPlan {
-    reference: PlanRevisionReference,
-    content: String,
-}
-
-struct SelectedTask {
-    document_id: DocumentId,
-    revision: u32,
-    content_hash: String,
-    index: u32,
-    markdown: String,
-    task_list: String,
 }
 
 struct PhaseChoice {
@@ -173,16 +115,6 @@ struct WorkflowLaunchView {
     workflows: Vec<WorkflowOption>,
     targets: Vec<TargetOption>,
     directory_launch: bool,
-    plans: Vec<PlanOption>,
-    requires_plan: bool,
-    plan_optional: bool,
-    requires_task_list: bool,
-    task_lists: Vec<PlanOption>,
-    task_document: String,
-    task_revision: String,
-    task_hash: String,
-    task_index: String,
-    task_preview: String,
     commit_policies: Vec<CommitPolicyOption>,
     phase_models: Vec<PhaseModelOption>,
     model_summary: String,
@@ -205,16 +137,6 @@ struct WorkflowLaunchContents<'a> {
     workflows: &'a [WorkflowOption],
     targets: &'a [TargetOption],
     directory_launch: bool,
-    plans: &'a [PlanOption],
-    requires_plan: bool,
-    plan_optional: bool,
-    requires_task_list: bool,
-    task_lists: &'a [PlanOption],
-    task_document: &'a str,
-    task_revision: &'a str,
-    task_hash: &'a str,
-    task_index: &'a str,
-    task_preview: &'a str,
     commit_policies: &'a [CommitPolicyOption],
     phase_models: &'a [PhaseModelOption],
     model_summary: &'a str,
@@ -237,16 +159,6 @@ impl WorkflowLaunchView {
             workflows: &self.workflows,
             targets: &self.targets,
             directory_launch: self.directory_launch,
-            plans: &self.plans,
-            requires_plan: self.requires_plan,
-            plan_optional: self.plan_optional,
-            requires_task_list: self.requires_task_list,
-            task_lists: &self.task_lists,
-            task_document: &self.task_document,
-            task_revision: &self.task_revision,
-            task_hash: &self.task_hash,
-            task_index: &self.task_index,
-            task_preview: &self.task_preview,
             commit_policies: &self.commit_policies,
             phase_models: &self.phase_models,
             model_summary: &self.model_summary,
@@ -284,6 +196,20 @@ pub(super) async fn show(
     Path(conversation_id): Path<String>,
     Query(fields): Query<Vec<(String, String)>>,
 ) -> AppResult<Response> {
+    // GET navigation shares the launch form but supplies no launch approval.
+    let fields = fields
+        .into_iter()
+        .filter(|(key, _)| {
+            !matches!(
+                key.as_str(),
+                "revision"
+                    | "preview_workflow"
+                    | "preview_target"
+                    | "preview_commit_policy"
+                    | "confirm_additional_access"
+            )
+        })
+        .collect();
     let Ok((mut query, phases)) = parse_fields::<WorkflowQuery>(fields) else {
         return Ok(axum::http::StatusCode::BAD_REQUEST.into_response());
     };
@@ -309,11 +235,6 @@ pub(super) async fn show(
         },
         &query.brief,
         &query.commit_policy,
-        &query.plan,
-        &query.task_document,
-        &query.task_revision,
-        &query.task_hash,
-        &query.task_index,
         &query.phase,
         "",
     )
@@ -326,32 +247,6 @@ pub(super) async fn show(
     } else if query.stage == "review" && view.stage == "inputs" && view.error.is_empty() {
         if let Err(error) = workflows::input_context::validate_launch_brief(&view.brief) {
             view.error = error.message();
-        } else if (view.requires_plan
-            && !view
-                .plans
-                .iter()
-                .any(|p| p.selected && !p.content_hash.is_empty()))
-            || (view.requires_task_list
-                && !view
-                    .task_lists
-                    .iter()
-                    .any(|p| p.selected && !p.content_hash.is_empty()))
-        {
-            view.error = "Choose the required saved input before review.";
-        } else if !query.plan.trim().is_empty() {
-            // An optional plan selection must still name an exact revision before
-            // review, so Back and Review never carry a stale plan reference.
-            match definition_for_plan(&state, &query.workflow, &query.plan) {
-                Ok(Some(definition)) => {
-                    if let Err(error) =
-                        resolve_selected_plan(&state, &record, &query.plan, &definition)
-                    {
-                        view.error = error;
-                    }
-                }
-                Ok(None) => {}
-                Err(error) => view.error = error,
-            }
         }
         if view.error.is_empty()
             && let Some(definition) = WorkflowSelection::parse(&query.workflow)
@@ -429,11 +324,6 @@ pub(super) async fn launch(
         let target = form.target.clone();
         let brief = form.brief.clone();
         let commit_policy = form.commit_policy.clone();
-        let plan = form.plan.clone();
-        let task_document = form.task_document.clone();
-        let task_revision = form.task_revision.clone();
-        let task_hash = form.task_hash.clone();
-        let task_index = form.task_index.clone();
         let phase = form.phase.clone();
         async move {
             let view = launch_view(
@@ -443,11 +333,6 @@ pub(super) async fn launch(
                 Some(target.as_str()),
                 &brief,
                 &commit_policy,
-                &plan,
-                &task_document,
-                &task_revision,
-                &task_hash,
-                &task_index,
                 &phase,
                 error,
             )
@@ -461,7 +346,10 @@ pub(super) async fn launch(
     if record.revision != revision {
         return error_view(PatchStatus::Conflict, super::REVISION_MESSAGE).await;
     }
-    if record.active_job.is_some() || state.sessions.busy(&session.0) {
+    if record.active_job.is_some()
+        || super::has_pending_review(&state, record.id)
+        || state.sessions.busy(&session.0)
+    {
         return error_view(
             PatchStatus::Conflict,
             "Wait until the current conversation command finishes.",
@@ -520,72 +408,7 @@ pub(super) async fn launch(
         ),
         Err(error) => return error_view(PatchStatus::UnprocessableEntity, error.message()).await,
     };
-    // A selected plan for a workflow without a declared saved-plan input pins
-    // that input for this run only, so Prepare implementation reaches an
-    // existing reference workflow without a seventh starter.
-    if !form.plan.trim().is_empty()
-        && pinned.definition.execution_mode() == ExecutionMode::Once
-        && !pinned
-            .definition
-            .launch_input_sources()
-            .contains(&LaunchInputSource::SavedPlan)
-    {
-        match pinned.definition.with_saved_plan_input() {
-            Ok(definition) => {
-                pinned = workflows::definition::PinnedWorkflowDefinition::pin(
-                    pinned.workflow_id,
-                    definition,
-                );
-            }
-            Err(_) => {
-                return error_view(
-                    PatchStatus::UnprocessableEntity,
-                    "That workflow cannot take a saved plan.",
-                )
-                .await;
-            }
-        }
-    }
-    if form.task_document != form.preview_task_document
-        || form.task_revision != form.preview_task_revision
-        || form.task_hash != form.preview_task_hash
-        || form.task_index != form.preview_task_index
-    {
-        return error_view(
-            PatchStatus::Conflict,
-            "The selected task changed. Review it before you start.",
-        )
-        .await;
-    }
-    let selected_task = match resolve_launch_task(
-        pinned.definition.execution_mode(),
-        &state,
-        &record,
-        &form.task_document,
-        &form.task_revision,
-        &form.task_hash,
-        &form.task_index,
-    ) {
-        Ok(task) => task,
-        Err(error) => return error_view(PatchStatus::UnprocessableEntity, error).await,
-    };
-    if selected_task.is_some() && !workflows::run::supports_task_execution(&pinned.definition) {
-        return error_view(
-            PatchStatus::UnprocessableEntity,
-            "Choose implementation with optional review, code approval and commit for a selected task.",
-        )
-        .await;
-    }
-    if form.plan != form.preview_plan {
-        return error_view(
-            PatchStatus::Conflict,
-            "The plan selection changed. Review the selected plan before you start.",
-        )
-        .await;
-    }
-    if let Err(error) = resolve_selected_plan(&state, &record, &form.plan, &pinned.definition) {
-        return error_view(PatchStatus::UnprocessableEntity, error).await;
-    }
+
     let directory_launch = uses_conversation_directories(&pinned.definition);
     let settings = super::effective_model(&state, &record).map(|model| model.settings);
     if directory_launch && settings.is_none() {
@@ -774,117 +597,6 @@ pub(super) async fn launch(
         }
         .into()
     };
-    // Environment resolution awaits external work. Revalidate the document before reservation.
-    let selected_plan =
-        match resolve_selected_plan(&state, &current, &form.plan, &pinned.definition) {
-            Ok(plan) => plan,
-            Err(error) => return error_view(PatchStatus::UnprocessableEntity, error).await,
-        };
-    let selected_task = match resolve_launch_task(
-        pinned.definition.execution_mode(),
-        &state,
-        &current,
-        &form.task_document,
-        &form.task_revision,
-        &form.task_hash,
-        &form.task_index,
-    ) {
-        Ok(task) => task,
-        Err(error) => return error_view(PatchStatus::UnprocessableEntity, error).await,
-    };
-    if pinned.definition.execution_mode() == ExecutionMode::TaskList {
-        if selected_plan.is_some() {
-            return error_view(
-                PatchStatus::UnprocessableEntity,
-                "A task-list workflow does not take a saved plan input.",
-            )
-            .await;
-        }
-        let snapshot = match resolve_task_list_snapshot(
-            &state,
-            &current,
-            &form.task_document,
-            &form.task_revision,
-            &form.task_hash,
-        ) {
-            Ok(snapshot) => snapshot,
-            Err(error) => return error_view(PatchStatus::UnprocessableEntity, error).await,
-        };
-        let parsed = match workflows::task_list::parse(&snapshot.markdown) {
-            Ok(parsed) => parsed,
-            Err(_) => {
-                return error_view(
-                    PatchStatus::UnprocessableEntity,
-                    "That task list is invalid.",
-                )
-                .await;
-            }
-        };
-        let tasks: Vec<_> = parsed
-            .eligible_tasks()
-            .map(|task| workflows::TaskLoopItem {
-                index: task.index,
-                markdown: task.markdown.clone(),
-                child_id: None,
-                previous_child_ids: Vec::new(),
-                outcome: workflows::TaskOutcome::Pending,
-            })
-            .collect();
-        if tasks.len() > workflows::task_loop::MAXIMUM_LOOP_TASKS {
-            return error_view(
-                PatchStatus::UnprocessableEntity,
-                workflows::task_loop::TaskLoopError::TaskLimit.message(),
-            )
-            .await;
-        }
-        if tasks.is_empty() {
-            return error_view(
-                PatchStatus::UnprocessableEntity,
-                "The task list has no remaining tasks.",
-            )
-            .await;
-        }
-        let loop_id = workflows::TaskLoopId::generate()
-            .map_err(|error| AppError::new("create task loop identifier", error))?;
-        if directory_launch
-            && state
-                .access_consent
-                .approve_loop_launch(
-                    &form.confirm_additional_access,
-                    loop_id,
-                    session.0,
-                    current.id,
-                    phase_models
-                        .iter()
-                        .filter_map(|phase| phase.settings.clone())
-                        .collect(),
-                )
-                .is_err()
-        {
-            return error_view(
-                PatchStatus::Conflict,
-                "Review and approve the exact phase settings before start.",
-            )
-            .await;
-        }
-        return launch_task_loop(
-            state,
-            session.0,
-            current,
-            authority,
-            project_free,
-            connection,
-            execution,
-            brief,
-            pinned,
-            environments,
-            phase_models,
-            snapshot,
-            tasks,
-            loop_id,
-        )
-        .await;
-    }
     let run_id = workflows::RunId::generate()
         .map_err(|error| AppError::new("create workflow run identifier", error))?;
     if directory_launch
@@ -932,44 +644,19 @@ pub(super) async fn launch(
         run.launch_brief = brief.clone();
         run
     };
-    if let Some(task) = selected_task
-        && run
-            .set_task_selection(crate::workflows::TaskSelection {
-                document_id: task.document_id,
-                revision: task.revision,
-                content_hash: task.content_hash,
-                index: task.index,
-                task_markdown: task.markdown,
-                task_list: task.task_list,
-            })
-            .is_err()
-    {
-        return error_view(
-            PatchStatus::UnprocessableEntity,
-            "The selected task is invalid.",
-        )
-        .await;
-    }
-    if let Some(plan) = selected_plan {
-        let imported = crate::workflows::artefacts::import_saved_plan(
-            run_id,
-            workflows::now_ms(),
-            current.id,
-            plan.reference.document_id,
-            &plan.reference,
-            &plan.content,
-            &state.workflow_artefacts,
-        );
-        if imported
-            .ok()
-            .is_none_or(|record| run.record_launch_input(record).is_err())
-        {
+    if let Some(authority) = authority.as_ref() {
+        let Some(settings) = settings else {
             return error_view(
                 PatchStatus::UnprocessableEntity,
-                "The selected plan could not be imported.",
+                "Choose conversation settings before launch.",
             )
             .await;
-        }
+        };
+        run.project_authority =
+            match workflows::handoff::project::ProjectAuthority::capture(authority, settings) {
+                Ok(snapshot) => Some(snapshot),
+                Err(error) => return error_view(PatchStatus::Conflict, error).await,
+            };
     }
     let job = match state.sessions.begin_conversation_job(
         &session.0,
@@ -1052,170 +739,6 @@ pub(super) async fn launch(
             turns: Vec::new(),
             job: job.clone(),
             eligible_reply: std::sync::Arc::new(std::sync::Mutex::new(String::new())),
-            task_loop: None,
-        },
-        None,
-        execution,
-    ));
-    Ok(responses::command_navigation(&format!(
-        "/conversations/{}",
-        started.id.as_hex()
-    )))
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn launch_task_loop(
-    state: AppState,
-    session: crate::sessions::SessionId,
-    current: ConversationRecord,
-    authority: Option<crate::agents::EffectiveAuthority>,
-    project_free: Option<crate::execution::ProjectFreeAuthority>,
-    connection: crate::providers::ProviderConnection,
-    execution: crate::workflows::ExecutionGuard,
-    brief: String,
-    pinned: crate::workflows::definition::PinnedWorkflowDefinition,
-    environments: workflows::ResolvedEnvironmentSet,
-    phase_models: Vec<PhaseModelSelection>,
-    snapshot: workflows::TaskListSnapshot,
-    tasks: Vec<workflows::TaskLoopItem>,
-    loop_id: workflows::TaskLoopId,
-) -> AppResult<Response> {
-    let record = workflows::TaskLoop::create(
-        loop_id,
-        workflows::now_ms(),
-        current.id,
-        authority.as_ref().map(|authority| authority.project_id),
-        None,
-        brief.clone(),
-        pinned,
-        phase_models.clone(),
-        environments,
-        snapshot,
-        tasks,
-    )
-    .map_err(|error| AppError::new("create task loop", error))?;
-    let job = match state.sessions.begin_conversation_job(
-        &session,
-        current.id,
-        current.messages.len() + 1,
-    ) {
-        Ok(job) => job,
-        Err(_) => {
-            return Ok(responses::command_navigation(&format!(
-                "/conversations/{}",
-                current.id.as_hex()
-            )));
-        }
-    };
-    let started = match state.conversations.begin_message_with_model(
-        &current.id,
-        current.revision,
-        None,
-        job.id(),
-        brief.clone(),
-    ) {
-        Ok(started) => started,
-        Err(error) => {
-            state
-                .sessions
-                .finish_conversation_job(&session, current.id, job.id());
-            return Err(AppError::new("begin task loop", error));
-        }
-    };
-    if let Err(error) = state.task_loops.create(record) {
-        let _ = state.conversations.settle_message(
-            &started.id,
-            job.id(),
-            String::new(),
-            crate::conversations::MessageStatus::Failed,
-            None,
-        );
-        let _ = state
-            .sessions
-            .finish_conversation_job(&session, started.id, job.id());
-        return Err(AppError::new("store task loop", error));
-    }
-    let fail_launch = |message: &str| {
-        // Keep conversation ownership if the parent cannot reach a durable terminal state.
-        if state.task_loops.fail(&loop_id).is_ok() {
-            let _ = state.conversations.settle_message(
-                &started.id,
-                job.id(),
-                message.to_owned(),
-                crate::conversations::MessageStatus::Failed,
-                None,
-            );
-            state
-                .sessions
-                .finish_conversation_job(&session, started.id, job.id());
-        }
-    };
-    let (loop_record, child_id, task) = match state.task_loops.reserve_next_child(&loop_id, 0) {
-        Ok(reserved) => reserved,
-        Err(error) => {
-            fail_launch(error.message());
-            return Err(AppError::new("reserve task child", error));
-        }
-    };
-    let child =
-        match loop_record.child_run(child_id, workflows::now_ms(), task.index, task.markdown) {
-            Ok(child) => child,
-            Err(error) => {
-                fail_launch(error.message());
-                return Err(AppError::new("create task child", error));
-            }
-        };
-    if let Err(error) = state.workflow_runs.create(child) {
-        fail_launch("Power Plant could not store the task run.");
-        return Err(AppError::new("store task child", error));
-    }
-    if let Err(error) = state.task_loops.mark_dispatched(&loop_id, child_id) {
-        fail_launch(error.message());
-        return Err(AppError::new("dispatch task child", error));
-    }
-    job.set_workflow_name(loop_record.pinned.definition.name().to_owned());
-    job.set_step_label("Source capture".to_owned());
-    tokio::spawn(workflows::execute_run(
-        state.clone(),
-        WorkflowJob {
-            run_id: child_id,
-            session_id: session,
-            project_id: authority.as_ref().map(|authority| authority.project_id),
-            agent_id: loop_record.agent_id,
-            agent_revision: authority
-                .as_ref()
-                .map(|authority| authority.revision)
-                .unwrap_or(current.revision),
-            conversation_id: Some(started.id),
-            authority: authority.clone(),
-            project_free_authority: project_free.clone(),
-            grant_alias: authority
-                .as_ref()
-                .map(|authority| authority.grant_alias.clone())
-                .unwrap_or_default(),
-            grant_access: authority
-                .as_ref()
-                .map(|authority| authority.grant_access)
-                .unwrap_or(AccessMode::ReadWrite),
-            connection,
-            phase_providers: phase_models
-                .iter()
-                .map(|phase| phase.selection.provider)
-                .collect(),
-            active_connection: std::sync::Arc::new(std::sync::Mutex::new(None)),
-            host_policy: authority
-                .as_ref()
-                .map(|authority| authority.policy.clone())
-                .or_else(|| {
-                    project_free
-                        .as_ref()
-                        .map(|authority| authority.policy.clone())
-                })
-                .expect("workflow authority"),
-            turns: Vec::new(),
-            job: job.clone(),
-            eligible_reply: std::sync::Arc::new(std::sync::Mutex::new(String::new())),
-            task_loop: Some(loop_id),
         },
         None,
         execution,
@@ -1234,33 +757,10 @@ async fn launch_view(
     target_raw: Option<&str>,
     brief: &str,
     commit_policy_raw: &str,
-    plan_raw: &str,
-    task_document: &str,
-    task_revision: &str,
-    task_hash: &str,
-    task_index: &str,
     phase_raw: &[String],
     error: &'static str,
 ) -> WorkflowLaunchView {
-    let records: Vec<_> = state
-        .workflows
-        .list()
-        .into_iter()
-        .filter(|record| {
-            // The retired saved-plan starter stays resolvable for recorded runs
-            // but never appears as a choice beside the six reference workflows.
-            !(record.definition.name() == "Implement a saved plan"
-                && record
-                    .definition
-                    .launch_input_sources()
-                    .contains(&LaunchInputSource::SavedPlan))
-        })
-        .filter(|record| {
-            task_index.is_empty()
-                || (record.definition.execution_mode() == ExecutionMode::Once
-                    && workflows::run::supports_task_execution(&record.definition))
-        })
-        .collect();
+    let records = state.workflows.list();
     let mut ranked: Vec<_> = records
         .into_iter()
         .map(|record| {
@@ -1290,39 +790,6 @@ async fn launch_view(
     } else {
         error
     };
-    let mode = WorkflowSelection::parse(&selected_workflow)
-        .and_then(|selection| state.workflows.resolve(&selection).ok())
-        .map(|resolved| resolved.pinned.definition.execution_mode())
-        .unwrap_or(ExecutionMode::Once);
-    let task_document =
-        if mode == ExecutionMode::Once && task_index.is_empty() && task_document.contains('/') {
-            ""
-        } else {
-            task_document
-        };
-    let preview = if mode == ExecutionMode::TaskList && !task_document.is_empty() {
-        resolve_task_list_snapshot(state, record, task_document, task_revision, task_hash)
-            .map(|snapshot| snapshot.markdown)
-    } else {
-        resolve_selected_task(
-            state,
-            record,
-            task_document,
-            task_revision,
-            task_hash,
-            task_index,
-        )
-        .map(|task| {
-            task.map(|task| format!("Task {}\n\n{}", task.index + 1, task.markdown))
-                .unwrap_or_default()
-        })
-    };
-    let error = if error.is_empty() {
-        preview.as_ref().err().copied().unwrap_or(error)
-    } else {
-        error
-    };
-    let task_preview = preview.unwrap_or_default();
     let workflows: Vec<WorkflowOption> = records
         .iter()
         .map(|record| {
@@ -1366,7 +833,6 @@ async fn launch_view(
                 .commit_policy_choices()
                 .into_iter()
                 .filter(|policy| *policy != CommitPolicy::NoCommit)
-                .filter(|policy| task_index.is_empty() || *policy == CommitPolicy::HumanApproval)
                 .map(|policy| CommitPolicyOption {
                     value: policy.as_str().to_owned(),
                     label: policy.label().to_owned(),
@@ -1388,10 +854,6 @@ async fn launch_view(
         Some(raw) => ProjectId::parse(raw.trim()),
         None => record.execution_target,
     };
-    let (plans, requires_plan, plan_optional) =
-        selected_plan_options(state, record, &selected_workflow, plan_raw);
-    let (task_lists, requires_task_list) =
-        selected_task_list_options(state, record, &selected_workflow, task_document);
     let mut targets: Vec<TargetOption> = record
         .grants
         .iter()
@@ -1424,43 +886,10 @@ async fn launch_view(
     let (model_summary, access_summary, environment_summary) =
         launch_readiness(state, record, selected_target, &selected_workflow).await;
     let phase_models = selected_phase_model_options(state, record, &selected_workflow, phase_raw);
-    let available_plans = plans.iter().any(|plan| !plan.content_hash.is_empty());
-    let available_task_lists = task_lists.iter().any(|list| !list.content_hash.is_empty());
-    let selected_plan = plans
-        .iter()
-        .any(|plan| plan.selected && !plan.content_hash.is_empty());
-    let selected_task_list = task_lists
-        .iter()
-        .any(|list| list.selected && !list.content_hash.is_empty());
-    let input_summary = match mode {
-        ExecutionMode::TaskList if !available_task_lists => {
-            "This process needs a task list. Save one in this conversation first.".to_owned()
-        }
-        ExecutionMode::TaskList if !selected_task_list => {
-            "Select a task list before you start.".to_owned()
-        }
-        ExecutionMode::TaskList => {
-            "Task list selected. Each remaining task runs the pinned process once.".to_owned()
-        }
-        ExecutionMode::Once if requires_plan && !available_plans => {
-            "This process needs a saved plan. Save one in this conversation first.".to_owned()
-        }
-        ExecutionMode::Once if requires_plan && !selected_plan => {
-            "Select a saved plan before you start.".to_owned()
-        }
-        ExecutionMode::Once if requires_plan => {
-            "Saved plan selected. This process runs once.".to_owned()
-        }
-        ExecutionMode::Once if plan_optional && selected_plan => {
-            "Saved plan selected. The selected plan becomes task direction for this run.".to_owned()
-        }
-        ExecutionMode::Once => "This process runs once. It does not need a task list.".to_owned(),
-    };
+    let input_summary = "This workflow runs once with the supplied brief.".to_owned();
     let launch_blocked = workflows.is_empty()
         || target_unavailable
-        || (!directory_launch && !targets.iter().any(|target| target.selected))
-        || (requires_task_list && !available_task_lists)
-        || (requires_plan && !available_plans);
+        || (!directory_launch && !targets.iter().any(|target| target.selected));
     WorkflowLaunchView {
         stage: if selection_available {
             "inputs"
@@ -1470,9 +899,7 @@ async fn launch_view(
         document_title: format!("Workflows · {}{}", record.title, TITLE_SUFFIX),
         conversation_id: record.id.as_hex(),
         revision: record.revision.to_string(),
-        brief: if brief.is_empty() && (requires_task_list || !task_document.is_empty()) {
-            "Implement only the assigned task from the selected task list.".to_owned()
-        } else if brief.is_empty() {
+        brief: if brief.is_empty() {
             default_brief(record)
         } else {
             // The textarea renders flush, but navigation round-trips a leading
@@ -1482,16 +909,6 @@ async fn launch_view(
         workflows,
         targets,
         directory_launch,
-        plans,
-        requires_plan,
-        plan_optional,
-        requires_task_list,
-        task_lists,
-        task_document: task_document.to_owned(),
-        task_revision: task_revision.to_owned(),
-        task_hash: task_hash.to_owned(),
-        task_index: task_index.to_owned(),
-        task_preview,
         commit_policies,
         phase_models,
         model_summary,
@@ -2201,7 +1618,6 @@ fn starter_rank(name: &str) -> usize {
         "Implement with approval" => 3,
         "Implement and review" => 4,
         "Plan then implement" => 5,
-        "Task loop" => 6,
         _ => usize::MAX,
     }
 }
@@ -2213,7 +1629,6 @@ fn starter_summary(name: &str) -> Option<String> {
         "Implement with approval" => Some("Prepare a change for your review."),
         "Implement and review" => Some("A fresh reviewer inspects the change before you decide."),
         "Plan then implement" => Some("Approve a plan before implementation starts."),
-        "Task loop" => Some("Complete each remaining task with a fresh context."),
         _ => None,
     }
     .map(str::to_owned)
@@ -2291,65 +1706,6 @@ fn validate_phase_models(
     Ok(())
 }
 
-fn selected_plan_options(
-    state: &AppState,
-    record: &ConversationRecord,
-    workflow_raw: &str,
-    plan_raw: &str,
-) -> (Vec<PlanOption>, bool, bool) {
-    let resolved = WorkflowSelection::parse(workflow_raw)
-        .and_then(|selection| state.workflows.resolve(&selection).ok());
-    let Some(resolved) = resolved else {
-        return (Vec::new(), false, false);
-    };
-    if resolved.pinned.definition.execution_mode() == ExecutionMode::TaskList {
-        return (Vec::new(), false, false);
-    }
-    // Workflows that declare a saved-plan input require one. Every other
-    // single-run workflow offers the conversation plans as an optional input:
-    // the launch pins the input per run, so the stored definition is unchanged.
-    let requires_plan = resolved
-        .pinned
-        .definition
-        .launch_input_sources()
-        .contains(&LaunchInputSource::SavedPlan);
-    let mut plans: Vec<_> = state
-        .documents
-        .list_for_conversation(record.id)
-        .into_iter()
-        .filter(|document| document.kind == crate::conversations::DocumentKind::Plan)
-        .map(|document| {
-            let revision = document
-                .revisions
-                .iter()
-                .find(|revision| plan_choice_token(&document.id, revision) == plan_raw)
-                .unwrap_or_else(|| document.current());
-            let title = document.revision_title(revision.revision).to_owned();
-            PlanOption {
-                value: plan_choice_token(&document.id, revision),
-                title,
-                revision: revision.revision.to_string(),
-                content_hash: revision.content_hash.as_str(),
-                content_bytes: revision.content_bytes.to_string(),
-                selected: false,
-            }
-        })
-        .collect();
-    if let Some(selected) = plans.iter_mut().find(|plan| plan.value == plan_raw) {
-        selected.selected = true;
-    } else if !plan_raw.is_empty() {
-        plans.push(PlanOption {
-            value: plan_raw.to_owned(),
-            title: "Selected plan is unavailable".to_owned(),
-            revision: String::new(),
-            content_hash: String::new(),
-            content_bytes: String::new(),
-            selected: true,
-        });
-    }
-    (plans, requires_plan, !requires_plan)
-}
-
 fn default_brief(record: &ConversationRecord) -> String {
     record
         .messages
@@ -2369,381 +1725,6 @@ fn truncate_to_brief(text: &str) -> String {
         end -= 1;
     }
     text[..end].trim_end().to_owned()
-}
-
-/// Resolve the definition a plan selection launches against. A selected plan
-/// for a workflow without a declared saved-plan input pins that input per run,
-/// so Prepare implementation reaches an existing reference workflow and a
-/// launch without a plan keeps the stored definition unchanged.
-fn definition_for_plan(
-    state: &AppState,
-    workflow_raw: &str,
-    plan_raw: &str,
-) -> Result<Option<workflows::definition::WorkflowDefinition>, &'static str> {
-    if plan_raw.trim().is_empty() {
-        return Ok(None);
-    }
-    let Some(selection) = WorkflowSelection::parse(workflow_raw.trim()) else {
-        return Err("Choose a current workflow from the catalogue.");
-    };
-    let resolved = match state.workflows.resolve(&selection) {
-        Ok(resolved) => resolved,
-        Err(error) => return Err(error.message()),
-    };
-    if resolved.pinned.definition.execution_mode() == ExecutionMode::TaskList {
-        return Err("This workflow does not declare a saved plan input.");
-    }
-    if resolved
-        .pinned
-        .definition
-        .launch_input_sources()
-        .contains(&LaunchInputSource::SavedPlan)
-    {
-        return Ok(Some(resolved.pinned.definition.clone()));
-    }
-    match resolved.pinned.definition.with_saved_plan_input() {
-        Ok(definition) => Ok(Some(definition)),
-        Err(_) => Err("That workflow cannot take a saved plan."),
-    }
-}
-
-fn selected_task_list_options(
-    state: &AppState,
-    record: &ConversationRecord,
-    workflow_raw: &str,
-    selected_document: &str,
-) -> (Vec<PlanOption>, bool) {
-    let requires = WorkflowSelection::parse(workflow_raw)
-        .and_then(|selection| state.workflows.resolve(&selection).ok())
-        .is_some_and(|resolved| {
-            resolved.pinned.definition.execution_mode() == ExecutionMode::TaskList
-        });
-    if !requires {
-        return (Vec::new(), false);
-    }
-    let mut lists: Vec<_> = state
-        .documents
-        .list_for_conversation(record.id)
-        .into_iter()
-        .filter(|document| document.kind == crate::conversations::DocumentKind::TaskList)
-        .map(|document| {
-            let revision = document.current();
-            let value = format!(
-                "{}/{}/{}",
-                document.id.as_hex(),
-                revision.revision,
-                revision.content_hash.as_str()
-            );
-            PlanOption {
-                value: value.clone(),
-                title: document.title.clone(),
-                revision: revision.revision.to_string(),
-                content_hash: revision.content_hash.as_str(),
-                content_bytes: revision.content_bytes.to_string(),
-                selected: value == selected_document.trim()
-                    || document.id.as_hex() == selected_document.trim(),
-            }
-        })
-        .collect();
-    if !selected_document.trim().is_empty() && !lists.iter().any(|list| list.selected) {
-        lists.push(PlanOption {
-            value: selected_document.to_owned(),
-            title: "Selected task list is unavailable".to_owned(),
-            revision: String::new(),
-            content_hash: String::new(),
-            content_bytes: String::new(),
-            selected: true,
-        });
-    }
-    (lists, true)
-}
-
-pub(super) fn implementation_href(
-    state: &AppState,
-    document: &crate::conversations::PlanDocument,
-    revision: &crate::conversations::PlanRevision,
-) -> String {
-    let Some(conversation) = document.associated_conversation else {
-        return String::new();
-    };
-    // Prepare implementation hands the saved plan to the Implement and review
-    // reference workflow. A retired saved-plan starter stays out of the
-    // chooser but remains a fallback so older records keep their handoff.
-    let workflows = state.workflows.list();
-    let workflow = workflows
-        .iter()
-        .find(|workflow| {
-            workflow.definition.execution_mode() == ExecutionMode::Once
-                && workflow.definition.name() == "Implement and review"
-        })
-        .or_else(|| {
-            workflows.iter().find(|workflow| {
-                workflow.definition.execution_mode() == ExecutionMode::Once
-                    && workflow
-                        .definition
-                        .launch_input_sources()
-                        .contains(&LaunchInputSource::SavedPlan)
-            })
-        });
-    let Some(workflow) = workflow else {
-        return String::new();
-    };
-    let query = url::form_urlencoded::Serializer::new(String::new())
-        .extend_pairs([
-            (
-                "workflow",
-                WorkflowSelection {
-                    workflow_id: workflow.id,
-                    definition_version: workflow.definition_version,
-                }
-                .as_token(),
-            ),
-            ("plan", plan_choice_token(&document.id, revision)),
-            (
-                "brief",
-                format!(
-                    "Implement the selected plan: {}",
-                    document.revision_title(revision.revision)
-                ),
-            ),
-        ])
-        .finish();
-    format!("/conversations/{conversation}/workflow?{query}")
-}
-
-fn plan_choice_token(
-    document_id: &DocumentId,
-    revision: &crate::conversations::PlanRevision,
-) -> String {
-    serde_json::to_string(&PlanChoiceToken {
-        document: document_id.as_hex(),
-        revision: revision.revision,
-        content_hash: revision.content_hash.as_str(),
-        object_hash: revision.object_hash.as_str(),
-        artefact_hash: revision.artefact_hash.as_str(),
-    })
-    .expect("plan choice token")
-}
-
-fn resolve_selected_plan(
-    state: &AppState,
-    record: &ConversationRecord,
-    raw: &str,
-    definition: &workflows::definition::WorkflowDefinition,
-) -> Result<Option<SelectedPlan>, &'static str> {
-    let requires_plan = definition
-        .launch_input_sources()
-        .contains(&LaunchInputSource::SavedPlan);
-    if !requires_plan {
-        return if raw.trim().is_empty() {
-            Ok(None)
-        } else {
-            Err("This workflow does not declare a saved plan input.")
-        };
-    }
-    if raw.trim().is_empty() {
-        return Err("Choose a saved plan before launch.");
-    }
-    let token: PlanChoiceToken =
-        serde_json::from_str(raw).map_err(|_| "Choose an available saved plan.")?;
-    let document_id =
-        DocumentId::parse(&token.document).ok_or("Choose an available saved plan.")?;
-    let content_hash = crate::workflows::artefacts::ObjectHash::parse(&token.content_hash)
-        .ok_or("Choose an available saved plan.")?;
-    let object_hash = crate::workflows::artefacts::ObjectHash::parse(&token.object_hash)
-        .ok_or("Choose an available saved plan.")?;
-    let artefact_hash = crate::workflows::artefacts::ArtefactHash::parse(&token.artefact_hash)
-        .ok_or("Choose an available saved plan.")?;
-    let document = state
-        .documents
-        .get(&document_id)
-        .ok_or("That saved plan is no longer available.")?;
-    if document.associated_conversation != Some(record.id) {
-        return Err("That saved plan is not associated with this conversation.");
-    }
-    if document.kind != crate::conversations::DocumentKind::Plan {
-        return Err("Select a plan document, not a task list.");
-    }
-    let revision = document
-        .revision(token.revision)
-        .ok_or("That saved plan revision is no longer available.")?;
-    if revision.content_hash != content_hash
-        || revision.object_hash != object_hash
-        || revision.artefact_hash != artefact_hash
-    {
-        return Err("That saved plan changed. Reload the launch sheet.");
-    }
-    let content = state
-        .documents
-        .content(&document, revision.revision)
-        .map_err(|_| "Power Plant could not read the selected plan.")?;
-    if content.len() > workflows::input_context::MAXIMUM_IMPORTED_TEXT_BYTES
-        || crate::workflows::artefacts::ObjectHash::of(content.as_bytes()) != revision.content_hash
-    {
-        return Err("That saved plan is too large or changed. Reload the launch sheet.");
-    }
-    Ok(Some(SelectedPlan {
-        reference: PlanRevisionReference {
-            document_id,
-            revision: revision.revision,
-            content_hash: revision.content_hash,
-            object_hash: revision.object_hash,
-            artefact_hash: revision.artefact_hash,
-        },
-        content,
-    }))
-}
-
-#[allow(clippy::too_many_arguments)]
-fn resolve_launch_task(
-    mode: ExecutionMode,
-    state: &AppState,
-    record: &ConversationRecord,
-    document: &str,
-    revision: &str,
-    hash: &str,
-    index: &str,
-) -> Result<Option<SelectedTask>, &'static str> {
-    if mode == ExecutionMode::TaskList {
-        if !index.trim().is_empty() {
-            return Err("A task loop runs all remaining tasks, not one selected task.");
-        }
-        resolve_task_list_snapshot(state, record, document, revision, hash)?;
-        Ok(None)
-    } else {
-        resolve_selected_task(state, record, document, revision, hash, index)
-    }
-}
-
-fn resolve_selected_task(
-    state: &AppState,
-    record: &ConversationRecord,
-    document_raw: &str,
-    revision_raw: &str,
-    hash_raw: &str,
-    index_raw: &str,
-) -> Result<Option<SelectedTask>, &'static str> {
-    if document_raw.trim().is_empty()
-        && revision_raw.trim().is_empty()
-        && hash_raw.trim().is_empty()
-        && index_raw.trim().is_empty()
-    {
-        return Ok(None);
-    }
-    let document_id = DocumentId::parse(document_raw.trim()).ok_or("Choose an available task.")?;
-    let revision = revision_raw
-        .parse::<u32>()
-        .ok()
-        .filter(|value| *value > 0)
-        .ok_or("Choose an available task.")?;
-    let index = index_raw
-        .parse::<u32>()
-        .ok()
-        .ok_or("Choose an available task.")?;
-    let expected_hash = crate::workflows::artefacts::ObjectHash::parse(hash_raw.trim())
-        .ok_or("Choose an available task.")?;
-    let document = state
-        .documents
-        .get(&document_id)
-        .ok_or("That task list is no longer available.")?;
-    if document.associated_conversation != Some(record.id)
-        || document.kind != crate::conversations::DocumentKind::TaskList
-    {
-        return Err("That task list is not associated with this conversation.");
-    }
-    let stored = document
-        .revision(revision)
-        .ok_or("That task-list revision is no longer available.")?;
-    if stored.content_hash != expected_hash {
-        return Err("That task list changed. Reload the task preview.");
-    }
-    let task_list = state
-        .documents
-        .content(&document, revision)
-        .map_err(|_| "Power Plant could not read the selected task list.")?;
-    if crate::workflows::artefacts::ObjectHash::of(task_list.as_bytes()) != expected_hash {
-        return Err("That task list changed. Reload the task preview.");
-    }
-    let list = workflows::task_list::parse(&task_list).map_err(|_| "That task list is invalid.")?;
-    let task = list
-        .tasks
-        .get(index as usize)
-        .ok_or("That task is no longer available.")?;
-    if task.checked {
-        return Err("Only an unchecked task can run.");
-    }
-    Ok(Some(SelectedTask {
-        document_id,
-        revision,
-        content_hash: expected_hash.as_str(),
-        index,
-        markdown: task.markdown.clone(),
-        task_list,
-    }))
-}
-
-fn resolve_task_list_snapshot(
-    state: &AppState,
-    record: &ConversationRecord,
-    document_raw: &str,
-    revision_raw: &str,
-    hash_raw: &str,
-) -> Result<workflows::TaskListSnapshot, &'static str> {
-    let packed = if revision_raw.trim().is_empty()
-        && hash_raw.trim().is_empty()
-        && document_raw.contains('/')
-    {
-        let mut parts = document_raw.trim().splitn(3, '/');
-        (
-            parts.next().unwrap_or_default().to_owned(),
-            parts.next().unwrap_or_default().to_owned(),
-            parts.next().unwrap_or_default().to_owned(),
-        )
-    } else {
-        (
-            document_raw.trim().to_owned(),
-            revision_raw.trim().to_owned(),
-            hash_raw.trim().to_owned(),
-        )
-    };
-    let document_id =
-        DocumentId::parse(&packed.0).ok_or("Choose a task list for this workflow.")?;
-    let revision = packed
-        .1
-        .parse::<u32>()
-        .ok()
-        .filter(|value| *value > 0)
-        .ok_or("Choose a task list for this workflow.")?;
-    let expected_hash = crate::workflows::artefacts::ObjectHash::parse(&packed.2)
-        .ok_or("Choose a task list for this workflow.")?;
-    let document = state
-        .documents
-        .get(&document_id)
-        .ok_or("That task list is no longer available.")?;
-    if document.associated_conversation != Some(record.id)
-        || document.kind != crate::conversations::DocumentKind::TaskList
-    {
-        return Err("That task list is not associated with this conversation.");
-    }
-    let stored = document
-        .revision(revision)
-        .ok_or("That task-list revision is no longer available.")?;
-    if stored.content_hash != expected_hash {
-        return Err("That task list changed. Reload the launch sheet.");
-    }
-    let markdown = state
-        .documents
-        .content(&document, revision)
-        .map_err(|_| "Power Plant could not read the selected task list.")?;
-    if crate::workflows::artefacts::ObjectHash::of(markdown.as_bytes()) != expected_hash {
-        return Err("That task list changed. Reload the launch sheet.");
-    }
-    Ok(workflows::TaskListSnapshot {
-        document_id,
-        revision,
-        content_hash: expected_hash.as_str(),
-        markdown,
-    })
 }
 
 fn target_access_summary(

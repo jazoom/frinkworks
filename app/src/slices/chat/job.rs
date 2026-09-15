@@ -293,7 +293,6 @@ pub(crate) async fn run_agent_action(
             run: host.run.clone(),
             step: host.step.clone(),
             attempt: host.attempt.clone(),
-            task_loop: host.task_loop.clone(),
         });
         let sandbox = if spec.location == ToolLocation::Host {
             None

@@ -1,7 +1,7 @@
 use crate::agents::{AccessMode, ToolId};
 use crate::execution::{DirectoryAccess, DirectoryGrant, SettingsOverrides};
 use crate::workflows::definition::{
-    AgentAuthority, AgentStep, ArtefactKind, ArtefactSource, CandidateAuthority, ExecutionMode,
+    AgentAuthority, AgentStep, ArtefactKind, ArtefactSource, CandidateAuthority,
     GuestDirectoryAccess, HumanGateStep, HumanRevisionPolicy, InputKey, MAXIMUM_DIRECTORIES,
     MAXIMUM_INPUTS, MAXIMUM_OUTPUTS, MAXIMUM_ROLES, MAXIMUM_STEPS, ModelStepSettings, OutputKey,
     OutputKind, RequiredInput, RequiredOutput, ReviewPolicy, RoleDefinition, RoleKey, StepAction,
@@ -27,7 +27,6 @@ pub(super) enum FormError {
     HumanRevisionPolicy,
     Purpose,
     Connection,
-    ExecutionMode,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -161,10 +160,10 @@ impl PhasePurpose {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum FormIntent {
     Save,
-    UpdateMode,
+
     AddRole,
     AddPhase(PhasePurpose),
-    AddSavedPlanImplementation,
+
     SetPhasePurpose { step: usize, purpose: PhasePurpose },
     RemoveRole(usize),
     MoveRoleUp(usize),
@@ -265,7 +264,7 @@ pub(super) struct WorkflowFormState {
     pub(super) name: String,
     pub(super) default_environment: String,
     pub(super) revision: Option<u64>,
-    pub(super) execution_mode: ExecutionMode,
+
     pub(super) roles: Vec<RoleDraft>,
     pub(super) steps: Vec<StepDraft>,
 }
@@ -326,7 +325,7 @@ pub(super) struct FormErrors {
     pub(super) summary: &'static str,
     pub(super) name: &'static str,
     pub(super) default_environment: &'static str,
-    pub(super) execution_mode: &'static str,
+
     pub(super) roles: Vec<RoleErrors>,
     pub(super) steps: Vec<StepErrors>,
 }
@@ -347,7 +346,6 @@ impl FormError {
             Self::ReviewTarget => "That action would invalidate a review revision target.",
             Self::Purpose => "Choose a supported phase purpose.",
             Self::Connection => "That action would break a phase connection.",
-            Self::ExecutionMode => "Choose Run once or For each task.",
         }
     }
 }
@@ -369,7 +367,7 @@ impl FormErrors {
             summary: "",
             name: "",
             default_environment: "",
-            execution_mode: "",
+
             roles: vec![RoleErrors::default(); roles],
             steps: steps
                 .iter()
@@ -386,7 +384,6 @@ impl FormErrors {
     fn has_field_error(&self) -> bool {
         !self.name.is_empty()
             || !self.default_environment.is_empty()
-            || !self.execution_mode.is_empty()
             || self.roles.iter().any(|role| {
                 !role.key.is_empty()
                     || !role.name.is_empty()
@@ -438,7 +435,7 @@ impl WorkflowFormState {
             name: String::new(),
             default_environment: String::new(),
             revision: None,
-            execution_mode: ExecutionMode::Once,
+
             roles: Vec::new(),
             steps: vec![phase_draft("phase-1", PhasePurpose::Implementation, "")],
         }
@@ -471,7 +468,7 @@ impl WorkflowFormState {
             name: record.definition.name().to_owned(),
             default_environment: record.definition.default_environment().as_hex(),
             revision: Some(record.revision),
-            execution_mode: record.definition.execution_mode(),
+
             roles,
             steps,
         }
@@ -535,7 +532,6 @@ impl WorkflowFormState {
         let mut name = String::new();
         let mut default_environment = String::new();
         let mut revision = None;
-        let mut execution_mode = ExecutionMode::Once;
         let mut intent = None;
         let mut role_fields: Vec<(usize, RolePart, String)> = Vec::new();
         let mut step_fields: Vec<(usize, StepPart, String)> = Vec::new();
@@ -547,10 +543,7 @@ impl WorkflowFormState {
             match parse_field(&key)? {
                 Field::Name => name = value,
                 Field::DefaultEnvironment => default_environment = value,
-                Field::ExecutionMode => {
-                    execution_mode =
-                        ExecutionMode::parse(value.trim()).ok_or(FormError::ExecutionMode)?;
-                }
+
                 Field::Revision => {
                     if !value.trim().is_empty() {
                         revision = Some(parse_revision(&value)?);
@@ -575,7 +568,6 @@ impl WorkflowFormState {
                 name,
                 default_environment,
                 revision,
-                execution_mode,
                 roles,
                 steps,
             },
@@ -585,7 +577,8 @@ impl WorkflowFormState {
 
     pub(super) fn apply(&mut self, intent: FormIntent) -> Result<(), FormError> {
         match intent {
-            FormIntent::Save | FormIntent::UpdateMode => Ok(()),
+            FormIntent::Save => Ok(()),
+
             FormIntent::AddRole => {
                 if self.roles.len() >= MAXIMUM_ROLES {
                     return Err(FormError::Excessive);
@@ -624,17 +617,7 @@ impl WorkflowFormState {
             FormIntent::MoveRoleUp(index) => move_item(&mut self.roles, index, true),
             FormIntent::MoveRoleDown(index) => move_item(&mut self.roles, index, false),
             FormIntent::AddPhase(purpose) => self.add_phase(purpose),
-            FormIntent::AddSavedPlanImplementation => {
-                self.add_phase(PhasePurpose::Implementation)?;
-                let step = self.steps.last_mut().ok_or(FormError::Index)?;
-                step.name = "Implement a saved plan".to_owned();
-                step.inputs.retain(|input| input.kind != "plan");
-                step.inputs = preserve_inputs(
-                    &step.inputs,
-                    &[(ArtefactKind::Plan, "launch-input:saved-plan".to_owned())],
-                );
-                Ok(())
-            }
+
             FormIntent::AddStep => self.add_phase(PhasePurpose::Implementation),
             FormIntent::SetPhasePurpose { step, purpose } => {
                 if step >= self.steps.len() {
@@ -901,13 +884,7 @@ impl WorkflowFormState {
                     return Err(errors);
                 }
             };
-        match WorkflowDefinition::from_parts_with_mode(
-            self.name.clone(),
-            default_environment,
-            roles,
-            steps,
-            self.execution_mode,
-        ) {
+        match WorkflowDefinition::from_parts(self.name.clone(), default_environment, roles, steps) {
             Ok(definition) => Ok(definition),
             Err(error) => {
                 relate_definition_error(self, error, &mut errors);
@@ -934,7 +911,7 @@ impl From<CatalogueError> for FormErrors {
 enum Field {
     Name,
     DefaultEnvironment,
-    ExecutionMode,
+
     Revision,
     Intent,
     Role { index: usize, part: RolePart },
@@ -1012,7 +989,7 @@ fn parse_field(name: &str) -> Result<Field, FormError> {
     match name {
         "name" => Ok(Field::Name),
         "default-environment" => Ok(Field::DefaultEnvironment),
-        "execution-mode" => Ok(Field::ExecutionMode),
+
         "revision" => Ok(Field::Revision),
         "intent" => Ok(Field::Intent),
         _ => parse_row_field(name),
@@ -1191,10 +1168,10 @@ fn parse_human_revision_policy(raw: &str) -> Result<bool, FormError> {
 fn parse_intent(raw: &str) -> Result<FormIntent, FormError> {
     match raw {
         "save" => Ok(FormIntent::Save),
-        "update-mode" => Ok(FormIntent::UpdateMode),
+
         "add-role" => Ok(FormIntent::AddRole),
         "add-step" => Ok(FormIntent::AddStep),
-        "add-phase:saved-plan-implementation" => Ok(FormIntent::AddSavedPlanImplementation),
+
         value if value.starts_with("add-phase:") => {
             let purpose = value
                 .strip_prefix("add-phase:")
@@ -1963,17 +1940,7 @@ fn contract_inputs(purpose: PhasePurpose, earlier: &[StepDraft]) -> Vec<(Artefac
             inputs.push((ArtefactKind::CandidateRevision, candidate));
         }
         PhasePurpose::PlanCheckpoint => {
-            let source = latest_output_source(earlier, OutputKind::Plan).or_else(|| {
-                earlier
-                    .iter()
-                    .any(|step| {
-                        step.inputs.iter().any(|input| {
-                            input.kind == ArtefactKind::Plan.as_str()
-                                && input.source == "launch-input:saved-plan"
-                        })
-                    })
-                    .then(|| "launch-input:saved-plan".to_owned())
-            });
+            let source = latest_output_source(earlier, OutputKind::Plan);
             if let Some(source) = source {
                 inputs.push((ArtefactKind::Plan, source));
             }
@@ -1984,29 +1951,13 @@ fn contract_inputs(purpose: PhasePurpose, earlier: &[StepDraft]) -> Vec<(Artefac
         PhasePurpose::Custom => return inputs,
     }
     if matches!(purpose, PhasePurpose::PlanReview) {
-        let has_plan = latest_output_source(earlier, OutputKind::Plan).is_some()
-            || earlier.iter().any(|step| {
-                step.inputs.iter().any(|input| {
-                    input.kind == ArtefactKind::Plan.as_str()
-                        && input.source == "launch-input:saved-plan"
-                })
-            });
+        let has_plan = latest_output_source(earlier, OutputKind::Plan).is_some();
         if has_plan {
             inputs.push((ArtefactKind::Plan, "run-current-plan".to_owned()));
         }
     }
     if matches!(purpose, PhasePurpose::Implementation)
-        && let Some(source) = latest_output_source(earlier, OutputKind::Plan).or_else(|| {
-            earlier
-                .iter()
-                .any(|step| {
-                    step.inputs.iter().any(|input| {
-                        input.kind == ArtefactKind::Plan.as_str()
-                            && input.source == "launch-input:saved-plan"
-                    })
-                })
-                .then(|| "launch-input:saved-plan".to_owned())
-        })
+        && let Some(source) = latest_output_source(earlier, OutputKind::Plan)
     {
         inputs.push((ArtefactKind::Plan, source));
         if let Some(decision) = latest_output_source(earlier, OutputKind::PlanDecision) {
@@ -2109,9 +2060,6 @@ fn default_input_key(kind: ArtefactKind, occurrence: usize) -> String {
 }
 
 pub(super) fn source_is_valid(raw: &str, kind: ArtefactKind, earlier: &[StepDraft]) -> bool {
-    if raw == "launch-input:saved-plan" {
-        return kind == ArtefactKind::Plan;
-    }
     if raw == "run-current-candidate" {
         return kind == ArtefactKind::CandidateRevision;
     }
@@ -2121,10 +2069,6 @@ pub(super) fn source_is_valid(raw: &str, kind: ArtefactKind, earlier: &[StepDraf
                 step.outputs
                     .iter()
                     .any(|output| output.kind == OutputKind::Plan.as_str())
-                    || step.inputs.iter().any(|input| {
-                        input.kind == ArtefactKind::Plan.as_str()
-                            && input.source == "launch-input:saved-plan"
-                    })
             });
     }
     if raw == "run-initial-candidate" {
@@ -2379,7 +2323,7 @@ fn source_token(source: &ArtefactSource) -> String {
         ArtefactSource::RunInitialCandidate => "run-initial-candidate".to_owned(),
         ArtefactSource::RunCurrentCandidate => "run-current-candidate".to_owned(),
         ArtefactSource::RunCurrentPlan => "run-current-plan".to_owned(),
-        ArtefactSource::LaunchInput { source } => format!("launch-input:{}", source.as_str()),
+
         ArtefactSource::StepOutput { step, output } => {
             format!("step-output:{}:{}", step.as_str(), output.as_str())
         }
@@ -2398,12 +2342,7 @@ fn parse_source(
     if raw == "run-current-plan" {
         return Ok(ArtefactSource::RunCurrentPlan);
     }
-    if let Some(source) = raw.strip_prefix("launch-input:") {
-        return Ok(ArtefactSource::LaunchInput {
-            source: crate::workflows::definition::LaunchInputSource::parse(source)
-                .ok_or(crate::workflows::definition::DefinitionError::Format)?,
-        });
-    }
+
     let Some(rest) = raw.strip_prefix("step-output:") else {
         return Err(crate::workflows::definition::DefinitionError::Format);
     };
@@ -3178,7 +3117,7 @@ fn relate_definition_error(
     errors.summary = error.message();
     match error {
         DefinitionError::Name => errors.name = error.message(),
-        DefinitionError::ExecutionMode => errors.execution_mode = error.message(),
+
         DefinitionError::DuplicateRole => {
             for role in &mut errors.roles {
                 if role.key.is_empty() {
@@ -3200,22 +3139,7 @@ fn relate_definition_error(
                 }
             }
         }
-        DefinitionError::ForwardInput
-        | DefinitionError::SelfInput
-        | DefinitionError::UnknownOutput
-        | DefinitionError::InputKind
-        | DefinitionError::AssistantInput
-        | DefinitionError::LaunchInput => {
-            for (index, step) in state.steps.iter().enumerate() {
-                for (input_index, input) in step.inputs.iter().enumerate() {
-                    if !ArtefactKind::parse(&input.kind).is_some_and(|kind| {
-                        source_is_valid(&input.source, kind, &state.steps[..index])
-                    }) {
-                        errors.steps[index].inputs[input_index].source = error.message();
-                    }
-                }
-            }
-        }
+
         DefinitionError::CandidateInput | DefinitionError::AssuranceInput => {
             for (index, step) in state.steps.iter().enumerate() {
                 let candidates = step

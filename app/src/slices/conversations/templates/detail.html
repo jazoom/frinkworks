@@ -30,7 +30,7 @@
               <path d="M4 6h16M4 12h16M4 18h16" />
             </svg>
           </button>
-          <div class="grow basis-40 sm:flex-initial">
+          <div class="min-w-0 grow basis-40 sm:flex-initial">
             <h1
               id="conversation-heading"
               class="text-lg font-semibold break-words"
@@ -56,37 +56,20 @@
             </form>
           {% endif %}
         </div>
-        <div class="workspace-header-actions flex items-center gap-1">
+        <div
+          class="workspace-header-actions ml-auto flex shrink-0 items-center gap-1"
+        >
           {% if let Some(saved) = self.saved() %}
             <a
-              href="/conversations/{{ saved.id }}/plans"
+              href="/conversations/{{ saved.id }}/handoff"
               data-graft
-              data-plans-toggle
-              aria-label="Plans"
-              {% if !companion_html.is_empty() && (companion_kind == "plans" || companion_kind == "plan-request" || companion_kind == "plan") %}aria-current="page"{% endif %}
               class="btn btn-ghost btn-sm min-h-11"
             >
               <svg class="workspace-icon" aria-hidden="true">
-                <use href="/static/images/workspace-icons.svg#file" /></svg
-              ><span class="workspace-action-label">Plans</span
-              >{% if !saved.plans.is_empty() %}
-                <span class="badge badge-ghost badge-sm"
-                  >{{ saved.plans.len() }}</span
-                >
-              {% endif %}
+                <use href="/static/images/workspace-icons.svg#arrow" />
+              </svg>
+              <span>Handoff</span>
             </a>
-          {% else %}
-            <button
-              type="button"
-              class="btn btn-ghost btn-sm min-h-11"
-              aria-label="Plans"
-              title="Send a message before you use plans"
-              disabled
-            >
-              <svg class="workspace-icon" aria-hidden="true">
-                <use href="/static/images/workspace-icons.svg#file" /></svg
-              ><span class="workspace-action-label">Plans</span>
-            </button>
           {% endif %}
           <button
             type="button"
@@ -102,15 +85,17 @@
           </button>
           <button
             type="button"
-            class="btn btn-ghost btn-sm btn-square min-h-11"
+            class="btn btn-ghost btn-sm min-h-11"
             aria-label="Conversation actions"
-            title="Conversation actions"
             popovertarget="conversation-actions"
             popovertargetaction="show"
           >
-            <svg class="workspace-icon" aria-hidden="true">
-              <use href="/static/images/workspace-icons.svg#down" />
+            <svg class="workspace-icon" aria-hidden="true" viewBox="0 0 24 24">
+              <circle cx="5" cy="12" r="1" />
+              <circle cx="12" cy="12" r="1" />
+              <circle cx="19" cy="12" r="1" />
             </svg>
+            <span>Actions</span>
           </button>
         </div>
       </header>
@@ -222,23 +207,35 @@
           </h2>
           <button
             type="button"
-            class="btn btn-ghost btn-sm min-h-11"
+            class="btn btn-ghost btn-sm btn-square min-h-11"
             popovertarget="conversation-actions"
             popovertargetaction="hide"
+            aria-label="Close conversation actions"
+            title="Close conversation actions"
           >
-            Close
+            <svg class="workspace-icon" aria-hidden="true">
+              <use href="/static/images/workspace-icons.svg#close" />
+            </svg>
           </button>
         </header>
         {% if let Some(saved) = self.saved() %}
           <div class="action-menu mt-3" data-actions-menu>
             <a
               href="{{ self.fresh_draft_href() }}"
+              aria-describedby="conversation-copy-description"
               data-graft
               class="btn btn-outline w-full justify-start"
               ><svg class="workspace-icon" aria-hidden="true">
                 <use href="/static/images/workspace-icons.svg#plus" /></svg
               >New conversation with the same setup</a
             >
+            <p
+              id="conversation-copy-description"
+              class="text-quiet mb-3 text-sm"
+            >
+              Copies settings only. Starts with an empty history and requires
+              fresh access approval.
+            </p>
             <button
               type="button"
               class="btn btn-ghost w-full justify-start"
@@ -247,6 +244,7 @@
             >
               Rename conversation
             </button>
+            <hr class="border-base-300 my-2" />
             <button
               type="button"
               class="btn btn-ghost danger-text w-full justify-start"
@@ -256,10 +254,6 @@
               Delete conversation
             </button>
           </div>
-          <p class="text-quiet mt-3 text-sm">
-            The draft copies settings only. History, consent and pending work
-            stay with this conversation.
-          </p>
           <div
             id="conversation-actions-rename"
             data-actions-panel="rename"
@@ -340,58 +334,14 @@
       <section
         id="transcript"
         data-island="transcript"
-        tabindex="-1"
+        tabindex="0"
         class="chat-transcript"
         aria-label="Messages"
         data-show-thinking="{% if show_thinking %}true{% else %}false{% endif %}"
         aria-live="polite"
       >
         {% if let Some(saved) = self.saved() %}
-          {% if let Some(review) = saved.source_review %}
-            <section
-              class="file-section mx-auto my-3 w-[calc(100%-2rem)] max-w-3xl shrink-0 space-y-4 sm:w-[calc(100%-4rem)]"
-              aria-labelledby="conversation-review-source-heading"
-            >
-              <div>
-                <h2
-                  id="conversation-review-source-heading"
-                  class="text-lg font-semibold"
-                >
-                  Plan under review
-                </h2>
-                <p class="text-quiet mt-1 max-w-[60ch] text-sm">
-                  This conversation keeps an immutable plan reference. Source
-                  messages, thoughts, tool output and write authority are not
-                  inherited.
-                </p>
-              </div>
-              <div
-                class="border-base-300 flex flex-wrap items-center gap-3 border-y py-3"
-              >
-                <div class="min-w-0 flex-1">
-                  <p class="font-medium break-words">{{ review.plan_title }}</p>
-                  <p class="text-quiet mt-1 text-xs">
-                    Revision {{ review.plan_revision }} ·
-                    {{ review.content_hash }}
-                  </p>
-                </div>
-                <div class="flex flex-wrap gap-2">
-                  <a
-                    href="{{ review.plan_href }}"
-                    data-graft
-                    class="btn btn-secondary btn-sm"
-                    >Open plan</a
-                  >
-                  <a
-                    href="{{ review.href }}"
-                    data-graft
-                    class="btn btn-ghost btn-sm"
-                    >Open source conversation: {{ review.title }}</a
-                  >
-                </div>
-              </div>
-            </section>
-          {% endif %}
+
           {% if let Some(review) = saved.source_candidate_review %}
             <section
               class="file-section mx-auto my-3 w-[calc(100%-2rem)] max-w-3xl shrink-0 space-y-4 sm:w-[calc(100%-4rem)]"
@@ -476,49 +426,6 @@
               </ul>
             </section>
           {% endif %}
-          {% if !saved.linked_reviews.is_empty() %}
-            <section
-              class="file-section mx-auto my-3 w-[calc(100%-2rem)] max-w-3xl shrink-0 space-y-4 sm:w-[calc(100%-4rem)]"
-              aria-labelledby="conversation-linked-reviews-heading"
-            >
-              <div>
-                <h2
-                  id="conversation-linked-reviews-heading"
-                  class="text-lg font-semibold"
-                >
-                  Linked plan reviews
-                </h2>
-                <p class="text-quiet mt-1 max-w-[60ch] text-sm">
-                  These links identify review conversations. They do not pass
-                  discussion history or project authority between conversations.
-                </p>
-              </div>
-              <ul class="record-list" aria-label="Linked plan reviews">
-                {% for review in saved.linked_reviews %}
-                  <li class="record-row flex-wrap gap-3">
-                    <div class="min-w-0 flex-1">
-                      <a
-                        href="{{ review.href }}"
-                        data-graft
-                        class="link link-hover font-medium break-words"
-                        >{{ review.title }}</a
-                      >
-                      <p class="text-quiet mt-1 text-xs">
-                        Revision {{ review.plan_revision }} ·
-                        {{ review.content_hash }}
-                      </p>
-                    </div>
-                    <a
-                      href="{{ review.plan_href }}"
-                      data-graft
-                      class="btn btn-ghost btn-sm"
-                      >Open plan</a
-                    >
-                  </li>
-                {% endfor %}
-              </ul>
-            </section>
-          {% endif %}
         {% endif %}
         {% if self.transcript_empty() %}
           <div class="empty-conversation m-auto max-w-xl px-6 py-8 text-center">
@@ -527,8 +434,8 @@
               Talk with your agent
             </h2>
             <p class="text-quiet mt-3">
-              Have a general chat, or give directory access first if you want to
-              work on a project.
+              Have a general chat, or give directory access if you want to work
+              on a project.
             </p>
           </div>
         {% endif %}
@@ -538,12 +445,7 @@
             They remain in local history and model context.
           </p>
         {% endif %}
-        {% if plan_actions_omitted %}
-          <p class="text-quiet px-6 py-3 text-sm">
-            Some plan contents are deferred to their pinned revisions to keep
-            the transcript within the display limit.
-          </p>
-        {% endif %}
+
         {% for message in messages %}{% include "conversations/templates/message_article.html" %}{% endfor %}
       </section>
       {% if let Some(saved) = self.saved() %}
@@ -569,12 +471,6 @@
               {{ companion_title }}
             {% else if companion_kind == "workflow" %}
               Run a workflow
-            {% else if companion_kind == "plans" %}
-              Plans
-            {% else if companion_kind == "plan-request" %}
-              Plan request
-            {% else %}
-              Plan
             {% endif %}
           </h2>
           <div class="flex items-center gap-1">
@@ -616,8 +512,120 @@
               {{ companion_html|safe }}
             </section>
           {% else %}
+            {% if let Some(recovery) = prepared_recovery %}
+              {% if let Some(saved) = self.saved() %}
+                <section
+                  class="border-base-300 space-y-3 border-b p-5"
+                  aria-label="Prepared-change recovery"
+                >
+                  <h3 class="text-lg font-semibold">
+                    Restore prepared changes
+                  </h3>
+                  <p class="text-sm">
+                    This conversation owns the isolated changes. Runtime consent
+                    expired or the transfer needs recovery.
+                  </p>
+                  <p class="text-sm">
+                    Restoration applies no files and approves no assessment.
+                    Each outstanding decision remains separate.
+                  </p>
+                  <details>
+                    <summary class="min-h-11 cursor-pointer">
+                      Pinned settings for this execution
+                    </summary>
+                    <pre
+                      tabindex="0"
+                      class="bg-base-200 max-h-64 overflow-auto p-3 text-xs break-words whitespace-pre-wrap"
+                    >
+{{ recovery.settings }}</pre>
+                  </details>
+                  <form
+                    method="post"
+                    action="/conversations/{{ saved.id }}/prepared/restore"
+                    data-graft
+                    class="space-y-3"
+                  >
+                    <input
+                      type="hidden"
+                      name="revision"
+                      value="{{ saved.revision }}"
+                    />
+                    <input
+                      type="hidden"
+                      name="run"
+                      value="{{ recovery.run }}"
+                    />
+                    <input
+                      type="hidden"
+                      name="fingerprint"
+                      value="{{ recovery.fingerprint }}"
+                    />
+                    <label class="flex items-start gap-3 text-sm">
+                      <input
+                        type="checkbox"
+                        name="approval"
+                        value="restore-prepared"
+                        required
+                        class="checkbox"
+                      />
+                      <span
+                        >I approve the pinned directory access and runtime
+                        settings for this execution only.</span
+                      >
+                    </label>
+                    <button type="submit" class="btn btn-primary w-full">
+                      Restore pending decision
+                    </button>
+                  </form>
+                </section>
+              {% endif %}
+            {% endif %}
             {% include "conversations/templates/current_work.html" %}
             {% if let Some(saved) = self.saved() %}
+              {% for result in saved.direct_results %}
+                <section
+                  class="border-base-300 border-b p-5"
+                  aria-label="Already-written changes"
+                >
+                  <h3 class="text-lg font-semibold">Already-written changes</h3>
+                  <p class="text-quiet mt-2 text-sm">
+                    These files are not isolated proposals. Stop and handoff do
+                    not undo direct writes.
+                  </p>
+                  {% if result.unknown %}
+                    <p class="mt-3 text-sm">
+                      The final snapshot is unavailable. Direct writes can
+                      remain.
+                    </p>
+                  {% else %}
+                    <p class="mt-3 text-sm">
+                      {{ result.total }} changed
+                      {% if result.total == 1 %}file{% else %}files{% endif %}
+                      in the named directories
+                    </p>
+                    {% for file in result.files %}
+                      <details class="border-base-300 mt-3 border-t pt-3">
+                        <summary
+                          class="min-h-11 cursor-pointer font-mono text-xs break-all"
+                        >
+                          {{ file.path }} · {{ file.status }}
+                        </summary>
+                        <pre
+                          tabindex="0"
+                          class="bg-base-200 max-h-80 overflow-auto p-3 text-xs break-words whitespace-pre-wrap"
+                        >
+{{ file.text }}</pre>
+                      </details>
+                    {% endfor %}
+                  {% endif %}
+                  <a
+                    href="{{ result.href }}"
+                    data-graft
+                    class="btn btn-outline mt-4 w-full"
+                    >View recorded changes</a
+                  >
+                </section>
+              {% endfor %}
               {% if saved.pending_gate.is_none() && pending_host_command.is_none() %}
                 {% if job_active %}
                   <p class="text-quiet p-5 text-sm">
@@ -801,6 +809,47 @@
               <input type="hidden" name="title" value="{{ title }}" />
               <input
                 type="hidden"
+                name="prepared_run"
+                value="{{ prepared_run }}"
+              />
+              {% if !prepared_run.is_empty() %}
+                <section
+                  class="mb-4 max-h-[45dvh] space-y-3 overflow-y-auto px-4 pt-4"
+                  aria-label="Prepared-change handoff"
+                >
+                  <h2 class="font-semibold">Continue exact prepared changes</h2>
+                  <p class="text-sm">
+                    Send transfers ownership, not files. The original baseline
+                    and remaining workflow decisions stay unchanged.
+                  </p>
+                  <details>
+                    <summary class="min-h-11 cursor-pointer text-sm">
+                      Review pinned execution settings
+                    </summary>
+                    <pre
+                      tabindex="0"
+                      class="bg-base-200 max-h-64 overflow-auto p-3 text-xs break-words whitespace-pre-wrap"
+                    >
+{{ handoff_settings }}</pre>
+                  </details>
+                  <label class="flex items-start gap-3 text-sm">
+                    <input
+                      type="checkbox"
+                      name="handoff_approval"
+                      value="continue-prepared"
+                      class="checkbox"
+                      {% if handoff_approved %}checked{% endif %}
+                    />
+                    <span
+                      >I approve these pinned settings for this execution only.
+                      This action does not approve commands, assess code or
+                      apply files.</span
+                    >
+                  </label>
+                </section>
+              {% endif %}
+              <input
+                type="hidden"
                 name="consent_reference"
                 value="{{ consent_reference }}"
               />
@@ -838,7 +887,7 @@
               placeholder="Ask a question or describe a change…"
               rows="2"
               {% if !self.is_new() %}required{% endif %}
-              maxlength="8000"
+              maxlength="32768"
               {% if self.composer_disabled() %}disabled{% endif %}
             >
 {{ self.draft_message() }}</textarea>
@@ -1278,6 +1327,14 @@
             Presets
           </button>
         </div>
+        {% if notice != "" %}
+          <p
+            role="status"
+            class="border-base-300 bg-base-200 shrink-0 border-b px-5 py-3 text-sm sm:px-6"
+          >
+            {{ notice }}
+          </p>
+        {% endif %}
         <div class="flex min-h-0 flex-1">
           <div
             data-settings-scroll
@@ -1306,6 +1363,25 @@
                   name="revision"
                   value="{{ saved.revision }}"
                 />
+              </form>
+              <form
+                data-graft
+                method="post"
+                action="/conversations/{{ saved.id }}/settings/defaults"
+                class="my-4 space-y-2"
+              >
+                <input
+                  type="hidden"
+                  name="revision"
+                  value="{{ saved.revision }}"
+                />
+                <p class="text-quiet text-sm">
+                  Changes apply only to this conversation. Future defaults use
+                  saved settings, not unsaved edits or access approval.
+                </p>
+                <button type="submit" class="btn btn-outline btn-sm">
+                  Use saved settings as future defaults
+                </button>
               </form>
               <form
                 id="conversation-preset-form"
@@ -1351,25 +1427,6 @@
                 </form>
               {% endif %}
             {% endif %}
-            {% if self.is_new() %}
-              <form
-                id="conversation-model-preference"
-                data-graft
-                method="post"
-                action="/conversations/new/model"
-                hidden
-              >
-                <input type="hidden" name="provider" />
-                <input type="hidden" name="model" />
-                <input type="hidden" name="thinking" />
-              </form>
-              <p
-                id="conversation-model-status"
-                role="status"
-                class="text-error mt-3 text-sm"
-              ></p>
-            {% endif %}
-
             <section
               id="settings-presets"
               data-settings-panel
@@ -2523,7 +2580,7 @@
                         <p class="mt-1 text-sm">
                           This change does not save edits to the model,
                           instructions, tools or network access. Those edits
-                          need Review setup changes afterward.
+                          need Save settings afterwards.
                         </p>
                         {% if change.backend_changes %}
                           <p class="mt-1 text-sm break-words">
@@ -2763,7 +2820,7 @@
               type="submit"
               {% if job_active || session_busy %}disabled{% endif %}
             >
-              Review setup changes
+              Save settings
             </button>
             {% if let Some(saved) = self.saved() %}
               <a
@@ -2792,7 +2849,7 @@
               class="btn btn-primary"
               type="submit"
             >
-              Review setup changes
+              Keep draft settings
             </button>
             <button type="button" class="btn btn-ghost" data-settings-cancel>
               Cancel setup changes

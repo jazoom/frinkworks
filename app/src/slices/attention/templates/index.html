@@ -1,82 +1,43 @@
-<main
-  data-section="attention"
-  class="workspace-catalogue flex min-h-0 w-full flex-1 flex-col"
->
-  <header
-    class="catalogue-head border-base-300 flex items-center justify-between gap-4 border-b py-3.5"
-  >
-    <div class="flex min-w-0 items-center gap-2">
-      <button
-        type="button"
-        class="btn btn-ghost btn-sm workspace-menu"
-        data-workspace-menu
-        aria-controls="workspace-index"
-        aria-expanded="false"
-        aria-label="Menu"
+{% extends "layout/page.html" %}
+{% block section %}attention{% endblock %}
+{% block heading %}Needs your attention{% endblock %}
+{% block actions %}
+  {% if !back_href.is_empty() %}
+    <a href="{{ back_href }}" data-graft class="btn btn-ghost btn-sm"
+      >Back to conversation</a
+    >
+  {% endif %}
+{% endblock %}
+{% block page_content %}
+  <p class="page-description">
+    The work waits safely. Each decision leads back to its conversation.
+  </p>
+  {% if decisions.is_empty() %}
+    <div class="page-empty">
+      <h2>Nothing needs a decision</h2>
+      <p>Your conversations remain available in the sidebar.</p>
+      <a href="/conversations/new" data-graft class="btn btn-primary btn-sm"
+        >Start a conversation</a
       >
-        <svg class="workspace-icon" aria-hidden="true" viewBox="0 0 24 24">
-          <path d="M4 6h16M4 12h16M4 18h16" />
-        </svg>
-      </button>
-      <h1>Needs your attention</h1>
     </div>
-    {% if !back_href.is_empty() %}
-      <a href="{{ back_href }}" data-graft class="btn btn-ghost btn-sm"
-        >Back to conversation</a
-      >
-    {% endif %}
-  </header>
-  <div
-    class="min-h-0 flex-1 overflow-y-auto px-11 pt-[34px] pb-[70px] max-[700px]:px-5 max-[700px]:pt-6"
-  >
-    <p class="page-description">
-      The work waits safely. Each decision leads back to its conversation.
-    </p>
-    {% if decisions.is_empty() %}
-      <div class="page-empty">
-        <h2>Nothing needs a decision</h2>
-        <p>Your conversations remain available in the sidebar.</p>
-        <a href="/conversations/new" data-graft class="btn btn-primary btn-sm"
-          >Start a conversation</a
-        >
-      </div>
-    {% else %}
-      <ul
-        class="border-base-300 m-0 list-none border-t p-0"
-        aria-label="Decisions that need your response"
-      >
-        {% for decision in decisions %}
-          <li>
-            <a
-              href="{{ decision.href }}"
-              data-graft
-              class="history-row border-base-300 flex items-center gap-[18px] border-b px-[9px] py-[23px] text-inherit no-underline max-[700px]:flex-wrap max-[700px]:gap-[11px]"
+  {% else %}
+    <ul
+      class="border-base-300 m-0 list-none border-t p-0"
+      aria-label="Decisions that need your response"
+    >
+      {% for decision in decisions %}
+        <li>
+          <a
+            href="{{ decision.href }}"
+            data-graft
+            class="history-row border-base-300 flex items-center gap-[18px] border-b px-[9px] py-[23px] text-inherit no-underline max-[700px]:flex-wrap max-[700px]:gap-[11px]"
+          >
+            <span
+              class="bg-base-200 grid size-[35px] shrink-0 place-items-center rounded-full max-[700px]:hidden"
+              aria-hidden="true"
             >
-              <span
-                class="bg-base-200 grid size-[35px] shrink-0 place-items-center rounded-full max-[700px]:hidden"
-                aria-hidden="true"
-              >
-                <svg
-                  class="workspace-icon"
-                  aria-hidden="true"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.6"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <circle cx="12" cy="12" r="9" />
-                  <path d="M12 7v6m0 3v1" />
-                </svg>
-              </span>
-              <span class="history-text min-w-0 flex-1">
-                <strong>{{ decision.title }}</strong>
-                <small>{{ decision.context }}</small>
-              </span>
-              <span class="history-state">{{ decision.reason }}</span>
               <svg
-                class="workspace-icon shrink-0"
+                class="workspace-icon"
                 aria-hidden="true"
                 viewBox="0 0 24 24"
                 fill="none"
@@ -85,33 +46,48 @@
                 stroke-linecap="round"
                 stroke-linejoin="round"
               >
-                <path d="M5 12h14m-6-6 6 6-6 6" />
+                <circle cx="12" cy="12" r="9" />
+                <path d="M12 7v6m0 3v1" />
               </svg>
-            </a>
-            {% if !decision.evidence.is_empty() && decision.evidence != decision.href %}
-              <p class="mt-1 text-right text-sm">
-                <a
-                  href="{{ decision.evidence }}"
-                  data-graft
-                  class="link text-sm"
-                  >Review exact decision</a
-                >
-              </p>
-            {% endif %}
-          </li>
-        {% endfor %}
-      </ul>
-      <p class="page-description mt-6">
-        This view grants no approval. The owning context shows the exact request
-        and eligible actions.
-      </p>
+            </span>
+            <span class="history-text min-w-0 flex-1">
+              <strong>{{ decision.title }}</strong>
+              <small>{{ decision.context }}</small>
+            </span>
+            <span class="history-state">{{ decision.reason }}</span>
+            <svg
+              class="workspace-icon shrink-0"
+              aria-hidden="true"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M5 12h14m-6-6 6 6-6 6" />
+            </svg>
+          </a>
+          {% if !decision.evidence.is_empty() && decision.evidence != decision.href %}
+            <p class="mt-1 text-right text-sm">
+              <a href="{{ decision.evidence }}" data-graft class="link text-sm"
+                >Review exact decision</a
+              >
+            </p>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+    <p class="page-description mt-6">
+      This view grants no approval. The owning context shows the exact request
+      and eligible actions.
+    </p>
+  {% endif %}
+  <nav aria-label="Decision pages" class="flex gap-4">
+    {% if !previous.is_empty() %}
+      <a href="{{ previous }}" data-graft class="link">Previous</a>
+    {% endif %}{% if !next.is_empty() %}
+      <a href="{{ next }}" data-graft class="link">Next</a>
     {% endif %}
-    <nav aria-label="Decision pages" class="flex gap-4">
-      {% if !previous.is_empty() %}
-        <a href="{{ previous }}" data-graft class="link">Previous</a>
-      {% endif %}{% if !next.is_empty() %}
-        <a href="{{ next }}" data-graft class="link">Next</a>
-      {% endif %}
-    </nav>
-  </div>
-</main>
+  </nav>
+{% endblock %}

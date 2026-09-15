@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use super::{
     CatalogueResetConflict, Inner, OWNERSHIP_CONTENTS, OWNERSHIP_MARKER_NAME, RESET_CONTENTS,
-    RESET_MARKER_NAME, ResetRequest,
+    RESET_MARKER_NAME, ResetCatalogues, ResetError, ResetRequest,
 };
 use crate::agents::{AccessMode, AgentId, AgentRecord, AgentStore, DirectoryGrant};
 use crate::config::{RuntimeConfig, StartupConfig};
@@ -659,6 +659,51 @@ fn reset_detects_directory_references_in_saved_workflow_overrides() {
 }
 
 #[tokio::test]
+async fn defaults_alone_protect_a_directory_from_local_data_reset() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_, local_data) = prepare(dir.path().join("data"));
+    let directory = local_data.root().join("project");
+    fs::create_dir(&directory).unwrap();
+    fs::write(directory.join("keep.txt"), "User files").unwrap();
+    let grant = crate::execution::DirectoryGrant::from_selected(&directory, &[]).unwrap();
+    let mut settings = crate::execution::ExecutionSettings::new(
+        crate::providers::ModelSelection::new(ProviderKind::Xai, "grok-4.6".to_owned(), None)
+            .unwrap(),
+        String::new(),
+        Vec::new(),
+        crate::tests::test_environment_id(),
+    )
+    .unwrap();
+    settings.directories.push(grant);
+    let preferences = Preferences::in_memory();
+    preferences.set_conversation_defaults(settings).unwrap();
+    let result = local_data
+        .request_reset(
+            &Arc::new(WorkflowExecution::new()),
+            ResetCatalogues {
+                projects: &ProjectStore::in_memory(),
+                agents: &AgentStore::in_memory(),
+                conversations: &ConversationStore::in_memory(),
+                presets: &crate::presets::PresetStore::in_memory(),
+                workflows: &crate::workflows::WorkflowCatalogue::in_memory(),
+                preferences: &preferences,
+            },
+        )
+        .await;
+    assert!(matches!(
+        result,
+        Err(ResetError::Catalogue(
+            CatalogueResetConflict::DefaultDirectory
+        ))
+    ));
+    assert!(!local_data.is_pending());
+    assert_eq!(
+        fs::read_to_string(directory.join("keep.txt")).unwrap(),
+        "User files"
+    );
+}
+
+#[tokio::test]
 async fn reset_request_retains_execution_until_process_exit() {
     let dir = tempfile::tempdir().expect("dir");
     let (_, local_data) = prepare(dir.path().join("data"));
@@ -672,11 +717,14 @@ async fn reset_request_retains_execution_until_process_exit() {
         local_data
             .request_reset(
                 &execution,
-                &projects,
-                &agents,
-                &conversations,
-                &presets,
-                &crate::workflows::WorkflowCatalogue::in_memory(),
+                ResetCatalogues {
+                    projects: &projects,
+                    agents: &agents,
+                    conversations: &conversations,
+                    presets: &presets,
+                    workflows: &crate::workflows::WorkflowCatalogue::in_memory(),
+                    preferences: &Preferences::in_memory(),
+                },
             )
             .await
             .expect("record"),
@@ -687,11 +735,14 @@ async fn reset_request_retains_execution_until_process_exit() {
         local_data
             .request_reset(
                 &execution,
-                &projects,
-                &agents,
-                &conversations,
-                &presets,
-                &crate::workflows::WorkflowCatalogue::in_memory(),
+                ResetCatalogues {
+                    projects: &projects,
+                    agents: &agents,
+                    conversations: &conversations,
+                    presets: &presets,
+                    workflows: &crate::workflows::WorkflowCatalogue::in_memory(),
+                    preferences: &Preferences::in_memory(),
+                },
             )
             .await
             .expect("repeat"),
@@ -720,11 +771,14 @@ async fn failed_marker_write_releases_both_process_permits() {
     let failed = local_data
         .request_reset(
             &execution,
-            &projects,
-            &agents,
-            &conversations,
-            &presets,
-            &crate::workflows::WorkflowCatalogue::in_memory(),
+            ResetCatalogues {
+                projects: &projects,
+                agents: &agents,
+                conversations: &conversations,
+                presets: &presets,
+                workflows: &crate::workflows::WorkflowCatalogue::in_memory(),
+                preferences: &Preferences::in_memory(),
+            },
         )
         .await;
     let mut restore = fs::metadata(root).expect("meta").permissions();

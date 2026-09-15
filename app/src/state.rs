@@ -4,7 +4,7 @@ use crate::{
     agents::{AgentLeaseCoordinator, AgentStore},
     assets::AssetPaths,
     config::{RuntimeConfig, StartupConfig},
-    conversations::{ConversationStore, PlanDocumentStore},
+    conversations::ConversationStore,
     environments::{
         EnvironmentCatalogue, EnvironmentPreparationScheduler, EnvironmentSnapshotRepository,
     },
@@ -20,9 +20,9 @@ use crate::{
     sessions::SessionStore,
     vault::ProviderVault,
     workflows::{
-        ApplyJournals, CommitJournals, TaskLoopStore, WorkflowArtefactRepository,
-        WorkflowCatalogue, WorkflowContinuationRegistry, WorkflowEvidenceStore, WorkflowExecution,
-        WorkflowRunStore, workspace::WorkflowWorkspaces,
+        ApplyJournals, CommitJournals, WorkflowArtefactRepository, WorkflowCatalogue,
+        WorkflowContinuationRegistry, WorkflowEvidenceStore, WorkflowExecution, WorkflowRunStore,
+        workspace::WorkflowWorkspaces,
     },
 };
 
@@ -39,7 +39,6 @@ pub(crate) struct AppState {
     pub(crate) presets: Arc<PresetStore>,
     pub(crate) agents: Arc<AgentStore>,
     pub(crate) conversations: Arc<ConversationStore>,
-    pub(crate) documents: Arc<PlanDocumentStore>,
     pub(crate) projects: Arc<ProjectStore>,
     pub(crate) folder_picker: FolderPicker,
     pub(crate) access_consent: Arc<AccessConsentStore>,
@@ -49,11 +48,11 @@ pub(crate) struct AppState {
     pub(crate) agent_leases: Arc<AgentLeaseCoordinator>,
     pub(crate) workflows: Arc<WorkflowCatalogue>,
     pub(crate) workflow_runs: Arc<WorkflowRunStore>,
-    pub(crate) task_loops: Arc<TaskLoopStore>,
     pub(crate) workflow_evidence: Arc<WorkflowEvidenceStore>,
     pub(crate) workflow_artefacts: Arc<WorkflowArtefactRepository>,
     pub(crate) workflow_execution: Arc<WorkflowExecution>,
     pub(crate) gate_continuations: Arc<WorkflowContinuationRegistry>,
+    pub(crate) handoff_drafts: Arc<crate::workflows::handoff::HandoffDrafts>,
     pub(crate) workflow_workspaces: Arc<WorkflowWorkspaces>,
     pub(crate) apply_journals: Arc<ApplyJournals>,
     pub(crate) commit_journals: Arc<CommitJournals>,
@@ -93,14 +92,7 @@ pub(crate) async fn build(
         WorkflowArtefactRepository::open(data_dir.join("workflow-artefacts"))
             .map_err(|error| error.message().to_owned())?,
     );
-    let documents = PlanDocumentStore::open(
-        data_dir.join("conversation-documents"),
-        workflow_artefacts.clone(),
-    )
-    .map_err(|error| error.message().to_owned())?;
     let workflow_runs = WorkflowRunStore::open(data_dir.join("workflow-runs"))
-        .map_err(|error| error.message().to_owned())?;
-    let task_loops = TaskLoopStore::open(data_dir.join("workflow-task-loops"))
         .map_err(|error| error.message().to_owned())?;
     let workflow_evidence = WorkflowEvidenceStore::open(data_dir.join("workflow-evidence"))
         .map_err(|error| error.message().to_owned())?;
@@ -148,7 +140,6 @@ pub(crate) async fn build(
         presets: Arc::new(presets),
         agents: Arc::new(agents),
         conversations: Arc::new(conversations),
-        documents: Arc::new(documents),
         projects: Arc::new(projects),
         folder_picker: FolderPicker::native(),
         access_consent: Arc::new(AccessConsentStore::new()),
@@ -158,11 +149,11 @@ pub(crate) async fn build(
         agent_leases: Arc::new(AgentLeaseCoordinator::new()),
         workflows: Arc::new(workflows),
         workflow_runs: Arc::new(workflow_runs),
-        task_loops: Arc::new(task_loops),
         workflow_evidence: Arc::new(workflow_evidence),
         workflow_artefacts,
         workflow_execution: Arc::new(WorkflowExecution::new()),
         gate_continuations: Arc::new(WorkflowContinuationRegistry::new()),
+        handoff_drafts: Arc::new(crate::workflows::handoff::HandoffDrafts::default()),
         workflow_workspaces: Arc::new(workflow_workspaces),
         apply_journals: Arc::new(apply_journals),
         commit_journals: Arc::new(commit_journals),
@@ -202,7 +193,14 @@ pub(crate) async fn build(
         .workflow_runs
         .interrupt_active()
         .map_err(|_| "Power Plant could not record workflow recovery.".to_owned())?;
-    crate::workflows::recover_task_loops(&state).map_err(str::to_owned)?;
+    state
+        .conversations
+        .recover_handoffs(&state.workflow_runs)
+        .map_err(|error| error.message().to_owned())?;
+    state
+        .conversations
+        .interrupt_requests()
+        .map_err(|error| error.message().to_owned())?;
     let workspace_recovery = state
         .workflow_workspaces
         .recover_leftovers(

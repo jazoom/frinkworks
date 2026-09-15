@@ -59,59 +59,7 @@
             <p class="text-error text-sm">{{ name_error }}</p>
           {% endif %}
         </label>
-        <fieldset class="file-section space-y-3">
-          <legend class="text-lg font-semibold">How this workflow runs</legend>
-          <p class="text-quiet max-w-[70ch] text-sm">
-            Run once keeps the purpose-based editor. For each task repeats one
-            group of phases. Ordinary chat still needs no workflow.
-          </p>
-          <label class="flex items-start gap-3">
-            <input
-              class="radio radio-sm mt-1"
-              type="radio"
-              name="execution-mode"
-              value="once"
-              data-workflow-execution-mode
-              {% if execution_mode == "once" %}checked{% endif %}
-            />
-            <span>
-              <span class="block font-medium">Run once</span>
-              <span class="text-quiet text-sm"
-                >One pass over the process. A task list is not required.</span
-              >
-            </span>
-          </label>
-          <label class="flex items-start gap-3">
-            <input
-              class="radio radio-sm mt-1"
-              type="radio"
-              name="execution-mode"
-              value="task-list"
-              data-workflow-execution-mode
-              {% if execution_mode == "task-list" %}checked{% endif %}
-            />
-            <span>
-              <span class="block font-medium">For each task</span>
-              <span class="text-quiet text-sm"
-                >Repeats the group below for each remaining task. Launch needs a
-                task list.</span
-              >
-            </span>
-          </label>
-          <button
-            type="submit"
-            formnovalidate
-            name="intent"
-            value="update-mode"
-            data-workflow-mode-preview
-            hidden
-            aria-hidden="true"
-            tabindex="-1"
-          ></button>
-          {% if execution_mode_error != "" %}
-            <p class="text-error text-sm">{{ execution_mode_error }}</p>
-          {% endif %}
-        </fieldset>
+
         <details class="workflow-advanced" open>
           <summary>Workflow defaults</summary>
           <div class="workflow-advanced-body">
@@ -280,17 +228,6 @@
               Select a phase to edit its settings. Unselected fields remain in
               the form, so switching phases keeps unsaved values.
             </p>
-            {% if repeating %}
-              <p class="text-quiet mt-2 max-w-[70ch] text-sm">
-                The group below runs once for each remaining task. Do not
-                duplicate phases for every task. Review and fix is optional.
-                Independent review appears only when you add a read-only review
-                phase. A code approval phase requires human approval before
-                commit. Without that phase, automatic commit requires an
-                approved review of the exact candidate. The launch sheet offers
-                the policies that this process supports.
-              </p>
-            {% endif %}
           </div>
           <div
             class="workflow-phase-selector"
@@ -1489,17 +1426,17 @@
           {% if can_add_step %}
             <div class="flex flex-wrap gap-2" aria-label="Add phase">
               <span class="self-center text-sm">Add phase:</span>
-              {% if !repeating %}
-                <button
-                  class="btn btn-outline btn-sm"
-                  type="submit"
-                  formnovalidate
-                  name="intent"
-                  value="add-phase:planning"
-                >
-                  Planning
-                </button>
-              {% endif %}
+
+              <button
+                class="btn btn-outline btn-sm"
+                type="submit"
+                formnovalidate
+                name="intent"
+                value="add-phase:planning"
+              >
+                Planning
+              </button>
+
               <button
                 class="btn btn-outline btn-sm"
                 type="submit"
@@ -1509,35 +1446,26 @@
               >
                 Implementation
               </button>
-              {% if !repeating %}
-                <button
-                  class="btn btn-outline btn-sm"
-                  type="submit"
-                  formnovalidate
-                  name="intent"
-                  value="add-phase:plan-review"
-                >
-                  Plan review
-                </button>
-                <button
-                  class="btn btn-outline btn-sm"
-                  type="submit"
-                  formnovalidate
-                  name="intent"
-                  value="add-phase:plan-checkpoint"
-                >
-                  Plan checkpoint
-                </button>
-                <button
-                  class="btn btn-outline btn-sm"
-                  type="submit"
-                  formnovalidate
-                  name="intent"
-                  value="add-phase:saved-plan-implementation"
-                >
-                  Implementation from a saved plan
-                </button>
-              {% endif %}
+
+              <button
+                class="btn btn-outline btn-sm"
+                type="submit"
+                formnovalidate
+                name="intent"
+                value="add-phase:plan-review"
+              >
+                Plan review
+              </button>
+              <button
+                class="btn btn-outline btn-sm"
+                type="submit"
+                formnovalidate
+                name="intent"
+                value="add-phase:plan-checkpoint"
+              >
+                Plan checkpoint
+              </button>
+
               <button
                 class="btn btn-outline btn-sm"
                 type="submit"

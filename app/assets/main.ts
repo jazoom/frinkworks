@@ -382,15 +382,6 @@ document.addEventListener("change", (event) => {
     }
     if (
         field instanceof HTMLInputElement &&
-        field.matches("[data-workflow-execution-mode]")
-    ) {
-        const preview = field.form?.querySelector<HTMLButtonElement>(
-            "[data-workflow-mode-preview]",
-        );
-        if (preview && field.form) field.form.requestSubmit(preview);
-    }
-    if (
-        field instanceof HTMLInputElement &&
         field.form?.id === "conversation-composer" &&
         (field.name === "location" ||
             field.name === "tool_run" ||

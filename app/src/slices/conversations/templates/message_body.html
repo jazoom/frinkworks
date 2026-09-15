@@ -28,17 +28,4 @@
       <p>{{ message.error }}</p>
     </div>
   {% endif %}
-  {% if message.saveable_plan %}
-    <div class="mt-2">
-      <a
-        href="{{ message.plan_request_href }}"
-        data-graft
-        class="btn btn-ghost btn-xs font-normal"
-      >
-        <svg class="workspace-icon" aria-hidden="true">
-          <use href="/static/images/workspace-icons.svg#file" /></svg
-        >Create a plan from this</a
-      >
-    </div>
-  {% endif %}
 </div>

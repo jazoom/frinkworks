@@ -10,7 +10,7 @@ export function initWorkspace(
     let expanded = false;
     let returnFocus: HTMLElement | null = null;
     let previousActivity = false;
-    let previousPlan = false;
+    let previousCompanion = false;
     let setupReturnFocus: HTMLElement | null = null;
     let menuTrigger: HTMLElement | null = null;
     let header: HTMLElement | null = null;
@@ -83,13 +83,13 @@ export function initWorkspace(
             previousActivity = workOpen;
         }
         const active = work?.dataset.workActive === "true";
-        const plan = !!root.querySelector(
-            "#plan-detail, #workflow-detail, #plans-detail, #plan-request-detail, #activity-detail",
+        const companion = !!root.querySelector(
+            "#workflow-detail, #activity-detail",
         );
         if (previousActivity && !active && work?.dataset.workEmpty === "true")
             workOpen = false;
-        if (previousPlan && !plan && !active) workOpen = false;
-        previousPlan = plan;
+        if (previousCompanion && !companion && !active) workOpen = false;
+        previousCompanion = companion;
         if (active && !previousActivity) workOpen = true;
         previousActivity = active;
         if (openWork) workOpen = true;
@@ -356,11 +356,7 @@ export function initWorkspace(
             : root.querySelector<HTMLElement>(
                   root.querySelector("#workflow-detail")
                       ? "[data-workflow-toggle]"
-                      : root.querySelector(
-                              "#plan-detail, #plans-detail, #plan-request-detail",
-                          )
-                        ? "[data-plans-toggle]"
-                        : "[data-work-toggle]",
+                      : "[data-work-toggle]",
               );
         destination?.focus();
     }
@@ -541,16 +537,13 @@ export function initWorkspace(
             if (
                 context.cause === "location" &&
                 context.detail.cause !== "command-patch-replacement" &&
-                root.querySelector(
-                    "#plan-detail, #workflow-detail, #plans-detail, #plan-request-detail",
-                )
+                root.querySelector("#workflow-detail, #activity-detail")
             ) {
                 const url = new URL(context.detail.url, location.href);
                 if (
-                    /^\/(?:plans\/[^/]+|conversations\/[^/]+\/(?:workflow|plans(?:\/request)?))$/.test(
+                    /^\/conversations\/[^/]+\/(?:workflow|activity)$/.test(
                         url.pathname,
-                    ) ||
-                    url.searchParams.get("plans") === "true"
+                    )
                 ) {
                     workOpen = true;
                     expanded = false;

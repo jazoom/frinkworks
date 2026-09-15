@@ -132,14 +132,14 @@
       >
     </details>
   </div>
-  <div
+  <fieldset
     class="workspace-candidate-actions border-base-300 shrink-0 border-t p-5"
+    aria-label="Candidate decisions"
+    {% if prepared_recovery.is_some() %}disabled{% endif %}
   >
     <p class="text-quiet mb-3 text-center text-xs">
-      {% if gate.ordinary %}
+      {% if gate.ordinary || gate.quick_task %}
         Apply reviewed files · no Git commit
-      {% else if gate.quick_task %}
-        Apply creates a local Git commit
       {% else %}
         Approval continues the configured run
       {% endif %}<br /><span class="mt-1 inline-block font-mono break-all"
@@ -221,5 +221,5 @@
         </button>
       </form>
     </div>
-  </div>
+  </fieldset>
 </section>

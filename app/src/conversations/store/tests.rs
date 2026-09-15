@@ -1,12 +1,10 @@
 use std::path::Path;
 
-use super::super::{DocumentId, PlanReviewCreation, PlanRevisionReference};
 use crate::{
     agents::{AccessMode, NetworkAccess},
     projects::ProjectId,
     providers::{ModelSelection, ProviderKind},
     sessions::JobId,
-    workflows::artefacts::{ArtefactHash, ObjectHash},
 };
 
 use super::{
@@ -468,51 +466,6 @@ fn rename_preserves_timestamp_order_after_clock_regression() {
     drop(store);
     let reopened = ConversationStore::open(dir.path().to_path_buf()).expect("reopen");
     assert_eq!(reopened.get(&record.id), Some(renamed));
-}
-
-#[test]
-fn linked_plan_reviews_survive_restart_with_the_exact_plan_reference() {
-    let dir = tempfile::tempdir().expect("directory");
-    let source;
-    let review;
-    let plan = PlanRevisionReference {
-        document_id: DocumentId::generate().expect("document"),
-        revision: 1,
-        content_hash: ObjectHash::of(b"selected plan"),
-        object_hash: ObjectHash::of(b"plan object"),
-        artefact_hash: ArtefactHash::of(b"plan", b"plan object"),
-    };
-    {
-        let store = ConversationStore::open(dir.path().to_path_buf()).expect("store");
-        source = store.create("Source".to_owned()).expect("source");
-        let selection =
-            ModelSelection::new(ProviderKind::Xai, "grok-4.6".to_owned(), None).expect("model");
-        review = store
-            .create_plan_review(PlanReviewCreation {
-                source_id: source.id,
-                source_revision: source.revision,
-                title: "Plan review".to_owned(),
-                model: super::super::ConversationModelConfiguration::direct(
-                    selection,
-                    crate::tests::test_environment_id(),
-                ),
-                plan: plan.clone(),
-                task_brief: "Review this plan".to_owned(),
-                read_only_projects: Vec::new(),
-                source_target: None,
-            })
-            .expect("review");
-    }
-    let store = ConversationStore::open(dir.path().to_path_buf()).expect("reopen");
-    let source = store.get(&source.id).expect("source");
-    let recovered = store.get(&review.id).expect("review");
-    assert_eq!(source.plan_reviews[0].conversation_id, review.id);
-    assert_eq!(source.plan_reviews[0].plan, plan);
-    assert_eq!(
-        recovered.source_review.as_ref().expect("source link").plan,
-        plan
-    );
-    assert_eq!(recovered.review_context.expect("context").source.plan, plan);
 }
 
 #[test]

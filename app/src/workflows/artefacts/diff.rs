@@ -79,6 +79,13 @@ impl CandidateDiff {
         }
         let base_candidate = load_candidate(run, base, store)?;
         let target_candidate = load_candidate(run, target, store)?;
+        Self::from_payloads(base_candidate, target_candidate)
+    }
+
+    pub(crate) fn from_payloads(
+        base_candidate: CandidatePayload,
+        target_candidate: CandidatePayload,
+    ) -> Result<Self, DiffError> {
         let (roots, exclusions) = match (&base_candidate, &target_candidate) {
             (CandidatePayload::Revision(base), CandidatePayload::Revision(target)) => (
                 vec![DiffRoot {

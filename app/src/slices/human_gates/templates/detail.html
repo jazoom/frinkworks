@@ -38,6 +38,17 @@
       </div>
     {% endif %}
 
+    {% if needs_recovery %}
+      <div class="alert" role="status">
+        <p>
+          Runtime consent is unavailable in this session.
+          <a href="{{ back_href }}" data-graft class="link"
+            >Open the owner conversation to restore the pending decision.</a
+          >
+        </p>
+      </div>
+    {% endif %}
+
     <section class="border-base-300 space-y-4 border p-4">
       <div>
         <h2 class="font-heading text-lg font-semibold">
@@ -57,19 +68,14 @@
             </p>
           {% else if quick_task %}
             <p class="text-quiet mt-1 max-w-[70ch] text-sm">
-              {% if ordinary %}
-                Review the prepared files before application. Apply writes only
-                these changes to the listed authorised directories. It creates
-                no Git commit. Writes across filesystems are not atomic.
-              {% else %}
-                Apply creates a local Git commit. Discard ends the task without
-                changing project files.
-              {% endif %}
+              Review the prepared files before application. Apply writes only
+              these changes to the listed authorised directories. It creates no
+              Git commit. Writes across filesystems are not atomic.
             </p>
           {% else %}
             <p class="text-quiet mt-1 max-w-[70ch] text-sm">
-              Approval continues the run. A revision request or cancellation
-              ends this run.
+              Approval continues the run. A revision request follows its pinned
+              revision route. Cancellation ends the run.
             </p>
           {% endif %}
         {% endif %}

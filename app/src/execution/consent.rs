@@ -53,7 +53,6 @@ pub(crate) struct AccessConsentStore {
     consumed_drafts: Mutex<HashSet<(SessionId, String)>>,
     launch_previews: Mutex<HashMap<String, LaunchConsent>>,
     launches: Mutex<HashMap<crate::workflows::RunId, LaunchConsent>>,
-    loops: Mutex<HashMap<crate::workflows::TaskLoopId, LaunchConsent>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -270,14 +269,12 @@ impl AccessConsentStore {
         lock(&self.consumed_drafts).retain(|(session, _)| live(session));
         lock(&self.launch_previews).retain(|_, binding| live(&binding.session));
         lock(&self.launches).retain(|_, binding| live(&binding.session));
-        lock(&self.loops).retain(|_, binding| live(&binding.session));
     }
 
     pub(crate) fn invalidate_conversation(&self, conversation: ConversationId) {
         self.invalidate_approvals(conversation);
         lock(&self.launch_previews).retain(|_, binding| binding.conversation != conversation);
         lock(&self.launches).retain(|_, binding| binding.conversation != conversation);
-        lock(&self.loops).retain(|_, binding| binding.conversation != conversation);
         lock(&self.pending).retain(|_, binding| {
             !matches!(binding.subject, Subject::Conversation { id, .. } if id == conversation)
         });
@@ -337,6 +334,30 @@ impl AccessConsentStore {
         Ok(())
     }
 
+    pub(crate) fn approve_handoff(
+        &self,
+        run: crate::workflows::RunId,
+        session: SessionId,
+        conversation: ConversationId,
+        settings: Vec<super::ExecutionSettings>,
+    ) -> Result<(), &'static str> {
+        let mut launches = lock(&self.launches);
+        if !launches.contains_key(&run) && launches.len() >= MAXIMUM_RUNTIME_RECORDS {
+            return Err(
+                "The runtime consent limit is full. Restart Power Plant before continuation.",
+            );
+        }
+        launches.insert(
+            run,
+            LaunchConsent {
+                session,
+                conversation,
+                settings,
+            },
+        );
+        Ok(())
+    }
+
     pub(crate) fn authorised_launch(
         &self,
         run: crate::workflows::RunId,
@@ -345,46 +366,6 @@ impl AccessConsentStore {
         settings: &super::ExecutionSettings,
     ) -> bool {
         lock(&self.launches).get(&run).is_some_and(|binding| {
-            binding.session == session
-                && binding.conversation == conversation
-                && binding.settings.contains(settings)
-        })
-    }
-
-    pub(crate) fn approve_loop_launch(
-        &self,
-        request: &str,
-        loop_id: crate::workflows::TaskLoopId,
-        session: SessionId,
-        conversation: ConversationId,
-        settings: Vec<super::ExecutionSettings>,
-    ) -> Result<(), ConsentError> {
-        let expected = LaunchConsent {
-            session,
-            conversation,
-            settings,
-        };
-        let mut previews = lock(&self.launch_previews);
-        if previews.get(request) != Some(&expected) {
-            return Err(ConsentError::Invalid);
-        }
-        let mut loops = lock(&self.loops);
-        if loops.len() >= MAXIMUM_RUNTIME_RECORDS || loops.contains_key(&loop_id) {
-            return Err(ConsentError::Invalid);
-        }
-        previews.remove(request);
-        loops.insert(loop_id, expected);
-        Ok(())
-    }
-
-    pub(crate) fn authorised_loop(
-        &self,
-        loop_id: crate::workflows::TaskLoopId,
-        session: SessionId,
-        conversation: ConversationId,
-        settings: &super::ExecutionSettings,
-    ) -> bool {
-        lock(&self.loops).get(&loop_id).is_some_and(|binding| {
             binding.session == session
                 && binding.conversation == conversation
                 && binding.settings.contains(settings)

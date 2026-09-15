@@ -14,7 +14,7 @@ use super::definition::{
     AgentAuthority, AgentStep, CandidateAuthority, StepAction, StepDefinition, SystemCommandId,
 };
 use super::execution::ExecutionGuard;
-use super::id::{AttemptId, RunId, TaskLoopId};
+use super::id::{AttemptId, RunId};
 use super::run::{FailureCategory, now_ms};
 use super::store::StoreError;
 
@@ -30,42 +30,14 @@ const COMMAND_OUTPUT_LIMIT: usize = 64 * 1024;
 
 pub(crate) struct WorkflowContinuationRegistry {
     inner: std::sync::Mutex<std::collections::BTreeMap<RunId, WorkflowJob>>,
-    paused: std::sync::Mutex<std::collections::BTreeMap<TaskLoopId, PausedWorkflow>>,
     // An uncertain commit retains execution protection until startup reconciliation.
     recovery_protection: std::sync::Mutex<Option<(Option<LeaseGuard>, ExecutionGuard)>>,
-}
-
-pub(crate) struct PausedWorkflow {
-    pub(crate) job: WorkflowJob,
-    pub(crate) source: crate::workflows::artefacts::candidate::CandidateRevisionArtefact,
-}
-
-enum ParkedWorkflow {
-    Gate(WorkflowJob),
-    Paused(TaskLoopId, PausedWorkflow),
-}
-
-impl ParkedWorkflow {
-    fn job(&self) -> &WorkflowJob {
-        match self {
-            Self::Gate(job) => job,
-            Self::Paused(_, checkpoint) => &checkpoint.job,
-        }
-    }
-
-    fn restore(self, registry: &WorkflowContinuationRegistry) {
-        match self {
-            Self::Gate(job) => registry.put_back(job),
-            Self::Paused(id, checkpoint) => registry.put_back_paused(id, checkpoint),
-        }
-    }
 }
 
 impl WorkflowContinuationRegistry {
     pub(crate) fn new() -> Self {
         Self {
             inner: std::sync::Mutex::new(std::collections::BTreeMap::new()),
-            paused: std::sync::Mutex::new(std::collections::BTreeMap::new()),
             recovery_protection: std::sync::Mutex::new(None),
         }
     }
@@ -137,6 +109,13 @@ impl WorkflowContinuationRegistry {
             .remove(run)
     }
 
+    pub(crate) fn occupied(&self, run: &RunId) -> bool {
+        self.inner
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .contains_key(run)
+    }
+
     pub(crate) fn available(&self, run: &RunId, session: &SessionId) -> bool {
         self.inner
             .lock()
@@ -152,37 +131,6 @@ impl WorkflowContinuationRegistry {
             .insert(job.run_id, job);
     }
 
-    pub(crate) fn park_paused(
-        &self,
-        loop_id: TaskLoopId,
-        job: WorkflowJob,
-        source: crate::workflows::artefacts::candidate::CandidateRevisionArtefact,
-    ) -> bool {
-        let mut paused = self
-            .paused
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if paused.contains_key(&loop_id) {
-            return false;
-        }
-        paused.insert(loop_id, PausedWorkflow { job, source });
-        true
-    }
-
-    pub(crate) fn take_paused(&self, loop_id: &TaskLoopId) -> Option<PausedWorkflow> {
-        self.paused
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .remove(loop_id)
-    }
-
-    pub(crate) fn put_back_paused(&self, loop_id: TaskLoopId, job: PausedWorkflow) {
-        self.paused
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert(loop_id, job);
-    }
-
     pub(crate) fn commit_recovery_locked(&self) -> bool {
         self.recovery_protection
             .lock()
@@ -190,34 +138,25 @@ impl WorkflowContinuationRegistry {
             .is_some()
     }
 
-    fn take_provider(&self, provider: crate::providers::ProviderKind) -> Vec<ParkedWorkflow> {
+    fn take_provider(&self, provider: crate::providers::ProviderKind) -> Vec<WorkflowJob> {
         self.take_matching(|job| {
             (!job.phase_providers.is_empty() && job.phase_providers.contains(&provider))
                 || (job.phase_providers.is_empty() && job.connection.kind == provider)
         })
     }
 
-    fn take_session(&self, session: SessionId) -> Vec<ParkedWorkflow> {
+    fn take_session(&self, session: SessionId) -> Vec<WorkflowJob> {
         self.take_matching(|job| job.session_id == session)
     }
 
-    fn take_matching(&self, predicate: impl Fn(&WorkflowJob) -> bool) -> Vec<ParkedWorkflow> {
+    fn take_matching(&self, predicate: impl Fn(&WorkflowJob) -> bool) -> Vec<WorkflowJob> {
         let mut inner = self
             .inner
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let mut paused = self
-            .paused
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
         inner
             .extract_if(.., |_, job| predicate(job))
-            .map(|(_, job)| ParkedWorkflow::Gate(job))
-            .chain(
-                paused
-                    .extract_if(.., |_, checkpoint| predicate(&checkpoint.job))
-                    .map(|(id, checkpoint)| ParkedWorkflow::Paused(id, checkpoint)),
-            )
+            .map(|(_, job)| job)
             .collect()
     }
 }
@@ -241,7 +180,6 @@ pub(crate) struct WorkflowJob {
     pub(crate) turns: Vec<ChatTurn>,
     pub(crate) job: Arc<Job>,
     pub(crate) eligible_reply: Arc<std::sync::Mutex<String>>,
-    pub(crate) task_loop: Option<TaskLoopId>,
 }
 
 impl WorkflowJob {
@@ -355,14 +293,14 @@ pub(crate) fn interrupt_session_continuations(
     interrupt_continuations(state, state.gate_continuations.take_session(session))
 }
 
-fn interrupt_continuations(state: &AppState, jobs: Vec<ParkedWorkflow>) -> Result<(), StoreError> {
+fn interrupt_continuations(state: &AppState, jobs: Vec<WorkflowJob>) -> Result<(), StoreError> {
     let mut jobs = jobs.into_iter();
     while let Some(continuation) = jobs.next() {
-        let job = continuation.job();
+        let job = &continuation;
         if state
             .workflow_runs
             .mutate(&job.run_id, |run| {
-                if matches!(continuation, ParkedWorkflow::Paused(..)) && run.is_terminal() {
+                if run.recoverable_gate() {
                     Ok(())
                 } else {
                     run.interrupt(now_ms())
@@ -370,9 +308,9 @@ fn interrupt_continuations(state: &AppState, jobs: Vec<ParkedWorkflow>) -> Resul
             })
             .is_err()
         {
-            continuation.restore(&state.gate_continuations);
+            state.gate_continuations.put_back(continuation);
             for unprocessed in jobs {
-                unprocessed.restore(&state.gate_continuations);
+                state.gate_continuations.put_back(unprocessed);
             }
             return Err(StoreError::Persist);
         }
@@ -393,12 +331,6 @@ pub(crate) async fn execute_run(
     _agent_lease: Option<LeaseGuard>,
     _execution_lease: ExecutionGuard,
 ) {
-    if let Some(loop_id) = job.task_loop
-        && state.task_loops.mark_active(&loop_id, job.run_id).is_err()
-    {
-        fail_operational(&state, &job);
-        return;
-    }
     loop {
         let Some(run) = state.workflow_runs.get(&job.run_id) else {
             fail_operational(&state, &job);
@@ -486,11 +418,7 @@ pub(crate) async fn execute_run(
             settle_job(&state, &job, JobStatus::Failed, Some(error.message()));
             return;
         }
-        if matches!(step.action, StepAction::HumanGate(_))
-            || (run.task_selection.is_some()
-                && matches!(&step.action, StepAction::SystemCommand(action)
-                if action.command == SystemCommandId::CommitCandidate))
-        {
+        if matches!(step.action, StepAction::HumanGate(_)) {
             match state
                 .workflow_runs
                 .mutate(&job.run_id, |run| run.complete_unchanged_task())
@@ -578,15 +506,6 @@ pub(crate) async fn execute_run(
             }
             job.job.set_step_label("Awaiting decision".to_owned());
             let _ = job.job.set_awaiting_decision();
-            if let Some(loop_id) = job.task_loop
-                && state
-                    .task_loops
-                    .mark_awaiting(&loop_id, job.run_id)
-                    .is_err()
-            {
-                fail_operational(&state, &job);
-                return;
-            }
             if job.conversation_id.is_some()
                 && !state.sessions.release_job_reservation(
                     &job.session_id,
@@ -617,6 +536,21 @@ pub(crate) async fn execute_run(
             crate::workflows::definition::StepAction::SystemCommand(action)
                 if action.command == crate::workflows::commands::SystemCommandId::CommitCandidate
         );
+        if commit_step && run.kind != crate::workflows::RunKind::Configured {
+            if persist_fail(&state, &job.run_id, None, FailureCategory::Definition).is_err() {
+                fail_operational(&state, &job);
+                return;
+            }
+            settle_job(
+                &state,
+                &job,
+                JobStatus::Failed,
+                Some(
+                    "Ordinary agent work cannot create a commit through an application step. The prepared candidate remains unchanged.",
+                ),
+            );
+            return;
+        }
         let apply_precondition = if apply_step {
             crate::workflows::apply::require_approval(
                 &run,
@@ -746,29 +680,6 @@ pub(crate) async fn execute_run(
                 snapshot_digest,
             }
         };
-        if let Some(loop_id) = job.task_loop {
-            let Some(parent) = state.task_loops.get(&loop_id) else {
-                fail_operational(&state, &job);
-                return;
-            };
-            let Ok(aggregate) = task_loop_attempts(&state, &parent) else {
-                fail_operational(&state, &job);
-                return;
-            };
-            if aggregate >= super::task_loop::MAXIMUM_LOOP_ATTEMPTS {
-                let _ = state.task_loops.mutate(&loop_id, |parent| {
-                    parent.state = super::task_loop::TaskLoopState::Blocked;
-                    Ok(())
-                });
-                settle_job(
-                    &state,
-                    &job,
-                    JobStatus::Failed,
-                    Some("The task loop reached its attempt limit."),
-                );
-                return;
-            }
-        }
         if persist_start(
             &state,
             &job.run_id,
@@ -826,6 +737,29 @@ pub(crate) async fn execute_run(
             }
             return;
         }
+        if let Err(error) = super::direct::before(&state, &job, &step, attempt_id) {
+            if persist_cleanup(
+                &state,
+                &job.run_id,
+                attempt_id,
+                super::run::AttemptCleanupRecord::Complete,
+            )
+            .and_then(|_| {
+                persist_fail(
+                    &state,
+                    &job.run_id,
+                    Some(attempt_id),
+                    FailureCategory::Operational,
+                )
+            })
+            .is_err()
+            {
+                fail_operational(&state, &job);
+            } else {
+                settle_job(&state, &job, JobStatus::Failed, Some(error));
+            }
+            return;
+        }
         let isolated =
             isolate_and_run(&state, &job, &step, attempt_id, &inputs, &capabilities).await;
         let (mut outcome, mut cleanup, drafts, captured) = match isolated {
@@ -836,6 +770,14 @@ pub(crate) async fn execute_run(
                 captured,
             } => (outcome, cleanup, drafts, captured),
         };
+        if let Err(error) = super::direct::after(&state, &job, &step, attempt_id) {
+            outcome = StepOutcome::Failed {
+                category: FailureCategory::Operational,
+                error: Some(format!(
+                    "{error} Direct writes remain. The final diff is unavailable."
+                )),
+            };
+        }
         record_missing_terminal_evidence(&state, &job, &step, attempt_id, &outcome);
         if cleanup != crate::workflows::run::AttemptCleanupRecord::Complete {
             let _ = persist_cleanup(&state, &job.run_id, attempt_id, cleanup);
@@ -2643,7 +2585,6 @@ async fn run_agent_step(
             run: Some(job.run_id.as_hex()),
             step: Some(step_key.as_str().to_owned()),
             attempt: Some(attempt_id.as_hex()),
-            task_loop: job.task_loop.map(|id| id.as_hex()),
         })
     } else {
         None
@@ -3245,6 +3186,11 @@ fn confirm_run_authority(
             .workflow_runs
             .get(&job.run_id)
             .ok_or_else(|| "The workflow run is unavailable.".to_owned())?;
+        if run.conversation_id != Some(conversation_id) || run.pending_handoff.is_some() {
+            return Err(
+                "The prepared changes belong to another conversation or need recovery.".to_owned(),
+            );
+        }
         let settings = run
             .directory_settings()
             .or_else(|| record.model.as_ref().map(|model| model.settings.clone()))
@@ -3269,19 +3215,20 @@ fn confirm_run_authority(
                     job.session_id,
                     conversation_id,
                     settings,
-                ) || job.task_loop.is_some_and(|loop_id| {
-                    state.access_consent.authorised_loop(
-                        loop_id,
-                        job.session_id,
-                        conversation_id,
-                        settings,
-                    )
-                }) {
+                ) {
                     return false;
                 }
                 // Configured overrides need run-bound consent, including tool-only and network-only expansions.
                 if run.kind == crate::workflows::run::RunKind::Configured {
                     return true;
+                }
+                if settings.location == crate::execution::ToolLocation::Host {
+                    return settings.host_tools()
+                        && !state.access_consent.authorised_host_conversation(
+                            job.session_id,
+                            conversation_id,
+                            settings,
+                        );
                 }
                 settings.directories.iter().any(|grant| {
                     (grant.access != crate::execution::DirectoryAccess::ReadOnly
@@ -3334,6 +3281,27 @@ fn confirm_run_authority(
         let Some(record) = state.conversations.get(&conversation_id) else {
             return Err("That conversation is not in the catalogue.".to_owned());
         };
+        let run = state
+            .workflow_runs
+            .get(&job.run_id)
+            .ok_or("The workflow run is unavailable.")?;
+        if run.conversation_id != Some(conversation_id) || run.pending_handoff.is_some() {
+            return Err("The workflow owner changed or needs recovery.".to_owned());
+        }
+        if let Some(snapshot) = &run.project_authority
+            && snapshot.approved(state, &run, job.session_id)
+        {
+            if snapshot.resolve(state, &run)? != *authority {
+                return Err("The pinned project authority changed.".to_owned());
+            }
+            return Ok(project.host_path);
+        }
+        if !run.ownership_history.is_empty() {
+            return Err(
+                "The destination needs run-only approval for the pinned project authority."
+                    .to_owned(),
+            );
+        }
         let resolved = crate::conversations::resolve_workflow_authority(
             &record,
             &state.projects,
@@ -3458,15 +3426,6 @@ async fn capture_initial_source(state: &AppState, job: &WorkflowJob) -> Result<(
         .mutate(&job.run_id, |run| run.record_initial_candidate(record))
         .map(|_| ())
         .map_err(|_| OPERATIONAL_STORE_ERROR.to_owned())?;
-    if let Some(loop_id) = job.task_loop
-        && let Some(run) = state.workflow_runs.get(&job.run_id)
-        && let crate::workflows::RunSource::Captured { source } = &run.source
-    {
-        state
-            .task_loops
-            .record_original_source(&loop_id, source.initial.clone())
-            .map_err(|_| OPERATIONAL_STORE_ERROR.to_owned())?;
-    }
     Ok(())
 }
 
@@ -3500,26 +3459,7 @@ fn resolve_inputs(
             crate::workflows::definition::ArtefactSource::RunCurrentPlan => {
                 run.current_plan().ok_or("The current plan is missing.")?
             }
-            crate::workflows::definition::ArtefactSource::LaunchInput { source } => run
-                .artefacts
-                .iter()
-                .rev()
-                .find_map(|record| {
-                    matches!(
-                        &record.provenance.producer,
-                        crate::workflows::artefacts::ArtefactProducer::LaunchInput {
-                            source: stored,
-                            conversation_id,
-                            ..
-                        } if stored == source && run.conversation_id == Some(*conversation_id)
-                    )
-                    .then(|| crate::workflows::artefacts::ArtefactReference {
-                        id: record.id,
-                        kind: record.kind,
-                        artefact_hash: record.artefact_hash,
-                    })
-                })
-                .ok_or("The selected launch input is missing.")?,
+
             crate::workflows::definition::ArtefactSource::StepOutput {
                 step: source_step,
                 output,
@@ -4076,9 +4016,6 @@ fn persist_cancel(state: &AppState, run_id: &RunId) -> Result<(), StoreError> {
 }
 
 fn fail_operational(state: &AppState, workflow: &WorkflowJob) {
-    if let Some(loop_id) = workflow.task_loop {
-        let _ = state.task_loops.fail(&loop_id);
-    }
     settle_job(
         state,
         workflow,
@@ -4122,150 +4059,11 @@ fn finish_driven_job(
     status: JobStatus,
     error: Option<&str>,
 ) -> bool {
-    if job.task_loop.is_none() {
-        match status {
-            JobStatus::Completed if error.is_none() => settle_completed_job(state, job),
-            _ => settle_job(state, job, status, error),
-        }
-        return true;
-    }
     match status {
-        JobStatus::Completed => match continue_task_loop(state, job) {
-            Ok(TaskLoopDrive::Next) => false,
-            Ok(TaskLoopDrive::Complete) => {
-                settle_completed_job(state, job);
-                true
-            }
-            Ok(TaskLoopDrive::Pause) => {
-                if let Err(error) = park_paused_job(state, job) {
-                    settle_job(state, job, JobStatus::Failed, Some(error));
-                }
-                true
-            }
-            Err(error) => {
-                settle_job(state, job, JobStatus::Failed, Some(error));
-                true
-            }
-        },
-        JobStatus::Cancelled => {
-            if let Some(loop_id) = job.task_loop {
-                let _ = state.task_loops.cancel(&loop_id);
-            }
-            settle_job(state, job, status, error);
-            true
-        }
-        _ => {
-            if let Some(loop_id) = job.task_loop {
-                let _ = state.task_loops.fail(&loop_id);
-            }
-            settle_job(state, job, status, error);
-            true
-        }
+        JobStatus::Completed if error.is_none() => settle_completed_job(state, job),
+        _ => settle_job(state, job, status, error),
     }
-}
-
-fn task_loop_attempts(
-    state: &AppState,
-    parent: &super::task_loop::TaskLoop,
-) -> Result<usize, &'static str> {
-    parent.tasks.iter().try_fold(0usize, |total, task| {
-        task.child_id
-            .into_iter()
-            .chain(task.previous_child_ids.iter().copied())
-            .try_fold(total, |total, id| {
-                let Some(child) = state.workflow_runs.get(&id) else {
-                    return Ok(total);
-                };
-                if child.parent_loop != Some(parent.id) {
-                    return Err(OPERATIONAL_STORE_ERROR);
-                }
-                total
-                    .checked_add(child.attempts.len())
-                    .ok_or(OPERATIONAL_STORE_ERROR)
-            })
-    })
-}
-
-enum TaskLoopDrive {
-    Next,
-    Complete,
-    Pause,
-}
-
-fn park_paused_job(state: &AppState, job: &WorkflowJob) -> Result<(), &'static str> {
-    let loop_id = job.task_loop.ok_or(OPERATIONAL_STORE_ERROR)?;
-    let project = state
-        .projects
-        .get(&job.project_id.expect("project-backed job"))
-        .ok_or(OPERATIONAL_STORE_ERROR)?;
-    // A successful commit changes HEAD and the index. The next command must compare
-    // against this post-commit checkpoint, not the pre-commit candidate manifest.
-    let source = crate::workflows::artefacts::CandidateCapture::capture_host(
-        &project.host_path,
-        &state.workflow_artefacts,
-    )
-    .map_err(|_| OPERATIONAL_STORE_ERROR)?;
-    job.job.set_step_label("Paused after task".to_owned());
-    let _ = job.job.set_awaiting_decision();
-    if job.conversation_id.is_some() {
-        let _ = state.sessions.release_job_reservation(
-            &job.session_id,
-            job.conversation_id,
-            job.job.id(),
-        );
-    }
-    if !state
-        .gate_continuations
-        .park_paused(loop_id, job.clone(), source)
-    {
-        return Err(OPERATIONAL_STORE_ERROR);
-    }
-    Ok(())
-}
-
-fn continue_task_loop(
-    state: &AppState,
-    job: &mut WorkflowJob,
-) -> Result<TaskLoopDrive, &'static str> {
-    let loop_id = job.task_loop.ok_or(OPERATIONAL_STORE_ERROR)?;
-    let child = state
-        .workflow_runs
-        .get(&job.run_id)
-        .ok_or(OPERATIONAL_STORE_ERROR)?;
-    let (record, advance) = state
-        .task_loops
-        .complete_child(&loop_id, &child)
-        .map_err(|error| error.message())?;
-    match advance {
-        super::task_loop::LoopAdvance::Complete => return Ok(TaskLoopDrive::Complete),
-        super::task_loop::LoopAdvance::Pause => return Ok(TaskLoopDrive::Pause),
-        super::task_loop::LoopAdvance::Stopped => {
-            return Err("The task loop stopped before completion.");
-        }
-        super::task_loop::LoopAdvance::Next => {}
-    }
-    let aggregate = task_loop_attempts(state, &record)?;
-    let (record, child_id, task) = state
-        .task_loops
-        .reserve_next_child(&loop_id, aggregate)
-        .map_err(|error| error.message())?;
-    let run = record
-        .child_run(child_id, now_ms(), task.index, task.markdown)
-        .map_err(|error| error.message())?;
-    state
-        .workflow_runs
-        .create(run)
-        .map_err(|_| OPERATIONAL_STORE_ERROR)?;
-    state
-        .task_loops
-        .mark_dispatched(&loop_id, child_id)
-        .map_err(|error| error.message())?;
-    job.run_id = child_id;
-    if let Ok(mut reply) = job.eligible_reply.lock() {
-        reply.clear();
-    }
-    job.job.set_step_label("Source capture".to_owned());
-    Ok(TaskLoopDrive::Next)
+    true
 }
 
 pub(crate) fn settle_completed_job(state: &AppState, workflow: &WorkflowJob) {
@@ -4296,47 +4094,6 @@ fn settle_with_reply(
     error: Option<&str>,
     reply: &crate::providers::AssistantReply,
 ) {
-    // A failed coordinator write must not release the unfinished conversation.
-    if let Some(loop_id) = workflow.task_loop {
-        if status != JobStatus::Completed
-            && state
-                .workflow_runs
-                .get(&workflow.run_id)
-                .is_some_and(|run| !run.is_terminal())
-            && state
-                .workflow_runs
-                .mutate(&workflow.run_id, |run| {
-                    run.interrupt(now_ms())
-                        .or_else(|_| run.fail_before_attempt(now_ms()))
-                })
-                .is_err()
-        {
-            return;
-        }
-        let terminal = match status {
-            JobStatus::Completed => state
-                .task_loops
-                .get(&loop_id)
-                .filter(|parent| parent.state == super::task_loop::TaskLoopState::Completed),
-            JobStatus::Cancelled => state.task_loops.cancel(&loop_id).ok(),
-            _ => state.task_loops.fail(&loop_id).ok(),
-        };
-        if terminal
-            .as_ref()
-            .is_some_and(|parent| matches!(parent.state, super::task_loop::TaskLoopState::Failed))
-        {
-            workflow.job.set_awaiting_decision();
-            let _ = state.sessions.release_job_reservation(
-                &workflow.session_id,
-                workflow.conversation_id,
-                workflow.job.id(),
-            );
-            return;
-        }
-        if !terminal.is_some_and(|parent| parent.state.is_terminal()) {
-            return;
-        }
-    }
     let connection = workflow.active_connection();
     let secret = match &connection.auth {
         crate::providers::AuthMethod::ApiKey => Some(connection.api_key.expose()),
@@ -4345,23 +4102,7 @@ fn settle_with_reply(
     let error = error
         .and_then(|text| crate::providers::sanitise_detail(&crate::tools::redact(text, secret)));
     let reply = crate::slices::bound_reply(reply);
-    let conversation_reply = if let Some(loop_id) = workflow.task_loop {
-        let stopped = state.task_loops.get(&loop_id).is_some_and(|parent| {
-            matches!(
-                parent.state,
-                super::task_loop::TaskLoopState::Stopped
-                    | super::task_loop::TaskLoopState::Cancelled
-            )
-        });
-        Some(if stopped && status == JobStatus::Cancelled {
-            format!(
-                "The task loop stopped. Earlier commits remain. This did not roll back the project.\n\n[Open the run record](/runs/loops/{}) for detailed activity, changes and result.",
-                loop_id.as_hex()
-            )
-        } else {
-            conversation_loop_result(loop_id, status, &reply.text)
-        })
-    } else {
+    let conversation_reply = {
         state
             .workflow_runs
             .get(&workflow.run_id)
@@ -4424,14 +4165,6 @@ fn settle_with_reply(
     }
     state.host_approvals.invalidate_job(workflow.job.id());
     let _ = workflow.job.finish(status, error.as_deref());
-}
-
-fn conversation_loop_result(loop_id: TaskLoopId, status: JobStatus, response: &str) -> String {
-    conversation_result(
-        status,
-        response,
-        &format!("/runs/loops/{}", loop_id.as_hex()),
-    )
 }
 
 fn conversation_run_result(run_id: RunId, status: JobStatus, response: &str) -> String {
@@ -4507,174 +4240,6 @@ fn recovery_project_path(
         return Err(error);
     }
     Ok(project.host_path)
-}
-
-pub(crate) fn recover_task_loops(state: &AppState) -> Result<(), &'static str> {
-    // Restart restores reservations. It never resumes automatic host commands.
-    let unfinished: std::collections::HashSet<_> = state
-        .task_loops
-        .list()
-        .into_iter()
-        .filter(|record| record.keeps_conversation_reservation())
-        .map(|record| record.id)
-        .collect();
-    state
-        .task_loops
-        .reconcile(&state.workflow_runs)
-        .map_err(|_| "Power Plant could not recover a task loop.")?;
-    for record in state.task_loops.list() {
-        // Old terminal loops do not own a later conversation request.
-        if !unfinished.contains(&record.id) {
-            continue;
-        }
-        if matches!(
-            record.state,
-            super::task_loop::TaskLoopState::Completed
-                | super::task_loop::TaskLoopState::Cancelled
-                | super::task_loop::TaskLoopState::Stopped
-        ) {
-            let status = match record.state {
-                super::task_loop::TaskLoopState::Completed => JobStatus::Completed,
-                _ => JobStatus::Cancelled,
-            };
-            if let Ok(request) = state
-                .conversations
-                .restore_reservation(&record.conversation_id)
-            {
-                let _ = state.conversations.settle_message(
-                    &record.conversation_id,
-                    request,
-                    conversation_loop_result(record.id, status, ""),
-                    match status {
-                        JobStatus::Completed => crate::conversations::MessageStatus::Complete,
-                        _ => crate::conversations::MessageStatus::Interrupted,
-                    },
-                    None,
-                );
-            }
-            continue;
-        }
-        if record.keeps_conversation_reservation()
-            && state.conversations.get(&record.conversation_id).is_some()
-            && state
-                .conversations
-                .restore_reservation(&record.conversation_id)
-                .is_err()
-        {
-            return Err("Power Plant could not restore a task loop reservation.");
-        }
-    }
-    Ok(())
-}
-
-pub(crate) fn reconstruct_loop_job(
-    state: &AppState,
-    session_id: SessionId,
-    job: std::sync::Arc<Job>,
-    record: &super::task_loop::TaskLoop,
-    child_id: RunId,
-) -> Result<WorkflowJob, &'static str> {
-    let conversation = state
-        .conversations
-        .get(&record.conversation_id)
-        .ok_or("The conversation for this task loop is no longer available.")?;
-    let resolved = if record.project_id.is_some() {
-        let resolved = crate::conversations::resolve_workflow_authority(
-            &conversation,
-            &state.projects,
-            &state.agents,
-        )
-        .ok()
-        .flatten()
-        .ok_or("The conversation authority does not match this run.")?;
-        if Some(resolved.effective.project_id) != record.project_id {
-            return Err("The conversation authority does not match this run.");
-        }
-        Some(resolved)
-    } else {
-        None
-    };
-    for phase in &record.phase_models {
-        validate_phase_selection(state, &phase.selection)
-            .map_err(|_| "A selected phase provider is no longer available.")?;
-    }
-    let connection = if let Some(phase) = record.phase_models.first() {
-        validate_phase_selection(state, &phase.selection)
-            .map_err(|_| "A selected phase provider is no longer available.")?
-    } else {
-        let selection = conversation
-            .model
-            .as_ref()
-            .map(|model| &model.settings.model)
-            .ok_or("The conversation has no model selection.")?;
-        state
-            .vault
-            .connection_for(selection)
-            .ok_or("The provider for this phase is no longer stored.")?
-    };
-    let project_free = if record.project_id.is_none() {
-        let settings = crate::execution::ExecutionSettings::combined(
-            record
-                .phase_models
-                .iter()
-                .filter_map(|phase| phase.settings.as_ref()),
-        )
-        .or_else(|| {
-            conversation
-                .model
-                .as_ref()
-                .map(|model| model.settings.clone())
-        })
-        .ok_or("The conversation settings are unavailable.")?;
-        Some(
-            crate::execution::ProjectFreeAuthority::from_settings(conversation.revision, &settings)
-                .map_err(|_| "A pinned directory changed identity before dispatch.")?,
-        )
-    } else {
-        None
-    };
-    let host_policy = resolved
-        .as_ref()
-        .map(|resolved| resolved.effective.policy.clone())
-        .or_else(|| {
-            project_free
-                .as_ref()
-                .map(|authority| authority.policy.clone())
-        })
-        .ok_or("The conversation authority does not match this run.")?;
-    Ok(WorkflowJob {
-        run_id: child_id,
-        session_id,
-        project_id: record.project_id,
-        agent_id: record.agent_id,
-        agent_revision: resolved
-            .as_ref()
-            .map(|resolved| resolved.effective.revision)
-            .unwrap_or(conversation.revision),
-        conversation_id: Some(record.conversation_id),
-        authority: resolved.as_ref().map(|resolved| resolved.effective.clone()),
-        project_free_authority: project_free,
-        grant_alias: resolved
-            .as_ref()
-            .map(|resolved| resolved.effective.grant_alias.clone())
-            .unwrap_or_default(),
-        grant_access: resolved
-            .as_ref()
-            .map(|resolved| resolved.effective.grant_access)
-            .unwrap_or(AccessMode::ReadWrite),
-        connection,
-        phase_providers: record
-            .phase_models
-            .iter()
-            .map(|phase| phase.selection.provider)
-            .collect(),
-        active_connection: std::sync::Arc::new(std::sync::Mutex::new(None)),
-        host_policy,
-        turns: Vec::new(),
-        job,
-        eligible_reply: std::sync::Arc::new(std::sync::Mutex::new(String::new())),
-        task_loop: Some(record.id),
-    })
 }
 
 pub(crate) fn recover_apply_transactions(state: &AppState) -> Result<(), &'static str> {

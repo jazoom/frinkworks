@@ -26,19 +26,9 @@ pub(super) async fn run(
     record: ConversationRecord,
     connection: ProviderConnection,
     job: Arc<Job>,
-    scope: Option<super::plans::Scope>,
 ) {
     let language = state.sessions.language(&session);
     let mut instructions = instructions(&state, &record);
-    if matches!(scope, None | Some(super::plans::Scope::Create)) {
-        instructions.push_str(&super::plans::context(&state, &record));
-    } else {
-        instructions.push_str("\n\nSubmit the requested explicit plan action. Use the exact source revision in the request. The action grants no execution approval.");
-    }
-    let definitions: Vec<_> = super::plans::definitions()
-        .into_iter()
-        .filter(|definition| scope.is_none_or(|scope| scope.name() == definition.name))
-        .collect();
     if let Some(language) = &language {
         language.append_instructions(&mut instructions);
     }
@@ -48,17 +38,13 @@ pub(super) async fn run(
     };
     let mut reply = String::new();
     let mut event_count = 0usize;
-    let mut plan_action = None;
     let result = tokio::select! {
         biased;
         _ = job.cancelled() => Err(Failure::Cancelled),
         _ = tokio::time::sleep(Duration::from_secs(600)) => Err(Failure::Provider(ProviderError::Unreachable)),
         result = async {
-            let history = match super::plans::selected_history(&state, &record, scope).map_err(|error| Failure::Context(error.message()))? {
-                Some(history) => history,
-                None => history_with_review(&state, &record, secret).map_err(Failure::Context)?,
-            };
-            let mut stream = state.chat.stream_turn(&connection, &history, &[], &definitions, &instructions).await.map_err(Failure::Provider)?;
+            let history = history_with_review(&state, &record, secret).map_err(Failure::Context)?;
+            let mut stream = state.chat.stream_turn(&connection, &history, &[], &[], &instructions).await.map_err(Failure::Provider)?;
             while let Some(event) = tokio::select! {
                 biased;
                 _ = job.cancelled() => return Err(Failure::Cancelled),
@@ -82,22 +68,10 @@ pub(super) async fn run(
                             input_tokens,
                         });
                     }
-                    ModelEvent::ToolCall { name, arguments, .. } => {
-                        if plan_action.is_some() { return Err(Failure::Provider(ProviderError::Refused)); }
-                        plan_action = Some((name, arguments));
-                    }
+                    ModelEvent::ToolCall { .. } => return Err(Failure::Provider(ProviderError::Refused)),
                 }
             }
-            if let Some((name, arguments)) = plan_action.take() {
-                super::plans::publish(&state, &record, job.assistant_index(), &name, arguments, secret, scope)
-                    .map_err(|error| Failure::Context(match error {
-                        crate::conversations::DocumentError::Source => "The model submitted a mismatched plan source. No plan changed.",
-                        crate::conversations::DocumentError::Content => "The model submitted invalid plan contents. No plan changed.",
-                        _ => error.message(),
-                    }))?;
-            } else if scope.is_some() {
-                return Err(Failure::Context("The model did not submit the requested plan action. No plan changed."));
-            } else if reply.trim().is_empty() {
+            if reply.trim().is_empty() {
                 return Err(Failure::Provider(ProviderError::EmptyReply));
             }
             Ok(())
@@ -148,169 +122,6 @@ pub(super) async fn run(
             Some("Power Plant could not store the reply. Try again."),
         );
     }
-}
-
-pub(super) async fn run_host_tools(
-    state: AppState,
-    session: SessionId,
-    conversation: ConversationId,
-    record: ConversationRecord,
-    connection: ProviderConnection,
-    job: Arc<Job>,
-) {
-    let language = state.sessions.language(&session);
-    let mut preamble = instructions(&state, &record);
-    if let Some(language) = &language {
-        language.append_instructions(&mut preamble);
-    }
-    if !preamble.is_empty() {
-        preamble.push_str("\n\n");
-    }
-    let settings = record.model.as_ref().map(|model| &model.settings);
-    if let Some(settings) = settings {
-        preamble.push_str(&crate::workflows::input_context::authorised_source_text(
-            settings, false,
-        ));
-        preamble.push_str("\n\n");
-        preamble.push_str(match settings.host_approval {
-            crate::execution::HostApprovalPolicy::AskEachTime => "Each shell command waits for user approval. ",
-            crate::execution::HostApprovalPolicy::Automatic => "Run without approval permits automatic commands within this conversation's authorised settings. ",
-        });
-    }
-    preamble.push_str("Commands use the Power Plant process user's authority. Approval does not inspect script internals. Command output is sent to the hosted model.");
-    let secret = match connection.auth {
-        crate::providers::AuthMethod::ApiKey => Some(connection.api_key.expose().to_owned()),
-        crate::providers::AuthMethod::Plan => None,
-    };
-    let secret = secret.as_deref();
-    let tool_ids = settings
-        .map(|settings| crate::tools::advertised(&settings.tools, settings.location))
-        .unwrap_or_default();
-    let directory = crate::execution::command_directory(
-        settings
-            .map(|settings| settings.directories.as_slice())
-            .unwrap_or(&[]),
-    );
-    let host = settings.map(|settings| crate::tools::HostRunSpec {
-        session,
-        conversation,
-        execution_revision: record.revision,
-        directory,
-        settings: settings.clone(),
-        run: None,
-        step: None,
-        attempt: None,
-        task_loop: None,
-    });
-    let history = match history_with_review(&state, &record, secret) {
-        Ok(history) => history,
-        Err(error) => {
-            finish_host_job(
-                &state,
-                session,
-                conversation,
-                &job,
-                HostJobEnd {
-                    reply: String::new(),
-                    status: JobStatus::Failed,
-                    message_status: MessageStatus::Failed,
-                    error: Some(error.to_owned()),
-                    language,
-                },
-            );
-            return;
-        }
-    };
-    let spec = crate::slices::AgentRunSpec {
-        agent_id: None,
-        revision: record.revision,
-        preamble,
-        tools: crate::tools::definitions_for(&tool_ids, crate::execution::ToolLocation::Host),
-        tool_ids,
-        policy: crate::agents::DirectoryPolicy::from_grants_with_workspace(
-            Vec::new(),
-            "workspace".to_owned(),
-        ),
-        connection,
-        location: crate::execution::ToolLocation::Host,
-        sandbox: None,
-        host,
-        output_drafts: None,
-        required_outputs: Vec::new(),
-        evidence: None,
-    };
-    let ended = crate::slices::run_agent_action(&state, spec, history, job.clone()).await;
-    let result = match ended.outcome {
-        crate::slices::AgentOutcome::Completed => Ok(()),
-        crate::slices::AgentOutcome::Cancelled => Err(Failure::Cancelled),
-        crate::slices::AgentOutcome::ProviderFailure | crate::slices::AgentOutcome::ToolFailure => {
-            Err(Failure::Provider(ProviderError::Unreachable))
-        }
-    };
-    let reply = ended.reply.text;
-    let (status, message_status, error) = match result {
-        Ok(()) => (JobStatus::Completed, MessageStatus::Complete, None),
-        Err(Failure::Cancelled) => (JobStatus::Cancelled, MessageStatus::Interrupted, None),
-        Err(_) => (
-            JobStatus::Failed,
-            MessageStatus::Failed,
-            ended.error.and_then(|text| {
-                crate::providers::sanitise_detail(&crate::tools::redact(&text, secret))
-            }),
-        ),
-    };
-    finish_host_job(
-        &state,
-        session,
-        conversation,
-        &job,
-        HostJobEnd {
-            reply,
-            status,
-            message_status,
-            error,
-            language,
-        },
-    );
-}
-
-struct HostJobEnd {
-    reply: String,
-    status: JobStatus,
-    message_status: MessageStatus,
-    error: Option<String>,
-    language: Option<crate::sessions::BrowserLanguage>,
-}
-
-fn finish_host_job(
-    state: &AppState,
-    session: SessionId,
-    conversation: ConversationId,
-    job: &Job,
-    end: HostJobEnd,
-) {
-    let settlement = state.conversations.settle_message(
-        &conversation,
-        job.id(),
-        end.reply,
-        end.message_status,
-        end.error.clone(),
-    );
-    if settlement.is_ok() {
-        crate::conversations::titles::start(state, conversation, end.language);
-    }
-    if settlement.is_ok() || settlement == Err(crate::conversations::ConversationError::Conflict) {
-        job.finish(end.status, end.error.as_deref());
-        state
-            .sessions
-            .finish_conversation_job(&session, conversation, job.id());
-    } else {
-        job.finish(
-            JobStatus::Failed,
-            Some("Power Plant could not store the reply. Try again."),
-        );
-    }
-    state.host_approvals.invalidate_job(job.id());
 }
 
 enum Failure {
@@ -365,9 +176,6 @@ pub(super) fn history_with_review(
     secret: Option<&str>,
 ) -> Result<Vec<ChatTurn>, &'static str> {
     let mut history = history(record);
-    if let Some(context) = &record.review_context {
-        history.insert(0, ChatTurn::user(review_prompt(state, context)?));
-    }
     if let Some(context) = &record.candidate_review_context {
         history.insert(
             0,
@@ -405,7 +213,12 @@ fn candidate_review_prompt(
         .workflow_runs
         .get(&context.source.run_id)
         .ok_or("The source run is no longer available.")?;
-    if run.conversation_id != context.source.conversation_id {
+    if run.conversation_id != context.source.conversation_id
+        && !context
+            .source
+            .conversation_id
+            .is_some_and(|id| run.ownership_history.contains(&id))
+    {
         return Err("The source run is not bound to the selected review.");
     }
     let diff = crate::workflows::artefacts::CandidateDiff::load(
@@ -471,32 +284,6 @@ fn candidate_review_prompt(
         diff.base.as_str(),
         preview,
         project_instructions,
-    ))
-}
-
-fn review_prompt(
-    state: &AppState,
-    context: &crate::conversations::PlanReviewContext,
-) -> Result<String, &'static str> {
-    let Some(document) = state.documents.get(&context.source.plan.document_id) else {
-        return Err("The selected plan is no longer available.");
-    };
-    let Some(revision) = document.revision(context.source.plan.revision) else {
-        return Err("The selected plan revision is no longer available.");
-    };
-    if revision.content_hash != context.source.plan.content_hash
-        || revision.object_hash != context.source.plan.object_hash
-        || revision.artefact_hash != context.source.plan.artefact_hash
-    {
-        return Err("The selected plan changed. Start the review again.");
-    }
-    let content = state
-        .documents
-        .content(&document, context.source.plan.revision)
-        .map_err(|_| "Power Plant could not read the selected plan.")?;
-    Ok(format!(
-        "Review task:\n{}\n\nSelected plan revision {} (immutable content):\n--- BEGIN SELECTED PLAN ---\n{}\n--- END SELECTED PLAN ---\n\nReturn a review of the selected plan. Do not treat source conversation history or worker output as context.",
-        context.task_brief, context.source.plan.revision, content
     ))
 }
 
@@ -596,8 +383,6 @@ fn progress_frame(
         status: "Replying",
         error: String::new(),
         streaming: true,
-        saveable_plan: false,
-        plan_request_href: String::new(),
     };
     let mut patches = PatchSet::new();
     let target = format!("conversation-message-{}", message.index);
@@ -660,8 +445,6 @@ fn final_frame(
             },
             error: super::page::message_error(message),
             streaming: message.status == MessageStatus::Pending,
-            saveable_plan: false,
-            plan_request_href: String::new(),
         };
         let target = format!("conversation-message-{index}");
         let _ = patches.children(&target, &MessageBody { message: &message });

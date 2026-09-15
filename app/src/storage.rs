@@ -46,21 +46,37 @@ pub(crate) fn ensure_private_dir(path: &Path) -> Result<(), PersistError> {
 }
 
 pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> Result<(), PersistError> {
-    let dir = path.parent().ok_or(PersistError)?;
-    let (tmp, mut file) = create_unique_file(dir, ".tmp").map_err(|_| PersistError)?;
+    write_private_outcome(path, bytes).map_err(|_| PersistError)
+}
+
+pub(crate) enum PrivateWriteError {
+    Unchanged,
+    Replaced,
+}
+
+pub(crate) fn write_private_outcome(path: &Path, bytes: &[u8]) -> Result<(), PrivateWriteError> {
+    let dir = path.parent().ok_or(PrivateWriteError::Unchanged)?;
+    let (tmp, mut file) =
+        create_unique_file(dir, ".tmp").map_err(|_| PrivateWriteError::Unchanged)?;
+    let mut replaced = false;
     let result: io::Result<()> = (|| {
         restrict_file_permissions(&file)?;
         file.write_all(bytes)?;
         file.sync_all()?;
         drop(file);
         fs::rename(&tmp, path)?;
+        replaced = true;
         sync_dir(dir)
     })();
     match result {
         Ok(()) => Ok(()),
         Err(_) => {
             let _ = fs::remove_file(&tmp);
-            Err(PersistError)
+            Err(if replaced {
+                PrivateWriteError::Replaced
+            } else {
+                PrivateWriteError::Unchanged
+            })
         }
     }
 }

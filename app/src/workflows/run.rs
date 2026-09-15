@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::agents::{AccessMode, AgentId, ToolId};
-use crate::conversations::{ConversationId, DocumentId};
+use crate::conversations::ConversationId;
 use crate::environments::snapshot::{OciManifestDigest, RecordedIntegrity, SnapshotArtifactKey};
 use crate::environments::{
     EnvironmentId, EnvironmentRecipeVersion, PreparationId, PreparedSnapshot, SnapshotDigest,
@@ -17,11 +17,11 @@ use super::capabilities::{
 };
 use super::commit::{CommitResult, CommitTransaction, CommitTransactionState};
 use super::definition::{
-    DefinitionFile, DefinitionVersion, InputKey, LaunchInputSource, OutputKey,
-    PinnedWorkflowDefinition, StepAction, StepDefinition, StepKey, WorkflowDefinition,
+    DefinitionFile, DefinitionVersion, InputKey, OutputKey, PinnedWorkflowDefinition, StepAction,
+    StepDefinition, StepKey, WorkflowDefinition,
 };
 use super::gates::{GateRevision, HumanGateRecord, HumanGateState};
-use super::id::{AttemptId, GateId, RunId, TaskLoopId, WorkflowId};
+use super::id::{AttemptId, GateId, RunId, WorkflowId};
 use super::input_context::AttemptContextPacket;
 use super::resolve::{ResolvedEnvironment, ResolvedEnvironmentSet, ResolvedStepEnvironment};
 
@@ -33,8 +33,11 @@ pub(crate) struct WorkflowRun {
     pub(crate) created_at_ms: u64,
     pub(crate) project_id: Option<ProjectId>,
     pub(crate) conversation_id: Option<ConversationId>,
+    pub(crate) ownership_history: Vec<ConversationId>,
+    pub(crate) pending_handoff: Option<super::handoff::PendingHandoff>,
+    pub(crate) project_authority: Option<super::handoff::project::ProjectAuthority>,
     pub(crate) launch_brief: String,
-    pub(crate) task_selection: Option<TaskSelection>,
+
     pub(crate) kind: RunKind,
     pub(crate) agent_id: Option<AgentId>,
     pub(crate) phase_models: Vec<PhaseModelSelection>,
@@ -46,7 +49,6 @@ pub(crate) struct WorkflowRun {
     pub(crate) attempts: Vec<AttemptRecord>,
     pub(crate) gates: Vec<HumanGateRecord>,
     pub(crate) revision_reservation: Option<RevisionReservation>,
-    pub(crate) parent_loop: Option<TaskLoopId>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -69,16 +71,6 @@ pub(crate) struct PinnedPreset {
     pub(crate) id: crate::presets::PresetId,
     pub(crate) revision: u32,
     pub(crate) name: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct TaskSelection {
-    pub(crate) document_id: DocumentId,
-    pub(crate) revision: u32,
-    pub(crate) content_hash: String,
-    pub(crate) index: u32,
-    pub(crate) task_markdown: String,
-    pub(crate) task_list: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -214,6 +206,7 @@ pub(crate) struct AttemptRecord {
     pub(crate) apply_transaction: Option<ApplyTransaction>,
     pub(crate) commit_transaction: Option<CommitTransaction>,
     pub(crate) commit_result: Option<CommitResult>,
+    pub(crate) direct_changes: Option<super::direct::DirectChanges>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -290,9 +283,11 @@ pub(super) struct RunFile {
     project_id: Option<String>,
     #[serde(deserialize_with = "crate::storage::required_option")]
     conversation_id: Option<String>,
+    ownership_history: Vec<String>,
+    pending_handoff: Option<super::handoff::PendingHandoff>,
+    project_authority: Option<super::handoff::project::ProjectAuthority>,
     launch_brief: String,
-    #[serde(deserialize_with = "crate::storage::required_option")]
-    task_selection: Option<TaskSelectionFile>,
+
     kind: String,
     #[serde(deserialize_with = "crate::storage::required_option")]
     agent_id: Option<String>,
@@ -308,8 +303,6 @@ pub(super) struct RunFile {
     gates: Vec<HumanGateFile>,
     #[serde(default)]
     revision_reservation: Option<RevisionReservationFile>,
-    #[serde(default)]
-    parent_loop: Option<String>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -367,17 +360,6 @@ struct PinnedPresetFile {
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
-struct TaskSelectionFile {
-    document_id: String,
-    revision: u32,
-    content_hash: String,
-    index: u32,
-    task_markdown: String,
-    task_list: String,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "kebab-case")]
 struct HumanGateFile {
     id: String,
     step: String,
@@ -428,6 +410,7 @@ struct AttemptFile {
     apply_transaction: Option<ApplyTransactionFile>,
     commit_transaction: Option<CommitTransactionFile>,
     commit_result: Option<CommitResultFile>,
+    direct_changes: Option<super::direct::DirectChanges>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -588,13 +571,6 @@ struct ProvenanceFile {
 #[serde(tag = "producer", rename_all = "kebab-case")]
 enum ProducerFile {
     RunSourceCapture,
-    LaunchInput {
-        source: String,
-        conversation_id: String,
-        document_id: String,
-        revision: u32,
-        content_hash: String,
-    },
     StepAttempt {
         attempt_id: String,
         step: String,
@@ -708,8 +684,11 @@ impl WorkflowRun {
             created_at_ms,
             project_id: Some(project_id),
             conversation_id: None,
+            ownership_history: Vec::new(),
+            pending_handoff: None,
+            project_authority: None,
             launch_brief: String::new(),
-            task_selection: None,
+
             kind,
             agent_id,
             phase_models: Vec::new(),
@@ -721,7 +700,6 @@ impl WorkflowRun {
             attempts: Vec::new(),
             gates: Vec::new(),
             revision_reservation: None,
-            parent_loop: None,
         }
     }
 
@@ -758,50 +736,6 @@ impl WorkflowRun {
                     .directories
                     .iter()
                     .any(|grant| grant.access == crate::execution::DirectoryAccess::DirectWrite)
-            })
-    }
-
-    pub(crate) fn has_host_execution(&self) -> bool {
-        self.phase_models
-            .iter()
-            .filter_map(|phase| phase.settings.as_ref())
-            .any(|settings| settings.location == crate::execution::ToolLocation::Host)
-    }
-
-    pub(crate) fn completed_host(&self) -> bool {
-        self.state == RunState::Completed
-            && self.has_host_execution()
-            && self.reviewed_directories().is_empty()
-            && !self.has_direct_writes()
-            && self.attempts.iter().any(|attempt| {
-                attempt.action_kind == ActionKind::Agent
-                    && self.phase_settings(&attempt.step).is_some_and(|settings| {
-                        settings.location == crate::execution::ToolLocation::Host
-                    })
-            })
-            && self.attempts.iter().all(|attempt| {
-                attempt.cleanup == AttemptCleanupRecord::Complete
-                    && attempt.state == AttemptState::Completed
-                    && matches!(attempt.result, Some(AttemptResult::Completed { .. }))
-            })
-    }
-
-    pub(crate) fn completed_direct(&self) -> bool {
-        self.state == RunState::Completed
-            && self.has_direct_writes()
-            && (self.reviewed_directories().is_empty() || self.completed_without_changes())
-            && self.attempts.iter().any(|attempt| {
-                attempt.action_kind == ActionKind::Agent
-                    && self.phase_settings(&attempt.step).is_some_and(|settings| {
-                        settings.directories.iter().any(|grant| {
-                            grant.access == crate::execution::DirectoryAccess::DirectWrite
-                        })
-                    })
-            })
-            && self.attempts.iter().all(|attempt| {
-                attempt.cleanup == AttemptCleanupRecord::Complete
-                    && attempt.state == AttemptState::Completed
-                    && matches!(attempt.result, Some(AttemptResult::Completed { .. }))
             })
     }
 
@@ -846,8 +780,11 @@ impl WorkflowRun {
             created_at_ms,
             project_id: None,
             conversation_id: Some(conversation_id),
+            ownership_history: Vec::new(),
+            pending_handoff: None,
+            project_authority: None,
             launch_brief: String::new(),
-            task_selection: None,
+
             kind: RunKind::QuickTask,
             agent_id: None,
             phase_models,
@@ -863,31 +800,7 @@ impl WorkflowRun {
             attempts: Vec::new(),
             gates: Vec::new(),
             revision_reservation: None,
-            parent_loop: None,
         }
-    }
-
-    pub(crate) fn create_for_conversation(
-        id: RunId,
-        created_at_ms: u64,
-        project_id: ProjectId,
-        conversation_id: ConversationId,
-        pinned: PinnedWorkflowDefinition,
-        environments: ResolvedEnvironmentSet,
-        phase_models: Vec<PhaseModelSelection>,
-    ) -> Self {
-        let mut run = Self::create(
-            id,
-            created_at_ms,
-            project_id,
-            None,
-            RunKind::QuickTask,
-            pinned,
-            environments,
-        );
-        run.phase_models = phase_models;
-        run.conversation_id = Some(conversation_id);
-        run
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -914,67 +827,6 @@ impl WorkflowRun {
         run.launch_brief = launch_brief;
         run.phase_models = phase_models;
         run
-    }
-
-    pub(crate) fn set_task_selection(
-        &mut self,
-        selection: TaskSelection,
-    ) -> Result<(), TransitionError> {
-        if self.kind != RunKind::Configured
-            || !self.attempts.is_empty()
-            || self.task_selection.is_some()
-            || !self.pinned.definition.supports_task_execution()
-            || task_selection_from_file(task_selection_to_file(&selection)).is_err()
-        {
-            return Err(TransitionError::Invalid);
-        }
-        self.task_selection = Some(selection);
-        Ok(())
-    }
-
-    pub(crate) fn set_parent_loop(
-        &mut self,
-        parent_loop: TaskLoopId,
-    ) -> Result<(), TransitionError> {
-        if self.parent_loop.is_some() || !self.attempts.is_empty() {
-            return Err(TransitionError::Invalid);
-        }
-        self.parent_loop = Some(parent_loop);
-        Ok(())
-    }
-
-    pub(crate) fn record_launch_input(
-        &mut self,
-        record: crate::workflows::artefacts::ArtefactRecord,
-    ) -> Result<(), TransitionError> {
-        let source = match &record.provenance.producer {
-            crate::workflows::artefacts::ArtefactProducer::LaunchInput {
-                source,
-                conversation_id,
-                revision,
-                ..
-            } if self.conversation_id == Some(*conversation_id) && *revision > 0 => *source,
-            _ => return Err(TransitionError::Invalid),
-        };
-        if record.kind != crate::workflows::definition::ArtefactKind::Plan
-            || record.provenance.run_id != self.id
-            || !record.provenance.inputs.is_empty()
-            || !self
-                .pinned
-                .definition
-                .launch_input_sources()
-                .contains(&source)
-            || !self.attempts.is_empty()
-            || self.artefacts.len() >= crate::workflows::artefacts::MAXIMUM_ARTEFACTS
-            || self.artefacts.iter().any(|item| item.id == record.id || matches!(
-                item.provenance.producer,
-                crate::workflows::artefacts::ArtefactProducer::LaunchInput { source: stored, .. } if stored == source
-            ))
-        {
-            return Err(TransitionError::Invalid);
-        }
-        self.artefacts.push(record);
-        Ok(())
     }
 
     pub(crate) fn record_initial_candidate(
@@ -1573,6 +1425,7 @@ impl WorkflowRun {
             apply_transaction: None,
             commit_transaction: None,
             commit_result: None,
+            direct_changes: None,
         });
         self.state = RunState::Active {
             step,
@@ -2143,8 +1996,15 @@ impl WorkflowRun {
             conversation_id: self
                 .conversation_id
                 .map(|conversation| conversation.as_hex()),
+            ownership_history: self
+                .ownership_history
+                .iter()
+                .map(|id| id.as_hex())
+                .collect(),
+            pending_handoff: self.pending_handoff.clone(),
+            project_authority: self.project_authority.clone(),
             launch_brief: self.launch_brief.clone(),
-            task_selection: self.task_selection.as_ref().map(task_selection_to_file),
+
             kind: self.kind.as_str().to_owned(),
             agent_id: self.agent_id.map(|id| id.as_hex()),
             phase_models: self.phase_models.iter().map(phase_model_to_file).collect(),
@@ -2161,12 +2021,11 @@ impl WorkflowRun {
                 .revision_reservation
                 .as_ref()
                 .map(revision_reservation_to_file),
-            parent_loop: self.parent_loop.map(|id| id.as_hex()),
         }
     }
 
     pub(super) fn from_file(file: RunFile) -> Result<Self, RunRecordError> {
-        if file.record_version != RUN_RECORD_VERSION {
+        if file.record_version != RUN_RECORD_VERSION || file.ownership_history.len() > 64 {
             return Err(RunRecordError::Corrupt);
         }
         let id = RunId::parse(&file.id).ok_or(RunRecordError::Corrupt)?;
@@ -2179,10 +2038,6 @@ impl WorkflowRun {
             None => None,
         };
         let kind = RunKind::parse(&file.kind).ok_or(RunRecordError::Corrupt)?;
-        let task_selection = file
-            .task_selection
-            .map(task_selection_from_file)
-            .transpose()?;
         let agent_id = match file.agent_id.as_deref() {
             Some(value) => Some(AgentId::parse(value).ok_or(RunRecordError::Corrupt)?),
             None => None,
@@ -2231,8 +2086,14 @@ impl WorkflowRun {
             created_at_ms: file.created_at_ms,
             project_id,
             conversation_id,
+            ownership_history: file
+                .ownership_history
+                .iter()
+                .map(|id| ConversationId::parse(id).ok_or(RunRecordError::Corrupt))
+                .collect::<Result<Vec<_>, _>>()?,
+            pending_handoff: file.pending_handoff,
+            project_authority: file.project_authority,
             launch_brief: file.launch_brief,
-            task_selection,
             kind,
             agent_id,
             phase_models,
@@ -2248,11 +2109,26 @@ impl WorkflowRun {
             attempts,
             gates,
             revision_reservation,
-            parent_loop: match file.parent_loop.as_deref() {
-                Some(value) => Some(TaskLoopId::parse(value).ok_or(RunRecordError::Corrupt)?),
-                None => None,
-            },
         };
+        if run.project_authority.as_ref().is_some_and(|authority| {
+            !authority.valid() || run.project_id.is_none() || run.conversation_id.is_none()
+        }) {
+            return Err(RunRecordError::Corrupt);
+        }
+        if run.ownership_history.iter().enumerate().any(|(index, id)| {
+            Some(*id) == run.conversation_id || run.ownership_history[..index].contains(id)
+        }) || run.pending_handoff.as_ref().is_some_and(|pending| {
+            !pending.valid()
+                || !run.recoverable_gate()
+                || run
+                    .ownership_history
+                    .last()
+                    .map(|id| id.as_hex())
+                    .as_deref()
+                    != Some(&pending.source)
+        }) {
+            return Err(RunRecordError::Corrupt);
+        }
         run.validate_loaded()?;
         Ok(run)
     }
@@ -2300,12 +2176,6 @@ impl WorkflowRun {
                 }))
             || fact_count > self.pinned.definition.attempt_bound()
             || self.artefacts.len() > crate::workflows::artefacts::MAXIMUM_ARTEFACTS
-        {
-            return Err(RunRecordError::Corrupt);
-        }
-        if self.task_selection.is_some()
-            && (self.kind != RunKind::Configured
-                || !self.pinned.definition.supports_task_execution())
         {
             return Err(RunRecordError::Corrupt);
         }
@@ -2460,11 +2330,17 @@ impl AttemptRecord {
             commit_result: self.commit_result.as_ref().map(|result| CommitResultFile {
                 commit: result.commit.clone(),
             }),
+            direct_changes: self.direct_changes.clone(),
         }
     }
 
     fn from_file(file: AttemptFile) -> Result<Self, RunRecordError> {
-        if file.ordinal == 0 {
+        if file.ordinal == 0
+            || file
+                .direct_changes
+                .as_ref()
+                .is_some_and(|changes| !changes.valid())
+        {
             return Err(RunRecordError::Corrupt);
         }
         Ok(Self {
@@ -2510,6 +2386,7 @@ impl AttemptRecord {
             commit_result: file.commit_result.map(|result| CommitResult {
                 commit: result.commit,
             }),
+            direct_changes: file.direct_changes,
         })
     }
 }
@@ -2966,48 +2843,6 @@ fn phase_model_to_file(selection: &PhaseModelSelection) -> PhaseModelFile {
     }
 }
 
-pub(crate) fn supports_task_execution(definition: &super::definition::WorkflowDefinition) -> bool {
-    definition.supports_task_execution()
-}
-
-fn task_selection_to_file(selection: &TaskSelection) -> TaskSelectionFile {
-    TaskSelectionFile {
-        document_id: selection.document_id.as_hex(),
-        revision: selection.revision,
-        content_hash: selection.content_hash.clone(),
-        index: selection.index,
-        task_markdown: selection.task_markdown.clone(),
-        task_list: selection.task_list.clone(),
-    }
-}
-
-fn task_selection_from_file(file: TaskSelectionFile) -> Result<TaskSelection, RunRecordError> {
-    let document_id = DocumentId::parse(&file.document_id).ok_or(RunRecordError::Corrupt)?;
-    if file.revision == 0
-        || crate::workflows::artefacts::ObjectHash::of(file.task_list.as_bytes()).as_str()
-            != file.content_hash
-        || file.task_list.len() > crate::workflows::task_list::MAXIMUM_TASK_LIST_BYTES
-    {
-        return Err(RunRecordError::Corrupt);
-    }
-    let list =
-        crate::workflows::task_list::parse(&file.task_list).map_err(|_| RunRecordError::Corrupt)?;
-    let Some(task) = list.tasks.get(file.index as usize) else {
-        return Err(RunRecordError::Corrupt);
-    };
-    if task.checked || task.markdown != file.task_markdown {
-        return Err(RunRecordError::Corrupt);
-    }
-    Ok(TaskSelection {
-        document_id,
-        revision: file.revision,
-        content_hash: file.content_hash,
-        index: file.index,
-        task_markdown: file.task_markdown,
-        task_list: file.task_list,
-    })
-}
-
 fn phase_model_from_file(file: PhaseModelFile) -> Result<PhaseModelSelection, RunRecordError> {
     let provider = ProviderKind::parse(&file.provider).ok_or(RunRecordError::Corrupt)?;
     let thinking = file
@@ -3337,19 +3172,7 @@ fn producer_to_file(producer: &crate::workflows::artefacts::ArtefactProducer) ->
     use crate::workflows::artefacts::ArtefactProducer;
     match producer {
         ArtefactProducer::RunSourceCapture => ProducerFile::RunSourceCapture,
-        ArtefactProducer::LaunchInput {
-            source,
-            conversation_id,
-            document_id,
-            revision,
-            content_hash,
-        } => ProducerFile::LaunchInput {
-            source: source.as_str().to_owned(),
-            conversation_id: conversation_id.as_hex(),
-            document_id: document_id.as_hex(),
-            revision: *revision,
-            content_hash: content_hash.as_str(),
-        },
+
         ArtefactProducer::StepAttempt {
             attempt_id,
             step,
@@ -3379,22 +3202,7 @@ fn producer_from_file(
     use crate::workflows::artefacts::{ArtefactProducer, ProductionDisposition};
     Ok(match file {
         ProducerFile::RunSourceCapture => ArtefactProducer::RunSourceCapture,
-        ProducerFile::LaunchInput {
-            source,
-            conversation_id,
-            document_id,
-            revision,
-            content_hash,
-        } => ArtefactProducer::LaunchInput {
-            source: LaunchInputSource::parse(&source).ok_or(RunRecordError::Corrupt)?,
-            conversation_id: crate::conversations::ConversationId::parse(&conversation_id)
-                .ok_or(RunRecordError::Corrupt)?,
-            document_id: crate::conversations::DocumentId::parse(&document_id)
-                .ok_or(RunRecordError::Corrupt)?,
-            revision,
-            content_hash: crate::workflows::artefacts::ObjectHash::parse(&content_hash)
-                .ok_or(RunRecordError::Corrupt)?,
-        },
+
         ProducerFile::StepAttempt {
             attempt_id,
             step,
@@ -3560,11 +3368,7 @@ fn unchanged_task_gate(run: &WorkflowRun, step: &StepKey) -> bool {
     let quick_task = run.kind == RunKind::QuickTask
         && run.pinned.workflow_id.is_none()
         && super::quick::is_expected_gate_step(definition);
-    let selected_task = run.task_selection.is_some()
-        && (matches!(definition.action, StepAction::HumanGate(ref action) if !action.is_plan_checkpoint())
-            || matches!(definition.action, StepAction::SystemCommand(ref action)
-                if action.command == super::definition::SystemCommandId::CommitCandidate));
-    if !quick_task && !selected_task {
+    if !quick_task {
         return false;
     }
     let RunSource::Captured { source } = &run.source else {
@@ -3604,7 +3408,7 @@ fn gate_input_candidate(run: &WorkflowRun, step: &StepDefinition) -> Option<Arte
             source.accepted.clone()
         }
         crate::workflows::definition::ArtefactSource::RunCurrentPlan => return None,
-        crate::workflows::definition::ArtefactSource::LaunchInput { .. } => return None,
+
         crate::workflows::definition::ArtefactSource::StepOutput {
             step: source_step,
             output,
@@ -4212,11 +4016,7 @@ fn valid_apply_transaction(
     if candidate.map(|input| &input.artefact) != Some(&transaction.candidate)
         || approval.map(|input| &input.artefact) != Some(&transaction.approval)
         || source.initial != transaction.baseline
-        || source.accepted != transaction.candidate
-        || !matches!(
-            &source.observed,
-            ObservedCandidate::Exact { artefact } if artefact == &transaction.candidate
-        )
+        // Later outputs can advance accepted and observed references. The transaction retains its exact approved inputs.
         || !summaries_match
         || transaction.baseline.kind
             != crate::workflows::definition::ArtefactKind::CandidateRevision
@@ -4475,6 +4275,7 @@ fn capabilities_from_file(
     match (git_admin, source_location) {
         (AccessMode::ReadOnly, PrimarySourceLocation::AttemptWorkspace)
         | (AccessMode::ReadOnly, PrimarySourceLocation::PrivateWorkspace)
+        | (AccessMode::ReadOnly, PrimarySourceLocation::UserProject)
         | (AccessMode::ReadWrite, PrimarySourceLocation::UserProject) => {}
         _ => return Err(RunRecordError::Corrupt),
     }
@@ -4968,31 +4769,7 @@ fn validate_artefacts(run: &WorkflowRun) -> Result<(), RunRecordError> {
                     return Err(RunRecordError::Corrupt);
                 }
             }
-            crate::workflows::artefacts::ArtefactProducer::LaunchInput {
-                source,
-                conversation_id,
-                document_id: _,
-                revision,
-                content_hash: _,
-            } => {
-                if *source != LaunchInputSource::SavedPlan
-                    || record.kind != crate::workflows::definition::ArtefactKind::Plan
-                    || !record.provenance.inputs.is_empty()
-                    || !run
-                        .pinned
-                        .definition
-                        .launch_input_sources()
-                        .contains(source)
-                    || run.conversation_id != Some(*conversation_id)
-                    || *revision == 0
-                    || run.artefacts[..index].iter().any(|earlier| matches!(
-                        earlier.provenance.producer,
-                        crate::workflows::artefacts::ArtefactProducer::LaunchInput { source: stored, .. } if stored == *source
-                    ))
-                {
-                    return Err(RunRecordError::Corrupt);
-                }
-            }
+
             crate::workflows::artefacts::ArtefactProducer::StepAttempt {
                 attempt_id,
                 step,

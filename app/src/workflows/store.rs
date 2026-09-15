@@ -92,7 +92,7 @@ impl WorkflowRunStore {
         let mut runs: Vec<_> = self
             .lock()
             .values()
-            .filter(|run| run.conversation_id == Some(*conversation) && run.parent_loop.is_none())
+            .filter(|run| run.conversation_id == Some(*conversation))
             .cloned()
             .collect();
         runs.sort_by(|left, right| {
@@ -131,12 +131,7 @@ impl WorkflowRunStore {
     }
 
     pub(crate) fn all_summaries(&self) -> Vec<RunSummary> {
-        let mut summaries: Vec<RunSummary> = self
-            .lock()
-            .values()
-            .filter(|run| run.parent_loop.is_none())
-            .map(summary_of)
-            .collect();
+        let mut summaries: Vec<RunSummary> = self.lock().values().map(summary_of).collect();
         summaries.sort_by(|left, right| {
             right
                 .created_at_ms
@@ -165,11 +160,31 @@ impl WorkflowRunStore {
         let Some(current) = runs.get(id).cloned() else {
             return Err(StoreError::Missing);
         };
-        let mut next = current;
+        let mut next = current.clone();
         op(&mut next).map_err(|_| StoreError::Conflict)?;
-        persist(self.dir.as_deref(), &next)?;
+        // An ownership commit must reach the conversation catalogue before any execution transition.
+        if current.pending_handoff.is_some() {
+            let mut settled = current;
+            settled.pending_handoff = None;
+            if next != settled {
+                return Err(StoreError::Conflict);
+            }
+        }
+        if next.pending_handoff.is_some() {
+            persist_ownership(self.dir.as_deref(), &next)?;
+        } else {
+            persist(self.dir.as_deref(), &next)?;
+        }
         runs.insert(*id, next.clone());
         Ok(next)
+    }
+
+    pub(crate) fn flush_handoff(&self, expected: &WorkflowRun) -> Result<(), StoreError> {
+        let runs = self.lock();
+        if runs.get(&expected.id) != Some(expected) || expected.pending_handoff.is_none() {
+            return Err(StoreError::Conflict);
+        }
+        persist(self.dir.as_deref(), expected)
     }
 
     fn lock(&self) -> MutexGuard<'_, BTreeMap<RunId, WorkflowRun>> {
@@ -229,13 +244,24 @@ fn interrupt_active(
 ) -> Result<(), StoreError> {
     let at_ms = now_ms();
     for run in runs.values_mut() {
-        if !run.is_active() {
+        if !run.is_active() || run.recoverable_gate() {
             continue;
         }
         run.interrupt(at_ms).map_err(|_| StoreError::Corrupt)?;
         persist(dir, run)?;
     }
     Ok(())
+}
+
+fn persist_ownership(dir: Option<&Path>, run: &WorkflowRun) -> Result<(), StoreError> {
+    let Some(dir) = dir else { return Ok(()) };
+    crate::storage::ensure_private_dir(dir).map_err(|_| StoreError::Persist)?;
+    let path = dir.join(format!("{}.json", run.id.as_hex()));
+    let bytes = serde_json::to_vec_pretty(&run.to_file()).map_err(|_| StoreError::Persist)?;
+    match crate::storage::write_private_outcome(&path, &bytes) {
+        Ok(()) | Err(crate::storage::PrivateWriteError::Replaced) => Ok(()),
+        Err(crate::storage::PrivateWriteError::Unchanged) => Err(StoreError::Persist),
+    }
 }
 
 fn persist(dir: Option<&Path>, run: &WorkflowRun) -> Result<(), StoreError> {

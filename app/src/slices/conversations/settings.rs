@@ -18,8 +18,8 @@ use crate::{
 };
 
 use super::{
-    REVISION_MESSAGE, detail_view, load_conversation, parse_revision, remember_selection,
-    render_detail_command, status_for, valid_selection,
+    REVISION_MESSAGE, detail_view, load_conversation, parse_revision, render_detail_command,
+    status_for, valid_selection,
 };
 
 const CANCELLATION_WAIT: std::time::Duration = if cfg!(test) {
@@ -185,6 +185,62 @@ pub(super) struct PresetSaveForm {
     pub(super) name: String,
 }
 
+pub(super) async fn save_defaults(
+    State(state): State<AppState>,
+    session: RequiredSession,
+    graft: PatchGraft,
+    Path(conversation_id): Path<String>,
+    Form(form): Form<super::RevisionForm>,
+) -> AppResult<Response> {
+    let Some(record) = load_conversation(&state, &conversation_id) else {
+        return Ok(responses::command_navigation("/conversations"));
+    };
+    if parse_revision(&form.revision) != Some(record.revision) {
+        return render_detail_command(
+            graft,
+            PatchStatus::Conflict,
+            detail_view(&state, session.0, &record, &record.title, REVISION_MESSAGE)
+                .open_settings(),
+        );
+    }
+    let Some(model) = &record.model else {
+        return render_detail_command(
+            graft,
+            PatchStatus::UnprocessableEntity,
+            detail_view(
+                &state,
+                session.0,
+                &record,
+                &record.title,
+                "Choose a model first.",
+            )
+            .open_settings(),
+        );
+    };
+    let Ok(_permit) = state.local_data.begin_host_path_mutation().await else {
+        return render_detail_command(
+            graft,
+            PatchStatus::Conflict,
+            detail_view(
+                &state,
+                session.0,
+                &record,
+                &record.title,
+                crate::local_data::HOST_PATH_RESET_PENDING,
+            )
+            .open_settings(),
+        );
+    };
+    state
+        .preferences
+        .set_conversation_defaults(model.settings.clone())
+        .map_err(|error| AppError::new("store conversation defaults", error))?;
+    let mut view = detail_view(&state, session.0, &record, &record.title, "").open_settings();
+    view.notice =
+        "Future conversations will use these saved settings. Access approval remains separate.";
+    render_detail_command(graft, PatchStatus::Ok, view)
+}
+
 pub(super) async fn update(
     State(state): State<AppState>,
     session: RequiredSession,
@@ -315,7 +371,6 @@ pub(super) async fn update(
             || model.settings.location != settings.location
             || model.settings.host_approval != settings.host_approval
     });
-    let selection = settings.model.clone();
     match state
         .conversations
         .update_execution_settings(&record.id, revision, settings)
@@ -325,12 +380,10 @@ pub(super) async fn update(
                 state.access_consent.invalidate_conversation(record.id);
                 state.host_approvals.invalidate_conversation(record.id);
             }
-            let warning = remember_selection(&state, selection).err().unwrap_or("");
-            render_detail_command(
-                graft,
-                PatchStatus::Ok,
-                detail_view(&state, session.0, &updated, &updated.title, warning).open_settings(),
-            )
+            let mut view =
+                detail_view(&state, session.0, &updated, &updated.title, "").open_settings();
+            view.notice = "Conversation settings saved. Future defaults are unchanged.";
+            render_detail_command(graft, PatchStatus::Ok, view)
         }
         Err(error @ (ConversationError::Persist | ConversationError::Corrupt)) => {
             Err(AppError::new("store conversation settings", error))

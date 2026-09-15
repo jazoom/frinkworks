@@ -3,8 +3,7 @@ use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
 use crate::workflows::definition::{
-    ExecutionMode, MAXIMUM_DIRECTORIES, MAXIMUM_INPUTS, MAXIMUM_OUTPUTS, MAXIMUM_ROLES,
-    MAXIMUM_STEPS,
+    MAXIMUM_DIRECTORIES, MAXIMUM_INPUTS, MAXIMUM_OUTPUTS, MAXIMUM_ROLES, MAXIMUM_STEPS,
 };
 use crate::workflows::summary::ProcessPhase;
 use crate::workflows::{WorkflowRecord, summary};
@@ -302,9 +301,7 @@ pub(super) struct WorkflowFormView {
     pub(super) name_error: &'static str,
     pub(super) default_environment: String,
     pub(super) default_environment_error: &'static str,
-    pub(super) execution_mode: String,
-    pub(super) execution_mode_error: &'static str,
-    pub(super) repeating: bool,
+
     pub(super) environment_options: Vec<EnvironmentOption>,
     pub(super) no_ready_environment: bool,
     pub(super) presets: Vec<PresetChoice>,
@@ -330,9 +327,7 @@ pub(super) struct WorkflowFormContents<'a> {
     pub(super) name_error: &'static str,
     pub(super) default_environment: &'a str,
     pub(super) default_environment_error: &'static str,
-    pub(super) execution_mode: &'a str,
-    pub(super) execution_mode_error: &'static str,
-    pub(super) repeating: bool,
+
     pub(super) environment_options: &'a [EnvironmentOption],
     pub(super) no_ready_environment: bool,
     pub(super) presets: &'a [PresetChoice],
@@ -351,7 +346,7 @@ pub(super) struct WorkflowFormContents<'a> {
 
 impl WorkflowFormView {
     pub(super) fn create(state: WorkflowFormState, errors: FormErrors) -> Self {
-        let process_phases = draft_process_overview(&state.steps, state.execution_mode);
+        let process_phases = draft_process_overview(&state.steps);
         Self::from_state(
             "New workflow",
             "/workflows",
@@ -371,7 +366,7 @@ impl WorkflowFormView {
         errors: FormErrors,
         delete_error: &'static str,
     ) -> Self {
-        let process_phases = draft_process_overview(&state.steps, state.execution_mode);
+        let process_phases = draft_process_overview(&state.steps);
         Self::from_state(
             "Configure workflow",
             &format!("/workflows/{}/configuration", record.id.as_hex()),
@@ -424,9 +419,7 @@ impl WorkflowFormView {
             name_error: errors.name,
             default_environment: state.default_environment.clone(),
             default_environment_error: errors.default_environment,
-            execution_mode: state.execution_mode.as_str().to_owned(),
-            execution_mode_error: errors.execution_mode,
-            repeating: state.execution_mode == ExecutionMode::TaskList,
+
             environment_options: Vec::new(),
             no_ready_environment: false,
             presets: Vec::new(),
@@ -527,9 +520,7 @@ impl WorkflowFormView {
             name_error: self.name_error,
             default_environment: &self.default_environment,
             default_environment_error: self.default_environment_error,
-            execution_mode: &self.execution_mode,
-            execution_mode_error: self.execution_mode_error,
-            repeating: self.repeating,
+
             environment_options: &self.environment_options,
             no_ready_environment: self.no_ready_environment,
             presets: &self.presets,
@@ -828,8 +819,8 @@ fn step_row(
     }
 }
 
-fn draft_process_overview(steps: &[StepDraft], mode: ExecutionMode) -> Vec<ProcessPhase> {
-    let mut phases: Vec<_> = steps
+fn draft_process_overview(steps: &[StepDraft]) -> Vec<ProcessPhase> {
+    let phases: Vec<_> = steps
         .iter()
         .enumerate()
         .map(|(index, step)| {
@@ -901,9 +892,7 @@ fn draft_process_overview(steps: &[StepDraft], mode: ExecutionMode) -> Vec<Proce
             phase
         })
         .collect();
-    if mode == ExecutionMode::TaskList {
-        summary::mark_repeated_group(&mut phases);
-    }
+
     phases
 }
 
