@@ -19,7 +19,7 @@
       method="get"
       action="/conversations"
       data-graft
-      class="flex flex-wrap items-end gap-3"
+      class="mb-8 grid grid-cols-1 items-end gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_auto]"
     >
       {% if !back_href.is_empty() %}
         <input
@@ -29,25 +29,26 @@
         />
       {% endif %}
       <label
-        class="flex w-full min-w-0 flex-col gap-1 sm:flex-1"
+        class="flex min-w-0 flex-col gap-2"
         for="conversation-title-filter"
       >
-        <span class="text-sm">Title</span>
+        <span class="text-sm font-medium">Search conversations</span>
         <input
           id="conversation-title-filter"
           class="input input-bordered w-full"
           type="search"
           name="q"
           value="{{ query }}"
+          placeholder="Search by title"
           maxlength="256"
           autocomplete="off"
         />
       </label>
       <label
-        class="flex w-full min-w-0 flex-col gap-1 sm:flex-1"
+        class="flex min-w-0 flex-col gap-2"
         for="conversation-directory-filter"
       >
-        <span class="text-sm">Directory</span>
+        <span class="text-sm font-medium">Directory</span>
         <select
           id="conversation-directory-filter"
           class="select select-bordered w-full"
@@ -67,26 +68,36 @@
           {% endfor %}
         </select>
       </label>
-      <button type="submit" class="btn btn-primary btn-sm min-h-11">
+      <button type="submit" class="btn btn-outline h-10! min-h-10!">
         Filter
       </button>
       {% for directory in directories %}
         {% if directory.selected %}
-          <p class="w-full text-sm break-all">{{ directory.name }}</p>
+          <p class="text-quiet text-sm break-all sm:col-span-full">
+            {{ directory.name }}
+          </p>
         {% endif %}
       {% endfor %}
+      {% if !filter.is_empty() || !query.is_empty() %}
+        <a
+          href="/conversations{% if !back_href.is_empty() %}?conversation={{ back_href.trim_start_matches("/conversations/") }}{% endif %}"
+          data-graft
+          class="link text-quiet justify-self-start text-sm underline-offset-4 sm:col-span-full"
+          >Clear filters</a
+        >
+      {% endif %}
     </form>
   {% endif %}
   {% if error != "" %}
-    <div class="alert alert-error" role="alert" tabindex="-1">
+    <div class="alert alert-error mb-6" role="alert" tabindex="-1">
       <p>{{ error }}</p>
     </div>
   {% endif %}
   {% if conversations.is_empty() %}
     {% if filter.is_empty() && query.is_empty() && error == "" %}
-      <section class="file-section space-y-3">
+      <section class="page-empty">
         <h2 class="text-lg font-semibold">Start a conversation</h2>
-        <p class="text-quiet max-w-[60ch]">
+        <p class="text-quiet mx-auto max-w-[60ch]">
           A new conversation starts without directory access.
         </p>
         <a href="/conversations/new" data-graft class="btn btn-primary btn-sm"
@@ -94,11 +105,11 @@
         >
       </section>
     {% else %}
-      <section class="file-section space-y-3">
+      <section class="page-empty">
         <h2 class="text-lg font-semibold">
           No conversations match these filters
         </h2>
-        <p class="text-quiet max-w-[60ch]">
+        <p class="text-quiet mx-auto max-w-[60ch]">
           No saved conversation matches the current title or directory filters.
         </p>
         <a
@@ -110,6 +121,19 @@
       </section>
     {% endif %}
   {% else %}
+    <div class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+      <h2 class="text-sm font-semibold">
+        {% if filter.is_empty() && query.is_empty() %}
+          Saved conversations
+        {% else %}
+          Filtered conversations
+        {% endif %}
+        <span class="text-quiet ml-1 font-normal tabular-nums"
+          >({{ conversations.len() }})</span
+        >
+      </h2>
+      <p class="text-quiet text-xs">Most recently updated first</p>
+    </div>
     <ul
       class="border-base-300 m-0 list-none border-t p-0"
       aria-label="Saved conversations"
@@ -119,21 +143,23 @@
           <a
             href="{{ conversation.href }}"
             data-graft
-            class="history-row border-base-300 flex items-center gap-[18px] border-b px-[9px] py-[23px] text-inherit no-underline max-[700px]:flex-wrap max-[700px]:gap-[11px]"
+            class="history-row border-base-300 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-3 border-b px-3 py-5 text-inherit no-underline sm:grid-cols-[minmax(0,1fr)_auto_auto]"
           >
-            <span
-              class="bg-base-200 grid size-[35px] shrink-0 place-items-center rounded-full max-[700px]:hidden"
-              aria-hidden="true"
-            >
-              <span class="state-dot {{ conversation.dot }}"></span>
-            </span>
-            <span class="history-text min-w-0 flex-1">
+            <span class="history-text min-w-0">
               <strong>{{ conversation.title }}</strong>
-              <small>{{ conversation.meta }}</small>
+              <small class="break-words">{{ conversation.meta }}</small>
             </span>
-            <span class="history-state">{{ conversation.status }}</span>
+            <span
+              class="history-state col-start-1 row-start-2 flex items-center gap-2 sm:col-start-2 sm:row-start-1"
+            >
+              <span
+                class="state-dot {{ conversation.dot }}"
+                aria-hidden="true"
+              ></span>
+              {{ conversation.status }}
+            </span>
             <svg
-              class="workspace-icon shrink-0"
+              class="workspace-icon col-start-2 row-start-1 shrink-0 sm:col-start-3"
               aria-hidden="true"
               viewBox="0 0 24 24"
               fill="none"

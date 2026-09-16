@@ -169,6 +169,7 @@ body {
 }
 /* Theme changes must not mix an old foreground with a new background. */
 .app-frame {
+    --workspace-page-head: 89px;
     font-size: 14px;
     line-height: 1.55;
 }
@@ -226,10 +227,12 @@ body {
     color: var(--workspace-cover-text);
 }
 .app-brand {
-    min-height: 82px;
+    min-height: var(--workspace-page-head);
     gap: 10px;
     border: 0;
-    padding: 25px 21px 26px;
+    border-bottom: 1px solid
+        color-mix(in srgb, var(--workspace-cover-text) 10%, transparent);
+    padding: 20px 21px;
     color: var(--workspace-cover-text);
 }
 .app-brand strong {
@@ -330,7 +333,7 @@ body {
     height: 100dvh;
 }
 .app-frame .workspace-new {
-    margin: 0 14px;
+    margin: 20px 14px 0;
     font-size: 13px;
     justify-content: flex-start;
     width: calc(100% - 28px);
@@ -454,7 +457,7 @@ body:has(.workspace-catalogue) .app-frame {
 }
 .catalogue-head {
     flex-shrink: 0;
-    min-height: 89px;
+    min-height: var(--workspace-page-head);
     padding: 20px 28px;
     background: var(--color-base-100);
 }
@@ -563,7 +566,7 @@ body:has(.workspace-catalogue) .app-frame {
 }
 #conversation-detail > header {
     grid-column: 1 / -1;
-    min-height: 89px;
+    min-height: var(--workspace-page-head);
     padding: 20px 28px;
     background: var(--color-base-100);
 }
