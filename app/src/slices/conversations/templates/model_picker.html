@@ -1,92 +1,53 @@
-<label class="flex flex-col gap-1"
-  ><span class="text-sm">Provider</span
-  ><select
-    form="{{ self.model_form() }}"
+<div
+  id="conversation-model-controls"
+  class="flex min-w-0 flex-wrap items-center gap-1"
+>
+  <input
+    form="{{ self.selection_form() }}"
     id="conversation-provider"
     name="provider"
-    {% if job_active %}disabled{% endif %}
-    class="select select-bordered w-full"
-  >
-    {% if let Some(provider) = model_picker.unavailable_provider %}
-      <option value="{{ provider.as_str() }}" selected>
-        Unavailable · {{ provider.label() }}
-      </option>
-    {% else if model_picker.providers.is_empty() %}
-      <option value="" disabled>No connected providers</option>
-    {% endif %}
-    {% for provider in model_picker.providers %}
-      <option
-        value="{{ provider.value }}"
-        data-default-model="{{ provider.model }}"
-        {% if provider.selected %}selected{% endif %}
-      >
-        {{ provider.label }}
-      </option>
-    {% endfor %}
-  </select></label
->
-<div
-  id="conversation-model-picker"
-  class="relative flex min-w-0 flex-col gap-1"
->
-  <span id="conversation-model-label" class="text-sm">Model</span>
+    type="hidden"
+    value="{% if let Some(provider) = model_picker.unavailable_provider %}{{ provider.as_str() }}{% else %}{% for provider in model_picker.providers %}{% if provider.selected %}{{ provider.value }}{% endif %}{% endfor %}{% endif %}"
+  />
   <input
-    form="{{ self.model_form() }}"
-    name="model"
+    form="{{ self.selection_form() }}"
     id="conversation-model"
+    name="model"
     type="hidden"
     value="{{ model_picker.model }}"
   />
   <button
     id="conversation-model-toggle"
     type="button"
-    class="select select-bordered h-auto min-h-10 w-full min-w-0 text-left"
-    aria-labelledby="conversation-model-label conversation-model-value"
+    class="btn btn-ghost btn-sm min-h-10 max-w-full min-w-0 gap-3 font-normal"
+    popovertarget="conversation-model-options"
+    aria-label="Choose model"
     aria-controls="conversation-model-options"
     aria-expanded="false"
-    {% if job_active || model_picker.models.is_empty() %}disabled{% endif %}
+    title="Choose model"
+    {% if job_active || self.needs_review() %}disabled{% endif %}
   >
-    <span id="conversation-model-value" class="min-w-0 break-all"
-      >{% if model_picker.model.is_empty() %}No models available{% else %}{{ model_picker.model }}{% endif %}</span
+    <span id="conversation-model-value" class="truncate"
+      >{% if let Some(provider) = model_picker.unavailable_provider %}
+        Unavailable · {{ provider.label() }} · {{ model_picker.model }}
+      {% else if model_picker.model_unavailable %}
+        Unavailable · {{ model_picker.model }}
+      {% else if model_picker.model.is_empty() %}
+        Choose a model
+      {% else %}
+        {{ model_picker.model }}
+      {% endif %}</span
     >
+    <svg class="workspace-icon shrink-0" aria-hidden="true">
+      <use href="/static/images/workspace-icons.svg#down" />
+    </svg>
   </button>
-  <div
-    id="conversation-model-options"
-    class="border-base-300 bg-base-100 absolute inset-x-0 top-full z-20 mt-1 flex max-h-[min(20rem,40dvh)] min-w-0 flex-col border p-2 shadow-lg [contain:inline-size]"
-    hidden
-  >
-    <label class="sr-only" for="conversation-model-search">Search models</label>
-    <input
-      id="conversation-model-search"
-      type="search"
-      class="input input-bordered w-full min-w-0 shrink-0"
-      placeholder="Search models"
-      maxlength="256"
-      autocomplete="off"
-      aria-controls="conversation-model-results"
-      aria-describedby="conversation-model-search-status"
-    />
-    <p
-      id="conversation-model-search-status"
-      role="status"
-      class="text-quiet px-2 py-2 text-xs"
-    ></p>
-    <div
-      id="conversation-model-results"
-      role="group"
-      aria-label="Models"
-      class="min-h-0 overflow-y-auto overscroll-contain"
-    ></div>
-  </div>
-</div>
-<label class="flex flex-col gap-1"
-  ><span class="text-sm">Thinking effort</span
-  ><select
-    form="{{ self.model_form() }}"
+  <select
+    form="{{ self.selection_form() }}"
     id="conversation-thinking"
     name="thinking"
-    class="select select-bordered w-full"
-    {% if job_active || model_picker.efforts.is_empty() %}disabled{% endif %}
+    hidden
+    {% if job_active || self.needs_review() || model_picker.efforts.is_empty() %}disabled{% endif %}
   >
     {% if model_picker.efforts.is_empty() %}
       <option value="">Not available</option>
@@ -99,8 +60,123 @@
         {{ effort.label }}
       </option>
     {% endfor %}
-  </select></label
->
-<template
-  data-conversation-model-catalogue="{{ model_picker.catalogue }}"
-></template>
+  </select>
+  <button
+    id="conversation-thinking-toggle"
+    type="button"
+    class="btn btn-ghost btn-sm min-h-10 max-w-full min-w-0 gap-3 font-normal"
+    popovertarget="conversation-thinking-options"
+    aria-label="Thinking effort"
+    aria-describedby="conversation-thinking-value"
+    aria-controls="conversation-thinking-options"
+    aria-expanded="false"
+    title="Thinking effort"
+    {% if job_active || self.needs_review() || model_picker.efforts.is_empty() %}disabled{% endif %}
+  >
+    <span id="conversation-thinking-value">
+      {% if model_picker.efforts.is_empty() %}Not available{% endif %}
+      {% for effort in model_picker.efforts %}{% if effort.value == model_picker.thinking %}{{ effort.label }}{% endif %}{% endfor %}
+    </span>
+    <svg class="workspace-icon shrink-0" aria-hidden="true">
+      <use href="/static/images/workspace-icons.svg#down" />
+    </svg>
+  </button>
+  <section
+    id="conversation-thinking-options"
+    popover
+    class="border-base-300 bg-base-100 text-base-content fixed inset-x-3 top-auto bottom-28 m-0 max-h-[min(24rem,65dvh)] w-56 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded border p-2 shadow-lg"
+    aria-label="Thinking effort"
+  >
+    <div
+      id="conversation-thinking-results"
+      role="group"
+      aria-label="Thinking effort options"
+    ></div>
+  </section>
+  <section
+    id="conversation-model-options"
+    popover
+    class="border-base-300 bg-base-100 text-base-content fixed inset-x-3 top-auto bottom-28 m-0 max-h-[min(32rem,70dvh)] w-auto max-w-lg flex-col overflow-hidden rounded border shadow-lg [&:popover-open]:flex"
+    aria-label="Choose model"
+  >
+    <div class="border-base-300 flex flex-col gap-2 border-b p-3">
+      <label class="sr-only" for="conversation-model-search"
+        >Search models</label
+      >
+      <div class="relative">
+        <input
+          id="conversation-model-search"
+          type="search"
+          class="input input-bordered w-full min-w-0 pr-12"
+          placeholder="Search models…"
+          maxlength="256"
+          autocomplete="off"
+          aria-controls="conversation-model-results"
+          autofocus
+        />
+        <button
+          id="conversation-model-search-clear"
+          type="button"
+          class="btn btn-ghost btn-square btn-sm absolute top-1/2 right-1 -translate-y-1/2"
+          aria-label="Clear model search"
+          title="Clear model search"
+          hidden
+        >
+          <svg class="workspace-icon" aria-hidden="true">
+            <use href="/static/images/workspace-icons.svg#close" />
+          </svg>
+        </button>
+      </div>
+      <div class="flex items-center gap-2">
+        <label class="sr-only" for="conversation-model-provider-filter"
+          >Filter by provider</label
+        >
+        <select
+          id="conversation-model-provider-filter"
+          class="select select-bordered select-sm min-h-10 min-w-0 flex-1"
+          aria-controls="conversation-model-results"
+        >
+          <option value="">All providers</option>
+          {% for provider in model_picker.providers %}
+            <option value="{{ provider.value }}">{{ provider.label }}</option>
+          {% endfor %}
+        </select>
+        <button
+          type="button"
+          id="conversation-model-favourites-filter"
+          class="btn btn-ghost btn-sm group aria-pressed:border-base-300 aria-pressed:bg-base-200 min-h-10"
+          aria-pressed="false"
+          aria-controls="conversation-model-results"
+        >
+          <svg
+            class="workspace-icon hidden group-aria-pressed:block"
+            aria-hidden="true"
+          >
+            <use href="/static/images/workspace-icons.svg#check" />
+          </svg>
+          Favourites
+        </button>
+      </div>
+    </div>
+    <p
+      id="conversation-model-search-status"
+      role="status"
+      class="text-quiet px-3 pt-2 text-xs"
+    ></p>
+    <div
+      id="conversation-model-results"
+      role="group"
+      aria-label="Models"
+      class="min-h-0 overflow-y-auto overscroll-contain p-2"
+    ></div>
+    <div id="conversation-model-catalogue">
+      {% let catalogue = model_picker.catalogue %}{% let error = "" %}
+      {% include "conversations/templates/model_catalogue.html" %}
+    </div>
+    {% if model_picker.providers.is_empty() %}
+      <a href="/connect" data-graft class="link p-3 text-sm"
+        >Connect a provider</a
+      >
+    {% endif %}
+  </section>
+</div>

@@ -891,19 +891,7 @@
               {% if self.composer_disabled() %}disabled{% endif %}
             >
 {{ self.draft_message() }}</textarea>
-            <button
-              type="button"
-              class="btn btn-ghost btn-sm"
-              popovertarget="conversation-settings"
-              popovertargetaction="show"
-              data-settings-section="conversation-model-heading"
-            >
-              <span data-conversation-model-summary
-                >{% if model_picker.model.is_empty() %}Choose a model{% else %}{{ model_picker.model }}{% endif %}</span
-              ><svg class="workspace-icon" aria-hidden="true">
-                <use href="/static/images/workspace-icons.svg#down" />
-              </svg>
-            </button>
+            {% include "conversations/templates/model_picker.html" %}
 
             <div class="flex flex-col gap-2">
               {# Explicit ARIA values replace the transport overlay on a retained submitter. #}
@@ -946,6 +934,31 @@
               ></p>
             {% endif %}
           </form>
+          <form
+            id="conversation-favourite-form"
+            data-graft
+            method="post"
+            action="/conversations/models/favourite"
+            hidden
+          >
+            <input type="hidden" name="provider" />
+            <input type="hidden" name="model" />
+          </form>
+          {% if let Some(saved) = self.saved() %}
+            <form
+              id="conversation-model-form"
+              data-graft
+              method="post"
+              action="/conversations/{{ saved.id }}/model"
+              hidden
+            >
+              <input
+                type="hidden"
+                name="revision"
+                value="{{ saved.revision }}"
+              />
+            </form>
+          {% endif %}
           {% if let Some(saved) = self.saved() %}{% if job_active %}
             <details class="stop-confirm">
               <summary class="btn btn-ghost btn-sm cursor-pointer">
@@ -1297,16 +1310,8 @@
           <button
             type="button"
             class="btn btn-ghost btn-sm"
-            data-settings-tab="settings-model"
-            aria-pressed="true"
-          >
-            Model
-          </button>
-          <button
-            type="button"
-            class="btn btn-ghost btn-sm"
             data-settings-tab="settings-files"
-            aria-pressed="false"
+            aria-pressed="true"
           >
             Files and execution
           </button>
@@ -1358,6 +1363,21 @@
                 method="post"
                 action="/conversations/{{ saved.id }}/settings"
               >
+                <input
+                  type="hidden"
+                  name="provider"
+                  value="{% if let Some(provider) = model_picker.unavailable_provider %}{{ provider.as_str() }}{% else %}{% for provider in model_picker.providers %}{% if provider.selected %}{{ provider.value }}{% endif %}{% endfor %}{% endif %}"
+                />
+                <input
+                  type="hidden"
+                  name="model"
+                  value="{{ model_picker.model }}"
+                />
+                <input
+                  type="hidden"
+                  name="thinking"
+                  value="{{ model_picker.thinking }}"
+                />
                 <input
                   type="hidden"
                   name="revision"
@@ -1628,31 +1648,6 @@
             </section>
 
             <section
-              id="settings-model"
-              data-settings-panel
-              aria-labelledby="conversation-model-heading"
-              class="mt-5 space-y-3"
-            >
-              <h3
-                id="conversation-model-heading"
-                class="text-base font-semibold"
-                tabindex="-1"
-              >
-                A model for this conversation
-              </h3>
-              <div class="flex min-w-0 flex-col gap-3">
-                {% include "conversations/templates/model_picker.html" %}
-              </div>
-              <div class="setup-notice">
-                <strong>Model requests leave this computer</strong>
-                <p>
-                  Power Plant stores conversations locally. Your selected
-                  provider receives the model context.
-                </p>
-              </div>
-            </section>
-
-            <section
               id="settings-instructions"
               data-settings-panel
               aria-labelledby="conversation-instructions-heading"
@@ -1721,7 +1716,6 @@
               id="settings-execution"
               data-settings-panel
               aria-labelledby="conversation-execution-heading"
-              hidden
               class="mt-5 [&>section:first-of-type]:mt-4 [&>section:first-of-type]:border-t-0 [&>section:first-of-type]:pt-0"
             >
               <h3
@@ -2106,7 +2100,6 @@
               id="settings-directories"
               data-settings-panel
               aria-labelledby="conversation-directory-heading"
-              hidden
             >
               <section
                 class="mt-5 space-y-3"
@@ -2546,7 +2539,7 @@
                 </p>
               </section>
             </section>
-            <div data-execution-actions hidden>
+            <div data-execution-actions>
               {% if let Some(saved) = self.saved() %}
                 {% if !directories.is_empty() %}
                   <input

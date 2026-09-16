@@ -449,7 +449,7 @@ async fn conversation_states_share_document_navigation_and_detail_patch_controls
         (
             format!("/conversations/{}", record.id),
             "saved",
-            "conversation-settings-form",
+            "conversation-model-form",
         ),
     ] {
         let patch = Request::builder()
@@ -477,7 +477,7 @@ async fn conversation_states_share_document_navigation_and_detail_patch_controls
             for id in [
                 "transcript",
                 "conversation-composer",
-                "conversation-model-picker",
+                "conversation-model-controls",
                 "conversation-model-search",
                 "conversation-settings",
                 "conversation-project-settings",
@@ -984,7 +984,6 @@ async fn directory_history_matches_identity_without_granting_access() {
         assert!(body.contains("href=\"/conversations/new\""));
         assert!(body.contains("id=\"conversation-directory-filter\""));
         assert!(body.contains("data-graft-submit-on=\"change\""));
-        assert!(!body.contains("Clear filter"));
     }
     std::fs::rename(&first, root.path().join("old-code")).unwrap();
     std::fs::create_dir(&first).unwrap();
@@ -1499,8 +1498,8 @@ async fn applied_preset_copies_model_and_instructions_without_directory_authorit
     let current = state.conversations.get(&conversation.id).expect("current");
     let model = current.model.expect("direct model");
     assert_eq!(model.settings.model, selection);
-    assert!(model.settings.instructions.is_empty());
-    assert!(model.preset.is_none());
+    assert_eq!(model.settings.instructions, "Reply briefly.");
+    assert_eq!(model.preset.as_ref().unwrap().id, instructions_only.id);
 }
 
 #[tokio::test]

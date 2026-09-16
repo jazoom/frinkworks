@@ -336,7 +336,6 @@ pub(super) struct PresetPreviewView {
 pub(super) struct ProviderOption {
     pub(super) value: &'static str,
     pub(super) label: &'static str,
-    pub(super) model: String,
     pub(super) selected: bool,
 }
 
@@ -738,6 +737,14 @@ impl ConversationDetailView {
             "conversation-composer"
         } else {
             "conversation-settings-form"
+        }
+    }
+
+    fn selection_form(&self) -> &'static str {
+        if self.is_new() {
+            "conversation-composer"
+        } else {
+            "conversation-model-form"
         }
     }
 

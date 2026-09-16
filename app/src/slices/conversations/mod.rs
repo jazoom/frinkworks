@@ -2,6 +2,7 @@ mod activity;
 mod directories;
 mod handoff;
 mod job;
+mod model_favourites;
 mod new;
 
 pub(crate) mod recent;
@@ -53,6 +54,10 @@ pub(super) fn router() -> Router<AppState> {
     Router::new()
         .route("/conversations", get(catalogue).post(create))
         .route("/conversations/new", get(new::show).post(new::save))
+        .route(
+            "/conversations/models/favourite",
+            post(model_favourites::toggle),
+        )
         .route(
             "/conversations/new/settings/presets/save",
             post(settings::save_draft_preset),
@@ -1604,6 +1609,19 @@ async fn select_model(
             graft,
             PatchStatus::UnprocessableEntity,
             detail_view(&state, session.0, &record, &record.title, error),
+        );
+    }
+    if has_pending_review(&state, record.id) {
+        return render_detail_command(
+            graft,
+            PatchStatus::Conflict,
+            detail_view(
+                &state,
+                session.0,
+                &record,
+                &record.title,
+                "Finish or discard the current work before you change the model.",
+            ),
         );
     }
     let environment = record

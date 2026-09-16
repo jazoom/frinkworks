@@ -375,7 +375,12 @@ async fn draft_preset_replacement_retains_its_reference_without_creating_a_conve
     assert_eq!(response.status(), StatusCode::OK);
     let body = text(response).await;
     assert!(body.contains(&preview.token));
-    assert!(body.contains("Unavailable · DeepSeek"));
+    assert!(
+        body.split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .contains("Unavailable · DeepSeek")
+    );
     assert!(body.contains("Keep these instructions."));
     assert!(state.conversations.list().is_empty());
     assert!(state.presets.applied_draft(owner, &preview.token).is_some());

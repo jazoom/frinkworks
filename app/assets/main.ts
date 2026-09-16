@@ -5,7 +5,606 @@ import "@fontsource/ibm-plex-mono/latin-400.css";
 import "@fontsource/ibm-plex-mono/latin-500.css";
 import "./input.css";
 import { startApp } from "./hypergraft-bootstrap";
-import { listenForRequestSettled } from "hypergraft/browser";
+import {
+    commandBlockReason,
+    listenForRequestSettled,
+} from "hypergraft/browser";
+
+type ComposerModel = {
+    id: string;
+    favourite: boolean;
+    default_effort: string;
+    efforts: { value: string; label: string }[];
+};
+
+function composerCatalogue(): Record<string, ComposerModel[]> {
+    const source = document.querySelector<HTMLElement>(
+        "[data-conversation-model-catalogue]",
+    );
+    try {
+        return JSON.parse(source?.dataset.conversationModelCatalogue ?? "{}");
+    } catch {
+        return {};
+    }
+}
+
+function composerControls() {
+    const model = document.querySelector<HTMLInputElement>(
+        "#conversation-model",
+    );
+    const provider = document.querySelector<HTMLInputElement>(
+        "#conversation-provider",
+    );
+    const thinking = document.querySelector<HTMLSelectElement>(
+        "#conversation-thinking",
+    );
+    const toggle = document.querySelector<HTMLButtonElement>(
+        "#conversation-model-toggle",
+    );
+    const panel = document.querySelector<HTMLElement>(
+        "#conversation-model-options",
+    );
+    return model && provider && thinking && toggle && panel
+        ? { model, provider, thinking, toggle, panel }
+        : null;
+}
+
+function renderComposerModels() {
+    const controls = composerControls();
+    const results = document.querySelector<HTMLElement>(
+        "#conversation-model-results",
+    );
+    const search = document.querySelector<HTMLInputElement>(
+        "#conversation-model-search",
+    );
+    const filter = document.querySelector<HTMLSelectElement>(
+        "#conversation-model-provider-filter",
+    );
+    if (!controls || !results || !search || !filter) return;
+    const clear = document.getElementById("conversation-model-search-clear");
+    if (clear) clear.hidden = search.value.length === 0;
+    const query = search.value.trim().toLocaleLowerCase();
+    const favouritesOnly =
+        document.getElementById("conversation-model-favourites-filter")
+            ?.ariaPressed === "true";
+    const matches = Object.entries(composerCatalogue())
+        .flatMap(([provider, models]) => {
+            const label =
+                Array.from(filter.options).find(
+                    (option) => option.value === provider,
+                )?.text ?? provider;
+            return models
+                .filter(
+                    (model) =>
+                        (!filter.value || filter.value === provider) &&
+                        (!favouritesOnly || model.favourite) &&
+                        `${model.id} ${label}`
+                            .toLocaleLowerCase()
+                            .includes(query),
+                )
+                .map((model) => ({ ...model, provider, label }));
+        })
+        .sort(
+            (a, b) =>
+                Number(b.favourite) - Number(a.favourite) ||
+                a.id.localeCompare(b.id) ||
+                a.provider.localeCompare(b.provider),
+        );
+    const nodes: HTMLElement[] = [];
+    let group = "";
+    for (const item of matches) {
+        const heading = item.favourite ? "Favourites" : "All models";
+        if (heading !== group) {
+            const label = document.createElement("p");
+            label.className = "px-2 pt-3 pb-1 text-xs font-semibold text-quiet";
+            label.textContent = heading;
+            nodes.push(label);
+            group = heading;
+        }
+        const row = document.createElement("div");
+        row.className = "flex min-w-0 items-center gap-1";
+        const button = document.createElement("button");
+        button.type = "button";
+        button.dataset.composerModel = item.id;
+        button.dataset.provider = item.provider;
+        button.className =
+            "btn btn-ghost h-auto min-h-11 min-w-0 flex-1 justify-start gap-1 px-2 py-2 text-left font-normal aria-pressed:bg-base-200";
+        button.ariaPressed = String(
+            controls.provider.value === item.provider &&
+                controls.model.value === item.id,
+        );
+        const label = document.createElement("span");
+        label.className = "flex min-w-0 flex-1 flex-col";
+        const name = document.createElement("span");
+        name.className = "break-all text-sm";
+        name.textContent = item.id;
+        const provider = document.createElement("span");
+        provider.className = "text-xs text-quiet";
+        provider.textContent = item.label;
+        label.append(name, provider);
+        button.append(label);
+        if (button.ariaPressed === "true") button.append(modelIcon("check"));
+        const favourite = document.createElement("button");
+        favourite.type = "button";
+        favourite.dataset.modelFavourite = item.id;
+        favourite.dataset.provider = item.provider;
+        favourite.className =
+            "btn btn-ghost btn-square min-h-11 h-11 w-11 shrink-0";
+        favourite.ariaPressed = String(item.favourite);
+        favourite.ariaLabel = `${item.favourite ? "Remove" : "Add"} ${item.id} (${item.label}) ${item.favourite ? "from" : "to"} favourites`;
+        favourite.title = item.favourite ? "Remove favourite" : "Add favourite";
+        favourite.append(modelIcon("star", item.favourite));
+        row.append(button, favourite);
+        nodes.push(row);
+    }
+    results.replaceChildren(...nodes);
+    const status = document.getElementById("conversation-model-search-status");
+    if (status)
+        status.textContent = matches.length
+            ? `${matches.length} ${matches.length === 1 ? "model" : "models"}`
+            : favouritesOnly
+              ? "No favourites match. Turn off Favourites to see all models."
+              : "No models match. Clear the search or change the provider filter.";
+}
+
+function modelIcon(name: string, filled = false): SVGSVGElement {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.classList.add("workspace-icon", "shrink-0");
+    svg.setAttribute("aria-hidden", "true");
+    if (filled) svg.classList.add("model-favourite-filled");
+    const use = document.createElementNS(svg.namespaceURI, "use");
+    use.setAttribute("href", `/static/images/workspace-icons.svg#${name}`);
+    svg.append(use);
+    return svg;
+}
+
+function composerEfforts(saved: string) {
+    const controls = composerControls();
+    if (!controls) return;
+    const selected = composerCatalogue()[controls.provider.value]?.find(
+        (item) => item.id === controls.model.value,
+    );
+    const efforts = selected?.efforts ?? [];
+    controls.thinking.replaceChildren(
+        ...(efforts.length
+            ? efforts.map((effort) => new Option(effort.label, effort.value))
+            : [new Option("Not available", "")]),
+    );
+    controls.thinking.value = efforts.some((effort) => effort.value === saved)
+        ? saved
+        : (selected?.default_effort ?? "");
+    controls.thinking.disabled =
+        controls.toggle.disabled || efforts.length === 0;
+    const label = document.getElementById("conversation-model-value");
+    if (label) label.textContent = controls.model.value || "Choose a model";
+    syncThinkingChoice();
+}
+
+function syncThinkingChoice() {
+    const select = document.querySelector<HTMLSelectElement>(
+        "#conversation-thinking",
+    );
+    const toggle = document.querySelector<HTMLButtonElement>(
+        "#conversation-thinking-toggle",
+    );
+    const label = document.getElementById("conversation-thinking-value");
+    const results = document.getElementById("conversation-thinking-results");
+    if (!select || !toggle || !label || !results) return;
+    toggle.disabled = select.disabled;
+    label.textContent =
+        select.selectedOptions[0]?.text.trim() || "Not available";
+    results.replaceChildren(
+        ...Array.from(select.options, (option) => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.dataset.thinkingValue = option.value;
+            button.className =
+                "btn btn-ghost h-auto min-h-11 w-full justify-between gap-6 px-3 py-3 text-left text-sm font-normal aria-pressed:bg-base-200";
+            button.ariaPressed = String(option.selected);
+            button.disabled = select.disabled || option.disabled;
+            const text = document.createElement("span");
+            text.textContent = option.text.trim();
+            button.append(text);
+            if (option.selected) button.append(modelIcon("check"));
+            return button;
+        }),
+    );
+}
+
+let pendingModel:
+    | {
+          provider: string;
+          model: string;
+          thinking: string;
+          focus: string;
+          message: string;
+      }
+    | undefined;
+let pendingFavourite:
+    { provider: string; model: string; scroll: number } | undefined;
+let modelLocks: {
+    control: HTMLButtonElement | HTMLSelectElement;
+    disabled: boolean;
+}[] = [];
+
+function saveComposerModel(focus: string) {
+    const controls = composerControls();
+    if (!controls) return;
+    controls.model.dispatchEvent(new Event("input", { bubbles: true }));
+    if (controls.model.form?.id !== "conversation-model-form") return;
+    const settings = document.querySelector<HTMLFormElement>(
+        "#conversation-settings-form",
+    );
+    const saved = (name: string) =>
+        (settings?.elements.namedItem(name) as HTMLInputElement | null)
+            ?.value ?? "";
+    pendingModel = {
+        provider: saved("provider"),
+        model: saved("model"),
+        thinking: saved("thinking"),
+        focus,
+        message:
+            document.querySelector<HTMLTextAreaElement>("#composer-message")
+                ?.value ?? "",
+    };
+    controls.model.form.requestSubmit();
+}
+
+document.addEventListener("submit", (event) => {
+    if (
+        !(event.target instanceof HTMLFormElement) ||
+        event.target.id !== "conversation-model-form"
+    )
+        return;
+    const controls = composerControls();
+    const send = document.querySelector<HTMLButtonElement>(
+        '#conversation-composer button[name="action"]',
+    );
+    if (!controls) return;
+    const thinkingToggle = document.querySelector<HTMLButtonElement>(
+        "#conversation-thinking-toggle",
+    );
+    // Lock the message command until the server returns the model's new revision.
+    modelLocks = [
+        controls.toggle,
+        controls.thinking,
+        ...(thinkingToggle ? [thinkingToggle] : []),
+        ...(send ? [send] : []),
+    ].map((control) => ({ control, disabled: control.disabled }));
+    // Hypergraft captures the form before these controls become disabled.
+    queueMicrotask(() =>
+        modelLocks.forEach(({ control }) => {
+            control.disabled = true;
+        }),
+    );
+});
+
+document.addEventListener(
+    "beforetoggle",
+    (event) => {
+        if (
+            !(event instanceof ToggleEvent) ||
+            !(event.target instanceof HTMLElement)
+        )
+            return;
+        if (event.target.id === "conversation-thinking-options") {
+            const toggle = document.querySelector<HTMLButtonElement>(
+                "#conversation-thinking-toggle",
+            );
+            if (!toggle) return;
+            toggle.ariaExpanded = String(event.newState === "open");
+            if (event.newState === "open") {
+                syncThinkingChoice();
+                const panel = event.target;
+                requestAnimationFrame(() => {
+                    if (panel.matches(":popover-open"))
+                        panel
+                            .querySelector<HTMLElement>('[aria-pressed="true"]')
+                            ?.focus();
+                });
+            }
+            return;
+        }
+        if (event.target.id !== "conversation-model-options") return;
+        const controls = composerControls();
+        if (!controls) return;
+        controls.toggle.ariaExpanded = String(event.newState === "open");
+        if (event.newState === "open") {
+            const search = document.querySelector<HTMLInputElement>(
+                "#conversation-model-search",
+            );
+            if (search) search.value = "";
+            renderComposerModels();
+        }
+    },
+    true,
+);
+
+document.addEventListener("input", (event) => {
+    if (
+        event.target instanceof HTMLTextAreaElement &&
+        event.target.id === "composer-message" &&
+        pendingModel
+    )
+        pendingModel.message = event.target.value;
+    if (
+        event.target instanceof HTMLInputElement &&
+        event.target.id === "conversation-model-search"
+    )
+        renderComposerModels();
+});
+document.addEventListener("change", (event) => {
+    if (!(event.target instanceof HTMLSelectElement)) return;
+    if (event.target.id === "conversation-model-provider-filter")
+        renderComposerModels();
+    if (event.target.id === "conversation-thinking") {
+        syncThinkingChoice();
+        saveComposerModel("conversation-thinking-toggle");
+    }
+});
+document.addEventListener("click", (event) => {
+    if (!(event.target instanceof Element)) return;
+    const controls = composerControls();
+    if (!controls || controls.toggle.disabled) return;
+    const effort = event.target.closest<HTMLButtonElement>(
+        "[data-thinking-value]",
+    );
+    if (effort) {
+        const value = effort.dataset.thinkingValue;
+        if (
+            commandBlockReason() ||
+            controls.thinking.disabled ||
+            value === undefined ||
+            !Array.from(controls.thinking.options).some(
+                (option) => option.value === value && !option.disabled,
+            )
+        )
+            return;
+        document.getElementById("conversation-thinking-options")?.hidePopover();
+        document.getElementById("conversation-thinking-toggle")?.focus();
+        if (controls.thinking.value !== value) {
+            controls.thinking.value = value;
+            controls.thinking.dispatchEvent(
+                new Event("change", { bubbles: true }),
+            );
+        }
+        return;
+    }
+    const clear = event.target.closest<HTMLButtonElement>(
+        "#conversation-model-search-clear",
+    );
+    if (clear) {
+        const search = document.querySelector<HTMLInputElement>(
+            "#conversation-model-search",
+        );
+        if (search) {
+            search.value = "";
+            renderComposerModels();
+            search.focus();
+        }
+        return;
+    }
+    const filter = event.target.closest<HTMLButtonElement>(
+        "#conversation-model-favourites-filter",
+    );
+    if (filter) {
+        filter.ariaPressed = String(filter.ariaPressed !== "true");
+        renderComposerModels();
+        return;
+    }
+    const favourite = event.target.closest<HTMLButtonElement>(
+        "[data-model-favourite]",
+    );
+    if (favourite) {
+        if (pendingFavourite || commandBlockReason()) return;
+        const form = document.querySelector<HTMLFormElement>(
+            "#conversation-favourite-form",
+        );
+        if (!form) return;
+        const provider = favourite.dataset.provider ?? "";
+        const model = favourite.dataset.modelFavourite ?? "";
+        (form.elements.namedItem("provider") as HTMLInputElement).value =
+            provider;
+        (form.elements.namedItem("model") as HTMLInputElement).value = model;
+        pendingFavourite = {
+            provider,
+            model,
+            scroll:
+                document.getElementById("conversation-model-results")
+                    ?.scrollTop ?? 0,
+        };
+        form.requestSubmit();
+        return;
+    }
+    const option = event.target.closest<HTMLButtonElement>(
+        "[data-composer-model]",
+    );
+    if (!option || commandBlockReason()) return;
+    const provider = option.dataset.provider ?? "";
+    const model = option.dataset.composerModel ?? "";
+    const selected = composerCatalogue()[provider]?.find(
+        (item) => item.id === model,
+    );
+    if (!selected) return;
+    controls.panel.hidePopover();
+    controls.toggle.focus();
+    if (provider === controls.provider.value && model === controls.model.value)
+        return;
+    const thinking = controls.thinking.value;
+    controls.provider.value = provider;
+    controls.model.value = model;
+    composerEfforts(thinking);
+    saveComposerModel("conversation-model-toggle");
+});
+document.addEventListener("keydown", (event) => {
+    if (!(event.target instanceof HTMLElement)) return;
+    const controls = composerControls();
+    if (!controls) return;
+    const thinkingToggle = document.querySelector<HTMLButtonElement>(
+        "#conversation-thinking-toggle",
+    );
+    const thinkingPanel = document.getElementById(
+        "conversation-thinking-options",
+    );
+    if (
+        event.target === thinkingToggle &&
+        thinkingToggle &&
+        !thinkingToggle.disabled &&
+        ["ArrowDown", "ArrowUp"].includes(event.key)
+    ) {
+        event.preventDefault();
+        thinkingPanel?.showPopover();
+        return;
+    }
+    if (thinkingPanel?.contains(event.target)) {
+        if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            thinkingPanel.hidePopover();
+            thinkingToggle?.focus();
+            return;
+        }
+        const options = Array.from(
+            thinkingPanel.querySelectorAll<HTMLButtonElement>(
+                "[data-thinking-value]:not(:disabled)",
+            ),
+        );
+        const index = options.indexOf(event.target as HTMLButtonElement);
+        if (index < 0) return;
+        let next: HTMLButtonElement | undefined;
+        if (event.key === "ArrowDown")
+            next = options[(index + 1) % options.length];
+        else if (event.key === "ArrowUp")
+            next = options[(index + options.length - 1) % options.length];
+        else if (event.key === "Home") next = options[0];
+        else if (event.key === "End") next = options.at(-1);
+        else return;
+        event.preventDefault();
+        next?.focus();
+        return;
+    }
+    if (
+        event.target === controls.toggle &&
+        ["ArrowDown", "ArrowUp"].includes(event.key)
+    ) {
+        event.preventDefault();
+        controls.panel.showPopover();
+        document.getElementById("conversation-model-search")?.focus();
+        return;
+    }
+    if (!controls.panel.contains(event.target)) return;
+    if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        controls.panel.hidePopover();
+        controls.toggle.focus();
+        return;
+    }
+    const search = document.querySelector<HTMLInputElement>(
+        "#conversation-model-search",
+    );
+    const options = Array.from(
+        controls.panel.querySelectorAll<HTMLButtonElement>(
+            "[data-composer-model]",
+        ),
+    );
+    if (event.target === search && event.key === "Enter") {
+        event.preventDefault();
+        const exact = options.filter(
+            (option) =>
+                option.dataset.composerModel?.toLocaleLowerCase() ===
+                search.value.trim().toLocaleLowerCase(),
+        );
+        (exact.length === 1
+            ? exact[0]
+            : options.length === 1
+              ? options[0]
+              : undefined
+        )?.click();
+        return;
+    }
+    const index = options.indexOf(event.target as HTMLButtonElement);
+    if (event.target !== search && index < 0) return;
+    let next: HTMLElement | undefined;
+    if (event.key === "ArrowDown") next = options[(index + 1) % options.length];
+    else if (event.key === "ArrowUp")
+        next =
+            index === 0
+                ? (search ?? undefined)
+                : options.at(index < 0 ? -1 : index - 1);
+    else if (index >= 0 && event.key === "Home") next = options[0];
+    else if (index >= 0 && event.key === "End") next = options.at(-1);
+    else return;
+    event.preventDefault();
+    next?.focus();
+});
+
+listenForRequestSettled((detail) => {
+    if (
+        detail.outcome === "applied-patch" &&
+        detail.targetIds.includes("conversation-detail")
+    )
+        syncThinkingChoice();
+    if (pendingFavourite && detail.form.id === "conversation-favourite-form") {
+        const pending = pendingFavourite;
+        pendingFavourite = undefined;
+        renderComposerModels();
+        const results = document.getElementById("conversation-model-results");
+        if (results) results.scrollTop = pending.scroll;
+        const button = Array.from(
+            document.querySelectorAll<HTMLButtonElement>(
+                "[data-model-favourite]",
+            ),
+        ).find(
+            (item) =>
+                item.dataset.provider === pending.provider &&
+                item.dataset.modelFavourite === pending.model,
+        );
+        (button ?? document.getElementById("conversation-model-search"))?.focus(
+            { preventScroll: true },
+        );
+        if (detail.outcome !== "applied-patch") {
+            const status = document.querySelector(
+                "[data-model-favourite-status]",
+            );
+            if (status)
+                status.textContent =
+                    "Power Plant could not save the favourite. Try again.";
+        }
+    }
+    if (pendingModel && detail.form.id === "conversation-model-form") {
+        const pending = pendingModel;
+        pendingModel = undefined;
+        modelLocks.forEach(({ control, disabled }) => {
+            if (control.isConnected) control.disabled = disabled;
+        });
+        modelLocks = [];
+        if (detail.outcome !== "applied-patch") {
+            const controls = composerControls();
+            if (controls) {
+                controls.provider.value = pending.provider;
+                controls.model.value = pending.model;
+                composerEfforts(pending.thinking);
+            }
+        }
+        const currentForm = document.querySelector<HTMLFormElement>(
+            "#conversation-model-form",
+        );
+        if (currentForm?.action === detail.form.action) {
+            const message =
+                document.querySelector<HTMLTextAreaElement>(
+                    "#composer-message",
+                );
+            if (message) {
+                message.value = pending.message;
+                message.dispatchEvent(new Event("input", { bubbles: true }));
+            }
+            document
+                .getElementById(pending.focus)
+                ?.focus({ preventScroll: true });
+        }
+    }
+});
 
 type ReviewCatalogueModel = {
     id: string;
@@ -143,7 +742,7 @@ function settingsTabForPanel(sectionId: string | undefined): string {
         sectionId === "settings-directories"
     )
         return "settings-files";
-    return sectionId ?? "settings-model";
+    return sectionId ?? "settings-files";
 }
 
 function selectConversationSettingsSection(panel: HTMLElement, id: string) {

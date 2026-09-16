@@ -22,14 +22,7 @@ async fn copied_draft_is_independent_and_navigation_creates_no_record() {
     .unwrap();
     let source = state
         .conversations
-        .select_model_configuration(
-            &source.id,
-            source.revision,
-            crate::conversations::ConversationModelConfiguration {
-                settings: settings.clone(),
-                preset: None,
-            },
-        )
+        .update_execution_settings(&source.id, source.revision, settings.clone())
         .unwrap();
     let job = crate::sessions::JobId::generate().unwrap();
     let source = state
@@ -329,11 +322,8 @@ async fn invalid_first_submissions_preserve_all_local_choices_and_unsent_text() 
         assert!(body.contains("Unsent text</textarea>"));
         assert!(body.contains(&format!("value=\"{title}\"")));
         assert!(body.contains("value=\"grok-4.6\""));
-        for value in [
-            project.id.as_hex(),
-            "xai".to_owned(),
-            effort.as_str().to_owned(),
-        ] {
+        assert_eq!(hidden_named(&body, "provider"), "xai");
+        for value in [project.id.as_hex(), effort.as_str().to_owned()] {
             let option = body
                 .split(&format!("value=\"{value}\""))
                 .nth(1)

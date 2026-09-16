@@ -145,7 +145,11 @@ Stale workflow or preset identities report an error without substitution. Resour
 
 User messages use a tinted, ruled surface. Assistant messages identify Power Plant with its mark.
 
-The model control sits inside the composer with a dropdown chevron. The composer uses two rows with an 8000 character editor limit. The persisted message bound stays in the conversation store. The send control reads Send message. Effective directory access appears below it with a folder or shield icon and a visible Sandbox label. Project access stays beside the composer even with no attached project. An empty project catalogue links to project registration. Host mode names unrestricted access. Job-bound cancellation reads Stop task beside the composer and in Current work. The composer stays locked while a candidate or host command awaits a decision.
+The model control opens a searchable popover above the composer. It lists connected providers with an optional provider filter. Favourites appear first, with a separate star control on each row. The active Favourites filter uses a soft tint and a check mark. Local application data stores favourites across browser sessions.
+
+Thinking effort stays visible beside the model as a borderless value and caret. Both controls use identical buttons with the same hover size. The effort popover uses padded options and a tick for the current value. Models without adjustable effort show a disabled Not available control. Saved conversations apply model and effort changes immediately without changes to other settings. Unsent messages and unsaved setup fields survive those commands.
+
+The composer uses two rows with an 8000 character editor limit. The persisted message bound stays in the conversation store. The send control reads Send message. Effective directory access appears below it with a folder or shield icon and a visible Sandbox label. Project access stays beside the composer even with no attached project. An empty project catalogue links to project registration. Host mode names unrestricted access. Job-bound cancellation reads Stop task beside the composer and in Current work. The composer stays locked while a candidate or host command awaits a decision.
 
 Jump to latest appears when the reader leaves the transcript end. New output does not move the reader away from earlier messages.
 
@@ -183,7 +187,6 @@ Setup occupies the companion position. Its section controls retain unsaved value
 
 The visible sections are:
 
-- Model.
 - Files and execution.
 - Instructions.
 - Presets.
@@ -200,7 +203,7 @@ The execution-switch preview retains its existing settlement paths. Requested va
 
 Setup and workflow companions follow the actual header height. Long mobile titles remain visible above the open companion.
 
-Section changes retain unsaved fields. Validation reveals affected controls before focus moves. Effective summaries change only after a successful settings command.
+Section changes retain unsaved fields. Validation reveals affected controls before focus moves. Effective summaries change only after a successful settings command. Model and effort controls remain in the composer, outside Setup.
 
 Closure restores focus even after a command replaces the original trigger. Escape closes the navigation menu before the companion.
 

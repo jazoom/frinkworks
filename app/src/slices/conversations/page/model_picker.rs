@@ -9,6 +9,7 @@ pub(crate) struct EffortOption {
 #[derive(Clone, serde::Serialize)]
 pub(crate) struct ModelOption {
     pub(crate) id: String,
+    favourite: bool,
     efforts: Vec<EffortOption>,
     default_effort: String,
 }
@@ -41,6 +42,7 @@ impl ModelPicker {
                     .models(connection.kind)
                     .into_iter()
                     .map(|model| ModelOption {
+                        favourite: connection.favourites.contains(&model.id),
                         efforts: catalogue
                             .efforts(connection.kind, &model.id)
                             .into_iter()
@@ -100,7 +102,6 @@ impl ModelPicker {
                     value: connection.kind.as_str(),
                     label: connection.kind.label(),
                     selected: connection.kind.as_str() == provider,
-                    model: connection.model,
                 })
                 .collect(),
             models,

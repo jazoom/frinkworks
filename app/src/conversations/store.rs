@@ -822,11 +822,19 @@ impl ConversationStore {
         selection: ModelSelection,
         environment: crate::environments::EnvironmentId,
     ) -> Result<ConversationRecord, ConversationError> {
-        let mut model = ConversationModelConfiguration::direct(selection, environment);
-        if let Some(current) = self.get(id) {
-            model.settings.network = current.network;
-        }
-        self.select_model_configuration(id, expected_revision, model)
+        self.replace(id, expected_revision, |current| {
+            if current.active_job.is_some() {
+                return Err(ConversationError::Active);
+            }
+            if let Some(model) = &mut current.model {
+                model.settings.model = selection;
+            } else {
+                let mut model = ConversationModelConfiguration::direct(selection, environment);
+                model.settings.network = current.network.clone();
+                current.model = Some(model);
+            }
+            Ok(())
+        })
     }
 
     pub(crate) fn apply_preset(
@@ -844,27 +852,6 @@ impl ConversationStore {
             current.execution_target = None;
             current.network = preset.settings.network.clone();
             current.model = Some(ConversationModelConfiguration::from_preset(preset));
-            Ok(())
-        })
-    }
-
-    pub(crate) fn select_model_configuration(
-        &self,
-        id: &ConversationId,
-        expected_revision: u32,
-        mut model: ConversationModelConfiguration,
-    ) -> Result<ConversationRecord, ConversationError> {
-        self.replace(id, expected_revision, |current| {
-            if current.active_job.is_some() {
-                return Err(ConversationError::Active);
-            }
-            model.settings.directories = current
-                .model
-                .as_ref()
-                .map(|current| current.settings.directories.clone())
-                .unwrap_or_default();
-            current.network = model.settings.network.clone();
-            current.model = Some(model);
             Ok(())
         })
     }

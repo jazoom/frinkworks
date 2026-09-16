@@ -648,10 +648,11 @@ body:has(.workspace-catalogue) .app-frame {
     min-height: 71px;
     padding: 14px 15px 5px;
 }
-#conversation-composer > button[type="button"] {
+#conversation-composer > #conversation-model-controls {
+    grid-column: 1;
     margin: 4px 0 9px 9px;
 }
-#conversation-composer > div {
+#conversation-composer > div:not(#conversation-model-controls) {
     grid-column: 2;
     margin: 4px 9px 9px 0;
 }
@@ -762,19 +763,35 @@ body:has(.workspace-catalogue) .app-frame {
 [data-settings-panel] > h3 {
     font-size: 17px;
 }
-[data-settings-panel] > label > span,
-#settings-model label > span,
-#conversation-model-label {
+[data-settings-panel] > label > span {
     font-size: 12px;
     font-weight: 600;
 }
-#settings-model > div:first-of-type {
-    gap: 18px;
-    margin-top: 18px;
+#conversation-model-toggle {
+    anchor-name: --conversation-model;
 }
-#settings-model label,
-#conversation-model-picker {
-    gap: 8px;
+#conversation-thinking-toggle {
+    anchor-name: --conversation-thinking;
+}
+#conversation-model-options .workspace-icon.model-favourite-filled {
+    fill: currentColor;
+}
+@supports (position-area: top) {
+    #conversation-model-options {
+        position-anchor: --conversation-model;
+        position-area: top span-right;
+        position-try-fallbacks: flip-inline;
+        inset: auto;
+        width: min(32rem, calc(100vw - 1.5rem));
+        margin-bottom: 8px;
+    }
+    #conversation-thinking-options {
+        position-anchor: --conversation-thinking;
+        position-area: top span-right;
+        position-try-fallbacks: flip-inline;
+        inset: auto;
+        margin-bottom: 8px;
+    }
 }
 #conversation-settings :is(.input, .select, .textarea) {
     font-size: 13px;
@@ -948,13 +965,19 @@ body:has(.workspace-catalogue) .app-frame {
     .workspace-companion {
     visibility: hidden;
 }
-#conversation-composer > button[type="button"] {
-    justify-self: start;
+#conversation-model-toggle,
+#conversation-thinking-toggle {
     min-height: 36px;
-    height: auto;
-    font-size: 11px;
-    color: var(--workspace-muted);
+    height: 36px;
+    font-size: 12px;
     font-weight: 400;
+}
+#conversation-thinking-results .btn {
+    min-height: 44px;
+    padding: 10px 14px;
+}
+#conversation-model-search::-webkit-search-cancel-button {
+    appearance: none;
 }
 .workspace-diff {
     max-height: 380px;
@@ -1174,7 +1197,8 @@ body:has(.workspace-catalogue) .app-frame {
         font-size: 16px;
         padding: 11px 12px 3px;
     }
-    #conversation-composer > button[type="button"],
+    #conversation-model-toggle,
+    #conversation-thinking-toggle,
     #conversation-composer .btn-primary {
         min-height: 40px;
         height: auto;
@@ -1185,6 +1209,12 @@ body:has(.workspace-catalogue) .app-frame {
     }
     #conversation-composer-dock {
         padding: 10px 13px calc(10px + env(safe-area-inset-bottom));
+    }
+    #conversation-model-options {
+        position-area: none;
+        inset: auto 12px 8.5rem;
+        width: auto;
+        margin: 0;
     }
     .empty-conversation {
         padding: 25px 0;

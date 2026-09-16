@@ -278,7 +278,7 @@ fn workflow_reservations_leave_the_normal_model_selection_unchanged() {
         let mut conversation = store.create("Workflow".to_owned()).expect("conversation");
         if let Some(model) = model.clone() {
             conversation = store
-                .select_model_configuration(&conversation.id, conversation.revision, model)
+                .update_execution_settings(&conversation.id, conversation.revision, model.settings)
                 .expect("selection");
         }
         let started = store
@@ -292,6 +292,54 @@ fn workflow_reservations_leave_the_normal_model_selection_unchanged() {
             .expect("reserve");
         assert_eq!(started.model, model);
     }
+}
+
+#[test]
+fn model_changes_preserve_execution_authority_and_reject_stale_revisions() {
+    let store = ConversationStore::in_memory();
+    let record = store.create("Model controls".to_owned()).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let grant = crate::execution::DirectoryGrant::from_selected(directory.path(), &[]).unwrap();
+    let mut settings = crate::execution::ExecutionSettings::new(
+        ModelSelection::new(ProviderKind::Xai, "grok-4.6".to_owned(), None).unwrap(),
+        "Keep my instructions".to_owned(),
+        vec![crate::agents::ToolId::Run],
+        crate::tests::test_environment_id(),
+    )
+    .unwrap()
+    .with_directories(vec![grant.clone()])
+    .unwrap()
+    .with_location(crate::execution::ToolLocation::Host)
+    .with_host_approval(crate::execution::HostApprovalPolicy::Automatic);
+    let record = store
+        .update_execution_settings(&record.id, record.revision, settings.clone())
+        .unwrap();
+    let approval = crate::conversations::DirectoryApproval::for_grant(&settings, &grant);
+    let record = store
+        .record_directory_approval(&record.id, record.revision, approval)
+        .unwrap();
+    let selection =
+        ModelSelection::new(ProviderKind::Deepseek, "deepseek-chat".to_owned(), None).unwrap();
+    let updated = store
+        .select_model(
+            &record.id,
+            record.revision,
+            selection.clone(),
+            crate::tests::test_environment_id(),
+        )
+        .unwrap();
+    settings.model = selection.clone();
+    assert_eq!(updated.model.as_ref().unwrap().settings, settings);
+    assert_eq!(updated.directory_approvals, record.directory_approvals);
+    assert_eq!(
+        store.select_model(
+            &record.id,
+            record.revision,
+            selection,
+            crate::tests::test_environment_id()
+        ),
+        Err(ConversationError::Conflict)
+    );
 }
 
 fn write_catalogue(dir: &Path, contents: &str) {
