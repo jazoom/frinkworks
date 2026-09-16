@@ -1075,6 +1075,7 @@ function enableLiveReload() {
         let source: EventSource | null = null;
         let reloading = false;
         let checking = false;
+        let checkPending = false;
         const lifetime = new AbortController();
         const channel = new BroadcastChannel(LIVE_RELOAD_CHANNEL);
 
@@ -1096,7 +1097,12 @@ function enableLiveReload() {
         channel.addEventListener("message", () => reload(false));
 
         const checkRevision = async () => {
-            if (checking || reloading || lifetime.signal.aborted) return;
+            if (reloading || lifetime.signal.aborted) return;
+            if (checking) {
+                // A reconnect must not rely on a request from before the disconnect.
+                checkPending = true;
+                return;
+            }
             checking = true;
             try {
                 const response = await fetch("/_tower-livereload/revision", {
@@ -1122,6 +1128,10 @@ function enableLiveReload() {
                 // A server restart can interrupt this request. Reconnect or visibility retries it.
             } finally {
                 checking = false;
+                if (checkPending) {
+                    checkPending = false;
+                    void checkRevision();
+                }
             }
         };
 
