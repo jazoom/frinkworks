@@ -23,6 +23,9 @@ use crate::{
     state::{self, AppState},
 };
 
+#[cfg(feature = "dev")]
+mod development;
+
 pub(crate) async fn run(log_level: tracing::Level) -> Result<(), Box<dyn std::error::Error>> {
     let tracing_filter = tracing_subscriber::EnvFilter::builder()
         .with_default_directive(log_level.into())
@@ -55,12 +58,7 @@ pub(crate) async fn run(log_level: tracing::Level) -> Result<(), Box<dyn std::er
     let public_origin = state.config.public_origin().to_owned();
     let app = build_router(state, static_dir.clone());
     #[cfg(feature = "dev")]
-    let live_reload =
-        tower_livereload::LiveReloadLayer::new().request_predicate(suppress_live_reload_injection);
-    #[cfg(feature = "dev")]
-    watch_development_bundles(static_dir, live_reload.reloader());
-    #[cfg(feature = "dev")]
-    let app = app.layer(live_reload);
+    let app = development::with_live_reload(app, static_dir);
     let listener = tokio::net::TcpListener::bind(&bind_address).await?;
     tracing::info!(
         environment = ?environment,
@@ -89,36 +87,6 @@ fn request_route<B>(request: &axum::http::Request<B>) -> &str {
             path if path.starts_with("/static/") => path,
             _ => "unmatched",
         })
-}
-
-#[cfg(feature = "dev")]
-fn suppress_live_reload_injection<B>(_: &axum::http::Request<B>) -> bool {
-    false
-}
-
-#[cfg(feature = "dev")]
-fn watch_development_bundles(static_dir: std::path::PathBuf, reloader: tower_livereload::Reloader) {
-    std::thread::spawn(move || {
-        let files = [
-            static_dir.join("assets/main.js"),
-            static_dir.join("assets/main.css"),
-        ];
-        let mut last = [None, None];
-        loop {
-            std::thread::sleep(std::time::Duration::from_millis(300));
-            let mut changed = false;
-            for (path, previous) in files.iter().zip(last.iter_mut()) {
-                let modified = std::fs::metadata(path)
-                    .and_then(|metadata| metadata.modified())
-                    .ok();
-                changed |= previous.is_some() && modified != *previous;
-                *previous = modified;
-            }
-            if changed {
-                reloader.reload();
-            }
-        }
-    });
 }
 
 fn build_router(state: AppState, static_dir: std::path::PathBuf) -> Router {

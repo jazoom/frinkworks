@@ -470,9 +470,13 @@ const LIVE_RELOAD_CHANNEL = "powerplant-live-reload";
 // One event stream per tab can exhaust the browser HTTP/1.1 connection pool.
 // Keep the stream in the visible tab. Use BroadcastChannel to notify hidden tabs to reload.
 function enableLiveReload() {
+    // Retain the document revision across back/forward cache restores.
+    let revision: string | null = null;
     window.addEventListener("pageshow", () => {
         let source: EventSource | null = null;
         let reloading = false;
+        let checking = false;
+        const lifetime = new AbortController();
         const channel = new BroadcastChannel(LIVE_RELOAD_CHANNEL);
 
         const closeStream = () => {
@@ -492,6 +496,36 @@ function enableLiveReload() {
 
         channel.addEventListener("message", () => reload(false));
 
+        const checkRevision = async () => {
+            if (checking || reloading || lifetime.signal.aborted) return;
+            checking = true;
+            try {
+                const response = await fetch("/_tower-livereload/revision", {
+                    cache: "no-store",
+                    signal: AbortSignal.any([
+                        lifetime.signal,
+                        AbortSignal.timeout(5000),
+                    ]),
+                });
+                if (!response.ok) return;
+                const current = await response.text();
+                if (
+                    lifetime.signal.aborted ||
+                    !/^[a-f0-9]{32}-\d+$/.test(current)
+                )
+                    return;
+                if (revision !== null && revision !== current) {
+                    reload(true);
+                } else {
+                    revision = current;
+                }
+            } catch {
+                // A server restart can interrupt this request. Reconnect or visibility retries it.
+            } finally {
+                checking = false;
+            }
+        };
+
         const openStream = () => {
             if (source || document.visibilityState !== "visible") return;
             const next = new EventSource(LIVE_RELOAD_EVENT_STREAM);
@@ -499,16 +533,12 @@ function enableLiveReload() {
 
             next.addEventListener("reload", () => reload(true));
 
-            const reloadWhenServerReturns = () => {
-                next.removeEventListener("error", reloadWhenServerReturns);
-                next.addEventListener("init", () => reload(true));
-            };
-
-            next.addEventListener("error", reloadWhenServerReturns);
+            next.addEventListener("init", () => void checkRevision());
         };
 
         const onVisibility = () => {
             if (document.visibilityState === "visible") {
+                void checkRevision();
                 openStream();
             } else {
                 closeStream();
@@ -516,11 +546,18 @@ function enableLiveReload() {
         };
 
         document.addEventListener("visibilitychange", onVisibility);
-        window.addEventListener("pagehide", () => {
-            document.removeEventListener("visibilitychange", onVisibility);
-            closeStream();
-            channel.close();
-        });
+        window.addEventListener(
+            "pagehide",
+            () => {
+                lifetime.abort();
+                document.removeEventListener("visibilitychange", onVisibility);
+                closeStream();
+                channel.close();
+            },
+            { once: true },
+        );
+        // Even a page that starts hidden needs a baseline before its first visible connection.
+        void checkRevision();
         openStream();
     });
 }
