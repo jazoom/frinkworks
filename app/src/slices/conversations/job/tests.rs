@@ -164,12 +164,13 @@ async fn cancellation_and_stale_settlement_cannot_release_another_command() {
         .sessions
         .begin_conversation_job(&token.id(), record.id, 1)
         .expect("job");
-    assert!(
-        state
-            .sessions
-            .begin_conversation_job(&token.id(), another.id, 1)
-            .is_err()
-    );
+    let concurrent = state
+        .sessions
+        .begin_conversation_job(&token.id(), another.id, 1)
+        .expect("concurrent job");
+    assert!(!state.sessions.busy(&token.id()));
+    assert!(state.sessions.conversation_reserved(record.id));
+    assert!(state.sessions.conversation_reserved(another.id));
     assert!(
         state
             .sessions
@@ -180,6 +181,11 @@ async fn cancellation_and_stale_settlement_cannot_release_another_command() {
         !state
             .sessions
             .finish_conversation_job(&other.id(), record.id, job.id())
+    );
+    assert!(
+        state
+            .sessions
+            .finish_conversation_job(&token.id(), another.id, concurrent.id())
     );
     let connection = ProviderConnection::with_key(ProviderKind::Xai, "test-key", "grok-4.6");
     let selection =
@@ -223,7 +229,8 @@ async fn cancellation_and_stale_settlement_cannot_release_another_command() {
             .sessions
             .finish_conversation_job(&token.id(), record.id, job.id())
     );
-    assert!(state.sessions.busy(&token.id()));
+    assert!(!state.sessions.busy(&token.id()));
+    assert!(state.sessions.conversation_reserved(another.id));
     state.sessions.remove(&token.id());
     assert!(next.cancel_requested());
 }

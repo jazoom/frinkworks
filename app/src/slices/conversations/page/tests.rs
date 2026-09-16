@@ -41,7 +41,6 @@ fn escaped_history_keeps_the_latest_message_within_the_patch_bound() {
         },
         &[],
         None,
-        false,
         &record.title,
         "",
     );
@@ -83,7 +82,6 @@ fn network_form_preserves_domains_without_a_live_preset_ceiling() {
         },
         &[],
         None,
-        false,
         &record.title,
         "",
     );
@@ -147,7 +145,6 @@ fn candidate_review_escapes_untrusted_file_contents() {
         },
         &[],
         None,
-        false,
         &title,
         "",
         Some(gate),

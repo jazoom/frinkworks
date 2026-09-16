@@ -164,7 +164,7 @@ impl LocalDataReset {
         if self.is_pending() {
             return Ok(ResetRequest::Pending);
         }
-        let execution = match workflow_execution.acquire() {
+        let execution = match workflow_execution.acquire_exclusive() {
             Ok(execution) => execution,
             Err(()) if self.is_pending() => return Ok(ResetRequest::Pending),
             Err(()) => return Err(ResetError::WorkflowBusy),

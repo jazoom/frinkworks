@@ -84,7 +84,17 @@ function renderCount(state: StreamState, count: number): void {
     }
 }
 
-export function initTranscript(root: HTMLElement): () => void {
+export function initTranscript(
+    root: HTMLElement,
+    onMessageAdded?: (message: HTMLElement) => void,
+): () => void {
+    // Stable IDs prevent live replacements from replaying an entry transition.
+    const seenMessages = new Set(
+        Array.from(
+            root.querySelectorAll(".chat-turn[id]"),
+            (message) => message.id,
+        ),
+    );
     let pinned = true;
     let frame: number | null = null;
     let destroyed = false;
@@ -254,6 +264,14 @@ export function initTranscript(root: HTMLElement): () => void {
     };
 
     const onMutations = (mutations: MutationRecord[]) => {
+        for (const message of root.querySelectorAll<HTMLElement>(
+            ".chat-turn[id]",
+        )) {
+            if (!seenMessages.has(message.id)) {
+                seenMessages.add(message.id);
+                onMessageAdded?.(message);
+            }
+        }
         stick();
         reconcile(mutations);
     };

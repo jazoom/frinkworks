@@ -4,8 +4,17 @@ import { initWorkspace } from "./workspace";
 
 afterEach(() => {
     document.body.replaceChildren();
+    history.replaceState(null, "", "/");
     vi.unstubAllGlobals();
 });
+
+function workOpen(root: HTMLElement) {
+    return (
+        root
+            .querySelector("#conversation-detail")
+            ?.hasAttribute("data-work-open") === true
+    );
+}
 
 test.each(["activity", "workflow"])(
     "a %s companion excludes mobile conversation controls and releases them after a command patch",
@@ -22,6 +31,14 @@ test.each(["activity", "workflow"])(
             signal: controller.signal,
         } as Parameters<typeof initWorkspace>[1]);
         const transcript = root.querySelector<HTMLElement>("#transcript")!;
+        expect(transcript.inert).toBe(false);
+        island.reconcile?.({
+            cause: "location",
+            detail: {
+                url: `/conversations/example/${kind}`,
+                cause: "link-navigation",
+            },
+        });
         expect(transcript.inert).toBe(true);
         root.querySelector<HTMLButtonElement>("[data-work-close]")!.click();
         expect(transcript.inert).toBe(false);
@@ -89,7 +106,7 @@ test.each(["activity", "workflow"])(
                 cause: "get-form-replacement",
             },
         });
-        expect(work.hidden).toBe(true);
+        expect(workOpen(root)).toBe(false);
         work.querySelector("section")!.id = `${kind}-detail`;
         island.reconcile?.({
             cause: "location",
@@ -98,7 +115,7 @@ test.each(["activity", "workflow"])(
                 cause: "link-navigation",
             },
         });
-        expect(work.hidden).toBe(false);
+        expect(workOpen(root)).toBe(true);
         expect(root.querySelector<HTMLElement>("#transcript")!.inert).toBe(
             true,
         );
@@ -128,9 +145,7 @@ test.each([false, true])(
         });
         link.dispatchEvent(click);
         expect(click.defaultPrevented).toBe(false);
-        expect(
-            root.querySelector<HTMLElement>("#conversation-work")!.hidden,
-        ).toBe(true);
+        expect(workOpen(root)).toBe(false);
         if (replaceDetail) {
             root.innerHTML = `<section id="conversation-detail"><button data-work-toggle>Current work</button><aside id="conversation-work" data-work-active="false"></aside></section>`;
         } else {
@@ -146,8 +161,7 @@ test.each([false, true])(
                 cause: "link-navigation",
             },
         });
-        const work = root.querySelector<HTMLElement>("#conversation-work")!;
-        expect(work.hidden).toBe(false);
+        expect(workOpen(root)).toBe(true);
         island.reconcile?.({
             cause: "live-patch",
             detail: {
@@ -156,7 +170,7 @@ test.each([false, true])(
                 targetIds: ["conversation-detail"],
             },
         });
-        expect(work.hidden).toBe(false);
+        expect(workOpen(root)).toBe(true);
         island.destroy();
         controller.abort();
     },
@@ -174,6 +188,13 @@ test("Escape closes navigation before the companion and restores the menu trigge
     const island = initWorkspace(root, {
         signal: controller.signal,
     } as Parameters<typeof initWorkspace>[1]);
+    island.reconcile?.({
+        cause: "location",
+        detail: {
+            url: "/conversations/one?work=true",
+            cause: "link-navigation",
+        },
+    });
     const menu = root.querySelector<HTMLButtonElement>(
         "[data-workspace-menu]",
     )!;
@@ -185,9 +206,7 @@ test("Escape closes navigation before the companion and restores the menu trigge
     expect(menu.getAttribute("aria-expanded")).toBe("false");
     expect(document.activeElement).toBe(menu);
     expect(root.querySelector<HTMLElement>("#transcript")!.inert).toBe(true);
-    expect(root.querySelector<HTMLElement>("#conversation-work")!.hidden).toBe(
-        false,
-    );
+    expect(workOpen(root)).toBe(true);
     island.destroy?.();
     controller.abort();
 });
@@ -204,6 +223,13 @@ test("revision Cancel closes the inline form and returns focus to Request change
     const island = initWorkspace(root, {
         signal: controller.signal,
     } as Parameters<typeof initWorkspace>[1]);
+    island.reconcile?.({
+        cause: "location",
+        detail: {
+            url: "/conversations/one?work=true",
+            cause: "link-navigation",
+        },
+    });
     const disclosure = root.querySelector<HTMLDetailsElement>(
         "details.workspace-revision",
     )!;
@@ -307,10 +333,14 @@ test("skip link targets the transcript and the open mobile companion", () => {
     const companion =
         mobile.root.querySelector<HTMLElement>("#conversation-work")!;
     companion.dataset.workActive = "true";
-    mobile.island.reconcile?.(
-        {} as Parameters<NonNullable<typeof mobile.island.reconcile>>[0],
-    );
-    expect(companion.hidden).toBe(false);
+    mobile.island.reconcile?.({
+        cause: "location",
+        detail: {
+            url: "/conversations/one?work=true",
+            cause: "link-navigation",
+        },
+    } as Parameters<NonNullable<typeof mobile.island.reconcile>>[0]);
+    expect(workOpen(mobile.root)).toBe(true);
     expect(mobile.skip.getAttribute("href")).toBe("#conversation-work");
     mobile.island.destroy?.();
     mobile.controller.abort();

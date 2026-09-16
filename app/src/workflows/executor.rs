@@ -30,15 +30,15 @@ const COMMAND_OUTPUT_LIMIT: usize = 64 * 1024;
 
 pub(crate) struct WorkflowContinuationRegistry {
     inner: std::sync::Mutex<std::collections::BTreeMap<RunId, WorkflowJob>>,
-    // An uncertain commit retains execution protection until startup reconciliation.
-    recovery_protection: std::sync::Mutex<Option<(Option<LeaseGuard>, ExecutionGuard)>>,
+    // Each unresolved operation retains its leases until startup reconciliation.
+    recovery_protection: std::sync::Mutex<Vec<(Option<LeaseGuard>, ExecutionGuard)>>,
 }
 
 impl WorkflowContinuationRegistry {
     pub(crate) fn new() -> Self {
         Self {
             inner: std::sync::Mutex::new(std::collections::BTreeMap::new()),
-            recovery_protection: std::sync::Mutex::new(None),
+            recovery_protection: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -52,10 +52,7 @@ impl WorkflowContinuationRegistry {
             JobStatus::Failed,
             Some("Restart Power Plant to reconcile the uncertain file application. This operation retains its reservations."),
         );
-        *self
-            .recovery_protection
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((agent, execution));
+        self.retain_recovery(agent, execution);
     }
 
     fn protect_commit_recovery(
@@ -68,10 +65,7 @@ impl WorkflowContinuationRegistry {
             JobStatus::Failed,
             Some("Restart Power Plant to reconcile the uncertain Git commit. This operation retains its reservations."),
         );
-        *self
-            .recovery_protection
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((agent, execution));
+        self.retain_recovery(agent, execution);
     }
 
     fn protect_cleanup_failure(
@@ -84,10 +78,15 @@ impl WorkflowContinuationRegistry {
             JobStatus::Failed,
             Some("Power Plant could not clean up the sandbox. This operation retains its reservations."),
         );
-        *self
-            .recovery_protection
+        self.retain_recovery(agent, execution);
+    }
+
+    fn retain_recovery(&self, agent: Option<LeaseGuard>, execution: ExecutionGuard) {
+        execution.require_recovery();
+        self.recovery_protection
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((agent, execution));
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push((agent, execution));
     }
 
     pub(crate) fn insert(&self, job: WorkflowJob) -> bool {
@@ -132,10 +131,11 @@ impl WorkflowContinuationRegistry {
     }
 
     pub(crate) fn commit_recovery_locked(&self) -> bool {
-        self.recovery_protection
+        !self
+            .recovery_protection
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .is_some()
+            .is_empty()
     }
 
     fn take_provider(&self, provider: crate::providers::ProviderKind) -> Vec<WorkflowJob> {
@@ -386,6 +386,33 @@ pub(crate) async fn execute_run(
             fail_operational(&state, &job);
             return;
         };
+        let _application = if matches!(
+            &step.action,
+            StepAction::SystemCommand(action)
+                if matches!(action.command, SystemCommandId::ApplyChanges | SystemCommandId::CommitCandidate)
+        ) {
+            let application = tokio::select! {
+                result = state.workflow_execution.lock_application() => result,
+                _ = job.job.cancelled() => continue,
+            };
+            match application {
+                Ok(application) => Some(application),
+                Err(error) => {
+                    if state
+                        .workflow_runs
+                        .mutate(&job.run_id, |run| run.fail_before_attempt(now_ms()))
+                        .is_err()
+                    {
+                        fail_operational(&state, &job);
+                    } else {
+                        settle_job(&state, &job, JobStatus::Failed, Some(error));
+                    }
+                    return;
+                }
+            }
+        } else {
+            None
+        };
         job.job.set_step_label(active_step_label(&run, &step));
         let connection = match phase_connection(&state, &job, &run, &step) {
             Ok(connection) => connection,
@@ -506,10 +533,10 @@ pub(crate) async fn execute_run(
             }
             job.job.set_step_label("Awaiting decision".to_owned());
             let _ = job.job.set_awaiting_decision();
-            if job.conversation_id.is_some()
-                && !state.sessions.release_job_reservation(
+            if let Some(conversation_id) = job.conversation_id
+                && !state.sessions.owns_conversation_job(
                     &job.session_id,
-                    job.conversation_id,
+                    conversation_id,
                     job.job.id(),
                 )
             {

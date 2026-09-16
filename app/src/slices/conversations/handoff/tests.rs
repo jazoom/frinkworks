@@ -641,7 +641,7 @@ async fn stale_sources_and_unbounded_prompts_do_not_create_drafts_or_call_models
 }
 
 #[tokio::test]
-async fn an_aborted_generation_releases_its_session_reservation() {
+async fn an_aborted_generation_releases_its_conversation_reservation() {
     let mut state = test_state();
     let token = connected(&state);
     let record = source(&state);
@@ -665,10 +665,18 @@ async fn an_aborted_generation_releases_its_session_reservation() {
     })
     .await
     .unwrap();
-    assert!(state.sessions.busy(&session_id(&token)));
+    assert!(
+        state
+            .sessions
+            .command_reserved(&session_id(&token), &record.id)
+    );
     running.abort();
     assert!(running.await.unwrap_err().is_cancelled());
-    assert!(!state.sessions.busy(&session_id(&token)));
+    assert!(
+        !state
+            .sessions
+            .command_reserved(&session_id(&token), &record.id)
+    );
     assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
     assert_eq!(state.conversations.get(&record.id), Some(record));
 }

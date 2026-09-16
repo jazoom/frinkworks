@@ -1,5 +1,5 @@
 use super::super::tests::*;
-use crate::conversations::{ConversationId, ConversationStore};
+use crate::conversations::ConversationStore;
 use crate::providers::{ProviderConnection, ProviderKind};
 use axum::http::StatusCode;
 use tower::ServiceExt;
@@ -768,14 +768,9 @@ async fn first_message_preflight_requires_runtime_only_for_tools() {
 }
 
 #[tokio::test]
-async fn busy_session_and_full_store_reject_first_send_without_new_record() {
+async fn a_full_store_rejects_first_send_without_a_new_record() {
     let state = test_state();
     let token = connected(&state);
-    let id = ConversationId::generate().unwrap();
-    let job = state
-        .sessions
-        .begin_conversation_job(&session_id(&token), id, 1)
-        .unwrap();
     let effort = state
         .models_dev
         .effective_effort(ProviderKind::Xai, "grok-4.6", None)
@@ -784,15 +779,6 @@ async fn busy_session_and_full_store_reject_first_send_without_new_record() {
         "action=send&provider=xai&model=grok-4.6&thinking={}&message=Hello",
         effort.as_str()
     );
-    let response = app(&state)
-        .oneshot(command("/conversations/new", &token, &fields))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::CONFLICT);
-    assert!(state.conversations.list().is_empty());
-    state
-        .sessions
-        .finish_conversation_job(&session_id(&token), id, job.id());
     for _ in 0..128 {
         state.conversations.create("Saved".to_owned()).unwrap();
     }

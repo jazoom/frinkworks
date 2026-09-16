@@ -362,20 +362,15 @@ async fn discard_and_switch(
                 current.revision == form.conversation_revision
                     && current.active_job == Some(continuation.job.id())
             })
-        || state
+        || !state
             .sessions
-            .acquire_job_reservation(
-                &session,
-                continuation.conversation_id,
-                continuation.job.id(),
-            )
-            .is_err()
+            .owns_conversation_job(&session, conversation_id, continuation.job.id())
     {
         state.gate_continuations.put_back(continuation);
         return command_error_target(
             graft,
             PatchStatus::Conflict,
-            "Another command is active in this browser session.",
+            "That conversation task is no longer available. Reload the conversation.",
             "conversation-settings",
         );
     }
@@ -386,7 +381,7 @@ async fn discard_and_switch(
         })
         .is_err()
     {
-        return_continuation(&state, continuation, true);
+        state.gate_continuations.put_back(continuation);
         return command_error_target(
             graft,
             PatchStatus::Conflict,
@@ -654,39 +649,33 @@ async fn decide(
             form.conversation_surface,
         );
     }
-    let reservation_acquired = if run.conversation_id.is_some() {
-        if state
+    if let Some(conversation_id) = continuation.conversation_id
+        && !state
             .sessions
-            .acquire_job_reservation(
-                &session,
-                continuation.conversation_id,
-                continuation.job.id(),
-            )
-            .is_err()
-        {
-            return_continuation(&state, continuation, false);
-            return command_error_for_run(
-                graft,
-                PatchStatus::Conflict,
-                "Another command is active in this browser session.",
-                &run,
-                form.conversation_surface,
-            );
-        }
-        true
-    } else {
-        false
-    };
+            .owns_conversation_job(&session, conversation_id, continuation.job.id())
+    {
+        state.gate_continuations.put_back(continuation);
+        return command_error_for_run(
+            graft,
+            PatchStatus::Conflict,
+            "That conversation task is no longer available. Reload the conversation.",
+            &run,
+            form.conversation_surface,
+        );
+    }
     let leases = if matches!(action, DecisionAction::Approve | DecisionAction::Revision) {
-        let Ok(execution) = state.workflow_execution.acquire() else {
-            return_continuation(&state, continuation, reservation_acquired);
-            return command_error_for_run(
-                graft,
-                PatchStatus::Conflict,
-                "Another workflow is active. Try again.",
-                &run,
-                form.conversation_surface,
-            );
+        let execution = match state.workflow_execution.acquire() {
+            Ok(execution) => execution,
+            Err(error) => {
+                state.gate_continuations.put_back(continuation);
+                return command_error_for_run(
+                    graft,
+                    PatchStatus::Conflict,
+                    error,
+                    &run,
+                    form.conversation_surface,
+                );
+            }
         };
         let agent = if run.conversation_id.is_some() {
             None
@@ -697,7 +686,7 @@ async fn decide(
             {
                 Ok(agent) => Some(agent),
                 Err(()) => {
-                    return_continuation(&state, continuation, reservation_acquired);
+                    state.gate_continuations.put_back(continuation);
                     return command_error_for_run(
                         graft,
                         PatchStatus::Conflict,
@@ -716,7 +705,7 @@ async fn decide(
         match continuation_authority(&state, &run, &continuation) {
             ContinuationAuthority::Ready => {}
             ContinuationAuthority::Unavailable => {
-                return_continuation(&state, continuation, reservation_acquired);
+                state.gate_continuations.put_back(continuation);
                 return command_error_for_run(
                     graft,
                     PatchStatus::Conflict,
@@ -732,7 +721,6 @@ async fn decide(
                     run_id,
                     graft,
                     &destination,
-                    reservation_acquired,
                     form.conversation_surface,
                 );
             }
@@ -744,7 +732,7 @@ async fn decide(
             run.cancel_gate(gate_id, form.revision, crate::workflows::now_ms())
         });
         if result.is_err() {
-            return_continuation(&state, continuation, reservation_acquired);
+            state.gate_continuations.put_back(continuation);
             return command_error_for_run(
                 graft,
                 PatchStatus::Conflict,
@@ -783,7 +771,7 @@ async fn decide(
                         drop(agent);
                         drop(execution);
                     }
-                    return_continuation(&state, continuation, reservation_acquired);
+                    state.gate_continuations.put_back(continuation);
                     return command_error_for_run(
                         graft,
                         PatchStatus::Conflict,
@@ -816,7 +804,7 @@ async fn decide(
                 secret,
             )
         else {
-            return_continuation(&state, continuation, reservation_acquired);
+            state.gate_continuations.put_back(continuation);
             return command_error_for_run(
                 graft,
                 PatchStatus::UnprocessableEntity,
@@ -826,7 +814,7 @@ async fn decide(
             );
         };
         if state.workflow_artefacts.publish(&bytes) != Ok(object_hash) {
-            return_continuation(&state, continuation, reservation_acquired);
+            state.gate_continuations.put_back(continuation);
             return command_error_for_run(
                 graft,
                 PatchStatus::Conflict,
@@ -844,7 +832,7 @@ async fn decide(
             artefact_hash,
             bytes.len() as u64,
         ) else {
-            return_continuation(&state, continuation, reservation_acquired);
+            state.gate_continuations.put_back(continuation);
             return command_error_for_run(
                 graft,
                 PatchStatus::Conflict,
@@ -872,7 +860,7 @@ async fn decide(
             )
         });
         let Ok(changed) = changed else {
-            return_continuation(&state, continuation, reservation_acquired);
+            state.gate_continuations.put_back(continuation);
             return command_error_for_run(
                 graft,
                 PatchStatus::Conflict,
@@ -910,7 +898,7 @@ async fn decide(
                     drop(agent);
                     drop(execution);
                 }
-                return_continuation(&state, continuation, reservation_acquired);
+                state.gate_continuations.put_back(continuation);
                 return command_error_for_run(
                     graft,
                     PatchStatus::Conflict,
@@ -944,7 +932,7 @@ async fn decide(
         secret,
     );
     let Ok((bytes, object_hash, artefact_hash)) = encoded else {
-        return_continuation(&state, continuation, reservation_acquired);
+        state.gate_continuations.put_back(continuation);
         return command_error_for_run(
             graft,
             PatchStatus::UnprocessableEntity,
@@ -954,7 +942,7 @@ async fn decide(
         );
     };
     if state.workflow_artefacts.publish(&bytes) != Ok(object_hash) {
-        return_continuation(&state, continuation, reservation_acquired);
+        state.gate_continuations.put_back(continuation);
         return command_error_for_run(
             graft,
             PatchStatus::Conflict,
@@ -972,7 +960,7 @@ async fn decide(
         artefact_hash,
         bytes.len() as u64,
     ) else {
-        return_continuation(&state, continuation, reservation_acquired);
+        state.gate_continuations.put_back(continuation);
         return command_error_for_run(
             graft,
             PatchStatus::Conflict,
@@ -1000,7 +988,7 @@ async fn decide(
         )
     });
     let Ok(changed) = changed else {
-        return_continuation(&state, continuation, reservation_acquired);
+        state.gate_continuations.put_back(continuation);
         return command_error_for_run(
             graft,
             PatchStatus::Conflict,
@@ -1024,21 +1012,6 @@ async fn decide(
         }
     }
     Ok(responses::command_navigation(&destination))
-}
-
-fn return_continuation(
-    state: &AppState,
-    continuation: crate::workflows::WorkflowJob,
-    reservation_acquired: bool,
-) {
-    if reservation_acquired {
-        let _ = state.sessions.release_job_reservation(
-            &continuation.session_id,
-            continuation.conversation_id,
-            continuation.job.id(),
-        );
-    }
-    state.gate_continuations.put_back(continuation);
 }
 
 fn decision_record(
@@ -1426,7 +1399,6 @@ fn interrupt_and_redirect(
     run_id: RunId,
     graft: PatchGraft,
     destination: &str,
-    reservation_acquired: bool,
     conversation_surface: bool,
 ) -> AppResult<Response> {
     if state
@@ -1435,7 +1407,7 @@ fn interrupt_and_redirect(
         .is_err()
     {
         let conversation = conversation_surface && continuation.conversation_id.is_some();
-        return_continuation(&state, continuation, reservation_acquired);
+        state.gate_continuations.put_back(continuation);
         return command_error_target(
             graft,
             PatchStatus::Conflict,

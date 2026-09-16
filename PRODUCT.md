@@ -153,9 +153,11 @@ The application remains in alpha. Persisted formats stay at version 1. Removed f
 
 No historical records or evidence require retention. Current execution recovery still protects files and authority.
 
-One browser session permits one active command. A conversation reservation protects its unfinished operation.
+Each conversation can run one unfinished operation. Conversations do not share that reservation.
 
-One workflow execution can hold the process-wide execution reservation. Safe gates release the session reservation for other conversations.
+Conversations can execute at the same time. A local data reset requires that no execution is active. Safe gates keep their conversation reservation. They do not block other conversations.
+
+File application serialises baseline validation and writes. This protects approved changes from another application with the same baseline. Model work remains concurrent.
 
 The implementation status and evidence boundary are in `docs/conversation-system.md`. Hosted-model execution remains outside the current validation evidence.
 

@@ -458,8 +458,6 @@
         class="workspace-companion"
         aria-labelledby="workspace-work-heading"
         tabindex="-1"
-        data-work-empty="{% if let Some(saved) = self.saved() %}{% if !job_active && saved.workflow_progress.is_none() && saved.pending_gate.is_none() && pending_host_command.is_none() %}true{% else %}false{% endif %}{% else %}true{% endif %}"
-        data-work-active="{% if !companion_html.is_empty() %}true{% else if job_active %}true{% else if let Some(saved) = self.saved() %}{% if saved.pending_gate.is_some() %}true{% else %}false{% endif %}{% else %}false{% endif %}"
       >
         <header
           class="border-base-300 flex shrink-0 items-center justify-between border-b px-5 py-3"
@@ -701,38 +699,19 @@
             {% endif %}
           {% endif %}
         </div>
-        {% if companion_html.is_empty() && job_active %}
+        {% if companion_html.is_empty() && observe_active %}
           {% if let Some(saved) = self.saved() %}
             {% if saved.pending_gate.is_none() %}
-              <details
-                class="stop-confirm border-base-300 shrink-0 border-t p-5"
-              >
-                <summary class="btn btn-outline w-full cursor-pointer">
-                  Stop task
-                </summary>
-                <div class="mt-3 space-y-3">
-                  <p class="text-sm font-semibold">Stop this task?</p>
-                  <p class="text-quiet text-sm">
-                    The task stops before another action starts. Conversation
-                    history remains. Direct writes and host command effects
-                    remain after cancellation. Stop does not reverse them.
-                  </p>
-                  <form
-                    data-graft
-                    method="post"
-                    action="/conversations/{{ saved.id }}/cancel"
-                  >
-                    <input
-                      type="hidden"
-                      name="job"
-                      value="{{ saved.job_id }}"
-                    />
-                    <button class="btn btn-error w-full" type="submit">
-                      Confirm stop
-                    </button>
-                  </form>
-                </div>
-              </details>
+              <div class="border-base-300 shrink-0 border-t p-5">
+                <button
+                  class="btn btn-error w-full"
+                  type="submit"
+                  form="conversation-stop"
+                  aria-label="Stop"
+                >
+                  Stop
+                </button>
+              </div>
             {% endif %}
           {% endif %}
         {% endif %}
@@ -895,23 +874,38 @@
 
             <div class="flex flex-col gap-2">
               {# Explicit ARIA values replace the transport overlay on a retained submitter. #}
-              <button
-                class="btn btn-primary min-h-11 min-w-20"
-                type="submit"
-                name="action"
-                value="send"
-                aria-label="Send message"
-                aria-disabled="{{ self.composer_disabled() }}"
-                {% if self.composer_disabled() %}disabled{% endif %}
-              >
-                Send<svg class="workspace-icon" aria-hidden="true">
-                  <use href="/static/images/workspace-icons.svg#up" />
-                </svg>
-              </button>
-              <span
-                data-island="shortcut-hint"
-                class="shortcut-hint text-quiet text-center text-xs"
-              ></span>
+              {% if observe_active %}
+                {% if let Some(saved) = self.saved() %}
+                  <button
+                    class="btn btn-error min-h-11 min-w-20"
+                    type="submit"
+                    form="conversation-stop"
+                    aria-label="Stop"
+                  >
+                    Stop<svg class="workspace-icon" aria-hidden="true">
+                      <use href="/static/images/workspace-icons.svg#stop" />
+                    </svg>
+                  </button>
+                {% endif %}
+              {% else %}
+                <button
+                  class="btn btn-primary min-h-11 min-w-20"
+                  type="submit"
+                  name="action"
+                  value="send"
+                  aria-label="Send message"
+                  aria-disabled="{{ self.composer_disabled() }}"
+                  {% if self.composer_disabled() %}disabled{% endif %}
+                >
+                  Send<svg class="workspace-icon" aria-hidden="true">
+                    <use href="/static/images/workspace-icons.svg#up" />
+                  </svg>
+                </button>
+                <span
+                  data-island="shortcut-hint"
+                  class="shortcut-hint text-quiet text-center text-xs"
+                ></span>
+              {% endif %}
             </div>
             {% if !model_available %}
               <p class="text-quiet col-span-2 text-sm">
@@ -919,11 +913,6 @@
                   >Connect a provider</a
                 >
                 to send a message.
-              </p>
-            {% endif %}
-            {% if session_busy && !job_active %}
-              <p class="text-quiet col-span-2 text-sm">
-                Another command is active in this browser session.
               </p>
             {% endif %}
             {% if self.is_new() %}
@@ -959,33 +948,16 @@
               />
             </form>
           {% endif %}
-          {% if let Some(saved) = self.saved() %}{% if job_active %}
-            <details class="stop-confirm">
-              <summary class="btn btn-ghost btn-sm cursor-pointer">
-                Stop task
-              </summary>
-              <div class="mt-3 space-y-3">
-                <p class="text-sm font-semibold">Stop this task?</p>
-                <p class="text-quiet text-sm">
-                  The task stops before another action starts. Earlier file
-                  changes and host command effects remain. Stop does not reverse
-                  them.
-                </p>
-                <form
-                  data-graft
-                  method="post"
-                  action="/conversations/{{ saved.id }}/cancel"
-                >
-                  <input
-                    type="hidden"
-                    name="job"
-                    value="{{ saved.job_id }}"
-                  /><button class="btn btn-error btn-sm" type="submit">
-                    Confirm stop
-                  </button>
-                </form>
-              </div>
-            </details>
+          {% if let Some(saved) = self.saved() %}{% if observe_active %}
+            <form
+              id="conversation-stop"
+              data-graft
+              method="post"
+              action="/conversations/{{ saved.id }}/cancel"
+              hidden
+            >
+              <input type="hidden" name="job" value="{{ saved.job_id }}" />
+            </form>
           {% endif %}{% endif %}
         </div>
       </div>
@@ -1087,7 +1059,7 @@
                           <button
                             class="btn btn-secondary btn-xs"
                             type="submit"
-                            {% if job_active || session_busy %}disabled{% endif %}
+                            {% if job_active %}disabled{% endif %}
                           >
                             Use as execution target
                           </button>
@@ -1122,7 +1094,7 @@
                           <button
                             class="btn btn-secondary btn-xs"
                             type="submit"
-                            {% if job_active || session_busy %}disabled{% endif %}
+                            {% if job_active %}disabled{% endif %}
                           >
                             Grant writable target access
                           </button>
@@ -1157,7 +1129,7 @@
                           <button
                             class="btn btn-secondary btn-xs"
                             type="submit"
-                            {% if job_active || session_busy %}disabled{% endif %}
+                            {% if job_active %}disabled{% endif %}
                           >
                             Grant read-only access
                           </button>
@@ -1189,7 +1161,7 @@
                           <button
                             class="btn btn-secondary btn-xs"
                             type="submit"
-                            {% if job_active || session_busy %}disabled{% endif %}
+                            {% if job_active %}disabled{% endif %}
                           >
                             Grant writable target access
                           </button>
@@ -1210,7 +1182,7 @@
                     <button
                       class="btn btn-ghost btn-sm"
                       type="submit"
-                      {% if job_active || session_busy %}disabled{% endif %}
+                      {% if job_active %}disabled{% endif %}
                     >
                       Detach
                     </button>
@@ -1249,7 +1221,7 @@
                   id="conversation-project"
                   class="select select-bordered"
                   name="project"
-                  {% if job_active || session_busy %}disabled{% endif %}
+                  {% if job_active %}disabled{% endif %}
                 >
                   {% for project in attachable_projects %}
                     <option value="{{ project.id }}">{{ project.name }}</option>
@@ -1259,7 +1231,7 @@
               <button
                 class="btn btn-secondary"
                 type="submit"
-                {% if job_active || session_busy %}disabled{% endif %}
+                {% if job_active %}disabled{% endif %}
               >
                 Attach project
               </button>
@@ -1486,7 +1458,7 @@
                           {% if self.is_new() %}formaction="/conversations/new/settings/presets/preview"{% endif %}
                           formmethod="post"
                           class="btn btn-ghost choice-row border-base-300 flex h-auto w-full items-center gap-3 rounded-none border-0 border-b bg-transparent px-1 py-3 text-left font-normal [&>span]:min-w-0 [&>span]:flex-1"
-                          {% if job_active || session_busy %}disabled{% endif %}
+                          {% if job_active %}disabled{% endif %}
                         >
                           <span>
                             <strong>{{ preset.name }}</strong>
@@ -1629,7 +1601,7 @@
                           formmethod="post"
                           class="btn btn-primary"
                           type="submit"
-                          {% if job_active || session_busy %}disabled{% endif %}
+                          {% if job_active %}disabled{% endif %}
                         >
                           Save preset
                         </button>
@@ -2142,7 +2114,7 @@
                       id="conversation-add-directory"
                       class="btn btn-ghost btn-sm"
                       type="submit"
-                      {% if job_active || session_busy %}disabled{% endif %}
+                      {% if job_active %}disabled{% endif %}
                     >
                       <svg class="workspace-icon" aria-hidden="true">
                         <use href="/static/images/workspace-icons.svg#plus" />
@@ -2363,7 +2335,7 @@
                                       class="btn btn-warning btn-sm min-h-11"
                                       type="submit"
                                       formaction="/conversations/{{ saved.id }}/directories/{{ directory.id }}/consent"
-                                      {% if job_active || session_busy %}disabled{% endif %}
+                                      {% if job_active %}disabled{% endif %}
                                     >
                                       Review access
                                     </button>
@@ -2374,7 +2346,7 @@
                                   type="submit"
                                   aria-label="Remove {{ directory.name }}"
                                   title="Remove {{ directory.name }}"
-                                  {% if job_active || session_busy %}disabled{% endif %}
+                                  {% if job_active %}disabled{% endif %}
                                 >
                                   <svg
                                     class="workspace-icon"
@@ -2811,7 +2783,7 @@
               data-settings-save
               class="btn btn-primary"
               type="submit"
-              {% if job_active || session_busy %}disabled{% endif %}
+              {% if job_active %}disabled{% endif %}
             >
               Save settings
             </button>

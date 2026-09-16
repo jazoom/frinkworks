@@ -16,7 +16,7 @@ import { initTranscript } from "./transcript";
 import { initWorkflowEditor } from "./workflow-editor";
 import { initWorkspace } from "./workspace";
 
-export function startApp(): void {
+export function startApp(onMessageAdded: (message: HTMLElement) => void): void {
     const bound = bindTransportFeedback(document);
 
     if (import.meta.env.DEV) {
@@ -38,7 +38,7 @@ export function startApp(): void {
             "shortcut-hint": initShortcutHint,
             "theme-selector": initThemeSelector,
             "thinking-visibility": initThinkingVisibility,
-            transcript: initTranscript,
+            transcript: (root) => initTranscript(root, onMessageAdded),
             "workflow-editor": initWorkflowEditor,
             workspace: initWorkspace,
         },

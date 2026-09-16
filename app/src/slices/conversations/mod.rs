@@ -1192,12 +1192,10 @@ async fn start_message_mode(
         .map_err(|error| {
             StartMessageError::User(PatchStatus::UnprocessableEntity, error.message())
         })?;
-        let execution = state.workflow_execution.acquire().map_err(|_| {
-            StartMessageError::User(
-                PatchStatus::Conflict,
-                "Wait until the current workflow finishes.",
-            )
-        })?;
+        let execution = state
+            .workflow_execution
+            .acquire()
+            .map_err(|error| StartMessageError::User(PatchStatus::Conflict, error))?;
         let run_id = workflows::RunId::generate().map_err(|error| {
             StartMessageError::Internal(AppError::new("create workflow run identifier", error))
         })?;
@@ -1209,10 +1207,7 @@ async fn start_message_mode(
         .sessions
         .begin_conversation_job(&session, record.id, record.messages.len() + 1)
         .map_err(|_| {
-            StartMessageError::User(
-                PatchStatus::Conflict,
-                "Another command is active in this browser session.",
-            )
+            StartMessageError::User(PatchStatus::Conflict, ConversationError::Active.message())
         })?;
     let launch_brief = text.trim().to_owned();
     let phase_model = model.clone();
@@ -1665,7 +1660,7 @@ async fn attach_project(
     let Some(record) = load_conversation(&state, &conversation_id) else {
         return Ok(responses::command_navigation("/conversations"));
     };
-    if state.sessions.busy(&session.0) {
+    if conversation_busy(&state, &record) {
         return render_detail_command(
             graft,
             PatchStatus::Conflict,
@@ -1674,7 +1669,7 @@ async fn attach_project(
                 session.0,
                 &record,
                 &record.title,
-                "Another command is active in this browser session.",
+                ConversationError::Active.message(),
             ),
         );
     }
@@ -1744,7 +1739,7 @@ async fn grant_access(
     let Some(record) = load_conversation(&state, &conversation_id) else {
         return Ok(responses::command_navigation("/conversations"));
     };
-    if state.sessions.busy(&session.0) {
+    if conversation_busy(&state, &record) {
         return render_detail_command(
             graft,
             PatchStatus::Conflict,
@@ -1753,7 +1748,7 @@ async fn grant_access(
                 session.0,
                 &record,
                 &record.title,
-                "Another command is active in this browser session.",
+                ConversationError::Active.message(),
             ),
         );
     }
@@ -1860,10 +1855,7 @@ async fn set_network(
     let Some(record) = load_conversation(&state, &conversation_id) else {
         return Ok(responses::command_navigation("/conversations"));
     };
-    if state.sessions.busy(&session.0)
-        || record.active_job.is_some()
-        || state.sessions.conversation_reserved(record.id)
-    {
+    if conversation_busy(&state, &record) {
         return render_detail_command(
             graft,
             PatchStatus::Conflict,
@@ -1924,7 +1916,7 @@ async fn select_target(
     let Some(record) = load_conversation(&state, &conversation_id) else {
         return Ok(responses::command_navigation("/conversations"));
     };
-    if state.sessions.busy(&session.0) {
+    if conversation_busy(&state, &record) {
         return render_detail_command(
             graft,
             PatchStatus::Conflict,
@@ -1933,7 +1925,7 @@ async fn select_target(
                 session.0,
                 &record,
                 &record.title,
-                "Another command is active in this browser session.",
+                ConversationError::Active.message(),
             ),
         );
     }
@@ -2001,7 +1993,7 @@ async fn detach_project(
     let Some(record) = load_conversation(&state, &conversation_id) else {
         return Ok(responses::command_navigation("/conversations"));
     };
-    if state.sessions.busy(&session.0) {
+    if conversation_busy(&state, &record) {
         return render_detail_command(
             graft,
             PatchStatus::Conflict,
@@ -2010,7 +2002,7 @@ async fn detach_project(
                 session.0,
                 &record,
                 &record.title,
-                "Another command is active in this browser session.",
+                ConversationError::Active.message(),
             ),
         );
     }
@@ -2274,6 +2266,10 @@ fn valid_selection(state: &AppState, selection: &ModelSelection) -> Result<(), &
     }
 }
 
+fn conversation_busy(state: &AppState, record: &ConversationRecord) -> bool {
+    record.active_job.is_some() || state.sessions.conversation_reserved(record.id)
+}
+
 fn detail_view(
     state: &AppState,
     session: crate::sessions::SessionId,
@@ -2322,7 +2318,6 @@ fn detail_view(
         },
         &state.agents.list(),
         snapshot.as_ref(),
-        state.sessions.busy(&session) || record.active_job.is_some(),
         title,
         error,
         pending_gate,

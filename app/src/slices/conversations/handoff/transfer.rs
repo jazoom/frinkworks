@@ -159,7 +159,7 @@ pub(in crate::slices::conversations) fn finish(
         Ok(job) => job,
         Err(_) => {
             restore(previous);
-            return Err("Another command is active in this browser session.");
+            return Err(crate::conversations::ConversationError::Active.message());
         }
     };
     let started = match state.conversations.transfer_prepared(

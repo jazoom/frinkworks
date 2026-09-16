@@ -119,7 +119,7 @@ pub(in crate::slices::conversations) async fn restore(
         record.id,
         current.messages.len().saturating_sub(1),
     ) else {
-        return reject("Another command is active in this browser session.");
+        return reject(crate::conversations::ConversationError::Active.message());
     };
     let restored =
         match state
@@ -227,8 +227,5 @@ pub(super) fn attach(
     if !state.gate_continuations.insert(continuation) {
         return Err("Another operation controls the prepared changes.");
     }
-    state
-        .sessions
-        .release_job_reservation(&session, Some(record.id), job.id());
     Ok(())
 }

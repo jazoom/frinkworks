@@ -28,15 +28,16 @@ pub(crate) struct SessionStore {
 pub(crate) struct CommandReservation {
     store: Arc<SessionStore>,
     session: SessionId,
+    conversation: ConversationId,
     token: JobId,
 }
 
 impl Drop for CommandReservation {
     fn drop(&mut self) {
         if let Some(session) = self.store.lock().get_mut(&self.session)
-            && session.active == Some(self.token)
+            && session.commands.get(&self.conversation) == Some(&self.token)
         {
-            session.active = None;
+            session.commands.remove(&self.conversation);
         }
     }
 }
@@ -44,7 +45,6 @@ impl Drop for CommandReservation {
 struct ConversationJob {
     job: Arc<Job>,
     session: SessionId,
-    reservation: JobId,
 }
 
 struct Clock {
@@ -78,8 +78,9 @@ pub(crate) struct ConversationKey {
 struct StoredSession {
     conversations: HashMap<ConversationKey, Conversation>,
     language: Option<super::BrowserLanguage>,
-    // Safe gates release this token without release of conversation ownership.
+    // Legacy desk jobs use this token. Saved conversations do not share it.
     active: Option<JobId>,
+    commands: HashMap<ConversationId, JobId>,
     expires_at: Instant,
 }
 
@@ -115,6 +116,7 @@ impl SessionStore {
                 conversations: HashMap::new(),
                 language: None,
                 active: None,
+                commands: HashMap::new(),
                 expires_at,
             },
         );
@@ -146,21 +148,41 @@ impl SessionStore {
         live(&mut sessions, id, self.clock.now()).is_some_and(|session| session.active.is_some())
     }
 
+    pub(crate) fn command_reserved(&self, id: &SessionId, conversation: &ConversationId) -> bool {
+        let mut sessions = self.lock();
+        let now = self.clock.now();
+        live(&mut sessions, id, now).is_some() && command_held(&sessions, conversation, now)
+    }
+
     pub(crate) fn reserve_command(
         self: &Arc<Self>,
         id: SessionId,
+        conversation: ConversationId,
     ) -> Result<CommandReservation, BeginTurnError> {
         let token = JobId::generate().map_err(|_| BeginTurnError::JobId)?;
         let mut sessions = self.lock();
-        let session =
-            live_mut(&mut sessions, &id, self.clock.now()).ok_or(BeginTurnError::MissingSession)?;
-        if session.active.is_some() {
+        let now = self.clock.now();
+        live_mut(&mut sessions, &id, now).ok_or(BeginTurnError::MissingSession)?;
+        if command_held(&sessions, &conversation, now)
+            || self
+                .conversation_jobs()
+                .get(&conversation)
+                .is_some_and(|entry| {
+                    // Handoff can use a prepared candidate while its gate retains ownership.
+                    entry.job.snapshot().status != super::JobStatus::AwaitingDecision
+                })
+        {
             return Err(BeginTurnError::Conflict);
         }
-        session.active = Some(token);
+        sessions
+            .get_mut(&id)
+            .expect("live session")
+            .commands
+            .insert(conversation, token);
         Ok(CommandReservation {
             store: self.clone(),
             session: id,
+            conversation,
             token,
         })
     }
@@ -201,28 +223,29 @@ impl SessionStore {
         assistant_index: usize,
     ) -> Result<Arc<Job>, BeginTurnError> {
         let job_id = JobId::generate().map_err(|_| BeginTurnError::JobId)?;
-        let reservation = JobId::generate().map_err(|_| BeginTurnError::JobId)?;
         let mut sessions = self.lock();
-        let session =
-            live_mut(&mut sessions, id, self.clock.now()).ok_or(BeginTurnError::MissingSession)?;
-        if session.active.is_some() || self.conversation_jobs().contains_key(&conversation_id) {
+        live_mut(&mut sessions, id, self.clock.now()).ok_or(BeginTurnError::MissingSession)?;
+        let mut jobs = self.conversation_jobs();
+        if jobs.contains_key(&conversation_id)
+            || command_held(&sessions, &conversation_id, self.clock.now())
+        {
             return Err(BeginTurnError::Conflict);
         }
         let job = Job::for_conversation(job_id, conversation_id, assistant_index);
-        self.conversation_jobs().insert(
+        jobs.insert(
             conversation_id,
             ConversationJob {
                 job: job.clone(),
                 session: *id,
-                reservation,
             },
         );
-        session.active = Some(reservation);
         Ok(job)
     }
 
     pub(crate) fn conversation_reserved(&self, conversation_id: ConversationId) -> bool {
-        self.conversation_jobs().contains_key(&conversation_id)
+        let sessions = self.lock();
+        command_held(&sessions, &conversation_id, self.clock.now())
+            || self.conversation_jobs().contains_key(&conversation_id)
     }
 
     pub(crate) fn conversation_job(
@@ -236,57 +259,18 @@ impl SessionStore {
             .map(|entry| entry.job.clone())
     }
 
-    pub(crate) fn release_job_reservation(
+    pub(crate) fn owns_conversation_job(
         &self,
         id: &SessionId,
-        conversation_id: Option<ConversationId>,
+        conversation_id: ConversationId,
         job_id: JobId,
     ) -> bool {
         let mut sessions = self.lock();
-        let reservation = match conversation_id {
-            Some(conversation_id) => self
+        live(&mut sessions, id, self.clock.now()).is_some()
+            && self
                 .conversation_jobs()
                 .get(&conversation_id)
-                .filter(|entry| entry.job.id() == job_id && entry.session == *id)
-                .map(|entry| entry.reservation),
-            None => Some(job_id),
-        };
-        let Some(reservation) = reservation else {
-            return false;
-        };
-        let Some(session) = live_mut(&mut sessions, id, self.clock.now()) else {
-            return false;
-        };
-        if session.active != Some(reservation) {
-            return false;
-        }
-        session.active = None;
-        true
-    }
-
-    pub(crate) fn acquire_job_reservation(
-        &self,
-        id: &SessionId,
-        conversation_id: Option<ConversationId>,
-        job_id: JobId,
-    ) -> Result<(), BeginTurnError> {
-        let mut sessions = self.lock();
-        let reservation = match conversation_id {
-            Some(conversation_id) => self
-                .conversation_jobs()
-                .get(&conversation_id)
-                .filter(|entry| entry.job.id() == job_id && entry.session == *id)
-                .map(|entry| entry.reservation),
-            None => Some(job_id),
-        }
-        .ok_or(BeginTurnError::Conflict)?;
-        let session =
-            live_mut(&mut sessions, id, self.clock.now()).ok_or(BeginTurnError::MissingSession)?;
-        if session.active.is_some() {
-            return Err(BeginTurnError::Conflict);
-        }
-        session.active = Some(reservation);
-        Ok(())
+                .is_some_and(|entry| entry.session == *id && entry.job.id() == job_id)
     }
 
     pub(crate) fn finish_conversation_job(
@@ -295,18 +279,12 @@ impl SessionStore {
         conversation_id: ConversationId,
         job_id: JobId,
     ) -> bool {
-        let mut sessions = self.lock();
         let mut jobs = self.conversation_jobs();
-        let Some(entry) = jobs
+        if !jobs
             .get(&conversation_id)
-            .filter(|entry| entry.job.id() == job_id && entry.session == *id)
-        else {
-            return false;
-        };
-        if let Some(session) = live_mut(&mut sessions, id, self.clock.now())
-            && session.active == Some(entry.reservation)
+            .is_some_and(|entry| entry.job.id() == job_id && entry.session == *id)
         {
-            session.active = None;
+            return false;
         }
         jobs.remove(&conversation_id);
         true
@@ -368,6 +346,16 @@ impl SessionStore {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
+}
+
+fn command_held(
+    sessions: &HashMap<SessionId, StoredSession>,
+    conversation: &ConversationId,
+    now: Instant,
+) -> bool {
+    sessions
+        .values()
+        .any(|session| session.expires_at > now && session.commands.contains_key(conversation))
 }
 
 fn snapshot_session(key: &ConversationKey, session: &StoredSession) -> SessionSnapshot {

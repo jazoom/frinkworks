@@ -472,7 +472,6 @@ pub(super) struct ConversationDetailView {
     pub(super) directories_open: bool,
     pub(super) model_available: bool,
     pub(super) job_active: bool,
-    pub(super) session_busy: bool,
 }
 
 pub(super) struct SavedConversationState {
@@ -673,7 +672,6 @@ impl ConversationDetailView {
             directories_open: false,
             model_available: !form.model.is_empty(),
             job_active: false,
-            session_busy: false,
         }
     }
 
@@ -755,14 +753,15 @@ impl ConversationDetailView {
         )
     }
 
-    // The composer stays locked while a candidate or host command awaits a
-    // decision. The editor maxlength in the template is not the persisted
+    // The composer stays locked while this conversation has a running task or
+    // a candidate or host command awaits a decision. Other conversations do
+    // not lock it. The editor maxlength in the template is not the persisted
     // message bound in the conversation store.
     fn composer_disabled(&self) -> bool {
         if self.is_new() {
             return false;
         }
-        self.job_active || self.session_busy || !self.model_available || self.needs_review()
+        self.job_active || !self.model_available || self.needs_review()
     }
 
     fn transcript_empty(&self) -> bool {
@@ -780,7 +779,6 @@ impl ConversationDetailView {
         sources: ModelSources<'_>,
         agents: &[AgentRecord],
         job: Option<&JobSnapshot>,
-        session_busy: bool,
         title: &str,
         error: &'static str,
     ) -> Self {
@@ -789,7 +787,6 @@ impl ConversationDetailView {
             sources,
             agents,
             job,
-            session_busy,
             title,
             error,
             None,
@@ -804,7 +801,6 @@ impl ConversationDetailView {
         sources: ModelSources<'_>,
         agents: &[AgentRecord],
         job: Option<&JobSnapshot>,
-        session_busy: bool,
         title: &str,
         error: &'static str,
         pending_gate: Option<PendingCodeGateView>,
@@ -1066,7 +1062,6 @@ impl ConversationDetailView {
             settings_open: false,
             directories_open: false,
             job_active,
-            session_busy,
             state: ConversationPageState::Saved(Box::new(SavedConversationState {
                 id: record.id.as_hex(),
                 revision: record.revision.to_string(),

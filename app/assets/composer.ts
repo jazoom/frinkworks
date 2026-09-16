@@ -82,7 +82,7 @@ export function initComposer(
         const submitter = root.querySelector<HTMLButtonElement>(
             'button[type="submit"][name="mode"][value="quick"], button[type="submit"]',
         );
-        if (!submitter || submitter.disabled) {
+        if (!submitter || submitter.disabled || submitter.form !== root) {
             return;
         }
         root.requestSubmit(submitter);

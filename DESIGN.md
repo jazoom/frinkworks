@@ -97,6 +97,8 @@ First-use chooser headings use 30px, and connection headings use 28px. Narrow sc
 
 The desktop index occupies 230 pixels. The optional work companion occupies 400 pixels. The conversation fills the remaining width.
 
+Setup and Current work open with a 320 ms slide and close in 240 ms. Reduced motion removes the slide.
+
 The transcript and companion content scroll independently. The composer stays outside the transcript scroll area.
 
 The index leaves the page below 1021 pixels. Menu provides the same navigation destinations.
@@ -149,7 +151,7 @@ The model control opens a searchable popover above the composer. It lists connec
 
 Thinking effort stays visible beside the model as a borderless value and caret. Both controls use identical buttons with the same hover size. The effort popover uses padded options and a tick for the current value. Models without adjustable effort show a disabled Not available control. Saved conversations apply model and effort changes immediately without changes to other settings. Unsent messages and unsaved setup fields survive those commands.
 
-The composer uses two rows with an 8000 character editor limit. The persisted message bound stays in the conversation store. The send control reads Send message. Effective directory access appears below it with a folder or shield icon and a visible Sandbox label. Project access stays beside the composer even with no attached project. An empty project catalogue links to project registration. Host mode names unrestricted access. Job-bound cancellation reads Stop task beside the composer and in Current work. The composer stays locked while a candidate or host command awaits a decision.
+The composer uses two rows with an 8000 character editor limit. The persisted message bound stays in the conversation store. The send control reads Send message. Effective directory access appears below it with a folder or shield icon and a visible Sandbox label. Project access stays beside the composer even with no attached project. An empty project catalogue links to project registration. Host mode names unrestricted access. Job-bound cancellation reads Stop in the composer in place of Send. It posts without a confirmation step. Current work keeps the same Stop control when the composer is inert. The composer stays locked while a candidate or host command awaits a decision.
 
 Jump to latest appears when the reader leaves the transcript end. New output does not move the reader away from earlier messages.
 
@@ -159,7 +161,7 @@ New conversations show the title without an explanatory subtitle. Saved records 
 
 The header offers Handoff, Setup and Conversation actions. Conversation actions contains an independent draft copy, rename and explicit deletion.
 
-Current work appears when work is non-idle and its companion is closed. A Needs your review strip opens the companion without approval.
+Current work appears when work is non-idle and its companion is closed. Initial page loads and reloads keep the companion closed. A message does not open the companion. A Needs your review strip opens the companion without approval.
 
 Narrow screens wrap the actions below a long title. All actions retain readable labels.
 
@@ -169,7 +171,7 @@ Current work contains execution progress and required decisions. Candidate revie
 
 Per-file addition and removal counts derive from the complete stored diff. Binary or oversized changes omit counts rather than infer them from truncated previews. The companion lists the total changed-file count and notes when only the first paths render. Recorded test outcomes are not part of the candidate evidence, so neither review surface shows a test result line. These omissions are deliberate: counts and test lines appear only when recorded data supports them.
 
-The candidate footer has a bounded scroll area for long destinations and feedback forms. Current work retains the eligible job-bound cancellation control.
+The candidate footer has a bounded scroll area for long destinations and feedback forms. Current work retains the eligible job-bound Stop control without a confirmation step.
 
 The approval footer names the destination and the actual application consequence. It distinguishes ordinary file application from a local Git commit. It distinguishes configured continuation to the next step from both file outcomes.
 

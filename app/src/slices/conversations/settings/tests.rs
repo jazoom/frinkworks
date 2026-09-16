@@ -325,7 +325,7 @@ async fn settings_update_validates_the_complete_form_and_revision() {
     assert_eq!(response.status(), StatusCode::CONFLICT);
     assert!(text(response).await.contains("could not clean up the task"));
     assert_eq!(state.conversations.get(&active.id).unwrap(), active);
-    assert!(state.sessions.busy(&owner));
+    assert!(state.sessions.conversation_reserved(active.id));
 }
 
 #[tokio::test]

@@ -346,10 +346,7 @@ pub(super) async fn launch(
     if record.revision != revision {
         return error_view(PatchStatus::Conflict, super::REVISION_MESSAGE).await;
     }
-    if record.active_job.is_some()
-        || super::has_pending_review(&state, record.id)
-        || state.sessions.busy(&session.0)
-    {
+    if record.active_job.is_some() || super::has_pending_review(&state, record.id) {
         return error_view(
             PatchStatus::Conflict,
             "Wait until the current conversation command finishes.",
@@ -552,12 +549,8 @@ pub(super) async fn launch(
     };
     let execution = match state.workflow_execution.acquire() {
         Ok(execution) => execution,
-        Err(_) => {
-            return error_view(
-                PatchStatus::Conflict,
-                "Wait until the current workflow finishes.",
-            )
-            .await;
+        Err(error) => {
+            return error_view(PatchStatus::Conflict, error).await;
         }
     };
     let current = if target_record.execution_target != record.execution_target {
@@ -667,7 +660,7 @@ pub(super) async fn launch(
         Err(_) => {
             return error_view(
                 PatchStatus::Conflict,
-                "Another command is active in this browser session.",
+                crate::conversations::ConversationError::Active.message(),
             )
             .await;
         }

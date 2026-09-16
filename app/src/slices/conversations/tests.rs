@@ -1258,15 +1258,9 @@ async fn observation_uses_the_page_route_and_cancel_needs_only_the_job_identity(
         assert_eq!(response.status(), StatusCode::OK);
         let body = text(response).await;
         assert!(body.contains("Question"));
-        let companion = body
-            .split("id=\"conversation-work\"")
-            .nth(1)
-            .unwrap()
-            .split("</aside>")
-            .next()
-            .unwrap();
-        assert!(companion.contains(&format!("action=\"{path}/cancel\"")));
-        assert!(companion.contains(&format!("value=\"{}\"", job.id())));
+        assert!(body.contains(&format!("action=\"{path}/cancel\"")));
+        assert!(body.contains("id=\"conversation-stop\""));
+        assert!(body.contains(&format!("value=\"{}\"", job.id())));
     }
     let response = app(&state)
         .oneshot(command(

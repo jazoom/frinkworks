@@ -726,11 +726,12 @@ fn conversation_awaiting_gate() -> GateFixture {
     .expect("authority")
     .expect("authority");
     job.set_awaiting_decision();
-    assert!(fixture.state.sessions.release_job_reservation(
-        &session,
-        Some(conversation.id),
-        job.id(),
-    ));
+    assert!(
+        fixture
+            .state
+            .sessions
+            .owns_conversation_job(&session, conversation.id, job.id(),)
+    );
     assert!(
         fixture
             .state
@@ -844,7 +845,7 @@ async fn a_conversation_gate_shows_its_candidate_and_returns_to_the_conversation
 }
 
 #[tokio::test]
-async fn a_linked_candidate_review_releases_the_session_but_not_the_source_gate() {
+async fn a_linked_candidate_review_does_not_block_the_source_gate() {
     let mut fixture = conversation_awaiting_gate();
     let backend = crate::providers::tests::ScriptedBackend::accept();
     fixture.state.chat = std::sync::Arc::new(crate::providers::ChatBackend::Scripted(backend));
@@ -872,22 +873,16 @@ async fn a_linked_candidate_review_releases_the_session_but_not_the_source_gate(
             .active_job
             .is_some()
     );
-    assert!(fixture.state.sessions.busy(&fixture.session));
+    assert!(fixture.state.sessions.conversation_reserved(review.id));
 
-    let rejected = post_decision(
+    let approved = post_decision(
         &fixture,
         "approve",
         fixture.decision_body(&fixture.candidate),
         None,
     )
     .await;
-    assert_eq!(rejected.status(), axum::http::StatusCode::CONFLICT);
-    assert!(
-        fixture
-            .state
-            .gate_continuations
-            .available(&fixture.run_id, &fixture.session)
-    );
+    assert_eq!(approved.status(), axum::http::StatusCode::OK);
 
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
         while fixture
@@ -903,15 +898,7 @@ async fn a_linked_candidate_review_releases_the_session_but_not_the_source_gate(
     })
     .await
     .expect("review settlement");
-    assert!(!fixture.state.sessions.busy(&fixture.session));
-    let approved = post_decision(
-        &fixture,
-        "approve",
-        fixture.decision_body(&fixture.candidate),
-        None,
-    )
-    .await;
-    assert_eq!(approved.status(), axum::http::StatusCode::OK);
+    assert!(!fixture.state.sessions.conversation_reserved(review.id));
 }
 
 fn reopen_revision(
@@ -1142,7 +1129,7 @@ async fn a_human_revision_dispatches_the_reserved_attempt_and_rejects_a_duplicat
 }
 
 #[tokio::test]
-async fn another_conversation_keeps_a_gate_open_until_the_original_session_is_free() {
+async fn another_conversation_job_does_not_block_a_gate_decision() {
     let fixture = conversation_awaiting_gate();
     let other = fixture
         .state
@@ -1154,54 +1141,7 @@ async fn another_conversation_keeps_a_gate_open_until_the_original_session_is_fr
         .sessions
         .begin_conversation_job(&fixture.session, other.id, 1)
         .expect("other job");
-    let revision = post_decision(
-        &fixture,
-        "request-revision",
-        format!(
-            "{}&note=Fix+the+candidate",
-            fixture.decision_body(&fixture.candidate)
-        ),
-        None,
-    )
-    .await;
-    assert_eq!(revision.status(), axum::http::StatusCode::CONFLICT);
-    assert!(
-        fixture
-            .state
-            .workflow_runs
-            .get(&fixture.run_id)
-            .expect("run")
-            .revision_reservation
-            .is_none()
-    );
-    let response = post_decision(
-        &fixture,
-        "approve",
-        fixture.decision_body(&fixture.candidate),
-        None,
-    )
-    .await;
-    assert_eq!(response.status(), axum::http::StatusCode::CONFLICT);
-    assert!(
-        fixture
-            .state
-            .gate_continuations
-            .available(&fixture.run_id, &fixture.session)
-    );
-    assert!(matches!(
-        fixture
-            .state
-            .workflow_runs
-            .get(&fixture.run_id)
-            .expect("run")
-            .state,
-        crate::workflows::run::RunState::AwaitingHuman { .. }
-    ));
-    assert!(fixture.state.sessions.finish_conversation_job(
-        &fixture.session,
-        other.id,
-        other_job.id()
-    ));
+    assert!(fixture.state.sessions.conversation_reserved(other.id));
     let approved = post_decision(
         &fixture,
         "approve",
@@ -1236,6 +1176,12 @@ async fn another_conversation_keeps_a_gate_open_until_the_original_session_is_fr
         payload.decision,
         crate::workflows::gates::HumanDecisionKind::Approved
     );
+    assert!(fixture.state.sessions.conversation_reserved(other.id));
+    assert!(fixture.state.sessions.finish_conversation_job(
+        &fixture.session,
+        other.id,
+        other_job.id()
+    ));
     let duplicate = post_decision(
         &fixture,
         "approve",
@@ -1252,7 +1198,7 @@ async fn a_busy_executor_returns_the_conversation_gate_without_its_session_reser
     let execution = fixture
         .state
         .workflow_execution
-        .acquire()
+        .acquire_exclusive()
         .expect("other execution");
     let response = post_decision(
         &fixture,
@@ -1289,6 +1235,13 @@ async fn a_busy_executor_returns_the_conversation_gate_without_its_session_reser
             .is_some()
     );
     assert!(fixture.state.workflow_execution.acquire().is_err());
+    assert!(
+        fixture
+            .state
+            .workflow_execution
+            .acquire_exclusive()
+            .is_err()
+    );
     drop(execution);
 }
 

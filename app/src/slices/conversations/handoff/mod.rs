@@ -53,7 +53,7 @@ pub(super) async fn show(
             HandoffForm::default(),
             false,
             error,
-            state.sessions.busy(&session.0),
+            state.sessions.command_reserved(&session.0, &record.id),
         ),
     )
 }
@@ -113,10 +113,10 @@ pub(super) async fn generate(
             form,
         );
     };
-    let Ok(_reservation) = state.sessions.reserve_command(session.0) else {
+    let Ok(_reservation) = state.sessions.reserve_command(session.0, record.id) else {
         return reject(
             PatchStatus::Conflict,
-            "Another command is active in this browser session.",
+            "A handoff request is active for this conversation.",
             form,
         );
     };

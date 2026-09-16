@@ -1061,7 +1061,60 @@ document.addEventListener(
     true,
 );
 
-startApp();
+function animateMessage(message: HTMLElement): void {
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    message.animate(
+        [
+            {
+                opacity: reducedMotion.matches ? 0.65 : 0.2,
+                transform: reducedMotion.matches ? "none" : "translateY(10px)",
+            },
+            { opacity: 1, transform: "none" },
+        ],
+        {
+            duration: reducedMotion.matches ? 170 : 240,
+            easing: "cubic-bezier(0.16, 1, 0.3, 1)",
+        },
+    );
+}
+
+let sentMessageIds: Set<string> | undefined;
+document.addEventListener(
+    "submit",
+    (event) => {
+        if (
+            !(event.target instanceof HTMLFormElement) ||
+            event.target.id !== "conversation-composer"
+        )
+            return;
+        sentMessageIds = new Set(
+            Array.from(
+                document.querySelectorAll("#transcript .chat-turn[id]"),
+                (message) => message.id,
+            ),
+        );
+    },
+    true,
+);
+listenForRequestSettled((detail) => {
+    if (detail.form.id !== "conversation-composer") return;
+    // Send replaces the island, so its local observer cannot see these entries.
+    if (detail.outcome === "applied-patch" && sentMessageIds) {
+        for (const message of document.querySelectorAll<HTMLElement>(
+            "#transcript .chat-turn[id]",
+        )) {
+            if (
+                !sentMessageIds.has(message.id) &&
+                message.getAnimations().length === 0
+            ) {
+                animateMessage(message);
+            }
+        }
+    }
+    sentMessageIds = undefined;
+});
+
+startApp(animateMessage);
 
 const LIVE_RELOAD_EVENT_STREAM = "/_tower-livereload/event-stream";
 const LIVE_RELOAD_CHANNEL = "powerplant-live-reload";

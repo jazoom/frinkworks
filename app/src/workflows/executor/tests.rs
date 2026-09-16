@@ -2241,11 +2241,31 @@ fn uncertain_commit_protection_is_not_a_resumable_gate() {
         .acquire(workflow.agent_id.expect("agent"))
         .expect("agent lease");
     let execution = state.workflow_execution.acquire().expect("execution lease");
+    let second_execution = state
+        .workflow_execution
+        .acquire()
+        .expect("second execution");
+    let third_execution = state.workflow_execution.acquire().expect("third execution");
+    let second_agent_id = crate::agents::AgentId::generate().expect("second agent");
+    let second_agent = state
+        .agent_leases
+        .acquire(second_agent_id)
+        .expect("second agent lease");
     state
         .gate_continuations
         .protect_commit_recovery(&workflow.job, Some(agent), execution);
+    state.gate_continuations.protect_apply_recovery(
+        &workflow.job,
+        Some(second_agent),
+        second_execution,
+    );
+    state
+        .gate_continuations
+        .protect_cleanup_failure(&workflow.job, None, third_execution);
 
     assert!(state.workflow_execution.acquire().is_err());
+    assert!(state.agent_leases.acquire(second_agent_id).is_err());
+    assert!(state.workflow_execution.acquire_exclusive().is_err());
     assert!(
         state
             .agent_leases
@@ -2262,6 +2282,8 @@ fn uncertain_commit_protection_is_not_a_resumable_gate() {
         .expect("forget provider");
     super::interrupt_session_continuations(&state, session).expect("expire session");
     assert!(state.workflow_execution.acquire().is_err());
+    assert!(state.agent_leases.acquire(second_agent_id).is_err());
+    assert!(state.workflow_execution.acquire_exclusive().is_err());
     assert!(
         state
             .agent_leases

@@ -221,7 +221,7 @@ fn remove_cancels_the_active_job() {
 }
 
 #[test]
-fn a_gate_can_release_and_reacquire_only_its_session_reservation() {
+fn conversation_jobs_run_independently_of_each_other() {
     let store = super::SessionStore::new();
     let token = sessions::generate_session_token().expect("token");
     let id = token.id();
@@ -231,26 +231,77 @@ fn a_gate_can_release_and_reacquire_only_its_session_reservation() {
     let first_job = store
         .begin_conversation_job(&id, first, 1)
         .expect("first job");
-    assert!(store.release_job_reservation(&id, Some(first), first_job.id()));
-    assert!(!store.busy(&id));
-
-    assert!(
-        store
-            .acquire_job_reservation(&id, Some(first), first_job.id())
-            .is_ok()
-    );
-    assert!(store.release_job_reservation(&id, Some(first), first_job.id()));
     let second_job = store
         .begin_conversation_job(&id, second, 1)
         .expect("second job");
+    assert!(!store.busy(&id));
+    assert!(store.conversation_reserved(first));
+    assert!(store.conversation_reserved(second));
+    assert!(store.begin_conversation_job(&id, first, 1).is_err());
+    assert!(store.owns_conversation_job(&id, first, first_job.id()));
+    assert!(!store.owns_conversation_job(&id, first, second_job.id()));
+    assert!(!store.owns_conversation_job(&id, second, first_job.id()));
+    let other_session = sessions::generate_session_token()
+        .expect("other session")
+        .id();
+    store.insert(other_session);
+    assert!(!store.owns_conversation_job(&other_session, first, first_job.id()));
     assert!(
         store
-            .acquire_job_reservation(&id, Some(first), first_job.id())
+            .begin_conversation_job(&other_session, first, 1)
             .is_err()
     );
     assert!(store.finish_conversation_job(&id, first, first_job.id()));
-    assert!(store.busy(&id));
+    assert!(store.conversation_reserved(second));
+    assert!(!store.conversation_reserved(first));
     assert!(store.finish_conversation_job(&id, second, second_job.id()));
+    assert!(!store.busy(&id));
+}
+
+#[test]
+fn command_reservations_are_local_to_the_conversation() {
+    let store = Arc::new(super::SessionStore::new());
+    let session = sessions::generate_session_token().expect("session").id();
+    store.insert(session);
+    let first = crate::conversations::ConversationId::generate().expect("first");
+    let second = crate::conversations::ConversationId::generate().expect("second");
+    let first_command = store
+        .reserve_command(session, first)
+        .expect("first command");
+    let second_command = store
+        .reserve_command(session, second)
+        .expect("second command");
+    assert!(store.reserve_command(session, first).is_err());
+    assert!(store.conversation_reserved(first));
+    assert!(store.begin_conversation_job(&session, first, 1).is_err());
+    let other_session = sessions::generate_session_token()
+        .expect("other session")
+        .id();
+    store.insert(other_session);
+    assert!(store.reserve_command(other_session, first).is_err());
+    assert!(
+        store
+            .begin_conversation_job(&other_session, first, 1)
+            .is_err()
+    );
+    drop(first_command);
+    assert!(!store.command_reserved(&session, &first));
+    assert!(!store.conversation_reserved(first));
+    let job = store
+        .begin_conversation_job(&session, first, 1)
+        .expect("job after handoff");
+    assert!(store.reserve_command(session, first).is_err());
+    assert!(store.reserve_command(other_session, first).is_err());
+    assert!(job.set_awaiting_decision().is_some());
+    let gate_handoff = store
+        .reserve_command(session, first)
+        .expect("handoff at a safe gate");
+    drop(gate_handoff);
+    assert!(store.conversation_reserved(first));
+    assert!(store.finish_conversation_job(&session, first, job.id()));
+    assert!(store.command_reserved(&session, &second));
+    drop(second_command);
+    assert!(!store.command_reserved(&session, &second));
 }
 
 #[test]

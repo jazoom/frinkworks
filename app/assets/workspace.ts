@@ -9,7 +9,6 @@ export function initWorkspace(
     let workOpen = false;
     let expanded = false;
     let returnFocus: HTMLElement | null = null;
-    let previousActivity = false;
     let previousCompanion = false;
     let setupReturnFocus: HTMLElement | null = null;
     let menuTrigger: HTMLElement | null = null;
@@ -78,22 +77,19 @@ export function initWorkspace(
         const work = root.querySelector<HTMLElement>("#conversation-work");
         if (detail !== conversation) {
             conversation = detail;
-            workOpen = work?.dataset.workActive === "true";
+            workOpen = false;
             expanded = false;
-            previousActivity = workOpen;
         }
-        const active = work?.dataset.workActive === "true";
         const companion = !!root.querySelector(
             "#workflow-detail, #activity-detail",
         );
-        if (previousActivity && !active && work?.dataset.workEmpty === "true")
-            workOpen = false;
-        if (previousCompanion && !companion && !active) workOpen = false;
+        if (previousCompanion && !companion) workOpen = false;
         previousCompanion = companion;
-        if (active && !previousActivity) workOpen = true;
-        previousActivity = active;
         if (openWork) workOpen = true;
-        if (work) work.hidden = !workOpen;
+        detail?.toggleAttribute("data-work-open", workOpen);
+        if (work) {
+            work.setAttribute("aria-hidden", String(!workOpen));
+        }
         // The review strip only applies while Current work stays closed.
         root.querySelectorAll<HTMLElement>("[data-attention-strip]").forEach(
             (strip) => {
@@ -103,7 +99,7 @@ export function initWorkspace(
         const setup = root.querySelector(
             "#conversation-settings:popover-open, #conversation-actions:popover-open",
         );
-        if (work) work.inert = !!setup;
+        if (work) work.inert = !workOpen || !!setup;
         detail?.toggleAttribute(
             "data-review-expanded",
             expanded && workOpen && !setup,
@@ -261,7 +257,9 @@ export function initWorkspace(
         skip.textContent = "Skip to conversation";
         const companion = root.querySelector<HTMLElement>("#conversation-work");
         const companionVisible =
-            !!companion && !companion.hidden && mobile.matches;
+            !!companion &&
+            detail.hasAttribute("data-work-open") &&
+            mobile.matches;
         if (companionVisible) skip.setAttribute("href", "#conversation-work");
         else if (root.querySelector("#transcript"))
             skip.setAttribute("href", "#transcript");
@@ -384,7 +382,7 @@ export function initWorkspace(
                 if (workOpen)
                     root.querySelector<HTMLElement>(
                         "#conversation-work",
-                    )?.focus();
+                    )?.focus({ preventScroll: true });
             } else if (target?.closest("[data-actions-show]")) {
                 const trigger = target.closest<HTMLElement>(
                     "[data-actions-show]",
@@ -531,9 +529,10 @@ export function initWorkspace(
         { signal },
     );
     mobile.addEventListener("change", () => sync(), { signal });
-    sync(new URL(location.href).searchParams.get("work") === "true");
+    sync();
     return {
         reconcile(context) {
+            let openWork = false;
             if (
                 context.cause === "location" &&
                 context.detail.cause !== "command-patch-replacement" &&
@@ -545,7 +544,7 @@ export function initWorkspace(
                         url.pathname,
                     )
                 ) {
-                    workOpen = true;
+                    openWork = true;
                     expanded = false;
                     root.querySelector<HTMLElement>(
                         "#conversation-settings:popover-open, #conversation-actions:popover-open",
@@ -553,11 +552,13 @@ export function initWorkspace(
                 }
             }
             sync(
-                context.cause === "location" &&
-                    context.detail.cause !== "command-patch-replacement" &&
-                    new URL(context.detail.url, location.href).searchParams.get(
-                        "work",
-                    ) === "true",
+                openWork ||
+                    (context.cause === "location" &&
+                        context.detail.cause !== "command-patch-replacement" &&
+                        new URL(
+                            context.detail.url,
+                            location.href,
+                        ).searchParams.get("work") === "true"),
             );
         },
         destroy() {
