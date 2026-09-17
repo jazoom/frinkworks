@@ -360,7 +360,7 @@ where
                         })
                         .collect::<Vec<_>>()
                         .join("\n\n");
-                    (!text.is_empty()).then_some(Ok(ModelEvent::Thinking(text)))
+                    Some(Ok(ModelEvent::Thinking(text)))
                 }
             }
             Ok(StreamedAssistantContent::Final(final_response)) => {

@@ -26,7 +26,7 @@ use crate::{
 };
 
 use self::{forms::ModelForm, page::ChatViewModel};
-pub(crate) use job::{AgentOutcome, AgentRunSpec, bound_reply, run_agent_action};
+pub(crate) use job::{AgentOutcome, AgentRunSpec, StreamRedactor, bound_reply, run_agent_action};
 
 #[derive(Clone, Copy)]
 pub(crate) struct DeskPage<'a> {

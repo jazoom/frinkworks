@@ -951,6 +951,19 @@ impl ConversationDetailView {
         let message_budget =
             (672_usize * 1024).saturating_sub(ammonia::clean_text(&model_picker.catalogue).len());
         let mut messages = visible_messages(record, message_budget);
+        if let Some(job) = job
+            && !job.output.is_empty()
+            && let Some(message) = messages
+                .iter_mut()
+                .find(|message| message.id == message_id(&record.id, job.assistant_index))
+        {
+            *message = reply_view(
+                &record.id,
+                job.assistant_index,
+                &job.output,
+                job.status == JobStatus::Running,
+            );
+        }
         if pending_gate.is_some()
             || job.is_some_and(|job| job.status == JobStatus::AwaitingDecision)
         {
@@ -1831,12 +1844,13 @@ pub(super) fn message_id(conversation: &ConversationId, index: usize) -> String 
     format!("conversation-{}-message-{index}", conversation.as_hex())
 }
 
-fn message_view(
+pub(super) fn message_view(
     conversation: &ConversationId,
     index: usize,
     message: &ConversationMessage,
 ) -> MessageView {
     let user = message.role == MessageRole::User;
+    let streaming = message.status == MessageStatus::Pending;
     MessageView {
         id: message_id(conversation, index),
         user,
@@ -1846,17 +1860,131 @@ fn message_view(
                 ammonia::clean_text(&message.text)
             )
         } else {
-            reply_html(&message.text)
+            activity_html(
+                &message_id(conversation, index),
+                &message.text,
+                &message.activity,
+                streaming,
+            )
         },
         status: match message.status {
             MessageStatus::Complete => "",
-            MessageStatus::Pending => "Replying",
+            MessageStatus::Pending => reply_status(&message.activity),
             MessageStatus::Interrupted => "Interrupted",
             MessageStatus::Failed => "Failed",
         },
         error: message_error(message),
         streaming: message.status == MessageStatus::Pending,
     }
+}
+
+pub(super) fn reply_view(
+    conversation: &ConversationId,
+    index: usize,
+    reply: &crate::providers::AssistantReply,
+    streaming: bool,
+) -> MessageView {
+    let id = message_id(conversation, index);
+    MessageView {
+        html: activity_html(&id, &reply.text, &reply.activity, streaming),
+        id,
+        user: false,
+        status: if streaming {
+            reply_status(&reply.activity)
+        } else {
+            ""
+        },
+        error: String::new(),
+        streaming,
+    }
+}
+
+fn reply_status(activity: &[crate::providers::AssistantActivity]) -> &'static str {
+    use crate::providers::AssistantActivity;
+    match activity.last() {
+        Some(AssistantActivity::Thinking(_)) => "Thinking",
+        Some(AssistantActivity::ToolCall { result: None, .. }) => "Tool call in progress",
+        Some(_) => "Replying",
+        None => "Waiting for model",
+    }
+}
+
+#[derive(Template)]
+#[template(path = "conversations/templates/message_content.html")]
+struct MessageContent<'a> {
+    id: &'a str,
+    blocks: Vec<MessageBlock>,
+}
+
+struct MessageBlock {
+    kind: &'static str,
+    html: String,
+    label: String,
+    output: String,
+    active: bool,
+}
+
+fn activity_html(
+    id: &str,
+    text: &str,
+    activity: &[crate::providers::AssistantActivity],
+    streaming: bool,
+) -> String {
+    use crate::providers::AssistantActivity;
+    let blocks = if activity.is_empty() {
+        vec![MessageBlock {
+            kind: "response",
+            html: reply_html(text),
+            label: String::new(),
+            output: String::new(),
+            active: streaming,
+        }]
+    } else {
+        activity
+            .iter()
+            .enumerate()
+            .map(|(index, item)| {
+                let active = streaming && index + 1 == activity.len();
+                let mut block = MessageBlock {
+                    kind: "",
+                    html: String::new(),
+                    label: String::new(),
+                    output: String::new(),
+                    active,
+                };
+                match item {
+                    AssistantActivity::Response(text) => {
+                        block.kind = "response";
+                        block.html = reply_html(text);
+                    }
+                    AssistantActivity::Thinking(text) => {
+                        block.kind = "thinking";
+                        block.html = reply_html(text);
+                    }
+                    AssistantActivity::Tool(tool)
+                    | AssistantActivity::ToolCall {
+                        result: Some(tool), ..
+                    } => {
+                        block.kind = "tool";
+                        block.label = tool.label.clone();
+                        block.output = tool.output.clone();
+                        block.active = false;
+                    }
+                    AssistantActivity::ToolCall {
+                        name, result: None, ..
+                    } => {
+                        block.kind = "tool-call";
+                        block.label = name.clone();
+                        block.active = streaming;
+                    }
+                }
+                block
+            })
+            .collect()
+    };
+    MessageContent { id, blocks }
+        .render()
+        .expect("message content template")
 }
 
 pub(super) fn message_error(message: &ConversationMessage) -> String {

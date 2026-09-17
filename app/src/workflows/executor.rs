@@ -4108,7 +4108,7 @@ fn settle_job(state: &AppState, workflow: &WorkflowJob, status: JobStatus, error
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clone();
     let mut reply = workflow.job.snapshot().output;
-    if !eligible.is_empty() {
+    if !eligible.is_empty() && reply.activity.is_empty() {
         reply.text = eligible;
     }
     settle_with_reply(state, workflow, status, error, &reply);
@@ -4154,7 +4154,9 @@ fn settle_with_reply(
         let _ = state.conversations.settle_message(
             &conversation_id,
             workflow.job.id(),
-            conversation_reply.unwrap_or(reply.text),
+            conversation_reply
+                .map(crate::providers::AssistantReply::from)
+                .unwrap_or(reply),
             message_status,
             if message_status == crate::conversations::MessageStatus::Failed {
                 error.clone()

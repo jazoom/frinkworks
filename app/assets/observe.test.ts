@@ -71,10 +71,31 @@ test("an ancestor command patch restarts observation after the unsafe guard rele
     expect(submissions.count).toBe(1);
     vi.advanceTimersByTime(0);
     expect(submissions.count).toBe(2);
+    const preference = document.createElement("form");
+    preference.method = "post";
+    for (const outcome of [
+        "applied-patch",
+        "safe-failure",
+        "uncertain-unsafe-result",
+    ] as const) {
+        island.reconcile?.({
+            cause: "patch",
+            detail: {
+                requestKind: "patch",
+                form: preference,
+                url: "/thinking-visibility",
+                outcome,
+                status: 200,
+                targetIds: ["thinking-visibility"],
+            },
+        });
+        vi.advanceTimersByTime(0);
+    }
+    expect(submissions.count).toBe(5);
     root.dataset.observeActive = "false";
     patch("conversation-detail");
     vi.advanceTimersByTime(0);
-    expect(submissions.count).toBe(2);
+    expect(submissions.count).toBe(5);
     island.destroy();
     parent.remove();
     vi.useRealTimers();

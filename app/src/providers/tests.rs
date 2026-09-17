@@ -467,8 +467,12 @@ mod scripted_fixture {
         }
 
         pub(crate) fn events(events: Vec<Result<ModelEvent, ProviderError>>) -> Self {
+            Self::rounds(vec![events])
+        }
+
+        pub(crate) fn rounds(rounds: Vec<Vec<Result<ModelEvent, ProviderError>>>) -> Self {
             let mut backend = Self::accept();
-            backend.script = Ok(Script::Rounds(vec![events]));
+            backend.script = Ok(Script::Rounds(rounds));
             backend
         }
 

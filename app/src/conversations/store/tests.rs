@@ -735,8 +735,20 @@ fn completed_and_interrupted_messages_survive_restart() {
             store.delete(&record.id, record.revision),
             Err(ConversationError::Active)
         );
+        let mut reply = crate::providers::AssistantReply::default();
+        reply.push_response("Partial");
+        reply.push_thinking("");
+        reply.start_tool("call-1".to_owned(), "list".to_owned());
+        reply.finish_tool(
+            "call-1",
+            crate::providers::ToolOutput {
+                label: "list".to_owned(),
+                output: "Empty workspace".to_owned(),
+            },
+        );
+        reply.push_response(" reply");
         store
-            .append_output(&record.id, request, "Partial reply".to_owned())
+            .append_output(&record.id, request, reply)
             .expect("partial");
         if complete {
             store
@@ -759,6 +771,10 @@ fn completed_and_interrupted_messages_survive_restart() {
     assert_eq!(recovered.messages[1].text, "Complete reply");
     assert_eq!(recovered.messages[3].status, MessageStatus::Interrupted);
     assert_eq!(recovered.messages[3].text, "Partial reply");
+    use crate::providers::AssistantActivity;
+    assert!(
+        matches!(recovered.messages[3].activity.as_slice(), [AssistantActivity::Response(_), AssistantActivity::Thinking(text), AssistantActivity::ToolCall { result: Some(_), .. }, AssistantActivity::Response(_)] if text.is_empty())
+    );
     assert_eq!(
         store.settle_message(
             &record.id,
@@ -772,11 +788,78 @@ fn completed_and_interrupted_messages_survive_restart() {
 }
 
 #[test]
+fn transcript_progress_preserves_revision_without_weakening_request_identity() {
+    let store = ConversationStore::in_memory();
+    let record = store.create("Discussion".to_owned()).unwrap();
+    let request = JobId::generate().unwrap();
+    let started = store
+        .begin_message_with_model(
+            &record.id,
+            record.revision,
+            None,
+            request,
+            "Question".to_owned(),
+        )
+        .unwrap();
+    for text in ["Partial", "Partial", "Complete"] {
+        store.append_output(&record.id, request, text).unwrap();
+        let current = store.get(&record.id).unwrap();
+        assert_eq!(current.revision, started.revision);
+        assert_eq!(current.messages.last().unwrap().text, text);
+    }
+    assert_eq!(
+        store.append_output(&record.id, JobId::generate().unwrap(), "Wrong request"),
+        Err(ConversationError::Conflict)
+    );
+    store
+        .settle_message(
+            &record.id,
+            request,
+            "Complete",
+            MessageStatus::Complete,
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        store.get(&record.id).unwrap().revision,
+        started.revision + 1
+    );
+    assert_eq!(
+        store.append_output(&record.id, request, "Late output"),
+        Err(ConversationError::Conflict)
+    );
+}
+
+#[test]
 fn message_bounds_reserve_space_for_terminal_output() {
     let store = ConversationStore::in_memory();
     let record = store.create("Discussion".to_owned()).expect("conversation");
     let selection =
         ModelSelection::new(ProviderKind::Xai, "grok-4.6".to_owned(), None).expect("model");
+    // Existing history leaves less space than the escaped response needs without its reservation.
+    let mut history = store.create("History".to_owned()).unwrap();
+    for _ in 0..4 {
+        let request = JobId::generate().unwrap();
+        store
+            .begin_message(
+                &history.id,
+                history.revision,
+                selection.clone(),
+                request,
+                "Question".to_owned(),
+            )
+            .unwrap();
+        store
+            .settle_message(
+                &history.id,
+                request,
+                "x".repeat(super::MAXIMUM_REPLY_BYTES),
+                MessageStatus::Complete,
+                None,
+            )
+            .unwrap();
+        history = store.get(&history.id).unwrap();
+    }
     let request = JobId::generate().expect("request");
     for text in [
         "x".repeat(super::MAXIMUM_MESSAGE_BYTES + 1),
@@ -814,10 +897,20 @@ fn message_bounds_reserve_space_for_terminal_output() {
         )
         .expect("capacity for a linked review at a gate");
     let third = store.create("Third".to_owned()).expect("third");
-    assert_eq!(
-        store.begin_message(
+    store
+        .begin_message(
             &third.id,
             third.revision,
+            selection.clone(),
+            JobId::generate().unwrap(),
+            "Question".to_owned(),
+        )
+        .expect("third reservation");
+    let fourth = store.create("Fourth".to_owned()).expect("fourth");
+    assert_eq!(
+        store.begin_message(
+            &fourth.id,
+            fourth.revision,
             selection,
             JobId::generate().expect("request"),
             "Question".to_owned(),
@@ -832,7 +925,30 @@ fn message_bounds_reserve_space_for_terminal_output() {
         ),
         Err(ConversationError::Message)
     );
-    let reply = "\u{0001}".repeat(super::MAXIMUM_REPLY_BYTES);
+    let mut reply = crate::providers::AssistantReply::default();
+    reply.push_response(&"\u{0001}".repeat(super::MAXIMUM_REPLY_BYTES));
+    reply.push_thinking(&"\u{0001}".repeat(super::MAXIMUM_REPLY_BYTES));
+    for activity in [
+        vec![crate::providers::AssistantActivity::Thinking(
+            "invalid\0text".to_owned(),
+        )],
+        vec![crate::providers::AssistantActivity::Thinking(
+            "x".repeat(256 * 1024 + 1),
+        )],
+        vec![crate::providers::AssistantActivity::Thinking(String::new()); 257],
+        vec![crate::providers::AssistantActivity::Response(
+            "Different text".to_owned(),
+        )],
+    ] {
+        let invalid = crate::providers::AssistantReply {
+            activity,
+            ..Default::default()
+        };
+        assert_eq!(
+            store.append_output(&record.id, request, invalid),
+            Err(ConversationError::Message)
+        );
+    }
     store
         .append_output(&record.id, request, reply.clone())
         .expect("reserved capacity");

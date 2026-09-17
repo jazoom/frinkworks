@@ -76,6 +76,10 @@ fn finish_is_idempotent() {
 }
 
 impl super::Job {
+    pub(crate) fn push_tool(&self, output: ToolOutput) -> Option<u64> {
+        self.finish_tool(String::new(), output)
+    }
+
     pub(crate) fn new(id: JobId, _run_id: RunId, assistant_index: usize) -> Arc<Self> {
         Self::for_conversation(
             id,

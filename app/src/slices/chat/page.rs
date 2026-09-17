@@ -499,6 +499,10 @@ fn activity_views(reply: &AssistantReply) -> Vec<ActivityView> {
         match activity {
             AssistantActivity::Thinking(thinking) => push_thinking_view(&mut views, thinking),
             AssistantActivity::Tool(tool) => push_tool_view(&mut views, tool),
+            AssistantActivity::ToolCall {
+                result: Some(tool), ..
+            } => push_tool_view(&mut views, tool),
+            AssistantActivity::Response(_) | AssistantActivity::ToolCall { result: None, .. } => {}
         }
     }
     views

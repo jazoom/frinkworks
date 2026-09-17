@@ -639,11 +639,25 @@ async fn network_tool_reply_uses_private_workspace_without_catalogue_identity() 
             crate::environments::PreparationLogRecord::empty(),
         )
         .unwrap();
-    let backend = crate::providers::tests::ScriptedBackend::tool_then(
-        "run",
-        serde_json::json!({"command": "wget -qO- https://example.com"}),
-        "The network check completed.",
-    );
+    use crate::providers::{AssistantActivity, ModelEvent};
+    let backend = crate::providers::tests::ScriptedBackend::rounds(vec![
+        vec![
+            Ok(ModelEvent::Text("I will inspect the site.".to_owned())),
+            Ok(ModelEvent::Thinking(
+                "Inspect the response first.".to_owned(),
+            )),
+            Ok(ModelEvent::Text("The tool can read it.".to_owned())),
+            Ok(ModelEvent::ToolCall {
+                id: "call-1".to_owned(),
+                name: "run".to_owned(),
+                arguments: serde_json::json!({"command": "wget -qO- https://example.com"}),
+            }),
+        ],
+        vec![
+            Ok(ModelEvent::Thinking(String::new())),
+            Ok(ModelEvent::Text("The network check completed.".to_owned())),
+        ],
+    ]);
     state.chat = std::sync::Arc::new(crate::providers::ChatBackend::Scripted(backend));
     let token = connected(&state);
     let effort = state
@@ -703,7 +717,20 @@ async fn network_tool_reply_uses_private_workspace_without_catalogue_identity() 
     );
     assert_eq!(
         settled.messages.last().unwrap().text,
-        "The network check completed."
+        "I will inspect the site.The tool can read it.The network check completed."
+    );
+    assert!(
+        matches!(settled.messages.last().unwrap().activity.as_slice(), [
+        AssistantActivity::Response(_), AssistantActivity::Thinking(_), AssistantActivity::Response(_),
+        AssistantActivity::ToolCall { result: Some(_), .. }, AssistantActivity::Thinking(thought), AssistantActivity::Response(_)
+    ] if thought.is_empty())
+    );
+    assert!(
+        super::super::job::history(&settled)
+            .last()
+            .unwrap()
+            .text
+            .contains("it.\n\nThe network")
     );
     let capabilities = &run.attempts[0].capabilities;
     assert_eq!(capabilities.primary().unwrap().guest_path, "/workspace");

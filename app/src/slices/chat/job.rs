@@ -96,8 +96,10 @@ pub(crate) async fn run_agent_action(
     let mut output_visible = false;
     let mut response_redactor = StreamRedactor::new(secret);
     let mut thinking_redactor = StreamRedactor::new(secret);
+    let mut event_count = 0usize;
 
     for _ in 0..MAXIMUM_TOOL_ROUNDS {
+        persist_output(state, &job);
         thinking_progress.begin_phase();
         if job.cancel_requested() {
             return cancel_action(&job, &reply);
@@ -135,6 +137,7 @@ pub(crate) async fn run_agent_action(
         let mut text = String::new();
         let mut calls = Vec::new();
         loop {
+            persist_output(state, &job);
             let thinking_deadline = thinking_progress.deadline(&reply.thinking);
             let wait_for_thinking = async {
                 match thinking_deadline {
@@ -156,16 +159,28 @@ pub(crate) async fn run_agent_action(
             let Some(chunk) = chunk else {
                 break;
             };
+            event_count += 1;
+            if event_count > 4096
+                || reply.activity.len() >= 256
+                || matches!(&chunk, Ok(ModelEvent::Text(text) | ModelEvent::Thinking(text)) if text.contains('\0'))
+            {
+                return AgentActionEnd {
+                    outcome: AgentOutcome::ProviderFailure,
+                    error: Some(ProviderError::ReplyTooLong.message().to_owned()),
+                    reply,
+                };
+            }
             match chunk {
                 Ok(ModelEvent::Text(piece)) => {
+                    let tail = thinking_redactor.finish_boundary();
+                    append_thinking_piece(&mut reply, &tail, &mut thinking_bytes);
                     thinking_progress.flush(&job, &reply.thinking);
                     let piece = response_redactor.push(&piece);
                     if let Some(evidence) = &spec.evidence {
                         evidence.response(&piece, secret);
                     }
                     text.push_str(&piece);
-                    let truncated =
-                        append_model_piece(&mut reply.text, &piece, &mut model_reply_bytes);
+                    let truncated = append_model_piece(&mut reply, &piece, &mut model_reply_bytes);
                     publish_progress(
                         &job,
                         &reply.text,
@@ -189,6 +204,20 @@ pub(crate) async fn run_agent_action(
                     }
                 }
                 Ok(ModelEvent::Thinking(piece)) => {
+                    let tail = response_redactor.finish_boundary();
+                    text.push_str(&tail);
+                    append_model_piece(&mut reply, &tail, &mut model_reply_bytes);
+                    publish_remaining(
+                        &job,
+                        &reply.text,
+                        published_response,
+                        OutputChannel::Response,
+                    );
+                    published_response = reply.text.len();
+                    if !matches!(reply.activity.last(), Some(AssistantActivity::Thinking(_))) {
+                        reply.push_thinking("");
+                        job.push_thinking(String::new());
+                    }
                     let piece = thinking_redactor.push(&piece);
                     if let Some(evidence) = &spec.evidence {
                         evidence.thinking(&piece, secret);
@@ -200,7 +229,46 @@ pub(crate) async fn run_agent_action(
                     id,
                     name,
                     arguments,
-                }) => calls.push((id, name, arguments)),
+                }) => {
+                    let tail = response_redactor.finish_boundary();
+                    text.push_str(&tail);
+                    append_model_piece(&mut reply, &tail, &mut model_reply_bytes);
+                    let tail = thinking_redactor.finish_boundary();
+                    append_thinking_piece(&mut reply, &tail, &mut thinking_bytes);
+                    publish_reply_before_tools(
+                        &job,
+                        &reply,
+                        &mut published_response,
+                        &mut thinking_progress,
+                    );
+                    if id.len() > 512
+                        || name.len() > 512
+                        || id.contains('\0')
+                        || name.contains('\0')
+                    {
+                        return AgentActionEnd {
+                            outcome: AgentOutcome::ProviderFailure,
+                            error: Some(ProviderError::Refused.message().to_owned()),
+                            reply,
+                        };
+                    }
+                    let visible_id = tools::redact(&id, secret);
+                    let visible_name = tools::redact(&name, secret);
+                    visible_tool_bytes += visible_id.len() + visible_name.len();
+                    if visible_id.len() > 512
+                        || visible_name.len() > 512
+                        || visible_tool_bytes > MAXIMUM_VISIBLE_TOOL_BYTES
+                    {
+                        return AgentActionEnd {
+                            outcome: AgentOutcome::ProviderFailure,
+                            error: Some(ProviderError::ReplyTooLong.message().to_owned()),
+                            reply,
+                        };
+                    }
+                    job.start_tool(visible_id.clone(), visible_name.clone());
+                    reply.start_tool(visible_id, visible_name);
+                    calls.push((id, name, arguments));
+                }
                 Ok(ModelEvent::Usage { input_tokens }) => {
                     let usage = ModelUsage {
                         provider: spec.connection.kind,
@@ -243,8 +311,7 @@ pub(crate) async fn run_agent_action(
             if let Some(evidence) = &spec.evidence {
                 evidence.thinking(&thinking_tail, secret);
             }
-            let truncated =
-                append_model_piece(&mut reply.text, &response_tail, &mut model_reply_bytes);
+            let truncated = append_model_piece(&mut reply, &response_tail, &mut model_reply_bytes);
             append_thinking_piece(&mut reply, &thinking_tail, &mut thinking_bytes);
             thinking_progress.flush(&job, &reply.thinking);
             publish_reply_remaining(
@@ -310,6 +377,7 @@ pub(crate) async fn run_agent_action(
             required_outputs: &spec.required_outputs,
         };
         for (id, name, arguments) in calls {
+            persist_output(state, &job);
             let trace = tools::invoke(&context, &name, &arguments).await;
             if job.cancel_requested() {
                 return cancel_action(&job, &reply);
@@ -327,8 +395,10 @@ pub(crate) async fn run_agent_action(
             if let Some(visible) =
                 visible_tool_output(trace.label, &output, &mut visible_tool_bytes)
             {
-                job.push_tool(visible.clone());
-                reply.push_tool(visible);
+                let visible_id = tools::redact(&id, secret);
+                job.finish_tool(visible_id.clone(), visible.clone());
+                reply.finish_tool(&visible_id, visible);
+                persist_output(state, &job);
                 output_visible = true;
             }
             if trace.failed && spec.host.as_ref().is_some_and(|host| host.run.is_some()) {
@@ -357,20 +427,20 @@ pub(crate) async fn run_agent_action(
 }
 
 // A provider can split a credential across arbitrary stream events.
-struct StreamRedactor<'a> {
+pub(crate) struct StreamRedactor<'a> {
     secret: Option<&'a str>,
     pending: String,
 }
 
 impl<'a> StreamRedactor<'a> {
-    fn new(secret: Option<&'a str>) -> Self {
+    pub(crate) fn new(secret: Option<&'a str>) -> Self {
         Self {
             secret: secret.filter(|secret| !secret.is_empty()),
             pending: String::new(),
         }
     }
 
-    fn push(&mut self, piece: &str) -> String {
+    pub(crate) fn push(&mut self, piece: &str) -> String {
         self.pending.push_str(piece);
         let Some(secret) = self.secret else {
             return std::mem::take(&mut self.pending);
@@ -387,8 +457,18 @@ impl<'a> StreamRedactor<'a> {
         redacted[..split].to_owned()
     }
 
-    fn finish(&mut self) -> String {
+    pub(crate) fn finish(&mut self) -> String {
         std::mem::take(&mut self.pending)
+    }
+
+    // A channel boundary must not move a possible credential prefix into a later block.
+    pub(crate) fn finish_boundary(&mut self) -> String {
+        if self.pending.is_empty() {
+            String::new()
+        } else {
+            self.pending.clear();
+            "[redacted]".to_owned()
+        }
     }
 }
 
@@ -409,10 +489,14 @@ fn assistant_tool_message(text: &str, calls: &[(String, String, serde_json::Valu
     Message::Assistant { id: None, content }
 }
 
-fn append_model_piece(reply: &mut String, piece: &str, model_reply_bytes: &mut usize) -> bool {
+fn append_model_piece(
+    reply: &mut AssistantReply,
+    piece: &str,
+    model_reply_bytes: &mut usize,
+) -> bool {
     let remaining = MAXIMUM_MODEL_REPLY_BYTES.saturating_sub(*model_reply_bytes);
     if piece.len() <= remaining {
-        reply.push_str(piece);
+        reply.push_response(piece);
         *model_reply_bytes += piece.len();
         return false;
     }
@@ -420,12 +504,15 @@ fn append_model_piece(reply: &mut String, piece: &str, model_reply_bytes: &mut u
     while end > 0 && !piece.is_char_boundary(end) {
         end -= 1;
     }
-    reply.push_str(&piece[..end]);
+    reply.push_response(&piece[..end]);
     *model_reply_bytes += end;
     true
 }
 
 fn append_thinking_piece(reply: &mut AssistantReply, piece: &str, thinking_bytes: &mut usize) {
+    if piece.is_empty() {
+        return;
+    }
     let remaining = MAXIMUM_THINKING_BYTES.saturating_sub(*thinking_bytes);
     let mut end = piece.len().min(remaining);
     while end > 0 && !piece.is_char_boundary(end) {
@@ -441,6 +528,8 @@ fn visible_tool_output(
     visible_tool_bytes: &mut usize,
 ) -> Option<ToolOutput> {
     const MARKER: &str = "\n[output truncated]";
+    let label = label.replace('\0', "\u{fffd}");
+    let output = output.replace('\0', "\u{fffd}");
     let remaining = MAXIMUM_VISIBLE_TOOL_BYTES.saturating_sub(*visible_tool_bytes);
     let output_limit = remaining.checked_sub(label.len())?;
     if output_limit == 0 {
@@ -577,16 +666,40 @@ pub(crate) fn bound_reply(reply: &AssistantReply) -> AssistantReply {
     let mut activities = Vec::new();
     let mut thinking_bytes = 0usize;
     let mut tool_bytes = 0usize;
-    for activity in std::mem::take(&mut bounded.activity) {
+    let mut response_bytes = 0usize;
+    let ordered_response = bounded
+        .activity
+        .iter()
+        .any(|activity| matches!(activity, AssistantActivity::Response(_)));
+    if ordered_response {
+        bounded.text.clear();
+    }
+    for activity in std::mem::take(&mut bounded.activity).into_iter().take(256) {
         match activity {
+            AssistantActivity::Response(mut text) => {
+                truncate_utf8(
+                    &mut text,
+                    MAXIMUM_MODEL_REPLY_BYTES.saturating_sub(response_bytes),
+                );
+                response_bytes += text.len();
+                bounded.text.push_str(&text);
+                activities.push(AssistantActivity::Response(text));
+            }
+            AssistantActivity::ToolCall { id, name, result } => {
+                let result = result.and_then(|tool| {
+                    visible_tool_output(tool.label, &tool.output, &mut tool_bytes)
+                });
+                if let Some(tool) = &result {
+                    bounded.tools.push(tool.clone());
+                }
+                activities.push(AssistantActivity::ToolCall { id, name, result });
+            }
             AssistantActivity::Thinking(mut thinking) => {
                 let remaining = MAXIMUM_THINKING_BYTES.saturating_sub(thinking_bytes);
                 truncate_utf8(&mut thinking, remaining);
-                if !thinking.is_empty() {
-                    thinking_bytes += thinking.len();
-                    bounded.thinking.push_str(&thinking);
-                    activities.push(AssistantActivity::Thinking(thinking));
-                }
+                thinking_bytes += thinking.len();
+                bounded.thinking.push_str(&thinking);
+                activities.push(AssistantActivity::Thinking(thinking));
             }
             AssistantActivity::Tool(tool) => {
                 let ToolOutput { label, output } = tool;
@@ -599,6 +712,16 @@ pub(crate) fn bound_reply(reply: &AssistantReply) -> AssistantReply {
     }
     bounded.activity = activities;
     bounded
+}
+
+fn persist_output(state: &AppState, job: &Job) {
+    let snapshot = job.snapshot();
+    let crate::sessions::JobOwner::Conversation(conversation) = snapshot.owner;
+    if !snapshot.output.is_empty() {
+        let _ = state
+            .conversations
+            .append_output(&conversation, job.id(), snapshot.output);
+    }
 }
 
 fn truncate_utf8(text: &mut String, maximum: usize) {

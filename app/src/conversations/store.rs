@@ -21,7 +21,7 @@ mod handoff;
 
 const CATALOGUE_VERSION: u32 = 1;
 const CATALOGUE_FILE: &str = "catalogue.json";
-const MAXIMUM_CATALOGUE_BYTES: usize = 2 * 1024 * 1024;
+const MAXIMUM_CATALOGUE_BYTES: usize = 8 * 1024 * 1024;
 pub(crate) const MAXIMUM_CONVERSATIONS: usize = 128;
 pub(crate) const MAXIMUM_TITLE_BYTES: usize = 120;
 pub(crate) const MAXIMUM_MESSAGES: usize = 512;
@@ -196,6 +196,7 @@ pub(crate) enum MessageStatus {
 pub(crate) struct ConversationMessage {
     pub(crate) role: MessageRole,
     pub(crate) text: String,
+    pub(crate) activity: Vec<crate::providers::AssistantActivity>,
     pub(crate) status: MessageStatus,
     pub(crate) error: Option<String>,
     pub(crate) request: Option<JobId>,
@@ -388,6 +389,8 @@ struct ArtefactRefFile {
 struct MessageFile {
     role: MessageRole,
     text: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    activity: Vec<crate::providers::AssistantActivity>,
     status: MessageStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     error: Option<String>,
@@ -1002,6 +1005,7 @@ impl ConversationStore {
             current.messages.push(ConversationMessage {
                 role: MessageRole::User,
                 text,
+                activity: Vec::new(),
                 status: MessageStatus::Complete,
                 error: None,
                 request: None,
@@ -1009,6 +1013,7 @@ impl ConversationStore {
             current.messages.push(ConversationMessage {
                 role: MessageRole::Assistant,
                 text: String::new(),
+                activity: Vec::new(),
                 status: MessageStatus::Pending,
                 error: None,
                 request: Some(request),
@@ -1022,14 +1027,20 @@ impl ConversationStore {
         &self,
         id: &ConversationId,
         request: JobId,
-        text: String,
+        reply: impl Into<crate::providers::AssistantReply>,
     ) -> Result<(), ConversationError> {
-        if text.len() > MAXIMUM_REPLY_BYTES || text.contains('\0') {
+        let reply = reply.into();
+        if reply.text.len() > MAXIMUM_REPLY_BYTES
+            || reply.text.contains('\0')
+            || !valid_activity(&reply.activity, &reply.text)
+        {
             return Err(ConversationError::Message);
         }
-        self.replace(id, 0, |current| {
+        // Transcript progress must not invalidate revision-bound execution controls.
+        self.update(id, 0, false, |current| {
             let message = active_assistant(current, request)?;
-            message.text = text;
+            message.text = reply.text;
+            message.activity = reply.activity;
             Ok(())
         })
         .map(|_| ())
@@ -1039,23 +1050,26 @@ impl ConversationStore {
         &self,
         id: &ConversationId,
         request: JobId,
-        text: String,
+        reply: impl Into<crate::providers::AssistantReply>,
         status: MessageStatus,
         error: Option<String>,
     ) -> Result<(), ConversationError> {
-        if !valid_message_error(status, error.as_deref())
+        let reply = reply.into();
+        if !valid_activity(&reply.activity, &reply.text)
+            || !valid_message_error(status, error.as_deref())
             || !matches!(
                 status,
                 MessageStatus::Complete | MessageStatus::Interrupted | MessageStatus::Failed
             )
-            || text.len() > MAXIMUM_REPLY_BYTES
-            || text.contains('\0')
+            || reply.text.len() > MAXIMUM_REPLY_BYTES
+            || reply.text.contains('\0')
         {
             return Err(ConversationError::Message);
         }
         self.replace(id, 0, |current| {
             let message = active_assistant(current, request)?;
-            message.text = text;
+            message.text = reply.text;
+            message.activity = reply.activity;
             message.status = status;
             message.error = error;
             current.active_job = None;
@@ -1093,6 +1107,16 @@ impl ConversationStore {
         expected_revision: u32,
         edit: impl FnOnce(&mut ConversationRecord) -> Result<(), ConversationError>,
     ) -> Result<ConversationRecord, ConversationError> {
+        self.update(id, expected_revision, true, edit)
+    }
+
+    fn update(
+        &self,
+        id: &ConversationId,
+        expected_revision: u32,
+        advance_revision: bool,
+        edit: impl FnOnce(&mut ConversationRecord) -> Result<(), ConversationError>,
+    ) -> Result<ConversationRecord, ConversationError> {
         let mut conversations = self.lock();
         let Some(current) = conversations.get(id).cloned() else {
             return Err(ConversationError::Missing);
@@ -1112,10 +1136,12 @@ impl ConversationStore {
         if access_digest(&current) != access_digest(&updated) {
             updated.directory_approvals.clear();
         }
-        updated.revision = current
-            .revision
-            .checked_add(1)
-            .ok_or(ConversationError::Revision)?;
+        if advance_revision {
+            updated.revision = current
+                .revision
+                .checked_add(1)
+                .ok_or(ConversationError::Revision)?;
+        }
         updated.updated_at_ms = now_ms().max(current.updated_at_ms);
         conversations.insert(*id, updated.clone());
         if let Err(error) = persist(self.path.as_deref(), &conversations) {
@@ -1559,6 +1585,8 @@ fn message_from_file(file: MessageFile) -> Result<ConversationMessage, Conversat
     if file.text.len() > limit
         || file.text.contains('\0')
         || !valid_message_error(file.status, file.error.as_deref())
+        || !valid_activity(&file.activity, &file.text)
+        || (file.role == MessageRole::User && !file.activity.is_empty())
     {
         return Err(ConversationError::Corrupt);
     }
@@ -1574,10 +1602,50 @@ fn message_from_file(file: MessageFile) -> Result<ConversationMessage, Conversat
     Ok(ConversationMessage {
         role: file.role,
         text: file.text,
+        activity: file.activity,
         status: file.status,
         error: file.error,
         request,
     })
+}
+
+fn valid_activity(activity: &[crate::providers::AssistantActivity], text: &str) -> bool {
+    use crate::providers::AssistantActivity;
+    if activity.is_empty() {
+        return true;
+    }
+    if activity.len() > 256 {
+        return false;
+    }
+    let mut bytes = 0usize;
+    let mut response = String::new();
+    for item in activity {
+        let parts: Vec<&str> = match item {
+            AssistantActivity::Response(value) => {
+                response.push_str(value);
+                vec![value]
+            }
+            AssistantActivity::Thinking(value) => vec![value],
+            AssistantActivity::Tool(tool) => vec![&tool.label, &tool.output],
+            AssistantActivity::ToolCall { id, name, result } => {
+                if id.len() > 512 || name.len() > 512 {
+                    return false;
+                }
+                let mut parts = vec![id.as_str(), name.as_str()];
+                if let Some(tool) = result {
+                    parts.extend([tool.label.as_str(), tool.output.as_str()]);
+                }
+                parts
+            }
+        };
+        for part in parts {
+            bytes = bytes.saturating_add(part.len());
+            if part.contains('\0') || bytes > 256 * 1024 {
+                return false;
+            }
+        }
+    }
+    response == text
 }
 
 fn valid_message_error(status: MessageStatus, error: Option<&str>) -> bool {
@@ -1594,27 +1662,36 @@ fn persist(
     conversations: &BTreeMap<ConversationId, ConversationRecord>,
 ) -> Result<(), ConversationError> {
     let records = conversations.values().map(record_to_file).collect();
-    let bytes = serde_json::to_vec_pretty(&CatalogueFile {
+    let mut catalogue = CatalogueFile {
         version: CATALOGUE_VERSION,
         conversations: records,
-    })
-    .map_err(|_| ConversationError::Persist)?;
-    // Reserve worst-case JSON expansion and terminal status space before dispatch.
-    let reserved: usize = conversations
-        .values()
-        .filter(|record| record.active_job.is_some())
-        .map(|record| {
-            let used = record
-                .messages
-                .last()
-                .map_or(0, |message| message.text.len());
-            // JSON can encode one control byte as six bytes, including replies at safe gates.
-            6 * (MAXIMUM_REPLY_BYTES.saturating_sub(used)
-                + crate::providers::MAXIMUM_PROVIDER_DETAIL_BYTES)
-                + 64
-        })
-        .sum();
-    if bytes.len().saturating_add(reserved) > MAXIMUM_CATALOGUE_BYTES {
+    };
+    let bytes = serde_json::to_vec_pretty(&catalogue).map_err(|_| ConversationError::Persist)?;
+    // Reserve complete payloads against empty pending messages. Partial output must not
+    // change the reservation through JSON escaping or pretty-print indentation.
+    let mut reserved = 0usize;
+    for record in &mut catalogue.conversations {
+        if record.active_job.is_some() {
+            if let Some(message) = record.messages.last_mut() {
+                message.text.clear();
+                message.activity.clear();
+            }
+            reserved += 6
+                * (MAXIMUM_REPLY_BYTES
+                    + 256 * 1024
+                    + crate::providers::MAXIMUM_PROVIDER_DETAIL_BYTES)
+                + 256 * 512;
+        }
+    }
+    let reserved_bytes = if reserved == 0 {
+        bytes.len()
+    } else {
+        serde_json::to_vec_pretty(&catalogue)
+            .map_err(|_| ConversationError::Persist)?
+            .len()
+            .saturating_add(reserved)
+    };
+    if bytes.len().max(reserved_bytes) > MAXIMUM_CATALOGUE_BYTES {
         return Err(ConversationError::Full);
     }
     let Some(path) = path else {
@@ -1677,6 +1754,7 @@ fn record_to_file(record: &ConversationRecord) -> ConversationFile {
             .map(|message| MessageFile {
                 role: message.role,
                 text: message.text.clone(),
+                activity: message.activity.clone(),
                 status: message.status,
                 error: message.error.clone(),
                 request: message.request.map(|request| request.as_hex()),

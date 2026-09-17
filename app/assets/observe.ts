@@ -43,7 +43,12 @@ export function initObserve(root: HTMLElement): IslandInstance {
             if (root.dataset.observeActive !== "true") {
                 return;
             }
-            // A later segment must start after this one settles. Morph may
+            // Any unsafe command can cancel observation, even outside this root.
+            if (context.detail.form.method.toLowerCase() !== "get") {
+                schedule(0);
+                return;
+            }
+            // A later segment must start after this one settles. Morph can
             // keep this root, so mount will not run again.
             if (context.detail.outcome === "applied-patch") {
                 const target = root.dataset.observeTarget ?? "";
@@ -56,8 +61,6 @@ export function initObserve(root: HTMLElement): IslandInstance {
                 ) {
                     return;
                 }
-                // Ancestor command patches can cancel the previous observation.
-                // Restart after the unsafe request releases its guard.
                 schedule(0);
                 return;
             }

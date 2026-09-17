@@ -9,12 +9,12 @@ use crate::{
     conversations::{
         ConversationId, ConversationRecord, MAXIMUM_REPLY_BYTES, MessageRole, MessageStatus,
     },
-    providers::{ChatTurn, ModelEvent, ProviderConnection, ProviderError, Role},
+    providers::{AssistantReply, ChatTurn, ModelEvent, ProviderConnection, ProviderError, Role},
     sessions::{Job, JobStatus, SessionId},
     state::AppState,
 };
 
-use super::page::{ConversationObserveContents, MessageBody, MessageView};
+use super::page::{ConversationObserveContents, MessageBody};
 
 const OBSERVE_WAIT: Duration = Duration::from_secs(20);
 const OBSERVE_SEGMENT_MAX: Duration = Duration::from_secs(25);
@@ -36,7 +36,9 @@ pub(super) async fn run(
         crate::providers::AuthMethod::ApiKey => Some(connection.api_key.expose()),
         crate::providers::AuthMethod::Plan => None,
     };
-    let mut reply = String::new();
+    let mut reply = AssistantReply::default();
+    let mut redactor = crate::slices::chat::StreamRedactor::new(secret);
+    let mut thinking = false;
     let mut event_count = 0usize;
     let result = tokio::select! {
         biased;
@@ -51,16 +53,28 @@ pub(super) async fn run(
                 event = stream.next() => event,
             } {
                 event_count += 1;
-                if event_count > 4096 {
+                if event_count > 4096 || reply.activity.len() >= 256 {
                     return Err(Failure::Provider(ProviderError::ReplyTooLong));
                 }
                 match event.map_err(Failure::Provider)? {
                     ModelEvent::Text(text) => {
-                        append_text(&mut reply, &text)?;
-                        job.push_response(text);
+                        if thinking {
+                            append_piece(&mut reply, &job, redactor.finish_boundary(), thinking)?;
+                        }
+                        thinking = false;
+                        validate_piece(&reply, &text)?;
+                        append_piece(&mut reply, &job, redactor.push(&text), thinking)?;
                         state.conversations.append_output(&conversation, job.id(), reply.clone()).map_err(Failure::Store)?;
                     }
-                    ModelEvent::Thinking(_) => {}
+                    ModelEvent::Thinking(text) => {
+                        if !thinking {
+                            append_piece(&mut reply, &job, redactor.finish_boundary(), thinking)?;
+                        }
+                        thinking = true;
+                        validate_piece(&reply, &text)?;
+                        append_piece(&mut reply, &job, redactor.push(&text), thinking)?;
+                        state.conversations.append_output(&conversation, job.id(), reply.clone()).map_err(Failure::Store)?;
+                    }
                     ModelEvent::Usage { input_tokens } => {
                         job.push_usage(crate::providers::ModelUsage {
                             provider: connection.kind,
@@ -68,15 +82,32 @@ pub(super) async fn run(
                             input_tokens,
                         });
                     }
-                    ModelEvent::ToolCall { .. } => return Err(Failure::Provider(ProviderError::Refused)),
+                    ModelEvent::ToolCall { id, name, .. } => {
+                        append_piece(&mut reply, &job, redactor.finish_boundary(), thinking)?;
+                        if id.len() <= 512 && name.len() <= 512 && !id.contains('\0') && !name.contains('\0') {
+                            let id = crate::tools::redact(&id, secret);
+                            let name = crate::tools::redact(&name, secret);
+                            if id.len() > 512 || name.len() > 512 {
+                                return Err(Failure::Provider(ProviderError::ReplyTooLong));
+                            }
+                            reply.start_tool(id.clone(), name.clone());
+                            job.start_tool(id, name);
+                        }
+                        return Err(Failure::Provider(ProviderError::Refused));
+                    }
                 }
             }
-            if reply.trim().is_empty() {
+            append_piece(&mut reply, &job, redactor.finish(), thinking)?;
+            if reply.text.trim().is_empty() {
                 return Err(Failure::Provider(ProviderError::EmptyReply));
             }
             Ok(())
         } => result,
     };
+    let tail = redactor.finish_boundary();
+    if !tail.is_empty() {
+        let _ = append_piece(&mut reply, &job, tail, thinking);
+    }
     let (status, message_status, error) = match result {
         Ok(()) => (JobStatus::Completed, MessageStatus::Complete, None),
         Err(Failure::Cancelled)
@@ -131,11 +162,34 @@ enum Failure {
     Cancelled,
 }
 
-fn append_text(reply: &mut String, text: &str) -> Result<(), Failure> {
-    if text.contains('\0') || reply.len().saturating_add(text.len()) > MAXIMUM_REPLY_BYTES {
+fn append_piece(
+    reply: &mut AssistantReply,
+    job: &Job,
+    text: String,
+    thinking: bool,
+) -> Result<(), Failure> {
+    validate_piece(reply, &text)?;
+    if thinking {
+        reply.push_thinking(&text);
+        job.push_thinking(text);
+    } else {
+        reply.push_response(&text);
+        job.push_response(text);
+    }
+    Ok(())
+}
+
+fn validate_piece(reply: &AssistantReply, text: &str) -> Result<(), Failure> {
+    if text.contains('\0')
+        || reply
+            .text
+            .len()
+            .saturating_add(reply.thinking.len())
+            .saturating_add(text.len())
+            > MAXIMUM_REPLY_BYTES
+    {
         return Err(Failure::Provider(ProviderError::ReplyTooLong));
     }
-    reply.push_str(text);
     Ok(())
 }
 
@@ -298,7 +352,21 @@ pub(super) fn history(record: &ConversationRecord) -> Vec<ChatTurn> {
             {
                 Some(ChatTurn {
                     role: Role::Assistant,
-                    text: message.text.clone(),
+                    text: if message.activity.is_empty() {
+                        message.text.clone()
+                    } else {
+                        message
+                            .activity
+                            .iter()
+                            .filter_map(|activity| match activity {
+                                crate::providers::AssistantActivity::Response(text) => {
+                                    Some(text.as_str())
+                                }
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n\n")
+                    },
                     thinking: String::new(),
                     tools: Vec::new(),
                     activity: Vec::new(),
@@ -346,12 +414,12 @@ async fn observe_segment(
     while job.latest_seq() > cursor {
         let snapshot = job.snapshot();
         let output = job.output_up_to(snapshot.latest_seq);
-        if !output.text.is_empty()
+        if !output.is_empty()
             && let Some(frame) = progress_frame(
                 &conversation,
                 &job,
                 snapshot.latest_seq,
-                &output.text,
+                &output,
                 &mut budget,
             )
             && tx.send(frame).await.is_err()
@@ -373,17 +441,11 @@ fn progress_frame(
     conversation: &ConversationId,
     job: &Job,
     cursor: u64,
-    text: &str,
+    reply: &AssistantReply,
     budget: &mut hypergraft::StreamBudget,
 ) -> Option<hypergraft::StreamFrame> {
-    let message = MessageView {
-        id: super::page::message_id(conversation, job.assistant_index()),
-        user: false,
-        html: super::page::reply_html(text),
-        status: "Replying",
-        error: String::new(),
-        streaming: true,
-    };
+    let message =
+        super::page::reply_view(conversation, job.assistant_index(), reply, job.is_running());
     let mut patches = PatchSet::new();
     patches
         .children(&message.id, &MessageBody { message: &message })
@@ -431,18 +493,10 @@ fn final_frame(
         && let Some(message) = record.messages.get(job.assistant_index())
         && message.request == Some(job.id())
     {
-        let message = MessageView {
-            id: super::page::message_id(conversation, job.assistant_index()),
-            user: false,
-            html: super::page::reply_html(&message.text),
-            status: match message.status {
-                MessageStatus::Complete => "",
-                MessageStatus::Interrupted => "Interrupted",
-                MessageStatus::Failed => "Failed",
-                MessageStatus::Pending => "Replying",
-            },
-            error: super::page::message_error(message),
-            streaming: message.status == MessageStatus::Pending,
+        let message = if snapshot.status == JobStatus::Running && !snapshot.output.is_empty() {
+            super::page::reply_view(conversation, job.assistant_index(), &snapshot.output, true)
+        } else {
+            super::page::message_view(conversation, job.assistant_index(), message)
         };
         let _ = patches.children(&message.id, &MessageBody { message: &message });
     }

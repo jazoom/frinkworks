@@ -30,6 +30,10 @@ fn streamed_credentials_remain_redacted_at_every_utf8_split() {
     }
     output.push_str(&redactor.finish());
     assert_eq!(output, "Before [redacted] after [redacted].");
+    let mut redactor = super::StreamRedactor::new(Some(secret));
+    assert_eq!(redactor.push("Before sk-"), "Before ");
+    assert_eq!(redactor.finish_boundary(), "[redacted]");
+    assert_eq!(redactor.push("Next block"), "Next block");
 }
 
 #[test]
@@ -42,7 +46,7 @@ fn a_large_tool_result_does_not_consume_the_model_reply_limit() {
     )
     .expect("visible tool output");
 
-    let mut reply = String::new();
+    let mut reply = AssistantReply::default();
     let mut model_reply_bytes = 0;
     assert!(!append_model_piece(
         &mut reply,
@@ -50,7 +54,7 @@ fn a_large_tool_result_does_not_consume_the_model_reply_limit() {
         &mut model_reply_bytes,
     ));
     assert!(tool.output.ends_with("[output truncated]"));
-    assert_eq!(reply.len(), MAXIMUM_MODEL_REPLY_BYTES);
+    assert_eq!(reply.text.len(), MAXIMUM_MODEL_REPLY_BYTES);
 }
 
 fn job() -> std::sync::Arc<Job> {
@@ -162,7 +166,7 @@ fn pending_thinking_is_published_before_a_tool() {
     let events = job.events_after(0);
     let tool_index = events
         .iter()
-        .position(|event| matches!(event.kind, JobEventKind::Tool { .. }))
+        .position(|event| matches!(event.kind, JobEventKind::ToolFinished { .. }))
         .expect("tool event");
     assert_eq!(tool_index, events.len() - 1);
     assert!(events[..tool_index].iter().all(|event| {
@@ -177,12 +181,12 @@ fn pending_thinking_is_published_before_a_tool() {
 
 #[test]
 fn model_reply_overflow_remains_an_error() {
-    let mut reply = String::new();
+    let mut reply = AssistantReply::default();
     let mut model_reply_bytes = 0;
     assert!(append_model_piece(
         &mut reply,
         &"a".repeat(MAXIMUM_MODEL_REPLY_BYTES + 1),
         &mut model_reply_bytes,
     ));
-    assert_eq!(reply.len(), MAXIMUM_MODEL_REPLY_BYTES);
+    assert_eq!(reply.text.len(), MAXIMUM_MODEL_REPLY_BYTES);
 }

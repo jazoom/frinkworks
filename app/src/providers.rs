@@ -258,16 +258,24 @@ pub(crate) enum Role {
     Assistant,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ToolOutput {
     pub(crate) label: String,
     pub(crate) output: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) enum AssistantActivity {
+    Response(String),
     Thinking(String),
     Tool(ToolOutput),
+    ToolCall {
+        id: String,
+        name: String,
+        result: Option<ToolOutput>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -288,19 +296,51 @@ pub(crate) struct AssistantReply {
 
 impl AssistantReply {
     pub(crate) fn is_empty(&self) -> bool {
-        self.text.trim().is_empty() && self.thinking.trim().is_empty() && self.tools.is_empty()
+        self.text.trim().is_empty()
+            && self.thinking.trim().is_empty()
+            && self.tools.is_empty()
+            && self.activity.is_empty()
     }
 
-    pub(crate) fn push_thinking(&mut self, delta: &str) {
+    pub(crate) fn push_response(&mut self, delta: &str) {
         if delta.is_empty() {
             return;
         }
+        self.text.push_str(delta);
+        match self.activity.last_mut() {
+            Some(AssistantActivity::Response(text)) => text.push_str(delta),
+            _ => self
+                .activity
+                .push(AssistantActivity::Response(delta.to_owned())),
+        }
+    }
+
+    pub(crate) fn push_thinking(&mut self, delta: &str) {
         self.thinking.push_str(delta);
         match self.activity.last_mut() {
             Some(AssistantActivity::Thinking(thinking)) => thinking.push_str(delta),
-            Some(AssistantActivity::Tool(_)) | None => self
+            _ => self
                 .activity
                 .push(AssistantActivity::Thinking(delta.to_owned())),
+        }
+    }
+
+    pub(crate) fn start_tool(&mut self, id: String, name: String) {
+        self.activity.push(AssistantActivity::ToolCall {
+            id,
+            name,
+            result: None,
+        });
+    }
+
+    pub(crate) fn finish_tool(&mut self, id: &str, tool: ToolOutput) {
+        if let Some(AssistantActivity::ToolCall { result, .. }) = self.activity.iter_mut().rev().find(|activity| {
+            matches!(activity, AssistantActivity::ToolCall { id: call_id, result: None, .. } if call_id == id)
+        }) {
+            *result = Some(tool.clone());
+            self.tools.push(tool);
+        } else {
+            self.push_tool(tool);
         }
     }
 

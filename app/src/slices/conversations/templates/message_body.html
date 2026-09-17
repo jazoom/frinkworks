@@ -17,12 +17,11 @@
   {% endif %}
 </header>
 <div class="chat-turn-body">
-  <div
-    class="chat-prose"
-    {% if message.streaming %}data-streaming-text="{{ message.id }}"{% endif %}
-  >
+  {% if message.user %}
+    <div class="chat-prose">{{ message.html|safe }}</div>
+  {% else %}
     {{ message.html|safe }}
-  </div>
+  {% endif %}
   {% if message.error != "" %}
     <div class="alert alert-error mt-3" role="alert">
       <p>{{ message.error }}</p>

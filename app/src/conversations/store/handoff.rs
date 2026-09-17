@@ -182,6 +182,7 @@ fn apply_handoff(
         record.messages.push(ConversationMessage {
             role: MessageRole::User,
             text: pending.prompt.clone(),
+            activity: Vec::new(),
             status: MessageStatus::Complete,
             error: None,
             request: None,
@@ -189,6 +190,7 @@ fn apply_handoff(
         record.messages.push(ConversationMessage {
             role: MessageRole::Assistant,
             text: String::new(),
+            activity: Vec::new(),
             status: MessageStatus::Pending,
             error: None,
             request: Some(job),

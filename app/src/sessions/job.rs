@@ -81,7 +81,8 @@ pub(crate) enum JobStatus {
 pub(crate) enum JobEventKind {
     Response { delta: String },
     Thinking { delta: String },
-    Tool { output: ToolOutput },
+    ToolStarted { id: String, name: String },
+    ToolFinished { id: String, output: ToolOutput },
     Usage { usage: ModelUsage },
     Completed,
     Failed,
@@ -292,8 +293,12 @@ impl Job {
         self.push_output_event(JobEventKind::Thinking { delta })
     }
 
-    pub(crate) fn push_tool(&self, output: ToolOutput) -> Option<u64> {
-        self.push_output_event(JobEventKind::Tool { output })
+    pub(crate) fn start_tool(&self, id: String, name: String) -> Option<u64> {
+        self.push_output_event(JobEventKind::ToolStarted { id, name })
+    }
+
+    pub(crate) fn finish_tool(&self, id: String, output: ToolOutput) -> Option<u64> {
+        self.push_output_event(JobEventKind::ToolFinished { id, output })
     }
 
     pub(crate) fn push_usage(&self, usage: ModelUsage) -> Option<u64> {
@@ -302,8 +307,11 @@ impl Job {
 
     fn push_output_event(&self, kind: JobEventKind) -> Option<u64> {
         let empty = match &kind {
-            JobEventKind::Response { delta } | JobEventKind::Thinking { delta } => delta.is_empty(),
-            JobEventKind::Tool { .. } | JobEventKind::Usage { .. } => false,
+            JobEventKind::Response { delta } => delta.is_empty(),
+            JobEventKind::Thinking { .. }
+            | JobEventKind::ToolStarted { .. }
+            | JobEventKind::ToolFinished { .. }
+            | JobEventKind::Usage { .. } => false,
             JobEventKind::Completed | JobEventKind::Failed | JobEventKind::Cancelled => true,
         };
         if empty || !self.output_visible.load(Ordering::SeqCst) {
@@ -414,9 +422,10 @@ impl Job {
 
 fn apply_output_event(output: &mut AssistantReply, event: &JobEventKind) {
     match event {
-        JobEventKind::Response { delta } => output.text.push_str(delta),
+        JobEventKind::Response { delta } => output.push_response(delta),
         JobEventKind::Thinking { delta } => output.push_thinking(delta),
-        JobEventKind::Tool { output: tool } => output.push_tool(tool.clone()),
+        JobEventKind::ToolStarted { id, name } => output.start_tool(id.clone(), name.clone()),
+        JobEventKind::ToolFinished { id, output: tool } => output.finish_tool(id, tool.clone()),
         JobEventKind::Usage { usage } => output.usage = Some(usage.clone()),
         JobEventKind::Completed | JobEventKind::Failed | JobEventKind::Cancelled => {}
     }

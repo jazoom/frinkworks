@@ -15,6 +15,96 @@ use crate::{
 use std::sync::Arc;
 
 #[tokio::test]
+async fn untrusted_activity_keeps_its_order_and_stays_secret_safe_in_each_representation() {
+    use crate::providers::{AssistantActivity, ModelEvent};
+    let mut state = crate::tests::test_state(RuntimeConfig::development());
+    state.chat = Arc::new(ChatBackend::Scripted(ScriptedBackend::events(vec![
+        Ok(ModelEvent::Text("First response.".to_owned())),
+        Ok(ModelEvent::Thinking("Thought test-".to_owned())),
+        Ok(ModelEvent::Thinking(
+            "key <script>alert(1)</script>".to_owned(),
+        )),
+        Ok(ModelEvent::Text("Next response.".to_owned())),
+        Ok(ModelEvent::ToolCall {
+            id: "call-1".to_owned(),
+            name: "<script>test-key</script>".to_owned(),
+            arguments: serde_json::json!({}),
+        }),
+    ])));
+    let token = generate_session_token().unwrap();
+    state.sessions.insert(token.id());
+    let connection = ProviderConnection::with_key(ProviderKind::Xai, "test-key", "grok-4.6");
+    state.vault.put(connection.clone()).unwrap();
+    let record = state.conversations.create("Activity".to_owned()).unwrap();
+    let job = state
+        .sessions
+        .begin_conversation_job(&token.id(), record.id, 1)
+        .unwrap();
+    let record = state
+        .conversations
+        .begin_message_with_model(
+            &record.id,
+            record.revision,
+            None,
+            job.id(),
+            "Question".to_owned(),
+        )
+        .unwrap();
+    super::run(
+        state.clone(),
+        token.id(),
+        record.id,
+        record.clone(),
+        connection,
+        job.clone(),
+    )
+    .await;
+    let saved = state.conversations.get(&record.id).unwrap();
+    let message = &saved.messages[1];
+    assert_eq!(message.status, MessageStatus::Failed);
+    assert!(matches!(
+        message.activity.as_slice(),
+        [
+            AssistantActivity::Response(_),
+            AssistantActivity::Thinking(_),
+            AssistantActivity::Response(_),
+            AssistantActivity::ToolCall { result: None, .. }
+        ]
+    ));
+    assert_eq!(message.activity, job.snapshot().output.activity);
+    assert_eq!(
+        history(&saved).last().unwrap().text,
+        "First response.\n\nNext response."
+    );
+    for body in [
+        super::super::page::message_view(&record.id, 1, message).html,
+        String::from_utf8(
+            super::progress_frame(
+                &record.id,
+                &job,
+                job.latest_seq(),
+                &job.snapshot().output,
+                &mut hypergraft::StreamBudget::new(),
+            )
+            .unwrap()
+            .into_bytes(),
+        )
+        .unwrap(),
+        String::from_utf8(
+            super::final_frame(&state, &record.id, token.id(), &job, job.latest_seq()).into_bytes(),
+        )
+        .unwrap(),
+    ] {
+        assert!(!body.contains("test-key"));
+        assert!(!body.contains("<script>alert(1)</script>"));
+        assert!(body.contains("data-thinking-content"));
+        assert!(body.find("First response.").unwrap() < body.find("Thought [redacted]").unwrap());
+        assert!(body.find("Thought [redacted]").unwrap() < body.find("Next response.").unwrap());
+        assert!(body.contains("Tool call"));
+    }
+}
+
+#[tokio::test]
 async fn conversation_instructions_apply_before_and_after_the_first_exchange() {
     let mut state = crate::tests::test_state(RuntimeConfig::development());
     let backend = ScriptedBackend::chunks([Ok("Reply".to_owned())]);
@@ -326,6 +416,7 @@ fn pending_assistant_output_stays_out_of_the_next_request_history() {
             ConversationMessage {
                 role: MessageRole::User,
                 text: "First question".to_owned(),
+                activity: Vec::new(),
                 status: MessageStatus::Complete,
                 error: None,
                 request: None,
@@ -333,6 +424,7 @@ fn pending_assistant_output_stays_out_of_the_next_request_history() {
             ConversationMessage {
                 role: MessageRole::Assistant,
                 text: "First reply".to_owned(),
+                activity: Vec::new(),
                 status: MessageStatus::Complete,
                 error: None,
                 request: Some(JobId::generate().expect("previous request")),
@@ -340,6 +432,7 @@ fn pending_assistant_output_stays_out_of_the_next_request_history() {
             ConversationMessage {
                 role: MessageRole::User,
                 text: "Second question".to_owned(),
+                activity: Vec::new(),
                 status: MessageStatus::Complete,
                 error: None,
                 request: None,
@@ -347,6 +440,7 @@ fn pending_assistant_output_stays_out_of_the_next_request_history() {
             ConversationMessage {
                 role: MessageRole::Assistant,
                 text: String::new(),
+                activity: Vec::new(),
                 status: MessageStatus::Pending,
                 error: None,
                 request: Some(request),

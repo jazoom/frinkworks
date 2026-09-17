@@ -1,0 +1,61 @@
+<div class="flex flex-col gap-4">
+  {% for block in blocks %}
+    {% if block.kind == "response" %}
+      <div
+        class="chat-prose"
+        {% if block.active %}data-streaming-text="{{ id }}-block-{{ loop.index0 }}"{% endif %}
+      >
+        {{ block.html|safe }}
+      </div>
+    {% else if block.kind == "thinking" %}
+      <section
+        class="chat-thinking mb-0"
+        data-thinking-content
+        {% if block.active %}data-thinking-active{% endif %}
+      >
+        <div class="chat-content-heading">
+          <strong
+            >{% if block.active %}Thinking{% else %}Thought{% endif %}</strong
+          >
+          {% if block.active %}<span
+            class="loading loading-dots loading-xs motion-reduce:hidden"
+            aria-hidden="true"
+          ></span>{% endif %}
+        </div>
+        <div class="chat-prose">
+          {% if block.html.is_empty() %}<p>
+            The provider did not supply thought text.
+          </p>{% else %}{{ block.html|safe }}{% endif %}
+        </div>
+      </section>
+    {% else if block.kind == "tool" %}
+      <details
+        class="collapse-arrow border-base-300 bg-base-200 collapse rounded-sm border"
+      >
+        <summary class="collapse-title min-h-0 py-3 text-sm">
+          <span class="text-quiet">Tool result · </span
+          ><span class="font-mono break-words">{{ block.label }}</span>
+        </summary>
+        <div class="collapse-content">
+          <pre
+            class="max-h-80 overflow-auto text-xs break-words whitespace-pre-wrap"
+            tabindex="0"
+            aria-label="Tool output"
+          ><code>{{ block.output }}</code></pre>
+        </div>
+      </details>
+    {% else %}
+      <div class="text-quiet flex flex-wrap items-center gap-2 text-sm">
+        {% if block.active %}<span
+          class="loading loading-dots loading-xs motion-reduce:hidden"
+          aria-hidden="true"
+        ></span>{% endif %}
+        <span
+          >{% if block.active %}Tool call in progress{% else %}Tool call · No
+          result{% endif %}</span
+        >
+        <span class="font-mono break-all">{{ block.label }}</span>
+      </div>
+    {% endif %}
+  {% endfor %}
+</div>
