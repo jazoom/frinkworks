@@ -9,7 +9,7 @@ mod tests;
 use crate::{
     agents::AgentRecord,
     conversations::{
-        ConversationMessage, ConversationModelConfiguration, ConversationRecord,
+        ConversationId, ConversationMessage, ConversationModelConfiguration, ConversationRecord,
         MAXIMUM_PROJECT_ASSOCIATIONS, MessageRole, MessageStatus,
     },
     environments::{EnvironmentCatalogue, EnvironmentId, EnvironmentSnapshotRepository},
@@ -259,7 +259,7 @@ impl CandidateReviewView {
 }
 
 pub(super) struct MessageView {
-    pub(super) index: usize,
+    pub(super) id: String,
     pub(super) user: bool,
     pub(super) html: String,
     pub(super) status: &'static str,
@@ -1816,7 +1816,7 @@ fn visible_messages(record: &ConversationRecord, byte_budget: usize) -> Vec<Mess
     let mut messages = Vec::new();
     let mut bytes = 0;
     for (index, message) in record.messages.iter().enumerate().rev() {
-        let view = message_view(index, message);
+        let view = message_view(&record.id, index, message);
         bytes += view.html.len() + 2048;
         if bytes > byte_budget || messages.len() >= 64 {
             break;
@@ -1827,10 +1827,18 @@ fn visible_messages(record: &ConversationRecord, byte_budget: usize) -> Vec<Mess
     messages
 }
 
-fn message_view(index: usize, message: &ConversationMessage) -> MessageView {
+pub(super) fn message_id(conversation: &ConversationId, index: usize) -> String {
+    format!("conversation-{}-message-{index}", conversation.as_hex())
+}
+
+fn message_view(
+    conversation: &ConversationId,
+    index: usize,
+    message: &ConversationMessage,
+) -> MessageView {
     let user = message.role == MessageRole::User;
     MessageView {
-        index,
+        id: message_id(conversation, index),
         user,
         html: if user {
             format!(

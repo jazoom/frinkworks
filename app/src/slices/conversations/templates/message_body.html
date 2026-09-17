@@ -19,7 +19,7 @@
 <div class="chat-turn-body">
   <div
     class="chat-prose"
-    {% if message.streaming %}data-streaming-text="conversation-message-{{ message.index }}"{% endif %}
+    {% if message.streaming %}data-streaming-text="{{ message.id }}"{% endif %}
   >
     {{ message.html|safe }}
   </div>

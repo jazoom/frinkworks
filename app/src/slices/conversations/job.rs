@@ -377,7 +377,7 @@ fn progress_frame(
     budget: &mut hypergraft::StreamBudget,
 ) -> Option<hypergraft::StreamFrame> {
     let message = MessageView {
-        index: job.assistant_index(),
+        id: super::page::message_id(conversation, job.assistant_index()),
         user: false,
         html: super::page::reply_html(text),
         status: "Replying",
@@ -385,9 +385,8 @@ fn progress_frame(
         streaming: true,
     };
     let mut patches = PatchSet::new();
-    let target = format!("conversation-message-{}", message.index);
     patches
-        .children(&target, &MessageBody { message: &message })
+        .children(&message.id, &MessageBody { message: &message })
         .ok()?;
     patches
         .children(
@@ -432,9 +431,8 @@ fn final_frame(
         && let Some(message) = record.messages.get(job.assistant_index())
         && message.request == Some(job.id())
     {
-        let index = job.assistant_index();
         let message = MessageView {
-            index,
+            id: super::page::message_id(conversation, job.assistant_index()),
             user: false,
             html: super::page::reply_html(&message.text),
             status: match message.status {
@@ -446,8 +444,7 @@ fn final_frame(
             error: super::page::message_error(message),
             streaming: message.status == MessageStatus::Pending,
         };
-        let target = format!("conversation-message-{index}");
-        let _ = patches.children(&target, &MessageBody { message: &message });
+        let _ = patches.children(&message.id, &MessageBody { message: &message });
     }
     let active = snapshot.status == JobStatus::Running;
     let id = conversation.as_hex();

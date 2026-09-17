@@ -1,5 +1,6 @@
 <article
-  id="conversation-message-{{ message.index }}"
+  id="{{ message.id }}"
+  data-graft-enter="message"
   class="chat-turn conversation-turn {% if message.user %}chat-turn-user{% else %}chat-turn-agent{% endif %}"
   {% if message.streaming %}data-streaming="true"{% endif %}
 >

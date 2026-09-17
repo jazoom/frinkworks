@@ -16,7 +16,7 @@ import { initTranscript } from "./transcript";
 import { initWorkflowEditor } from "./workflow-editor";
 import { initWorkspace } from "./workspace";
 
-export function startApp(onMessageAdded: (message: HTMLElement) => void): void {
+export function startApp(): void {
     const bound = bindTransportFeedback(document);
 
     if (import.meta.env.DEV) {
@@ -27,6 +27,25 @@ export function startApp(onMessageAdded: (message: HTMLElement) => void): void {
 
     startHypergraft({
         feedback: bound.feedback,
+        enterEffects: {
+            message: {
+                keyframes: [
+                    { opacity: 0.2, transform: "translateY(10px)" },
+                    { opacity: 1, transform: "none" },
+                ],
+                timing: {
+                    duration: 240,
+                    easing: "cubic-bezier(0.16, 1, 0.3, 1)",
+                },
+                reducedMotion: {
+                    keyframes: [{ opacity: 0.65 }, { opacity: 1 }],
+                    timing: {
+                        duration: 170,
+                        easing: "cubic-bezier(0.16, 1, 0.3, 1)",
+                    },
+                },
+            },
+        },
         islands: {
             "app-context": initAppContext,
             composer: initComposer,
@@ -38,7 +57,7 @@ export function startApp(onMessageAdded: (message: HTMLElement) => void): void {
             "shortcut-hint": initShortcutHint,
             "theme-selector": initThemeSelector,
             "thinking-visibility": initThinkingVisibility,
-            transcript: (root) => initTranscript(root, onMessageAdded),
+            transcript: initTranscript,
             "workflow-editor": initWorkflowEditor,
             workspace: initWorkspace,
         },
