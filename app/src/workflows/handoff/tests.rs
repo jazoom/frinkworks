@@ -21,6 +21,7 @@ pub(crate) fn prepared_run(
     grant.access = crate::execution::DirectoryAccess::ReviewBeforeApply;
     let mut settings = conversation.model.as_ref().unwrap().settings.clone();
     settings.directories = vec![grant];
+    settings.git_destination = None;
     settings.tools = vec![crate::agents::ToolId::Read, crate::agents::ToolId::Write];
     let pinned = crate::workflows::pin_agent_work(&settings).unwrap();
     let environments = crate::tests::test_environment_set(&pinned.definition);
@@ -143,7 +144,6 @@ fn ownership_transfer_is_single_owner_and_preserves_baseline_and_progress_after_
         .conversations
         .create_saved(
             ConversationId::generate().unwrap(),
-            None,
             None,
             Some(
                 crate::conversations::ConversationModelConfiguration::direct(

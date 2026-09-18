@@ -391,15 +391,6 @@ async fn preset_application_uses_the_preview_snapshot_and_requires_fresh_access_
     let state = test_state();
     let token = connected(&state);
     let record = state.conversations.create("Saved".to_owned()).unwrap();
-    let project = crate::projects::ProjectId::generate().unwrap();
-    let record = state
-        .conversations
-        .attach_project(&record.id, record.revision, project)
-        .unwrap();
-    let record = state
-        .conversations
-        .grant_writable(&record.id, record.revision, project, 1)
-        .unwrap();
     let directory = tempfile::tempdir().unwrap();
     let mut grant = crate::execution::DirectoryGrant::from_selected(directory.path(), &[]).unwrap();
     grant.access = crate::execution::DirectoryAccess::ReviewBeforeApply;
@@ -482,8 +473,6 @@ async fn preset_application_uses_the_preview_snapshot_and_requires_fresh_access_
     assert!(body.contains("Pending approval"));
     let applied = state.conversations.get(&record.id).unwrap();
     assert_eq!(applied.model.as_ref().unwrap().settings, settings);
-    assert!(applied.grants.is_empty());
-    assert!(applied.execution_target.is_none());
     assert!(
         !state
             .access_consent
@@ -880,7 +869,6 @@ async fn explicit_empty_tool_selection_persists_without_default_substitution() {
     assert_eq!(status, StatusCode::OK, "{body}");
     let updated = state.conversations.get(&record.id).unwrap();
     assert!(updated.model.as_ref().unwrap().settings.tools.is_empty());
-    assert!(body.contains("Cancel setup changes"));
     let invalid = format!(
         "revision={}&provider=xai&model=grok-4.6&thinking=invalid&instructions=Concise+replies",
         updated.revision

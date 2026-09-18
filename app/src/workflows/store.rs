@@ -6,14 +6,13 @@ use std::sync::{Mutex, MutexGuard};
 
 use super::id::RunId;
 use super::run::{RunRecordError, WorkflowRun, now_ms};
-use crate::{conversations::ConversationId, projects::ProjectId};
+use crate::conversations::ConversationId;
 
 pub(crate) const BROWSER_SUMMARY_LIMIT: usize = 50;
 
 #[derive(Clone, Debug)]
 pub(crate) struct RunSummary {
     pub(crate) id: RunId,
-    pub(crate) project_id: Option<ProjectId>,
     pub(crate) name: String,
     pub(crate) state: String,
     pub(crate) created_at_ms: u64,
@@ -197,7 +196,6 @@ impl WorkflowRunStore {
 fn summary_of(run: &WorkflowRun) -> RunSummary {
     RunSummary {
         id: run.id,
-        project_id: run.project_id,
         name: run.pinned.definition.name().to_owned(),
         state: run.state.as_label().to_owned(),
         created_at_ms: run.created_at_ms,

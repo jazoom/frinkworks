@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::environments::EnvironmentId;
 
 use super::definition::{
-    DefinitionFile, DefinitionVersion, MAXIMUM_NAME_BYTES, PinnedWorkflowDefinition, StepAction,
+    DefinitionFile, DefinitionVersion, MAXIMUM_NAME_BYTES, PinnedWorkflowDefinition,
     WorkflowDefinition,
 };
 use super::id::{IdError, WorkflowId};
@@ -654,12 +654,14 @@ fn record_to_file(record: &WorkflowRecord) -> WorkflowRecordFile {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn definition_fits_agent(
     definition: &WorkflowDefinition,
     tools: &[crate::agents::ToolId],
     directories: &[(String, crate::agents::AccessMode)],
     primary_directory: &str,
 ) -> bool {
+    use super::definition::StepAction;
     definition.steps().iter().all(|step| match &step.action {
         StepAction::Agent(action) => {
             let primary_fits = directories.iter().any(|(alias, access)| {

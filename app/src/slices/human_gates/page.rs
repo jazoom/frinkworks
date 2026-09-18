@@ -256,20 +256,15 @@ impl GatePage {
             needs_recovery: false,
             error,
             run_kind: run.kind.as_str(),
-            project_id: run.project_id.map(|id| id.as_hex()).unwrap_or_default(),
+            project_id: String::new(),
             back_href: run.conversation_id.map_or_else(
-                || {
-                    run.project_id.map_or_else(
-                        || "/runs".to_owned(),
-                        |project| format!("/projects/{}", project.as_hex()),
-                    )
-                },
+                || "/runs".to_owned(),
                 |conversation| format!("/conversations/{}", conversation.as_hex()),
             ),
             back_label: if run.conversation_id.is_some() {
                 "Back to conversation"
             } else {
-                "Back to project"
+                "Back to runs"
             },
             quick_task,
             can_request_revision,

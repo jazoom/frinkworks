@@ -11,7 +11,7 @@ use tower::ServiceExt;
 use crate::{
     agents::{AccessMode, AgentDraft, DirectoryGrant, ToolId},
     config::{RuntimeConfig, StartupConfig},
-    local_data::{CatalogueResetConflict, HOST_PATH_RESET_PENDING},
+    local_data::CatalogueResetConflict,
     preferences::Theme,
     providers::{ProviderConnection, ProviderKind},
     sessions,
@@ -201,12 +201,6 @@ fn owned_state() -> AppState {
     state
 }
 
-fn git_worktree() -> tempfile::TempDir {
-    let dir = tempfile::tempdir().expect("dir");
-    git_init(dir.path());
-    dir
-}
-
 fn git_init(path: &Path) {
     assert!(
         Command::new("git")
@@ -223,10 +217,6 @@ fn git_worktree_under(root: &Path, name: &str) -> PathBuf {
     std::fs::create_dir_all(&path).expect("dir");
     git_init(&path);
     path.canonicalize().expect("canonical")
-}
-
-fn encoded_path(path: &Path) -> String {
-    path.to_string_lossy().replace(' ', "%20")
 }
 
 fn create_agent(state: &AppState, name: &str, path: &Path) -> crate::agents::AgentRecord {
@@ -348,28 +338,6 @@ async fn reset_conflicts_when_a_workflow_owns_the_executor() {
 }
 
 #[tokio::test]
-async fn reset_conflicts_when_a_project_path_sits_inside_the_data_root() {
-    let state = owned_state();
-    let token = connected(&state);
-    let nested = git_worktree_under(state.local_data.root(), "nested-project");
-    state
-        .projects
-        .create("Inside".to_owned(), nested.clone())
-        .expect("project");
-    let response = app(&state)
-        .oneshot(reset_request(&token, "confirmation=reset"))
-        .await
-        .expect("conflict");
-    assert_eq!(response.status(), StatusCode::CONFLICT);
-    let text = body_text(response).await;
-    assert!(text.contains("target=\"local-data-reset\""));
-    assert!(text.contains(CatalogueResetConflict::Project.message()));
-    assert_no_paths(&text, &[state.local_data.root(), nested.as_path()]);
-    assert!(!state.local_data.is_pending());
-    assert_eq!(state.projects.list().len(), 1);
-}
-
-#[tokio::test]
 async fn reset_conflicts_when_an_agent_grant_sits_inside_the_data_root() {
     let state = owned_state();
     let token = connected(&state);
@@ -428,178 +396,4 @@ async fn a_confirmed_reset_records_the_request_and_keeps_the_theme() {
     let repeated_text = body_text(repeated).await;
     assert!(repeated_text.contains("target=\"chat-main\""));
     assert!(repeated_text.contains("Stop and restart Power Plant to finish the reset."));
-}
-
-#[tokio::test]
-async fn host_path_mutations_conflict_after_reset_is_pending() {
-    let state = owned_state();
-    let token = connected(&state);
-    let project_dir = git_worktree();
-    let agent_dir = git_worktree();
-    let extra_dir = git_worktree();
-    let project = state
-        .projects
-        .create("Desk".to_owned(), project_dir.path().to_path_buf())
-        .expect("project");
-    let agent = create_agent(&state, "Other", agent_dir.path());
-    let configured = create_agent(&state, "Configured", extra_dir.path());
-    state.keep_temp_dir(project_dir);
-    state.keep_temp_dir(agent_dir);
-    state.keep_temp_dir(extra_dir);
-
-    let recorded = app(&state)
-        .oneshot(reset_request(&token, "confirmation=reset"))
-        .await
-        .expect("reset");
-    assert_eq!(recorded.status(), StatusCode::OK);
-    assert!(state.local_data.is_pending());
-
-    let create_dir = git_worktree();
-    let create_path = encoded_path(&create_dir.path().canonicalize().expect("canonical"));
-    state.keep_temp_dir(create_dir);
-    let created = app(&state)
-        .oneshot(patch_form(
-            &token,
-            "/projects",
-            format!("name=Desk&path={create_path}"),
-        ))
-        .await
-        .expect("create");
-    assert_eq!(created.status(), StatusCode::CONFLICT);
-    let created_text = body_text(created).await;
-    assert!(created_text.contains("target=\"project-form\""));
-    assert!(created_text.contains(HOST_PATH_RESET_PENDING));
-
-    let starter = app(&state)
-        .oneshot(patch_form(
-            &token,
-            &format!("/projects/{}/agents/starter", project.id.as_hex()),
-            String::new(),
-        ))
-        .await
-        .expect("starter");
-    assert_eq!(starter.status(), StatusCode::CONFLICT);
-    let starter_text = body_text(starter).await;
-    assert!(starter_text.contains("target=\"chat-main\""));
-    assert!(starter_text.contains(HOST_PATH_RESET_PENDING));
-    assert_eq!(state.agents.list().len(), 2);
-
-    let grant = app(&state)
-        .oneshot(patch_form(
-            &token,
-            &format!("/projects/{}/agents/grant", project.id.as_hex()),
-            format!(
-                "agent_id={}&revision={}&alias=code&access=read-write",
-                agent.id.as_hex(),
-                agent.revision
-            ),
-        ))
-        .await
-        .expect("grant");
-    assert_eq!(grant.status(), StatusCode::CONFLICT);
-    let grant_text = body_text(grant).await;
-    assert!(grant_text.contains("target=\"chat-main\""));
-    assert!(grant_text.contains(HOST_PATH_RESET_PENDING));
-    assert_eq!(
-        state
-            .agents
-            .get(&agent.id)
-            .expect("agent")
-            .directories
-            .len(),
-        1
-    );
-
-    let agent_dir = git_worktree();
-    let agent_path = encoded_path(&agent_dir.path().canonicalize().expect("canonical"));
-    state.keep_temp_dir(agent_dir);
-    let agent_create = app(&state)
-        .oneshot(patch_form(
-            &token,
-            "/agents",
-            format!(
-                "intent=save&name=Reader&instructions=&primary=project&tool_list=on&alias_0=project&path_0={agent_path}&access_0=read-write"
-            ),
-        ))
-        .await
-        .expect("agent create");
-    assert_eq!(agent_create.status(), StatusCode::CONFLICT);
-    let agent_create_text = body_text(agent_create).await;
-    assert!(agent_create_text.contains("target=\"agent-form\""));
-    assert!(agent_create_text.contains(HOST_PATH_RESET_PENDING));
-    assert_eq!(state.agents.list().len(), 2);
-
-    let updated = app(&state)
-        .oneshot(patch_form(
-            &token,
-            &format!("/agents/{}/configuration", configured.id.as_hex()),
-            format!(
-                "intent=save&name=After&instructions=&primary=project&tool_list=on&alias_0=project&path_0={}&access_0=read-write&revision={}",
-                encoded_path(&configured.directories[0].host_path),
-                configured.revision
-            ),
-        ))
-        .await
-        .expect("agent update");
-    assert_eq!(updated.status(), StatusCode::CONFLICT);
-    let updated_text = body_text(updated).await;
-    assert!(updated_text.contains("target=\"agent-form\""));
-    assert!(updated_text.contains(HOST_PATH_RESET_PENDING));
-    assert_eq!(
-        state.agents.get(&configured.id).expect("configured").name,
-        "Configured"
-    );
-
-    let deleted = app(&state)
-        .oneshot(patch_form(
-            &token,
-            &format!("/agents/{}/delete", configured.id.as_hex()),
-            format!("revision={}", configured.revision),
-        ))
-        .await
-        .expect("agent delete");
-    assert_eq!(deleted.status(), StatusCode::CONFLICT);
-    let deleted_text = body_text(deleted).await;
-    assert!(deleted_text.contains("target=\"agent-form\""));
-    assert!(deleted_text.contains(HOST_PATH_RESET_PENDING));
-    assert!(state.agents.get(&configured.id).is_some());
-}
-
-#[tokio::test]
-async fn reset_and_a_project_under_the_data_root_cannot_both_succeed() {
-    let state = owned_state();
-    let token = connected(&state);
-    let nested = git_worktree_under(state.local_data.root(), "race-project");
-    let encoded = encoded_path(&nested);
-    let router = app(&state);
-    let (reset, create) = tokio::join!(
-        router
-            .clone()
-            .oneshot(reset_request(&token, "confirmation=reset")),
-        router.oneshot(patch_form(
-            &token,
-            "/projects",
-            format!("name=Nested&path={encoded}"),
-        )),
-    );
-    let reset = reset.expect("reset");
-    let create = create.expect("create");
-    let reset_text = body_text(reset).await;
-    let create_text = body_text(create).await;
-    let reset_recorded = reset_text.contains("Stop and restart Power Plant to finish the reset.");
-    let create_recorded = create_text.contains("navigate=\"/projects/");
-    assert!(
-        reset_recorded ^ create_recorded,
-        "reset={reset_text}\ncreate={create_text}"
-    );
-    if reset_recorded {
-        assert!(state.local_data.is_pending());
-        assert!(state.projects.list().is_empty());
-        assert!(create_text.contains(HOST_PATH_RESET_PENDING));
-    } else {
-        assert!(!state.local_data.is_pending());
-        assert_eq!(state.projects.list().len(), 1);
-        assert!(reset_text.contains(CatalogueResetConflict::Project.message()));
-        assert_no_paths(&reset_text, &[state.local_data.root(), nested.as_path()]);
-    }
 }

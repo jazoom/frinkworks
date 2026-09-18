@@ -2,7 +2,6 @@ use askama::Template;
 use serde::Serialize;
 
 use crate::agents::{AgentRecord, MAXIMUM_GRANTS, ToolId, guest_path_for};
-use crate::projects::{ProjectRecord, eligible_projects};
 use crate::sandbox::OrphanSandbox;
 
 use super::forms::AgentFormState;
@@ -66,7 +65,6 @@ pub(super) struct CatalogueView {
 impl CatalogueView {
     pub(super) fn from_parts(
         agents: &[AgentRecord],
-        projects: &[ProjectRecord],
         orphans: Vec<OrphanSandbox>,
         error: &'static str,
     ) -> Self {
@@ -77,11 +75,12 @@ impl CatalogueView {
                     id: agent.id.as_hex(),
                     name: agent.name.clone(),
                     has_directory_ceiling: !agent.directories.is_empty(),
-                    projects: eligible_projects(agent, projects)
-                        .into_iter()
-                        .map(|project| AgentProjectMetadata {
-                            name: project.name.clone(),
-                            path: project.host_path.to_string_lossy().into_owned(),
+                    projects: agent
+                        .directories
+                        .iter()
+                        .map(|grant| AgentProjectMetadata {
+                            name: grant.alias.clone(),
+                            path: grant.host_path.to_string_lossy().into_owned(),
                         })
                         .collect(),
                 })
@@ -171,38 +170,6 @@ impl AgentFormView {
             "",
             false,
         )
-    }
-
-    pub(super) fn create_for_project(
-        app: &crate::state::AppState,
-        mut state: AgentFormState,
-        error: &'static str,
-        project: &ProjectRecord,
-    ) -> Self {
-        state.assign_project_path(&project.host_path);
-        let project_id = project.id.as_hex();
-        let mut view = Self::from_state(
-            app,
-            "New agent",
-            &format!("/agents?project={project_id}"),
-            "Create agent",
-            state,
-            error,
-            "",
-            false,
-        );
-        view.title = format!("Set up an agent for {}", project.name);
-        view.lead =
-            "This form sets their instructions, tools and access. The project folder is already included."
-                .to_owned();
-        view.section = "projects";
-        view.back_href = format!("/projects/{project_id}");
-        view.back_label = "Back to project";
-        if let Some(first) = view.grants.first_mut() {
-            first.path_locked = true;
-            first.can_remove = false;
-        }
-        view
     }
 
     pub(super) fn edit(

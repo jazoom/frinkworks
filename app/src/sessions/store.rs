@@ -6,15 +6,16 @@ use std::time::{Duration, Instant};
 use crate::{
     agents::AgentId,
     conversations::ConversationId,
-    projects::ProjectId,
     providers::{AssistantReply, ChatTurn},
     sessions::{
         SESSION_LIFETIME,
-        job::{Job, JobId, JobSnapshot},
+        job::{Job, JobId},
         tokens::SessionId,
     },
-    workflows::WorkflowId,
 };
+
+#[cfg(test)]
+use crate::sessions::JobSnapshot;
 
 #[cfg(test)]
 mod tests;
@@ -66,12 +67,10 @@ impl Clock {
 struct Conversation {
     turns: Vec<ChatTurn>,
     job: Option<Arc<Job>>,
-    preferred_workflow: Option<WorkflowId>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct ConversationKey {
-    pub(crate) project_id: ProjectId,
     pub(crate) agent_id: AgentId,
 }
 
@@ -84,12 +83,12 @@ struct StoredSession {
     expires_at: Instant,
 }
 
+#[cfg(test)]
 #[derive(Clone)]
 pub(crate) struct SessionSnapshot {
     pub(crate) turns: Vec<ChatTurn>,
     pub(crate) job: Option<JobSnapshot>,
     pub(crate) session_busy: bool,
-    pub(crate) preferred_workflow: Option<WorkflowId>,
 }
 
 #[derive(Debug)]
@@ -143,6 +142,7 @@ impl SessionStore {
             .is_some_and(|session| session.expires_at <= self.clock.now())
     }
 
+    #[cfg(test)]
     pub(crate) fn busy(&self, id: &SessionId) -> bool {
         let mut sessions = self.lock();
         live(&mut sessions, id, self.clock.now()).is_some_and(|session| session.active.is_some())
@@ -187,6 +187,7 @@ impl SessionStore {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn snapshot(
         &self,
         id: &SessionId,
@@ -358,6 +359,7 @@ fn command_held(
         .any(|session| session.expires_at > now && session.commands.contains_key(conversation))
 }
 
+#[cfg(test)]
 fn snapshot_session(key: &ConversationKey, session: &StoredSession) -> SessionSnapshot {
     let conversation = session.conversations.get(key);
     SessionSnapshot {
@@ -367,7 +369,6 @@ fn snapshot_session(key: &ConversationKey, session: &StoredSession) -> SessionSn
         job: conversation
             .and_then(|conversation| conversation.job.as_ref().map(|job| job.snapshot())),
         session_busy: session.active.is_some(),
-        preferred_workflow: conversation.and_then(|conversation| conversation.preferred_workflow),
     }
 }
 

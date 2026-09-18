@@ -228,63 +228,15 @@
                   </section>
                 </details>
               {% endif %}
-              {% if !directory_launch %}
-                <section aria-labelledby="workflow-target-heading">
-                  <h3 id="workflow-target-heading">Git destination</h3>
-                  <p class="text-quiet">
-                    Select one granted project as the execution target. Other
-                    grants remain read-only context.
-                  </p>
-                  {% if targets.is_empty() %}
-                    <p class="text-quiet text-sm">
-                      Attach and grant a project before you start.
-                    </p>
-                  {% else %}
-                    {% for target in targets %}
-                      {% if target.selected %}
-                        <input
-                          type="hidden"
-                          name="preview_target"
-                          value="{{ target.id }}"
-                        />
-                      {% endif %}
-                    {% endfor %}
-                    <label
-                      class="flex max-w-xl flex-col gap-1"
-                      for="workflow-target"
-                    >
-                      <span class="text-sm font-semibold">Git destination</span>
-                      <select
-                        id="workflow-target"
-                        name="target"
-                        class="select select-bordered"
-                        required
-                      >
-                        <option value="">
-                          Choose an explicit Git destination
-                        </option>
-                        {% for target in targets %}
-                          <option
-                            value="{{ target.id }}"
-                            {% if target.selected %}selected{% endif %}
-                          >
-                            {{ target.name }} — {{ target.access }}
-                          </option>
-                        {% endfor %}
-                      </select>
-                    </label>
-                  {% endif %}
-                </section>
-              {% else %}
-                <section>
-                  <h3>Conversation settings</h3>
-                  <p class="text-quiet">
-                    This process copies the conversation settings. No project
-                    registration or separate execution target is necessary.
-                  </p>
-                  <p class="text-sm">{{ access_summary }}</p>
-                </section>
-              {% endif %}
+              <section>
+                <h3>Conversation settings</h3>
+                <p class="text-quiet">
+                  This process copies the conversation directory settings. Git
+                  destination is the explicit grant you chose in Files and
+                  execution. Directory order never selects it.
+                </p>
+                <p class="text-sm">{{ access_summary }}</p>
+              </section>
             </div>
             <div {% if stage != "review" %}hidden{% endif %}>
               {% for workflow in workflows %}

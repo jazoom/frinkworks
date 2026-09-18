@@ -116,7 +116,6 @@ async fn detail(
         &run,
         &state.workflows,
         &state.environments,
-        &state.projects,
         &state.workflow_evidence,
     )
     .with_pending_host_command(

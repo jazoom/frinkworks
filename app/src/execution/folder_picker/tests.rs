@@ -22,8 +22,4 @@ impl super::FolderPicker {
         };
         super::lock(script).push_back(selected);
     }
-
-    pub(crate) fn occupy(&self) -> Option<tokio::sync::OwnedSemaphorePermit> {
-        self.inner.permit.clone().try_acquire_owned().ok()
-    }
 }

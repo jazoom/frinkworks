@@ -25,14 +25,12 @@ impl super::Clock {
 use std::time::Duration;
 
 use crate::agents::AgentId;
-use crate::projects::ProjectId;
 use crate::providers::ChatTurn;
 use crate::sessions::{self, ConversationKey, SESSION_LIFETIME};
 use crate::workflows::RunId;
 
 fn conversation() -> ConversationKey {
     ConversationKey {
-        project_id: ProjectId::generate().expect("project"),
         agent_id: AgentId::generate().expect("agent"),
     }
 }
@@ -136,8 +134,7 @@ fn transcripts_are_independent_per_conversation() {
     let id = token.id();
     let first = conversation();
     let second = ConversationKey {
-        project_id: ProjectId::generate().expect("project"),
-        agent_id: first.agent_id,
+        agent_id: AgentId::generate().expect("agent"),
     };
     store.insert(id);
     let begun = store
@@ -380,7 +377,6 @@ impl super::SessionStore {
             .or_insert_with(|| Conversation {
                 turns: Vec::new(),
                 job: None,
-                preferred_workflow: None,
             });
         conversation.turns.push(ChatTurn::user(message));
         let job = Job::new(job_id, run_id, conversation.turns.len());

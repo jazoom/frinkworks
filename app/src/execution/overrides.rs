@@ -6,7 +6,9 @@ use crate::{
     providers::ModelSelection,
 };
 
-use super::{DirectoryGrant, ExecutionSettings, HostApprovalPolicy, ToolLocation};
+use super::{
+    DirectoryGrant, DirectoryGrantId, ExecutionSettings, HostApprovalPolicy, ToolLocation,
+};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct SettingsOverrides {
@@ -16,6 +18,7 @@ pub(crate) struct SettingsOverrides {
     pub(crate) environment: Option<EnvironmentId>,
     pub(crate) network: Option<NetworkAccess>,
     pub(crate) directories: Option<Vec<DirectoryGrant>>,
+    pub(crate) git_destination: Option<DirectoryGrantId>,
     pub(crate) location: Option<ToolLocation>,
     pub(crate) host_approval: Option<HostApprovalPolicy>,
 }
@@ -29,6 +32,8 @@ pub(crate) struct SettingsOverridesFile {
     environment: Option<String>,
     network: Option<NetworkFile>,
     directories: Option<Vec<super::settings::DirectoryGrantFile>>,
+    #[serde(default)]
+    git_destination: Option<String>,
     location: Option<String>,
     host_approval: Option<String>,
 }
@@ -49,13 +54,14 @@ impl SettingsOverrides {
             environment: Some(settings.environment),
             network: Some(settings.network),
             directories: Some(settings.directories),
+            git_destination: settings.git_destination,
             location: Some(settings.location),
             host_approval: Some(settings.host_approval),
         }
     }
 
     pub(crate) fn resolve(&self, defaults: &ExecutionSettings) -> ExecutionSettings {
-        ExecutionSettings {
+        let mut settings = ExecutionSettings {
             model: self.model.clone().unwrap_or_else(|| defaults.model.clone()),
             instructions: self
                 .instructions
@@ -71,9 +77,17 @@ impl SettingsOverrides {
                 .directories
                 .clone()
                 .unwrap_or_else(|| defaults.directories.clone()),
+            git_destination: self.git_destination.or(defaults.git_destination),
             location: self.location.unwrap_or(defaults.location),
             host_approval: self.host_approval.unwrap_or(defaults.host_approval),
+        };
+        if settings
+            .git_destination
+            .is_some_and(|id| settings.directories.iter().all(|grant| grant.id != id))
+        {
+            settings.git_destination = None;
         }
+        settings
     }
 
     pub(crate) fn validate(&self) -> Option<()> {
@@ -109,6 +123,7 @@ impl SettingsOverrides {
                     .map(super::settings::DirectoryGrantFile::from)
                     .collect()
             }),
+            git_destination: self.git_destination.map(DirectoryGrantId::as_hex),
             location: self.location.map(|location| location.as_str().to_owned()),
             host_approval: self.host_approval.map(|policy| policy.as_str().to_owned()),
         }
@@ -145,6 +160,10 @@ impl SettingsOverrides {
                         .collect::<Option<Vec<_>>>()?,
                 ),
                 None => None,
+            },
+            git_destination: match file.git_destination.as_deref() {
+                None | Some("") => None,
+                Some(raw) => Some(DirectoryGrantId::parse(raw)?),
             },
             location: match file.location {
                 Some(location) => Some(ToolLocation::parse(&location)?),

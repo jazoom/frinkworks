@@ -10,7 +10,6 @@ use crate::agents::{AccessMode, AgentId, AgentRecord, AgentStore, DirectoryGrant
 use crate::config::{RuntimeConfig, StartupConfig};
 use crate::conversations::ConversationStore;
 use crate::preferences::{Preferences, Theme};
-use crate::projects::{ProjectId, ProjectRecord, ProjectStore};
 use crate::providers::{ModelSelection, ProviderConnection, ProviderKind};
 use crate::vault::ProviderVault;
 use crate::workflows::{WorkflowExecution, WorkflowRunStore};
@@ -59,19 +58,6 @@ fn listed_names(root: &Path) -> Vec<String> {
         .collect();
     names.sort();
     names
-}
-
-fn git_worktree() -> tempfile::TempDir {
-    let dir = tempfile::tempdir().expect("worktree");
-    assert!(
-        std::process::Command::new("git")
-            .args(["init", "-q"])
-            .current_dir(dir.path())
-            .status()
-            .expect("git")
-            .success()
-    );
-    dir
 }
 
 fn marker_path(root: &Path, name: &str) -> PathBuf {
@@ -437,7 +423,6 @@ fn startup_reset_leaves_no_provider_project_agent_run_or_saved_theme() {
     let dir = tempfile::tempdir().expect("dir");
     let (_, local_data) = prepare(dir.path().join("data"));
     let root = local_data.root().to_path_buf();
-    let worktree = git_worktree();
 
     ProviderVault::open(root.join("providers.json"))
         .expect("vault")
@@ -447,10 +432,7 @@ fn startup_reset_leaves_no_provider_project_agent_run_or_saved_theme() {
             ProviderKind::Xai.default_model(),
         ))
         .expect("provider");
-    ProjectStore::open(root.join("projects.json"))
-        .expect("projects")
-        .create("Desk".to_owned(), worktree.path().to_path_buf())
-        .expect("project");
+    fs::write(root.join("projects.json"), b"{\"projects\":true}").expect("projects");
     fs::create_dir(root.join("agents")).expect("agents");
     fs::write(root.join("agents").join("agent.json"), b"{\"agent\":true}").expect("agent");
     fs::create_dir(root.join("workflow-runs")).expect("runs");
@@ -477,10 +459,8 @@ fn startup_reset_leaves_no_provider_project_agent_run_or_saved_theme() {
             .has_providers()
     );
     assert!(
-        ProjectStore::open(root.join("projects.json"))
-            .expect("projects")
-            .list()
-            .is_empty()
+        !root.join("projects.json").exists(),
+        "reset must delete leftover project files"
     );
     assert!(
         AgentStore::open(root.join("agents"))
@@ -508,21 +488,12 @@ fn catalogue_conflict_uses_path_components_at_the_owned_root_boundary() {
     let prefix_sibling = root.with_file_name("data-copy");
 
     assert_eq!(
-        local_data.catalogue_conflict(&[project_record(root.clone())], &[], &[], &[], &[]),
-        Some(CatalogueResetConflict::Project)
-    );
-    assert_eq!(
-        local_data.catalogue_conflict(&[], &[agent_record(root.join("grant"))], &[], &[], &[]),
+        local_data.catalogue_conflict(&[agent_record(root.join("grant"))], &[], &[], &[]),
         Some(CatalogueResetConflict::AgentGrant)
     );
     assert_eq!(
-        local_data.catalogue_conflict(
-            &[project_record(prefix_sibling.clone())],
-            &[agent_record(prefix_sibling.join("grant")),],
-            &[],
-            &[],
-            &[],
-        ),
+        local_data
+            .catalogue_conflict(&[agent_record(prefix_sibling.join("grant"))], &[], &[], &[],),
         None
     );
 }
@@ -547,7 +518,6 @@ fn catalogue_conflict_includes_conversation_directory_grants() {
     let record = store
         .create_saved(
             crate::conversations::ConversationId::generate().unwrap(),
-            None,
             Some("Granted".to_owned()),
             Some(crate::conversations::ConversationModelConfiguration {
                 settings,
@@ -558,7 +528,7 @@ fn catalogue_conflict_includes_conversation_directory_grants() {
         .unwrap();
 
     assert_eq!(
-        local_data.catalogue_conflict(&[], &[], &[record], &[], &[]),
+        local_data.catalogue_conflict(&[], &[record], &[], &[]),
         Some(CatalogueResetConflict::ConversationGrant)
     );
 
@@ -575,7 +545,6 @@ fn catalogue_conflict_includes_conversation_directory_grants() {
     let broad_record = store
         .create_saved(
             crate::conversations::ConversationId::generate().unwrap(),
-            None,
             Some("Broad grant".to_owned()),
             Some(crate::conversations::ConversationModelConfiguration {
                 settings: broad_settings,
@@ -585,7 +554,7 @@ fn catalogue_conflict_includes_conversation_directory_grants() {
         )
         .unwrap();
     assert_eq!(
-        local_data.catalogue_conflict(&[], &[], &[broad_record], &[], &[]),
+        local_data.catalogue_conflict(&[], &[broad_record], &[], &[]),
         Some(CatalogueResetConflict::ConversationGrant)
     );
 }
@@ -616,7 +585,7 @@ fn catalogue_conflict_includes_preset_directory_grants() {
         .unwrap();
 
     assert_eq!(
-        local_data.catalogue_conflict(&[], &[], &[], &[preset], &[]),
+        local_data.catalogue_conflict(&[], &[], &[preset], &[]),
         Some(CatalogueResetConflict::PresetGrant)
     );
 }
@@ -653,7 +622,7 @@ fn reset_detects_directory_references_in_saved_workflow_overrides() {
         .create(definition)
         .unwrap();
     assert_eq!(
-        local_data.catalogue_conflict(&[], &[], &[], &[], &[record]),
+        local_data.catalogue_conflict(&[], &[], &[], &[record]),
         Some(CatalogueResetConflict::WorkflowGrant)
     );
 }
@@ -681,7 +650,6 @@ async fn defaults_alone_protect_a_directory_from_local_data_reset() {
         .request_reset(
             &Arc::new(WorkflowExecution::new()),
             ResetCatalogues {
-                projects: &ProjectStore::in_memory(),
                 agents: &AgentStore::in_memory(),
                 conversations: &ConversationStore::in_memory(),
                 presets: &crate::presets::PresetStore::in_memory(),
@@ -708,7 +676,6 @@ async fn reset_request_retains_execution_until_process_exit() {
     let dir = tempfile::tempdir().expect("dir");
     let (_, local_data) = prepare(dir.path().join("data"));
     let execution = Arc::new(WorkflowExecution::new());
-    let projects = ProjectStore::in_memory();
     let agents = AgentStore::in_memory();
     let conversations = ConversationStore::in_memory();
     let presets = crate::presets::PresetStore::in_memory();
@@ -718,7 +685,6 @@ async fn reset_request_retains_execution_until_process_exit() {
             .request_reset(
                 &execution,
                 ResetCatalogues {
-                    projects: &projects,
                     agents: &agents,
                     conversations: &conversations,
                     presets: &presets,
@@ -736,7 +702,6 @@ async fn reset_request_retains_execution_until_process_exit() {
             .request_reset(
                 &execution,
                 ResetCatalogues {
-                    projects: &projects,
                     agents: &agents,
                     conversations: &conversations,
                     presets: &presets,
@@ -763,7 +728,6 @@ async fn failed_marker_write_releases_both_process_permits() {
     permissions.set_mode(0o555);
     fs::set_permissions(root, permissions).expect("lock");
     let execution = Arc::new(WorkflowExecution::new());
-    let projects = ProjectStore::in_memory();
     let agents = AgentStore::in_memory();
     let conversations = ConversationStore::in_memory();
     let presets = crate::presets::PresetStore::in_memory();
@@ -772,7 +736,6 @@ async fn failed_marker_write_releases_both_process_permits() {
         .request_reset(
             &execution,
             ResetCatalogues {
-                projects: &projects,
                 agents: &agents,
                 conversations: &conversations,
                 presets: &presets,
@@ -792,16 +755,6 @@ async fn failed_marker_write_releases_both_process_permits() {
         .begin_host_path_mutation()
         .await
         .expect("host paths released");
-}
-
-fn project_record(host_path: PathBuf) -> ProjectRecord {
-    ProjectRecord {
-        id: ProjectId::generate().expect("project"),
-        revision: 1,
-        name: "Desk".to_owned(),
-        host_path,
-        created_at_ms: 0,
-    }
 }
 
 fn agent_record(host_path: PathBuf) -> AgentRecord {

@@ -93,24 +93,6 @@ fn cookie(token: &str) -> String {
     format!("powerplant_session={token}")
 }
 
-pub(super) fn register_project(state: &AppState, name: &str) -> crate::projects::ProjectRecord {
-    let directory = tempfile::tempdir().expect("project directory");
-    assert!(
-        std::process::Command::new("git")
-            .args(["init", "-q"])
-            .current_dir(directory.path())
-            .status()
-            .expect("git")
-            .success()
-    );
-    let project = state
-        .projects
-        .create(name.to_owned(), directory.path().to_path_buf())
-        .expect("project");
-    state.keep_temp_dir(directory);
-    project
-}
-
 fn candidate_run(
     state: &AppState,
 ) -> (
@@ -128,7 +110,6 @@ fn candidate_run(
     let mut run = crate::workflows::WorkflowRun::create(
         run_id,
         1,
-        crate::projects::ProjectId::generate().expect("project"),
         Some(crate::agents::AgentId::generate().expect("agent")),
         crate::workflows::RunKind::Configured,
         pinned.clone(),
@@ -368,7 +349,9 @@ async fn candidate_review_uses_immutable_selection_without_source_approval() {
     );
     assert_eq!(state.workflow_runs.get(&run.id).expect("source"), run);
     let mut follow_up = state.conversations.get(&review.id).expect("review");
-    follow_up.execution_target = Some(crate::projects::ProjectId::generate().expect("target"));
+    if let Some(model) = follow_up.model.as_mut() {
+        model.settings.tools = vec![crate::agents::ToolId::Read];
+    }
     let result = super::start_message(
         &state,
         session_id(&token),
@@ -480,7 +463,6 @@ async fn conversation_states_share_document_navigation_and_detail_patch_controls
                 "conversation-model-controls",
                 "conversation-model-search",
                 "conversation-settings",
-                "conversation-project-settings",
             ] {
                 assert_eq!(body.matches(&format!("id=\"{id}\"")).count(), 1);
             }
@@ -605,23 +587,6 @@ async fn local_model_selection_does_not_write_global_preferences() {
             .contains(&format!("name=\"revision\" value=\"{}\"", updated.revision))
     );
     assert!(!body.contains("Power Plant cannot store the model preference."));
-}
-
-#[tokio::test]
-async fn creation_errors_target_the_shared_page_from_any_entry_point() {
-    let state = test_state();
-    let token = connected(&state);
-    let response = app(&state)
-        .oneshot(command("/conversations", &token, "project=missing"))
-        .await
-        .expect("create");
-    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
-    let body = text(response).await;
-    assert!(body.contains("target=\"chat-main\""));
-    assert!(!body.contains("target=\"conversation-form\""));
-    assert!(body.contains("Choose an available project."));
-    assert!(body.contains("location=\"/conversations\""));
-    assert!(state.conversations.list().is_empty());
 }
 
 #[tokio::test]
@@ -797,7 +762,6 @@ pub(super) fn awaiting_gate(state: &AppState) {
         .conversations
         .create_saved(
             crate::conversations::ConversationId::generate().expect("id"),
-            None,
             Some("Fix the timeout message".to_owned()),
             None,
             vec![],
@@ -813,7 +777,6 @@ pub(super) fn awaiting_gate(state: &AppState) {
     let mut run = crate::workflows::WorkflowRun::create(
         crate::workflows::RunId::generate().expect("run"),
         1,
-        crate::projects::ProjectId::generate().expect("project"),
         None,
         crate::workflows::RunKind::QuickTask,
         pinned.clone(),
@@ -956,7 +919,6 @@ async fn directory_history_matches_identity_without_granting_access() {
             .conversations
             .create_saved(
                 crate::conversations::ConversationId::generate().unwrap(),
-                None,
                 Some(title.to_owned()),
                 Some(model),
                 Vec::new(),
@@ -1147,31 +1109,6 @@ async fn history_filters_preserve_only_valid_return_context() {
             assert!(!body.contains("Back to conversation"));
         }
     }
-}
-
-#[tokio::test]
-async fn project_entry_carries_context_without_creating_a_record() {
-    let state = test_state();
-    let token = connected(&state);
-    let project = register_project(&state, "Context project");
-    let catalogue_path = "/conversations".to_owned();
-    let catalogue = app(&state)
-        .oneshot(document(&catalogue_path, &token))
-        .await
-        .expect("filtered catalogue");
-    assert_eq!(catalogue.status(), StatusCode::OK);
-    assert!(state.conversations.list().is_empty());
-
-    let page = app(&state)
-        .oneshot(navigation(
-            &format!("/conversations/new?project={}", project.id),
-            &token,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(page.status(), StatusCode::OK);
-    assert!(text(page).await.contains(&project.id.as_hex()));
-    assert!(state.conversations.list().is_empty());
 }
 
 #[tokio::test]
@@ -1558,238 +1495,6 @@ async fn unavailable_preset_models_apply_without_substitution() {
 }
 
 #[tokio::test]
-async fn project_context_references_are_distinct_and_do_not_expose_paths() {
-    let mut state = test_state();
-    let backend = crate::providers::tests::ScriptedBackend::accept();
-    state.chat = std::sync::Arc::new(crate::providers::ChatBackend::Scripted(backend.clone()));
-    let token = connected(&state);
-    let first = register_project(&state, "First project");
-    let second = register_project(&state, "Second project");
-    let conversation = state
-        .conversations
-        .create("Discussion".to_owned())
-        .expect("conversation");
-    let path = format!("/conversations/{}/projects", conversation.id);
-
-    let response = app(&state)
-        .oneshot(command(
-            &path,
-            &token,
-            &format!("revision={}&project={}", conversation.revision, first.id),
-        ))
-        .await
-        .expect("attach first");
-    assert_eq!(response.status(), StatusCode::OK);
-    let first_attachment = state.conversations.get(&conversation.id).expect("attached");
-    let response = app(&state)
-        .oneshot(command(
-            &path,
-            &token,
-            &format!(
-                "revision={}&project={}",
-                first_attachment.revision, second.id
-            ),
-        ))
-        .await
-        .expect("attach second");
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = text(response).await;
-    assert!(body.contains("First project"));
-    assert!(body.contains("Second project"));
-    assert!(body.contains("Context reference only. File access is not granted."));
-    assert!(!body.contains(first.host_path.to_string_lossy().as_ref()));
-    assert!(!body.contains(second.host_path.to_string_lossy().as_ref()));
-    let attached = state.conversations.get(&conversation.id).expect("attached");
-    assert_eq!(attached.projects, vec![first.id, second.id]);
-    let model = "grok-4.6".to_owned();
-    let attached = state
-        .conversations
-        .select_model(
-            &attached.id,
-            attached.revision,
-            ModelSelection::new(
-                ProviderKind::Xai,
-                model.clone(),
-                state
-                    .models_dev
-                    .effective_effort(ProviderKind::Xai, &model, None),
-            )
-            .expect("model"),
-            crate::tests::test_environment_id(),
-        )
-        .expect("select model");
-    let response = app(&state)
-        .oneshot(command(
-            &format!("/conversations/{}/messages", attached.id),
-            &token,
-            &format!("revision={}&message=Hello", attached.revision),
-        ))
-        .await
-        .expect("send");
-    assert_eq!(response.status(), StatusCode::OK);
-    tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        while state
-            .conversations
-            .get(&attached.id)
-            .expect("conversation")
-            .active_job
-            .is_some()
-        {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("settlement");
-    let preamble = backend.last_preamble().expect("project metadata");
-    assert!(preamble.contains("First project"));
-    assert!(preamble.contains("Second project"));
-    assert!(!preamble.contains(first.host_path.to_string_lossy().as_ref()));
-    assert!(!preamble.contains(second.host_path.to_string_lossy().as_ref()));
-    assert!(backend.last_tools().is_empty());
-
-    state
-        .conversations
-        .create("Unrelated conversation".to_owned())
-        .expect("unrelated conversation");
-
-    std::fs::remove_dir_all(&first.host_path).expect("remove project directory");
-    let response = app(&state)
-        .oneshot(document(&format!("/conversations/{}", attached.id), &token))
-        .await
-        .expect("unavailable project");
-    let body = text(response).await;
-    assert!(body.contains("Project unavailable."));
-    assert!(body.contains("First project"));
-    let current = state.conversations.get(&attached.id).expect("conversation");
-    let response = app(&state)
-        .oneshot(command(
-            &format!("{path}/{}", first.id),
-            &token,
-            &format!("revision={}", current.revision),
-        ))
-        .await
-        .expect("detach unavailable project");
-    assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(
-        state
-            .conversations
-            .get(&attached.id)
-            .expect("conversation")
-            .projects,
-        vec![second.id]
-    );
-}
-
-#[tokio::test]
-async fn project_context_rejects_unknown_duplicate_stale_and_active_changes() {
-    let state = test_state();
-    let token = connected(&state);
-    let project = register_project(&state, "Project");
-    let conversation = state
-        .conversations
-        .create("Discussion".to_owned())
-        .expect("conversation");
-    let path = format!("/conversations/{}/projects", conversation.id);
-
-    for submitted in [
-        "not-a-project".to_owned(),
-        crate::projects::ProjectId::generate()
-            .expect("unknown identifier")
-            .as_hex(),
-        project.host_path.to_string_lossy().into_owned(),
-    ] {
-        let response = app(&state)
-            .oneshot(command(
-                &path,
-                &token,
-                &format!("revision={}&project={submitted}", conversation.revision),
-            ))
-            .await
-            .expect("invalid project");
-        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
-        assert_eq!(
-            state.conversations.get(&conversation.id),
-            Some(conversation.clone())
-        );
-    }
-
-    let response = app(&state)
-        .oneshot(command(
-            &path,
-            &token,
-            &format!("revision={}&project={}", conversation.revision, project.id),
-        ))
-        .await
-        .expect("attach");
-    assert_eq!(response.status(), StatusCode::OK);
-    let attached = state.conversations.get(&conversation.id).expect("attached");
-    let response = app(&state)
-        .oneshot(command(
-            &path,
-            &token,
-            &format!("revision={}&project={}", attached.revision, project.id),
-        ))
-        .await
-        .expect("duplicate");
-    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(
-        state.conversations.get(&conversation.id),
-        Some(attached.clone())
-    );
-
-    let detach = format!("{path}/{}", project.id);
-    let response = app(&state)
-        .oneshot(command(
-            &detach,
-            &token,
-            &format!("revision={}", conversation.revision),
-        ))
-        .await
-        .expect("stale detach");
-    assert_eq!(response.status(), StatusCode::CONFLICT);
-    assert_eq!(
-        state.conversations.get(&conversation.id),
-        Some(attached.clone())
-    );
-
-    let owner = sessions::generate_session_token().expect("owner");
-    state.sessions.insert(owner.id());
-    let job = state
-        .sessions
-        .begin_conversation_job(&owner.id(), conversation.id, 1)
-        .expect("job");
-    let selection =
-        ModelSelection::new(ProviderKind::Xai, "grok-4.6".to_owned(), None).expect("selection");
-    state
-        .conversations
-        .begin_message(
-            &conversation.id,
-            attached.revision,
-            selection,
-            job.id(),
-            "Question".to_owned(),
-        )
-        .expect("active message");
-    let active = state.conversations.get(&conversation.id).expect("active");
-    let response = app(&state)
-        .oneshot(command(
-            &detach,
-            &token,
-            &format!("revision={}", active.revision),
-        ))
-        .await
-        .expect("active detach");
-    assert_eq!(response.status(), StatusCode::CONFLICT);
-    assert_eq!(
-        state
-            .conversations
-            .get(&conversation.id)
-            .expect("unchanged"),
-        active
-    );
-}
-
-#[tokio::test]
 async fn stale_rename_returns_a_conflict_without_replacing_the_current_title() {
     let state = test_state();
     let token = connected(&state);
@@ -1819,122 +1524,6 @@ async fn stale_rename_returns_a_conflict_without_replacing_the_current_title() {
         state.conversations.get(&record.id).expect("current").title,
         "Current title"
     );
-}
-
-#[tokio::test]
-async fn writable_access_is_explicit_and_adds_write_without_network_access() {
-    let state = test_state();
-    let token = connected(&state);
-    let project = register_project(&state, "Writable project");
-    let conversation = state
-        .conversations
-        .create("Implementation".to_owned())
-        .expect("conversation");
-    let configured = state
-        .conversations
-        .update_execution_settings(
-            &conversation.id,
-            conversation.revision,
-            crate::execution::ExecutionSettings::new(
-                ModelSelection::new(ProviderKind::Xai, "grok-4.6".to_owned(), None).unwrap(),
-                String::new(),
-                ToolId::ALL.to_vec(),
-                crate::tests::test_environment_id(),
-            )
-            .unwrap(),
-        )
-        .expect("configure tools");
-    let attached = state
-        .conversations
-        .attach_project(&conversation.id, configured.revision, project.id)
-        .expect("attach");
-    let path = format!("/conversations/{}/access", conversation.id);
-
-    let response = app(&state)
-        .oneshot(command(
-            &path,
-            &token,
-            &format!(
-                "revision={}&project={}&access=read-write",
-                attached.revision, project.id
-            ),
-        ))
-        .await
-        .expect("grant");
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = text(response).await;
-    assert!(body.contains("Writable access granted."));
-    assert!(body.contains("List, Read, Run and Write"));
-    assert!(body.contains("Network: None"));
-
-    let granted = state.conversations.get(&conversation.id).expect("granted");
-    let authority =
-        crate::conversations::resolve_workflow_authority(&granted, &state.projects, &state.agents)
-            .expect("authority")
-            .expect("writable authority")
-            .effective;
-    assert_eq!(authority.grant_access, crate::agents::AccessMode::ReadWrite);
-    assert_eq!(
-        authority.tools,
-        vec![ToolId::List, ToolId::Read, ToolId::Run, ToolId::Write]
-    );
-    assert_eq!(authority.network, NetworkAccess::None);
-}
-
-#[tokio::test]
-async fn read_only_access_is_explicit_revisioned_and_selects_one_target() {
-    let state = test_state();
-    let token = connected(&state);
-    let project = register_project(&state, "Inspectable project");
-    let conversation = state
-        .conversations
-        .create("Inspection".to_owned())
-        .expect("conversation");
-    let attached = state
-        .conversations
-        .attach_project(&conversation.id, conversation.revision, project.id)
-        .expect("attach");
-    let detail = app(&state)
-        .oneshot(document(
-            &format!("/conversations/{}", conversation.id),
-            &token,
-        ))
-        .await
-        .expect("detail");
-    let detail_body = text(detail).await;
-    assert!(detail_body.contains("Grant effect: List, Read and Run"));
-    let path = format!("/conversations/{}/access", conversation.id);
-
-    let response = app(&state)
-        .oneshot(command(
-            &path,
-            &token,
-            &format!("revision={}&project={}", attached.revision, project.id),
-        ))
-        .await
-        .expect("grant");
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = text(response).await;
-    assert!(body.contains("Read-only access granted."));
-    let granted = state.conversations.get(&conversation.id).expect("granted");
-    assert_eq!(granted.execution_target, Some(project.id));
-    assert_eq!(granted.grants.len(), 1);
-    assert_eq!(granted.grants[0].project_revision, project.revision);
-    assert_eq!(
-        granted.grants[0].access,
-        crate::agents::AccessMode::ReadOnly
-    );
-
-    let stale = app(&state)
-        .oneshot(command(
-            &path,
-            &token,
-            &format!("revision={}&project={}", attached.revision, project.id),
-        ))
-        .await
-        .expect("stale grant");
-    assert_eq!(stale.status(), StatusCode::CONFLICT);
-    assert_eq!(state.conversations.get(&conversation.id), Some(granted));
 }
 
 #[tokio::test]
@@ -2097,7 +1686,6 @@ async fn catalogue_title_search_trims_case_and_combines_with_directory() {
             .conversations
             .create_saved(
                 crate::conversations::ConversationId::generate().unwrap(),
-                None,
                 Some(title.to_owned()),
                 Some(model),
                 Vec::new(),

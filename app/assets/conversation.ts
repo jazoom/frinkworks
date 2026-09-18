@@ -1,4 +1,8 @@
-import type { IslandInstance, IslandMountContext } from "hypergraft/browser";
+import {
+    commandBlockReason,
+    type IslandInstance,
+    type IslandMountContext,
+} from "hypergraft/browser";
 
 export function initConversation(
     root: HTMLElement,
@@ -29,10 +33,30 @@ export function initConversation(
         "network",
         "network_domains",
         "preset",
+        "git_destination",
+    ];
+    const executionNames = [
+        "environment",
+        "location",
+        "host_approval",
+        "directory_access",
+    ];
+    const ordinaryNames = [
+        "instructions",
+        "tool_list",
+        "tool_read",
+        "tool_write",
+        "tool_run",
+        "network",
+        "network_domains",
+        "git_destination",
     ];
     let unsavedSettings:
         | Map<string, { value: string; checked: boolean; disabled: boolean }>
         | undefined;
+    let submittedSettings: typeof unsavedSettings;
+    let ordinarySavePending = false;
+    let ordinarySaveQueued = false;
     function syncEnableTools() {
         const toggle = root.querySelector<HTMLInputElement>(
             "[data-enable-tools]",
@@ -46,73 +70,66 @@ export function initConversation(
         toggle.indeterminate = checked > 0 && checked < tools.length;
     }
 
-    function cancelSettings(trigger: HTMLElement) {
-        const panel = trigger.closest<HTMLElement>("#conversation-settings");
-        if (!panel) return;
-        if (trigger instanceof HTMLAnchorElement) {
-            if (panel.matches(":popover-open")) panel.hidePopover();
+    function applyField(
+        form: HTMLFormElement,
+        name: string,
+        saved: { value: string; checked: boolean; disabled: boolean },
+    ) {
+        const field = form.elements.namedItem(name);
+        if (field instanceof RadioNodeList) {
+            for (const radio of field) {
+                if (radio instanceof HTMLInputElement)
+                    radio.checked = radio.value === saved.value;
+            }
             return;
         }
-        panel
-            .querySelectorAll<
-                HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
-            >("input, select, textarea")
-            .forEach((control) => {
-                if (
-                    control instanceof HTMLInputElement &&
-                    (control.type === "checkbox" || control.type === "radio")
-                )
-                    control.checked = control.defaultChecked;
-                else if (control instanceof HTMLSelectElement) {
-                    for (const option of control.options)
-                        option.selected = option.defaultSelected;
-                } else control.value = control.defaultValue;
-            });
-        unsavedSettings = undefined;
-        syncEnableTools();
-        syncConversation();
-        const host =
-            panel.querySelector<HTMLInputElement>(
-                'input[name="location"]:checked',
-            )?.value === "host";
-        panel
-            .querySelectorAll<HTMLElement>("[data-execution-sandbox-settings]")
-            .forEach((section) => {
-                section.hidden = host;
-            });
-        panel
-            .querySelectorAll<HTMLElement>("[data-execution-host-policy]")
-            .forEach((section) => {
-                section.hidden = !host;
-            });
-        panel
-            .querySelectorAll<HTMLElement>(".segmented label")
-            .forEach((label) => {
-                const input = label.querySelector<HTMLInputElement>(
-                    'input[name="location"]',
-                );
-                if (input) label.classList.toggle("selected", input.checked);
-            });
-        const networkSelect = panel.querySelector<HTMLSelectElement>(
-            "[data-network-select]",
-        );
-        const domains = panel.querySelector<HTMLElement>(
-            "[data-network-domains]",
-        );
-        if (networkSelect && domains)
-            domains.hidden = networkSelect.value !== "restricted";
-        const environment = panel.querySelector<HTMLSelectElement>(
-            "#conversation-environment",
-        );
-        if (environment)
-            panel
-                .querySelectorAll<HTMLElement>("[data-environment-problem]")
-                .forEach((problem) => {
-                    problem.hidden =
-                        problem.dataset.environmentProblem !==
-                        environment.value;
-                });
-        if (panel.matches(":popover-open")) panel.hidePopover();
+        if (!(
+            field instanceof HTMLInputElement ||
+            field instanceof HTMLSelectElement ||
+            field instanceof HTMLTextAreaElement
+        ))
+            return;
+        if (
+            field instanceof HTMLSelectElement &&
+            !Array.from(field.options).some(
+                (option) => option.value === saved.value,
+            )
+        )
+            field.add(new Option(saved.value, saved.value));
+        field.value = saved.value;
+        if (field instanceof HTMLInputElement) field.checked = saved.checked;
+        if (
+            name === "thinking" &&
+            !root.querySelector<HTMLSelectElement>('[name="provider"]')
+                ?.disabled
+        )
+            field.disabled = saved.disabled;
+    }
+
+    function applyDefaults(form: HTMLFormElement, names: string[]) {
+        for (const name of names) {
+            const field = form.elements.namedItem(name);
+            if (field instanceof RadioNodeList) {
+                for (const radio of field) {
+                    if (radio instanceof HTMLInputElement)
+                        radio.checked = radio.defaultChecked;
+                }
+                continue;
+            }
+            if (
+                field instanceof HTMLInputElement &&
+                (field.type === "checkbox" || field.type === "radio")
+            )
+                field.checked = field.defaultChecked;
+            else if (field instanceof HTMLSelectElement) {
+                for (const option of field.options)
+                    option.selected = option.defaultSelected;
+            } else if (
+                field instanceof HTMLInputElement ||
+                field instanceof HTMLTextAreaElement
+            )
+                field.value = field.defaultValue;
+        }
     }
 
     function retainSettings() {
@@ -146,6 +163,32 @@ export function initConversation(
                 });
         }
     }
+
+    function queueOrdinarySave() {
+        if (draftSettings) return;
+        const form = root.querySelector<HTMLFormElement>(
+            "#conversation-settings-form",
+        );
+        if (!form || typeof form.requestSubmit !== "function") return;
+        if (ordinarySavePending || commandBlockReason()) {
+            ordinarySaveQueued = true;
+            return;
+        }
+        if (!form.checkValidity()) return;
+        retainSettings();
+        // Ordinary fields apply on change. Pin execution fields to the last
+        // saved values so this submit cannot open an execution review.
+        applyDefaults(form, executionNames);
+        submittedSettings = new Map(unsavedSettings);
+        ordinarySavePending = true;
+        form.requestSubmit();
+        if (!unsavedSettings) return;
+        for (const name of executionNames) {
+            const saved = unsavedSettings.get(name);
+            if (saved) applyField(form, name, saved);
+        }
+    }
+
     function syncConversation() {
         // Saved summaries describe the authoritative configuration, not unsubmitted choices.
         if (!root.querySelector('[data-conversation-state="new"]')) return;
@@ -183,29 +226,12 @@ export function initConversation(
                 environment.selectedOptions[0]?.dataset.environmentName ||
                 "Choose environment";
         }
-        const project = field("project") as HTMLSelectElement | null;
-        const context = root.querySelector<HTMLElement>(
-            "[data-conversation-project-summary]",
-        );
-        if (context && project) {
-            context.hidden = !project.value;
-            context.textContent = project.value
-                ? `${project.selectedOptions[0].text} · No file access`
-                : "";
-        }
     }
 
     root.addEventListener(
         "click",
         (event) => {
             if (!(event.target instanceof Element)) return;
-            const cancel = event.target.closest<HTMLElement>(
-                "[data-settings-cancel]",
-            );
-            if (cancel) {
-                cancelSettings(cancel);
-                return;
-            }
             const saveToggle = event.target.closest<HTMLButtonElement>(
                 "[data-preset-save-toggle]",
             );
@@ -300,11 +326,39 @@ export function initConversation(
                     }
                 }
                 event.target.indeterminate = false;
+                queueOrdinarySave();
                 return;
             }
-            if (event.target instanceof HTMLSelectElement) {
+            const field = event.target;
+            if (
+                (field instanceof HTMLInputElement ||
+                    field instanceof HTMLSelectElement) &&
+                ordinaryNames.includes(field.name)
+            ) {
+                if (field instanceof HTMLSelectElement) syncConversation();
+                if (field.form === modelForm()) {
+                    retainSettings();
+                    queueOrdinarySave();
+                }
+            } else if (field instanceof HTMLSelectElement) {
                 syncConversation();
-                if (event.target.form === modelForm()) retainSettings();
+                if (field.form === modelForm()) retainSettings();
+            }
+        },
+        { signal },
+    );
+
+    root.addEventListener(
+        "focusout",
+        (event) => {
+            const field = event.target;
+            if (
+                field instanceof HTMLTextAreaElement &&
+                ordinaryNames.includes(field.name) &&
+                field.form === modelForm()
+            ) {
+                retainSettings();
+                queueOrdinarySave();
             }
         },
         { signal },
@@ -322,6 +376,11 @@ export function initConversation(
                     ))
             )
                 return;
+            const ordinaryResponse =
+                context.cause === "patch" &&
+                context.detail.form.id === "conversation-settings-form";
+            if (ordinaryResponse || context.cause === "location")
+                ordinarySavePending = false;
             const settingsResponse =
                 (context.cause === "patch" &&
                     [
@@ -334,9 +393,29 @@ export function initConversation(
                 (context.cause === "patch" &&
                     context.detail.form.id === "conversation-composer" &&
                     draftSettings);
-            if (context.cause === "location" || settingsResponse) {
+            if (context.cause === "location") {
                 unsavedSettings = undefined;
-            } else if (unsavedSettings) {
+                submittedSettings = undefined;
+                ordinarySaveQueued = false;
+            } else if (
+                context.cause === "patch" &&
+                context.detail.form.id === "conversation-settings-form" &&
+                unsavedSettings
+            ) {
+                for (const name of [...unsavedSettings.keys()]) {
+                    const saved = unsavedSettings.get(name);
+                    const sent = submittedSettings?.get(name);
+                    const changedAfterSubmit =
+                        ordinaryNames.includes(name) &&
+                        sent &&
+                        (saved?.value !== sent.value ||
+                            saved?.checked !== sent.checked);
+                    if (!executionNames.includes(name) && !changedAfterSubmit)
+                        unsavedSettings.delete(name);
+                }
+                if (unsavedSettings.size === 0) unsavedSettings = undefined;
+            } else if (settingsResponse) unsavedSettings = undefined;
+            if (unsavedSettings) {
                 const form = modelForm();
                 for (const [name, saved] of unsavedSettings) {
                     if (
@@ -345,37 +424,7 @@ export function initConversation(
                         context.detail.form.id === "conversation-model-form"
                     )
                         continue;
-                    const field = form?.elements.namedItem(name);
-                    if (field instanceof RadioNodeList) {
-                        for (const radio of field) {
-                            if (radio instanceof HTMLInputElement)
-                                radio.checked = radio.value === saved.value;
-                        }
-                        continue;
-                    }
-                    if (!(
-                        field instanceof HTMLInputElement ||
-                        field instanceof HTMLSelectElement ||
-                        field instanceof HTMLTextAreaElement
-                    ))
-                        continue;
-                    if (
-                        field instanceof HTMLSelectElement &&
-                        !Array.from(field.options).some(
-                            (option) => option.value === saved.value,
-                        )
-                    )
-                        field.add(new Option(saved.value, saved.value));
-                    field.value = saved.value;
-                    if (field instanceof HTMLInputElement)
-                        field.checked = saved.checked;
-                    if (
-                        name === "thinking" &&
-                        !root.querySelector<HTMLSelectElement>(
-                            '[name="provider"]',
-                        )?.disabled
-                    )
-                        field.disabled = saved.disabled;
+                    if (form) applyField(form, name, saved);
                 }
                 const label = root.querySelector("#conversation-model-value");
                 if (label && draftSettings)
@@ -441,6 +490,11 @@ export function initConversation(
             );
             if (networkSelect && domains)
                 domains.hidden = networkSelect.value !== "restricted";
+            if (ordinaryResponse) submittedSettings = undefined;
+            if (ordinarySaveQueued && !ordinarySavePending) {
+                ordinarySaveQueued = false;
+                queueOrdinarySave();
+            }
         },
         destroy() {},
     };

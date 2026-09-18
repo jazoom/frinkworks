@@ -1,8 +1,7 @@
 use std::path::Path;
 
 use crate::{
-    agents::{AccessMode, NetworkAccess},
-    projects::ProjectId,
+    agents::NetworkAccess,
     providers::{ModelSelection, ProviderKind},
     sessions::JobId,
 };
@@ -16,42 +15,25 @@ impl ConversationStore {
     fn create_record(
         &self,
         title: String,
-        projects: Vec<ProjectId>,
         title_pending: bool,
     ) -> Result<super::ConversationRecord, ConversationError> {
         self.create_saved(
             super::ConversationId::generate().map_err(|_| ConversationError::Random)?,
-            projects.first().copied(),
             (!title_pending).then_some(title),
             None,
             Vec::new(),
         )
     }
 
-    pub(crate) fn create_untitled(
-        &self,
-        project: Option<ProjectId>,
-    ) -> Result<super::ConversationRecord, ConversationError> {
-        self.create_record(
-            "New conversation".to_owned(),
-            project.into_iter().collect(),
-            true,
-        )
+    pub(crate) fn create_untitled(&self) -> Result<super::ConversationRecord, ConversationError> {
+        self.create_record("New conversation".to_owned(), true)
     }
 
     pub(crate) fn create(
         &self,
         title: String,
     ) -> Result<super::ConversationRecord, ConversationError> {
-        self.create_record(title, Vec::new(), false)
-    }
-
-    pub(crate) fn create_with_project(
-        &self,
-        title: String,
-        project: ProjectId,
-    ) -> Result<super::ConversationRecord, ConversationError> {
-        self.create_record(title, vec![project], false)
+        self.create_record(title, false)
     }
 
     pub(crate) fn begin_message(
@@ -94,7 +76,7 @@ impl ConversationStore {
 fn restart_preserves_explicit_saves_with_or_without_a_manual_title() {
     let dir = tempfile::tempdir().unwrap();
     let store = ConversationStore::in_memory();
-    let draft = store.create_untitled(None).unwrap();
+    let draft = store.create_untitled().unwrap();
     let saved = store.create("New conversation".to_owned()).unwrap();
     let file = super::CatalogueFile {
         version: super::CATALOGUE_VERSION,
@@ -126,7 +108,6 @@ fn restart_preserves_directory_identity_and_guest_alias() {
     let record = store
         .create_saved(
             super::ConversationId::generate().unwrap(),
-            None,
             Some("Directory".to_owned()),
             Some(super::ConversationModelConfiguration {
                 settings,
@@ -159,7 +140,6 @@ fn capacity_never_evicts_saved_conversations() {
                 super::ConversationId::generate().unwrap(),
                 None,
                 None,
-                None,
                 Vec::new(),
             )
             .unwrap();
@@ -168,7 +148,6 @@ fn capacity_never_evicts_saved_conversations() {
     assert_eq!(
         store.create_saved(
             super::ConversationId::generate().unwrap(),
-            None,
             None,
             None,
             Vec::new()
@@ -181,7 +160,7 @@ fn capacity_never_evicts_saved_conversations() {
 #[test]
 fn automatic_titles_preserve_manual_edits_and_command_revisions() {
     let store = ConversationStore::in_memory();
-    let record = store.create_untitled(None).unwrap();
+    let record = store.create_untitled().unwrap();
     let job = JobId::generate().unwrap();
     let started = store
         .begin_message(
@@ -252,7 +231,7 @@ fn automatic_titles_preserve_manual_edits_and_command_revisions() {
     );
     assert_eq!(store.get(&record.id).unwrap().title, renamed.title);
 
-    let record = store.create_untitled(None).unwrap();
+    let record = store.create_untitled().unwrap();
     let record = store
         .rename(&record.id, record.revision, "New conversation".to_owned())
         .unwrap();
@@ -363,27 +342,6 @@ fn distinct_opaque_conversations_survive_a_restart() {
     let store = ConversationStore::open(dir.path().to_path_buf()).expect("reopen");
     assert_eq!(store.get(&first.id), Some(first));
     assert_eq!(store.get(&second.id), Some(second));
-}
-
-#[test]
-fn a_project_reference_is_persisted_without_access_or_model_configuration() {
-    let dir = tempfile::tempdir().expect("directory");
-    let project = ProjectId::parse("0123456789abcdef0123456789abcdef").expect("project id");
-    let store = ConversationStore::open(dir.path().to_path_buf()).expect("store");
-    let record = store
-        .create_with_project("Project discussion".to_owned(), project)
-        .expect("conversation");
-
-    assert_eq!(record.projects, vec![project]);
-    assert!(record.grants.is_empty());
-    assert!(record.model.is_none());
-    drop(store);
-
-    let reopened = ConversationStore::open(dir.path().to_path_buf()).expect("reopen");
-    assert_eq!(
-        reopened.get(&record.id).expect("record").projects,
-        vec![project]
-    );
 }
 
 #[test]
@@ -517,96 +475,6 @@ fn rename_preserves_timestamp_order_after_clock_regression() {
 }
 
 #[test]
-fn project_associations_survive_restart() {
-    let dir = tempfile::tempdir().expect("directory");
-    let first = crate::projects::ProjectId::generate().expect("first project");
-    let second = crate::projects::ProjectId::generate().expect("second project");
-    let record;
-    {
-        let store = ConversationStore::open(dir.path().to_path_buf()).expect("store");
-        let created = store.create("Discussion".to_owned()).expect("conversation");
-        let attached = store
-            .attach_project(&created.id, created.revision, first)
-            .expect("attach first");
-        record = store
-            .attach_project(&attached.id, attached.revision, second)
-            .expect("attach second");
-    }
-    let store = ConversationStore::open(dir.path().to_path_buf()).expect("reopen");
-    assert_eq!(store.get(&record.id), Some(record));
-}
-
-#[test]
-fn project_associations_are_ordered_bounded_and_revisioned() {
-    let store = ConversationStore::in_memory();
-    let record = store.create("Discussion".to_owned()).expect("conversation");
-    let first = crate::projects::ProjectId::generate().expect("first project");
-    let second = crate::projects::ProjectId::generate().expect("second project");
-    let attached = store
-        .attach_project(&record.id, record.revision, first)
-        .expect("attach first");
-    let attached = store
-        .attach_project(&record.id, attached.revision, second)
-        .expect("attach second");
-    assert_eq!(attached.projects, vec![first, second]);
-    assert_eq!(
-        store.attach_project(&attached.id, attached.revision, first),
-        Err(ConversationError::DuplicateProject)
-    );
-    assert_eq!(
-        store.detach_project(&attached.id, attached.revision - 1, first),
-        Err(ConversationError::Conflict)
-    );
-    assert_eq!(store.get(&attached.id), Some(attached.clone()));
-
-    let mut current = attached;
-    for _ in current.projects.len()..super::MAXIMUM_PROJECT_ASSOCIATIONS {
-        current = store
-            .attach_project(
-                &current.id,
-                current.revision,
-                crate::projects::ProjectId::generate().expect("project"),
-            )
-            .expect("attach within bound");
-    }
-    assert_eq!(
-        store.attach_project(
-            &current.id,
-            current.revision,
-            crate::projects::ProjectId::generate().expect("overflow project"),
-        ),
-        Err(ConversationError::Projects)
-    );
-}
-
-#[test]
-fn only_one_project_can_have_writable_conversation_access() {
-    let store = ConversationStore::in_memory();
-    let conversation = store.create("Discussion".to_owned()).expect("conversation");
-    let first = ProjectId::generate().expect("first project");
-    let second = ProjectId::generate().expect("second project");
-    let first_attached = store
-        .attach_project(&conversation.id, conversation.revision, first)
-        .expect("first attachment");
-    let attached = store
-        .attach_project(&conversation.id, first_attached.revision, second)
-        .expect("second attachment");
-    let writable = store
-        .grant_writable(&attached.id, attached.revision, first, 1)
-        .expect("first writable grant");
-    let second_read_only = store
-        .grant_read_only(&writable.id, writable.revision, second, 1)
-        .expect("second read-only grant");
-    assert_eq!(second_read_only.execution_target, Some(first));
-    assert_eq!(second_read_only.grants[1].access, AccessMode::ReadOnly);
-    assert_eq!(
-        store.grant_writable(&second_read_only.id, second_read_only.revision, second, 1),
-        Err(ConversationError::WriteTarget)
-    );
-    assert_eq!(store.get(&conversation.id), Some(second_read_only));
-}
-
-#[test]
 fn conversation_network_access_survives_restart() {
     let dir = tempfile::tempdir().expect("directory");
     let store = ConversationStore::open(dir.path().to_path_buf()).expect("store");
@@ -655,30 +523,6 @@ fn conversation_network_access_rejects_stale_and_active_changes() {
         store.set_network(&record.id, updated.revision + 1, NetworkAccess::None),
         Err(ConversationError::Active)
     );
-}
-
-#[test]
-fn writable_project_grants_survive_restart_with_their_revision() {
-    let dir = tempfile::tempdir().expect("directory");
-    let project = crate::projects::ProjectId::generate().expect("project");
-    let record;
-    {
-        let store = ConversationStore::open(dir.path().to_path_buf()).expect("store");
-        let conversation = store.create("Discussion".to_owned()).expect("conversation");
-        let attached = store
-            .attach_project(&conversation.id, conversation.revision, project)
-            .expect("attach");
-        record = store
-            .grant_writable(&attached.id, attached.revision, project, 3)
-            .expect("grant");
-    }
-    let store = ConversationStore::open(dir.path().to_path_buf()).expect("reopen");
-    let recovered = store.get(&record.id).expect("recovered");
-    assert_eq!(
-        recovered.grants[0].access,
-        crate::agents::AccessMode::ReadWrite
-    );
-    assert_eq!(recovered.execution_target, Some(project));
 }
 
 #[test]
@@ -975,7 +819,7 @@ fn message_bounds_reserve_space_for_terminal_output() {
 #[test]
 fn invalid_message_errors_do_not_settle_the_request() {
     let store = ConversationStore::in_memory();
-    let record = store.create_untitled(None).unwrap();
+    let record = store.create_untitled().unwrap();
     let request = JobId::generate().unwrap();
     let started = store
         .begin_message_with_model(
@@ -1049,7 +893,6 @@ fn restart_preserves_directory_approvals_until_settings_change() {
     let record = store
         .create_saved(
             super::ConversationId::generate().unwrap(),
-            None,
             Some("Directory".to_owned()),
             Some(super::ConversationModelConfiguration {
                 settings: settings.clone(),

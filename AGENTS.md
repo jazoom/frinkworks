@@ -17,7 +17,9 @@ There are no user accounts. A local vault stores provider API keys until the use
 - The CSP for HTML responses is `script-src 'nonce-…' 'self'` with no `unsafe-inline` or `unsafe-eval`. Put client-side logic in `app/assets/main.ts`.
 - Use DaisyUI primitives for controls. Use Tailwind utilities in Askama templates for layout.
 - Use vertical slice architecture. Feature code belongs in the relevant slice. Reserve `src/shared_templates/` for shared layouts.
-- For ordinary navigation, render a real `href` plus `data-graft`. Keep native navigation fallback.
+- For ordinary navigation, render a real `href` plus `data-graft`.
+- The application requires JavaScript.
+- Do not add noscript fallbacks.
 - When a `GET` supports page navigation and a targeted fragment update, use one canonical route.
 - Use `cargo add` when you add dependencies.
 - Do not edit `README.md` unless requested.

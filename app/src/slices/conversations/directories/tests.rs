@@ -11,7 +11,6 @@ fn conversation(state: &crate::state::AppState) -> crate::conversations::Convers
         .conversations
         .create_saved(
             ConversationId::generate().unwrap(),
-            None,
             Some("Directory test".to_owned()),
             Some(ConversationModelConfiguration::direct(
                 ModelSelection::new(ProviderKind::Xai, "grok-4.6".to_owned(), None).unwrap(),

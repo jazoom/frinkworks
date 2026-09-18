@@ -21,7 +21,7 @@ use crate::{
     plan_login::PendingPlan,
     providers::{ProviderConnection, ProviderError, ProviderKind},
     responses,
-    sessions::{self, OptionalSession},
+    sessions::{self, OptionalSession, RequiredSession},
     state::AppState,
 };
 
@@ -39,9 +39,20 @@ const PLAN_HOLD: Duration = if cfg!(test) {
 
 pub(super) fn router() -> Router<AppState> {
     Router::new()
+        .route("/", get(root))
         .route("/connect", get(show).post(submit))
         .route("/connect/plan", post(start_plan))
         .route("/connect/forget", post(forget))
+}
+
+// The root is a navigation entry point. A live session continues to work; any
+// other visitor lands on the connection page through the session extractor.
+async fn root(
+    State(_state): State<AppState>,
+    _session: RequiredSession,
+    graft: GraftRequest,
+) -> AppResult<Response> {
+    Ok(responses::request_navigation(graft, "/conversations"))
 }
 
 #[derive(Deserialize)]

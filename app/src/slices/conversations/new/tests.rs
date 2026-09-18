@@ -288,7 +288,6 @@ async fn new_navigation_and_invalid_submissions_leave_no_record_or_file() {
 async fn invalid_first_submissions_preserve_all_local_choices_and_unsent_text() {
     let state = test_state();
     let token = connected(&state);
-    let project = register_project(&state, "Context");
     let preset = state
         .agents
         .create(crate::agents::AgentDraft {
@@ -311,8 +310,8 @@ async fn invalid_first_submissions_preserve_all_local_choices_and_unsent_text() 
                 "/conversations/new",
                 &token,
                 &format!(
-                    "action={action}&project={}&title={title}&message=Unsent%20text&provider=xai&model=grok-4.6&thinking={}&preset={}",
-                    project.id, effort.as_str(), preset.id
+                    "action={action}&title={title}&message=Unsent%20text&provider=xai&model=grok-4.6&thinking={}&preset={}",
+                    effort.as_str(), preset.id
                 ),
             ))
             .await
@@ -323,16 +322,14 @@ async fn invalid_first_submissions_preserve_all_local_choices_and_unsent_text() 
         assert!(body.contains(&format!("value=\"{title}\"")));
         assert!(body.contains("value=\"grok-4.6\""));
         assert_eq!(hidden_named(&body, "provider"), "xai");
-        for value in [project.id.as_hex(), effort.as_str().to_owned()] {
-            let option = body
-                .split(&format!("value=\"{value}\""))
-                .nth(1)
-                .unwrap()
-                .split('>')
-                .next()
-                .unwrap();
-            assert!(option.contains("selected"), "{value}");
-        }
+        let option = body
+            .split(&format!("value=\"{}\"", effort.as_str()))
+            .nth(1)
+            .unwrap()
+            .split('>')
+            .next()
+            .unwrap();
+        assert!(option.contains("selected"), "{}", effort.as_str());
         assert!(!body.contains("location="));
         assert!(state.conversations.list().is_empty());
     }
@@ -343,14 +340,12 @@ async fn first_send_persists_message_and_model_then_replaces_location() {
     let state = test_state();
     ready_starter_environment(&state).await;
     let token = connected(&state);
-    let project = register_project(&state, "Context");
     let effort = state
         .models_dev
         .effective_effort(ProviderKind::Xai, "grok-4.6", None)
         .unwrap();
     let fields = format!(
-        "action=send&project={}&provider=xai&model=grok-4.6&thinking={}&instructions={}&tool_read=read&tool_list=list",
-        project.id,
+        "action=send&provider=xai&model=grok-4.6&thinking={}&instructions={}&tool_read=read&tool_list=list",
         effort.as_str(),
         "Use%20the%20supplied%20context."
     );
@@ -408,9 +403,6 @@ async fn first_send_persists_message_and_model_then_replaces_location() {
         settings.tools,
         vec![crate::agents::ToolId::List, crate::agents::ToolId::Read]
     );
-    assert_eq!(record.projects, vec![project.id]);
-    assert!(record.grants.is_empty());
-    assert!(record.execution_target.is_none());
 }
 
 #[tokio::test]
@@ -577,8 +569,6 @@ async fn first_message_persists_an_independent_directory_grant() {
         record.model.as_ref().unwrap().settings.directories,
         vec![grant.clone()]
     );
-    assert!(record.projects.is_empty());
-    assert!(record.grants.is_empty());
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
         while state
             .conversations
@@ -594,15 +584,21 @@ async fn first_message_persists_an_independent_directory_grant() {
     .expect("directory-backed reply");
     let run_id = state.workflow_runs.summaries().pop().unwrap().id;
     let run = state.workflow_runs.get(&run_id).unwrap();
-    assert!(run.project_id.is_none());
+    // A read-only non-Git folder stays valid for file work without a Git
+    // destination. It is mounted as secondary context, never auto-selected.
+    let directory = run.attempts[0]
+        .capabilities
+        .directories
+        .iter()
+        .find(|directory| directory.alias == grant.alias)
+        .expect("directory capability");
+    assert_eq!(directory.guest_path, grant.guest_path());
+    assert_eq!(directory.access, crate::agents::AccessMode::ReadOnly);
     assert_eq!(
-        run.attempts[0].capabilities.primary().unwrap().guest_path,
-        grant.guest_path()
+        directory.role,
+        crate::workflows::capabilities::DirectoryRole::SecondaryContext
     );
-    assert_eq!(
-        run.attempts[0].capabilities.primary().unwrap().access,
-        crate::agents::AccessMode::ReadOnly
-    );
+    assert!(run.attempts[0].capabilities.primary().is_none());
 }
 
 #[tokio::test]
@@ -698,7 +694,6 @@ async fn network_tool_reply_uses_private_workspace_without_catalogue_identity() 
         .expect("source-free run summary")
         .id;
     let run = state.workflow_runs.get(&run_id).expect("source-free run");
-    assert!(run.project_id.is_none());
     assert!(run.agent_id.is_none());
     assert_eq!(run.pinned.definition.default_environment(), environment.id);
     assert!(matches!(run.source, crate::workflows::RunSource::None));
@@ -744,7 +739,6 @@ async fn network_tool_reply_uses_private_workspace_without_catalogue_identity() 
     assert!(run.artefacts.is_empty());
     let reopened = crate::workflows::WorkflowRunStore::open(run_dir.path().to_path_buf()).unwrap();
     let loaded = reopened.get(&run_id).expect("loaded source-free run");
-    assert!(loaded.project_id.is_none());
     assert!(matches!(loaded.source, crate::workflows::RunSource::None));
 }
 

@@ -29,7 +29,6 @@ pub(crate) use apply::ApplyJournals;
 pub(crate) use artefacts::WorkflowArtefactRepository;
 pub(crate) use catalogue::{
     CatalogueError, ResolveWorkflowError, WorkflowCatalogue, WorkflowRecord, WorkflowSelection,
-    definition_fits_agent,
 };
 pub(crate) use commit::CommitJournals;
 pub(crate) use evidence::{AttemptEvidenceContext, WorkflowEvidenceStore};

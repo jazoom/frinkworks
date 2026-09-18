@@ -1,27 +1,4 @@
-use super::{AuthorityError, DirectoryPolicy, EffectiveAuthority};
-use crate::projects::ProjectRecord;
-
-impl EffectiveAuthority {
-    pub(crate) fn from_conversation(
-        conversation_id: crate::conversations::ConversationId,
-        conversation_revision: u32,
-        project: &ProjectRecord,
-        project_revision: u32,
-        access: AccessMode,
-        preset: Option<&AgentRecord>,
-    ) -> Result<Self, AuthorityError> {
-        Self::from_conversation_with_context(
-            conversation_id,
-            conversation_revision,
-            project,
-            project_revision,
-            access,
-            NetworkAccess::None,
-            Vec::new(),
-            preset,
-        )
-    }
-}
+use super::DirectoryPolicy;
 use crate::agents::record::{AccessMode, AgentRecord, DirectoryGrant, NetworkAccess};
 use crate::agents::{AgentId, ToolId};
 

@@ -8,10 +8,8 @@ use hypergraft::{GraftRequest, PatchGraft, PatchStatus};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    agents::AccessMode,
     conversations::ConversationRecord,
     error::{AppError, AppResult},
-    projects::ProjectId,
     providers::{ModelSelection, ProviderKind, ThinkingEffort},
     responses,
     sessions::RequiredSession,
@@ -29,7 +27,6 @@ const TITLE_SUFFIX: &str = " | Power Plant";
 pub(super) struct WorkflowQuery {
     stage: String,
     workflow: String,
-    target: String,
     brief: String,
     commit_policy: String,
     #[serde(default)]
@@ -43,13 +40,9 @@ pub(super) struct WorkflowLaunchForm {
     workflow: String,
     brief: String,
     #[serde(default)]
-    target: String,
-    #[serde(default)]
     commit_policy: String,
     #[serde(default)]
     preview_workflow: String,
-    #[serde(default)]
-    preview_target: String,
     #[serde(default)]
     preview_commit_policy: String,
     #[serde(default)]
@@ -64,13 +57,6 @@ struct WorkflowOption {
     summary: String,
     process_phases: Vec<crate::workflows::summary::ProcessPhase>,
     approvals: String,
-    selected: bool,
-}
-
-struct TargetOption {
-    id: String,
-    name: String,
-    access: String,
     selected: bool,
 }
 
@@ -113,8 +99,6 @@ struct WorkflowLaunchView {
     revision: String,
     brief: String,
     workflows: Vec<WorkflowOption>,
-    targets: Vec<TargetOption>,
-    directory_launch: bool,
     commit_policies: Vec<CommitPolicyOption>,
     phase_models: Vec<PhaseModelOption>,
     model_summary: String,
@@ -135,8 +119,6 @@ struct WorkflowLaunchContents<'a> {
     revision: &'a str,
     brief: &'a str,
     workflows: &'a [WorkflowOption],
-    targets: &'a [TargetOption],
-    directory_launch: bool,
     commit_policies: &'a [CommitPolicyOption],
     phase_models: &'a [PhaseModelOption],
     model_summary: &'a str,
@@ -157,8 +139,6 @@ impl WorkflowLaunchView {
             revision: &self.revision,
             brief: &self.brief,
             workflows: &self.workflows,
-            targets: &self.targets,
-            directory_launch: self.directory_launch,
             commit_policies: &self.commit_policies,
             phase_models: &self.phase_models,
             model_summary: &self.model_summary,
@@ -204,7 +184,6 @@ pub(super) async fn show(
                 key.as_str(),
                 "revision"
                     | "preview_workflow"
-                    | "preview_target"
                     | "preview_commit_policy"
                     | "confirm_additional_access"
             )
@@ -227,11 +206,6 @@ pub(super) async fn show(
             None
         } else {
             Some(query.workflow.as_str())
-        },
-        if query.target.is_empty() {
-            None
-        } else {
-            Some(query.target.as_str())
         },
         &query.brief,
         &query.commit_policy,
@@ -265,20 +239,18 @@ pub(super) async fn show(
             match resolve_phase_models(&state, &definition.pinned.definition, &phases) {
                 Ok(mut resolved) => {
                     view.stage = "review";
-                    if view.directory_launch {
-                        let result = preview_phase_access(
-                            &state,
-                            session.0,
-                            &record,
-                            &definition.pinned.definition,
-                            &mut resolved,
-                            &mut view,
-                        )
-                        .await;
-                        if let Err(error) = result {
-                            view.error = error;
-                            view.stage = "inputs";
-                        }
+                    let result = preview_phase_access(
+                        &state,
+                        session.0,
+                        &record,
+                        &definition.pinned.definition,
+                        &mut resolved,
+                        &mut view,
+                    )
+                    .await;
+                    if let Err(error) = result {
+                        view.error = error;
+                        view.stage = "inputs";
                     }
                 }
                 Err(error) => view.error = error,
@@ -321,7 +293,6 @@ pub(super) async fn launch(
         let state = state.clone();
         let record = record.clone();
         let workflow = form.workflow.clone();
-        let target = form.target.clone();
         let brief = form.brief.clone();
         let commit_policy = form.commit_policy.clone();
         let phase = form.phase.clone();
@@ -330,7 +301,6 @@ pub(super) async fn launch(
                 &state,
                 &record,
                 Some(workflow.as_str()),
-                Some(target.as_str()),
                 &brief,
                 &commit_policy,
                 &phase,
@@ -376,10 +346,7 @@ pub(super) async fn launch(
             return error_view(status, error.message()).await;
         }
     };
-    if form.workflow != form.preview_workflow
-        || form.target != form.preview_target
-        || form.commit_policy != form.preview_commit_policy
-    {
+    if form.workflow != form.preview_workflow || form.commit_policy != form.preview_commit_policy {
         return error_view(
             PatchStatus::Conflict,
             "The selection changed. Review its access and environment readiness before you start.",
@@ -406,69 +373,24 @@ pub(super) async fn launch(
         Err(error) => return error_view(PatchStatus::UnprocessableEntity, error.message()).await,
     };
 
-    let directory_launch = uses_conversation_directories(&pinned.definition);
-    let settings = super::effective_model(&state, &record).map(|model| model.settings);
-    if directory_launch && settings.is_none() {
+    let Some(settings) = super::effective_model(&state, &record).map(|model| model.settings) else {
         return error_view(
             PatchStatus::UnprocessableEntity,
             "Choose a model before you start a workflow.",
         )
         .await;
-    }
-    let target = ProjectId::parse(form.target.trim());
-    let mut target_record = record.clone();
-    let authority = if directory_launch {
-        None
-    } else {
-        let Some(target) = target else {
-            return error_view(
-                PatchStatus::UnprocessableEntity,
-                "Choose an available target project.",
-            )
-            .await;
-        };
-        if !record.projects.contains(&target)
-            || !record.grants.iter().any(|grant| grant.project_id == target)
-        {
-            return error_view(
-                PatchStatus::UnprocessableEntity,
-                "Grant access to the target project before launch.",
-            )
-            .await;
-        }
-        target_record.execution_target = Some(target);
-        match crate::conversations::resolve_workflow_authority(
-            &target_record,
-            &state.projects,
-            &state.agents,
-        ) {
-            Ok(Some(authority)) => Some(authority.effective),
-            Ok(None) => {
-                return error_view(
-                    PatchStatus::UnprocessableEntity,
-                    "Grant access to the target project before launch.",
-                )
-                .await;
-            }
-            Err(error) => return error_view(PatchStatus::Conflict, error.message()).await,
-        }
     };
-    if let Some(authority) = authority.as_ref()
-        && !workflows::definition_fits_agent(
-            &pinned.definition,
-            &authority.tools,
-            &authority
-                .policy
-                .grants()
-                .iter()
-                .map(|grant| (grant.alias.clone(), grant.access))
-                .collect::<Vec<_>>(),
-            &authority.grant_alias,
+    if pinned.definition.steps().iter().any(|step| {
+        matches!(
+            &step.action,
+            workflows::definition::StepAction::SystemCommand(action)
+                if action.command == workflows::commands::SystemCommandId::CommitCandidate
         )
+    }) && settings.git_destination_grant().is_none()
     {
         return error_view(
             PatchStatus::UnprocessableEntity,
-            "That workflow needs access outside the conversation ceiling.",
+            "Choose a Git destination before you start this workflow.",
         )
         .await;
     }
@@ -476,14 +398,8 @@ pub(super) async fn launch(
         Ok(models) => models,
         Err(error) => return error_view(PatchStatus::UnprocessableEntity, error).await,
     };
-    if let Some(authority) = authority.as_ref()
-        && let Err(error) =
-            validate_phase_models(&state, &pinned.definition, authority, &phase_models)
     {
-        return error_view(PatchStatus::UnprocessableEntity, error).await;
-    }
-    if directory_launch {
-        let defaults = settings.as_ref().expect("directory settings");
+        let defaults = &settings;
         if let Err(error) =
             resolve_directory_phase_settings(&pinned.definition, defaults, &mut phase_models)
         {
@@ -507,11 +423,10 @@ pub(super) async fn launch(
         pinned =
             workflows::definition::PinnedWorkflowDefinition::pin(pinned.workflow_id, definition);
     }
-    let project_free = if directory_launch {
-        let defaults = settings.as_ref().expect("directory settings");
-        let merged = merged_phase_settings(defaults, &phase_models);
+    let project_free = {
+        let merged = merged_phase_settings(&settings, &phase_models);
         match crate::execution::ProjectFreeAuthority::from_settings(record.revision, &merged) {
-            Ok(authority) => Some(authority),
+            Ok(authority) => authority,
             Err(_) => {
                 return error_view(
                     PatchStatus::UnprocessableEntity,
@@ -520,8 +435,6 @@ pub(super) async fn launch(
                 .await;
             }
         }
-    } else {
-        None
     };
     let selection = phase_models
         .first()
@@ -553,59 +466,25 @@ pub(super) async fn launch(
             return error_view(PatchStatus::Conflict, error).await;
         }
     };
-    let current = if target_record.execution_target != record.execution_target {
-        match state.conversations.select_execution_target(
-            &record.id,
-            revision,
-            target.expect("project target"),
-        ) {
-            Ok(current) => current,
-            Err(error) => {
-                return error_view(super::status_for(error), error.message()).await;
-            }
-        }
-    } else {
-        record.clone()
-    };
-    let authority = if directory_launch {
-        if !state.sessions.contains_live(&session.0) {
-            return error_view(PatchStatus::Conflict, "The browser session expired.").await;
-        }
-        None
-    } else {
-        match crate::conversations::resolve_workflow_authority(
-            &current,
-            &state.projects,
-            &state.agents,
-        ) {
-            Ok(Some(authority)) => authority.effective,
-            Ok(None) => {
-                return error_view(
-                    PatchStatus::Conflict,
-                    "Project access was lost before launch.",
-                )
-                .await;
-            }
-            Err(error) => return error_view(PatchStatus::Conflict, error.message()).await,
-        }
-        .into()
-    };
+    let current = record.clone();
+    if !state.sessions.contains_live(&session.0) {
+        return error_view(PatchStatus::Conflict, "The browser session expired.").await;
+    }
     let run_id = workflows::RunId::generate()
         .map_err(|error| AppError::new("create workflow run identifier", error))?;
-    if directory_launch
-        && state
-            .access_consent
-            .approve_launch(
-                &form.confirm_additional_access,
-                run_id,
-                session.0,
-                current.id,
-                phase_models
-                    .iter()
-                    .filter_map(|phase| phase.settings.clone())
-                    .collect(),
-            )
-            .is_err()
+    if state
+        .access_consent
+        .approve_launch(
+            &form.confirm_additional_access,
+            run_id,
+            session.0,
+            current.id,
+            phase_models
+                .iter()
+                .filter_map(|phase| phase.settings.clone())
+                .collect(),
+        )
+        .is_err()
     {
         return error_view(
             PatchStatus::Conflict,
@@ -613,44 +492,16 @@ pub(super) async fn launch(
         )
         .await;
     }
-    let mut run = if let Some(authority) = authority.as_ref() {
-        WorkflowRun::create_configured_for_conversation(
-            run_id,
-            workflows::now_ms(),
-            authority.project_id,
-            current.id,
-            brief.clone(),
-            pinned,
-            environments,
-            phase_models.clone(),
-        )
-    } else {
-        let mut run = WorkflowRun::create_source_free_for_conversation(
-            run_id,
-            workflows::now_ms(),
-            current.id,
-            pinned,
-            environments,
-            phase_models.clone(),
-        );
-        run.kind = workflows::run::RunKind::Configured;
-        run.launch_brief = brief.clone();
-        run
-    };
-    if let Some(authority) = authority.as_ref() {
-        let Some(settings) = settings else {
-            return error_view(
-                PatchStatus::UnprocessableEntity,
-                "Choose conversation settings before launch.",
-            )
-            .await;
-        };
-        run.project_authority =
-            match workflows::handoff::project::ProjectAuthority::capture(authority, settings) {
-                Ok(snapshot) => Some(snapshot),
-                Err(error) => return error_view(PatchStatus::Conflict, error).await,
-            };
-    }
+    let mut run = WorkflowRun::create_source_free_for_conversation(
+        run_id,
+        workflows::now_ms(),
+        current.id,
+        pinned,
+        environments,
+        phase_models.clone(),
+    );
+    run.kind = workflows::run::RunKind::Configured;
+    run.launch_brief = brief.clone();
     let job = match state.sessions.begin_conversation_job(
         &session.0,
         current.id,
@@ -693,42 +544,24 @@ pub(super) async fn launch(
             .finish_conversation_job(&session.0, started.id, job.id());
         return Err(AppError::new("store workflow run", error));
     }
-    job.set_workflow_name(run.pinned.definition.name().to_owned());
-    job.set_step_label("Source capture".to_owned());
     tokio::spawn(workflows::execute_run(
         state.clone(),
         WorkflowJob {
             run_id,
             session_id: session.0,
-            project_id: run.project_id,
             agent_id: run.agent_id,
-            agent_revision: authority
-                .as_ref()
-                .map_or(current.revision, |authority| authority.revision),
+            agent_revision: current.revision,
             conversation_id: Some(started.id),
-            authority: authority.clone(),
-            project_free_authority: project_free.clone(),
-            grant_alias: authority
-                .as_ref()
-                .map_or_else(String::new, |authority| authority.grant_alias.clone()),
-            grant_access: authority
-                .as_ref()
-                .map_or(AccessMode::ReadWrite, |authority| authority.grant_access),
+            authority: None,
+            project_free_authority: Some(project_free.clone()),
+            grant_alias: String::new(),
             connection,
             phase_providers: phase_models
                 .iter()
                 .map(|phase| phase.selection.provider)
                 .collect(),
             active_connection: std::sync::Arc::new(std::sync::Mutex::new(None)),
-            host_policy: authority
-                .as_ref()
-                .map(|authority| authority.policy.clone())
-                .or_else(|| {
-                    project_free
-                        .as_ref()
-                        .map(|authority| authority.policy.clone())
-                })
-                .expect("workflow authority"),
+            host_policy: project_free.policy.clone(),
             turns: Vec::new(),
             job: job.clone(),
             eligible_reply: std::sync::Arc::new(std::sync::Mutex::new(String::new())),
@@ -747,7 +580,6 @@ async fn launch_view(
     state: &AppState,
     record: &ConversationRecord,
     workflow_raw: Option<&str>,
-    target_raw: Option<&str>,
     brief: &str,
     commit_policy_raw: &str,
     phase_raw: &[String],
@@ -839,50 +671,11 @@ async fn launch_view(
                 .collect()
         })
         .unwrap_or_default();
-    let directory_launch = WorkflowSelection::parse(&selected_workflow)
-        .and_then(|selection| state.workflows.resolve(&selection).ok())
-        .is_some_and(|resolved| uses_conversation_directories(&resolved.pinned.definition));
-    let requested_target = target_raw.filter(|raw| !directory_launch && !raw.trim().is_empty());
-    let selected_target = match requested_target {
-        Some(raw) => ProjectId::parse(raw.trim()),
-        None => record.execution_target,
-    };
-    let mut targets: Vec<TargetOption> = record
-        .grants
-        .iter()
-        .filter(|_| !directory_launch)
-        .filter_map(|grant| {
-            let project = state.projects.get(&grant.project_id)?;
-            Some(TargetOption {
-                id: grant.project_id.as_hex(),
-                name: project.name.clone(),
-                access: target_access_summary(state, record, grant.project_id),
-                selected: selected_target == Some(grant.project_id),
-            })
-        })
-        .collect();
-    let target_unavailable =
-        requested_target.is_some() && !targets.iter().any(|target| target.selected);
-    if target_unavailable {
-        targets.push(TargetOption {
-            id: requested_target.unwrap_or_default().to_owned(),
-            name: "Selected project is unavailable".to_owned(),
-            access: "Choose an available granted project".to_owned(),
-            selected: true,
-        });
-    }
-    let error = if target_unavailable && error.is_empty() {
-        "The selected project is unavailable. Choose an available granted project."
-    } else {
-        error
-    };
     let (model_summary, access_summary, environment_summary) =
-        launch_readiness(state, record, selected_target, &selected_workflow).await;
+        launch_readiness(state, record, &selected_workflow).await;
     let phase_models = selected_phase_model_options(state, record, &selected_workflow, phase_raw);
     let input_summary = "This workflow runs once with the supplied brief.".to_owned();
-    let launch_blocked = workflows.is_empty()
-        || target_unavailable
-        || (!directory_launch && !targets.iter().any(|target| target.selected));
+    let launch_blocked = workflows.is_empty();
     WorkflowLaunchView {
         stage: if selection_available {
             "inputs"
@@ -900,8 +693,6 @@ async fn launch_view(
             brief.trim().to_owned()
         },
         workflows,
-        targets,
-        directory_launch,
         commit_policies,
         phase_models,
         model_summary,
@@ -918,7 +709,6 @@ async fn launch_view(
 async fn launch_readiness(
     state: &AppState,
     record: &ConversationRecord,
-    target: Option<ProjectId>,
     workflow: &str,
 ) -> (String, String, String) {
     let model_summary = super::effective_model(state, record).map_or_else(
@@ -939,234 +729,139 @@ async fn launch_readiness(
             )
         },
     );
-    if WorkflowSelection::parse(workflow)
-        .and_then(|selection| state.workflows.resolve(&selection).ok())
-        .is_some_and(|resolved| uses_conversation_directories(&resolved.pinned.definition))
-    {
-        let Some(model) = super::effective_model(state, record) else {
-            return (
-                model_summary,
-                "No execution settings".to_owned(),
-                "Choose a model in conversation Settings.".to_owned(),
-            );
-        };
-        let settings = &model.settings;
-        let directories = settings
-            .directories
-            .iter()
-            .map(|grant| {
-                format!(
-                    "{} → {} ({})",
-                    grant.host_path.display(),
-                    grant.guest_path(),
-                    match grant.access {
-                        crate::execution::DirectoryAccess::ReadOnly => "Read only",
-                        crate::execution::DirectoryAccess::ReviewBeforeApply =>
-                            "Review before apply",
-                        crate::execution::DirectoryAccess::DirectWrite => "Direct write",
-                    }
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        let access = if settings.location == crate::execution::ToolLocation::Host {
-            let locations = settings
-                .directories
-                .iter()
-                .map(|grant| grant.host_path.display().to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!(
-                "This computer · Unrestricted host access · {} · Work locations: {}",
-                crate::slices::execution_settings::page::host_approval_label(
-                    settings.host_approval
-                ),
-                if locations.is_empty() {
-                    "None selected"
-                } else {
-                    &locations
-                }
-            )
-        } else {
-            format!(
-                "{} · Tools: {} · Sandbox network: {}",
-                if directories.is_empty() {
-                    "Private scratch at /workspace"
-                } else {
-                    &directories
-                },
-                settings
-                    .tools
-                    .iter()
-                    .map(|tool| tool.label())
-                    .collect::<Vec<_>>()
-                    .join(", "),
-                network_label(&settings.network)
-            )
-        };
-        let Some(selection) = WorkflowSelection::parse(workflow) else {
-            return (
-                model_summary,
-                access,
-                "Choose a workflow to preview its environment.".to_owned(),
-            );
-        };
-        let definition = match state.workflows.resolve(&selection) {
-            Ok(resolved) => match resolved
-                .pinned
-                .definition
-                .with_conversation_settings(settings)
-            {
-                Ok(definition) => definition,
-                Err(error) => return (model_summary, access, error.message().to_owned()),
-            },
-            Err(error) => return (model_summary, access, error.message().to_owned()),
-        };
-        let captures_source = definition.steps().iter().any(|step| {
-            step.inputs.iter().any(|input| {
-                matches!(
-                    input.source,
-                    workflows::definition::ArtefactSource::RunInitialCandidate
-                        | workflows::definition::ArtefactSource::RunCurrentCandidate
-                )
-            })
-        });
-        let reviewed = settings
-            .directories
-            .iter()
-            .any(|grant| grant.access == crate::execution::DirectoryAccess::ReviewBeforeApply);
-        let exclusions = settings
-            .directories
-            .iter()
-            .filter(|grant| {
-                captures_source
-                    && (!reviewed
-                        || grant.access == crate::execution::DirectoryAccess::ReviewBeforeApply)
-            })
-            .flat_map(|grant| {
-                workflows::workspace::reviewed_capture_exclusions(
-                    &grant.host_path,
-                    state.local_data.root(),
-                )
-                .into_iter()
-                .map(|path| grant.host_path.join(path).display().to_string())
-            })
-            .collect::<Vec<_>>();
-        let access = if exclusions.is_empty() {
-            access
-        } else {
-            format!(
-                "{access}. The source snapshot excludes these engine paths: {}",
-                exclusions.join(", ")
-            )
-        };
-        let environment = match workflows::preview_environments(
-            &definition,
-            &state.environments,
-            &state.environment_snapshots,
-        )
-        .await
-        {
-            Ok(preview) => format!(
-                "Ready: {}",
-                preview
-                    .environments
-                    .iter()
-                    .map(|item| item.name.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-            Err(error) => error.message().to_owned(),
-        };
-        return (model_summary, access, environment);
-    }
-    let Some(target) = target else {
+    let Some(model) = super::effective_model(state, record) else {
         return (
             model_summary,
-            "No explicit Git destination".to_owned(),
-            "Select a granted project for this process.".to_owned(),
+            "No execution settings".to_owned(),
+            "Choose a model in conversation Settings.".to_owned(),
         );
     };
-    let mut selected = record.clone();
-    selected.execution_target = Some(target);
-    let authority = match crate::conversations::resolve_workflow_authority(
-        &selected,
-        &state.projects,
-        &state.agents,
-    ) {
-        Ok(Some(authority)) => authority.effective,
-        Ok(None) => {
-            return (
-                model_summary,
-                "No execution authority".to_owned(),
-                "The selected target has no grant.".to_owned(),
-            );
-        }
-        Err(error) => {
-            return (
-                model_summary,
-                error.message().to_owned(),
-                "The selected target is not ready.".to_owned(),
-            );
-        }
-    };
-    let access_summary = format!(
-        "{} · Tools: {} · Network: {}",
-        access_label(authority.grant_access),
-        authority
-            .tools
+    let settings = &model.settings;
+    let directories = settings
+        .directories
+        .iter()
+        .map(|grant| {
+            format!(
+                "{} → {} ({})",
+                grant.host_path.display(),
+                grant.guest_path(),
+                match grant.access {
+                    crate::execution::DirectoryAccess::ReadOnly => "Read only",
+                    crate::execution::DirectoryAccess::ReviewBeforeApply => "Review before apply",
+                    crate::execution::DirectoryAccess::DirectWrite => "Direct write",
+                }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let access = if settings.location == crate::execution::ToolLocation::Host {
+        let locations = settings
+            .directories
             .iter()
-            .map(|tool| tool.label())
+            .map(|grant| grant.host_path.display().to_string())
             .collect::<Vec<_>>()
-            .join(", "),
-        network_label(&authority.network),
-    );
+            .join(", ");
+        format!(
+            "This computer · Unrestricted host access · {} · Work locations: {}",
+            crate::slices::execution_settings::page::host_approval_label(settings.host_approval),
+            if locations.is_empty() {
+                "None selected"
+            } else {
+                &locations
+            }
+        )
+    } else {
+        format!(
+            "{} · Tools: {} · Sandbox network: {}",
+            if directories.is_empty() {
+                "Private scratch at /workspace"
+            } else {
+                &directories
+            },
+            settings
+                .tools
+                .iter()
+                .map(|tool| tool.label())
+                .collect::<Vec<_>>()
+                .join(", "),
+            network_label(&settings.network)
+        )
+    };
     let Some(selection) = WorkflowSelection::parse(workflow) else {
         return (
             model_summary,
-            access_summary,
-            "Choose a workflow to check its environments.".to_owned(),
+            access,
+            "Choose a workflow to preview its environment.".to_owned(),
         );
     };
-    let resolved = match state.workflows.resolve(&selection) {
-        Ok(resolved) => resolved,
-        Err(error) => return (model_summary, access_summary, error.message().to_owned()),
+    let definition = match state.workflows.resolve(&selection) {
+        Ok(resolved) => match resolved
+            .pinned
+            .definition
+            .with_conversation_settings(settings)
+        {
+            Ok(definition) => definition,
+            Err(error) => return (model_summary, access, error.message().to_owned()),
+        },
+        Err(error) => return (model_summary, access, error.message().to_owned()),
     };
-    if !workflows::definition_fits_agent(
-        &resolved.pinned.definition,
-        &authority.tools,
-        &authority
-            .policy
-            .grants()
-            .iter()
-            .map(|grant| (grant.alias.clone(), grant.access))
-            .collect::<Vec<_>>(),
-        &authority.grant_alias,
-    ) {
-        return (
-            model_summary,
-            access_summary,
-            "The workflow needs access outside the effective ceiling.".to_owned(),
-        );
-    }
-    match workflows::preview_environments(
-        &resolved.pinned.definition,
+    let captures_source = definition.steps().iter().any(|step| {
+        step.inputs.iter().any(|input| {
+            matches!(
+                input.source,
+                workflows::definition::ArtefactSource::RunInitialCandidate
+                    | workflows::definition::ArtefactSource::RunCurrentCandidate
+            )
+        })
+    });
+    let reviewed = settings
+        .directories
+        .iter()
+        .any(|grant| grant.access == crate::execution::DirectoryAccess::ReviewBeforeApply);
+    let exclusions = settings
+        .directories
+        .iter()
+        .filter(|grant| {
+            captures_source
+                && (!reviewed
+                    || grant.access == crate::execution::DirectoryAccess::ReviewBeforeApply)
+        })
+        .flat_map(|grant| {
+            workflows::workspace::reviewed_capture_exclusions(
+                &grant.host_path,
+                state.local_data.root(),
+            )
+            .into_iter()
+            .map(|path| grant.host_path.join(path).display().to_string())
+        })
+        .collect::<Vec<_>>();
+    let access = if exclusions.is_empty() {
+        access
+    } else {
+        format!(
+            "{access}. The source snapshot excludes these engine paths: {}",
+            exclusions.join(", ")
+        )
+    };
+    let environment = match workflows::preview_environments(
+        &definition,
         &state.environments,
         &state.environment_snapshots,
     )
     .await
     {
-        Ok(preview) => {
-            let names = preview
+        Ok(preview) => format!(
+            "Ready: {}",
+            preview
                 .environments
                 .iter()
-                .map(|environment| environment.name.as_str())
+                .map(|item| item.name.as_str())
                 .collect::<Vec<_>>()
-                .join(", ");
-            (model_summary, access_summary, format!("Ready: {names}"))
-        }
-        Err(error) => (model_summary, access_summary, error.message().to_owned()),
-    }
+                .join(", ")
+        ),
+        Err(error) => error.message().to_owned(),
+    };
+    (model_summary, access, environment)
 }
 
 fn phase_choice_token(
@@ -1627,14 +1322,6 @@ fn starter_summary(name: &str) -> Option<String> {
     .map(str::to_owned)
 }
 
-fn uses_conversation_directories(definition: &workflows::definition::WorkflowDefinition) -> bool {
-    !definition.steps().iter().any(|step| {
-        matches!(&step.action,
-            workflows::definition::StepAction::SystemCommand(action)
-                if action.command != workflows::commands::SystemCommandId::ApplyChanges)
-    })
-}
-
 fn resolve_phase_models(
     state: &AppState,
     definition: &workflows::definition::WorkflowDefinition,
@@ -1663,42 +1350,6 @@ fn resolve_phase_models(
     Ok(models)
 }
 
-fn validate_phase_models(
-    _state: &AppState,
-    definition: &workflows::definition::WorkflowDefinition,
-    base: &crate::agents::EffectiveAuthority,
-    models: &[PhaseModelSelection],
-) -> Result<(), &'static str> {
-    for model in models {
-        let step = definition
-            .step(&model.step)
-            .ok_or("Choose a valid workflow phase.")?;
-        let authority = if let Some(settings) = &model.settings {
-            if settings.environment != definition.effective_environment(step) {
-                return Err(
-                    "That preset requests a different environment. Choose the workflow environment before launch.",
-                );
-            }
-            crate::conversations::apply_settings_ceiling(base, settings)
-                .map_err(|_| "That preset requests access outside the conversation settings.")?
-        } else {
-            base.clone()
-        };
-        let workflows::definition::StepAction::Agent(action) = &step.action else {
-            return Err("Choose a model only for model phases.");
-        };
-        if action.candidate_authority.access().is_writable()
-            && !authority.grant_access.is_writable()
-            || !action
-                .authority
-                .allowed_by(&authority.tools, authority.directories())
-        {
-            return Err("That phase needs access outside the selected model ceiling.");
-        }
-    }
-    Ok(())
-}
-
 fn default_brief(record: &ConversationRecord) -> String {
     record
         .messages
@@ -1718,35 +1369,6 @@ fn truncate_to_brief(text: &str) -> String {
         end -= 1;
     }
     text[..end].trim_end().to_owned()
-}
-
-fn target_access_summary(
-    state: &AppState,
-    record: &ConversationRecord,
-    target: ProjectId,
-) -> String {
-    let mut selected = record.clone();
-    selected.execution_target = Some(target);
-    match crate::conversations::resolve_workflow_authority(
-        &selected,
-        &state.projects,
-        &state.agents,
-    ) {
-        Ok(Some(authority)) => format!(
-            "{} · {} tools",
-            access_label(authority.effective.grant_access),
-            authority.effective.tools.len()
-        ),
-        Ok(None) => "No access".to_owned(),
-        Err(error) => error.message().to_owned(),
-    }
-}
-
-fn access_label(access: AccessMode) -> &'static str {
-    match access {
-        AccessMode::ReadOnly => "Read-only target",
-        AccessMode::ReadWrite => "Writable target",
-    }
 }
 
 fn network_label(network: &crate::agents::NetworkAccess) -> String {

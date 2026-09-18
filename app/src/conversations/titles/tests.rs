@@ -12,7 +12,7 @@ async fn title_request_excludes_tools_presets_and_later_history() {
     state.chat = std::sync::Arc::new(ChatBackend::Scripted(backend.clone()));
     let connection =
         ProviderConnection::with_key(ProviderKind::Deepseek, "private-key", "title-model");
-    let initial = state.conversations.create_untitled(None).unwrap();
+    let initial = state.conversations.create_untitled().unwrap();
     let job = JobId::generate().unwrap();
     state
         .conversations

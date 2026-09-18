@@ -154,27 +154,12 @@ pub(super) fn attach(
     record: &ConversationRecord,
     job: Arc<crate::sessions::Job>,
 ) -> Result<(), &'static str> {
-    let project = run
-        .project_authority
-        .as_ref()
-        .map(|snapshot| snapshot.resolve(state, run))
-        .transpose()?;
-    let private = if project.is_none() {
-        let settings = run
-            .directory_settings()
-            .ok_or("The pinned settings are unavailable.")?;
-        Some(
-            crate::execution::ProjectFreeAuthority::from_settings(record.revision, &settings)
-                .map_err(|_| "A pinned directory changed identity.")?,
-        )
-    } else {
-        None
-    };
-    let policy = project
-        .as_ref()
-        .map(|authority| authority.policy.clone())
-        .or_else(|| private.as_ref().map(|authority| authority.policy.clone()))
-        .ok_or("The pinned authority is unavailable.")?;
+    let settings = run
+        .directory_settings()
+        .ok_or("The pinned settings are unavailable.")?;
+    let private = crate::execution::ProjectFreeAuthority::from_settings(record.revision, &settings)
+        .map_err(|_| "A pinned directory changed identity.")?;
+    let policy = private.policy.clone();
     let connection = run
         .model_phases()
         .next()
@@ -184,31 +169,19 @@ pub(super) fn attach(
     state
         .access_consent
         .approve_handoff(run.id, session, record.id, run.handoff_settings())?;
-    job.set_workflow_name(run.pinned.definition.name().to_owned());
-    job.set_step_label("Prepared changes await your decision".to_owned());
     if job.set_awaiting_decision().is_none() {
         return Err("The execution no longer awaits a decision.");
     }
     let continuation = WorkflowJob {
         run_id: run.id,
         session_id: session,
-        project_id: run.project_id,
         agent_id: None,
-        agent_revision: project
-            .as_ref()
-            .map_or(record.revision, |authority| authority.revision),
+        agent_revision: record.revision,
         conversation_id: Some(record.id),
         host_policy: policy,
-        project_free_authority: private,
-        grant_alias: project
-            .as_ref()
-            .map_or_else(String::new, |authority| authority.grant_alias.clone()),
-        grant_access: project
-            .as_ref()
-            .map_or(crate::agents::AccessMode::ReadWrite, |authority| {
-                authority.grant_access
-            }),
-        authority: project,
+        project_free_authority: Some(private),
+        grant_alias: String::new(),
+        authority: None,
         connection,
         phase_providers: run
             .model_phases()

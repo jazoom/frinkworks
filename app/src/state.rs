@@ -14,7 +14,6 @@ use crate::{
     plan_login::PlanLogin,
     preferences::Preferences,
     presets::PresetStore,
-    projects::ProjectStore,
     providers::ChatBackend,
     sandbox::SandboxFleet,
     sessions::SessionStore,
@@ -39,7 +38,6 @@ pub(crate) struct AppState {
     pub(crate) presets: Arc<PresetStore>,
     pub(crate) agents: Arc<AgentStore>,
     pub(crate) conversations: Arc<ConversationStore>,
-    pub(crate) projects: Arc<ProjectStore>,
     pub(crate) folder_picker: FolderPicker,
     pub(crate) access_consent: Arc<AccessConsentStore>,
     pub(crate) host_approvals: Arc<HostApprovalStore>,
@@ -71,8 +69,6 @@ pub(crate) async fn build(
     let data_dir = local_data.root();
     let agents =
         AgentStore::open(data_dir.join("agents")).map_err(|error| error.message().to_owned())?;
-    let projects = ProjectStore::open(data_dir.join("projects.json"))
-        .map_err(|error| error.message().to_owned())?;
     let conversations = ConversationStore::open(data_dir.join("conversations"))
         .map_err(|error| error.message().to_owned())?;
     let presets =
@@ -140,7 +136,6 @@ pub(crate) async fn build(
         presets: Arc::new(presets),
         agents: Arc::new(agents),
         conversations: Arc::new(conversations),
-        projects: Arc::new(projects),
         folder_picker: FolderPicker::native(),
         access_consent: Arc::new(AccessConsentStore::new()),
         host_approvals: Arc::new(HostApprovalStore::new()),

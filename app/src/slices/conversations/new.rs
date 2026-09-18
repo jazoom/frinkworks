@@ -3,7 +3,6 @@ use super::*;
 #[derive(Clone, Default, Deserialize)]
 #[serde(default)]
 pub(super) struct NewForm {
-    pub(super) project: String,
     pub(super) provider: String,
     pub(super) model: String,
     pub(super) thinking: String,
@@ -28,6 +27,7 @@ pub(super) struct NewForm {
     pub(super) directory_5: String,
     pub(super) directory_6: String,
     pub(super) directory_7: String,
+    pub(super) git_destination: String,
     pub(super) draft_nonce: String,
     pub(super) prepared_run: String,
     pub(super) handoff_approval: String,
@@ -44,7 +44,6 @@ pub(super) struct NewForm {
 #[derive(Default, Deserialize)]
 #[serde(default)]
 pub(super) struct NewQuery {
-    project: String,
     source: String,
 }
 
@@ -66,7 +65,6 @@ pub(super) async fn show(
         }
     };
     let mut form = NewForm {
-        project: query.project,
         network: "none".to_owned(),
         tool_list: selected(crate::agents::ToolId::List),
         tool_read: selected(crate::agents::ToolId::Read),
@@ -113,13 +111,12 @@ pub(super) async fn show(
             super::settings::copy_settings_to_draft(&mut form, &configuration.settings);
         }
     }
-    let error = project(&state, &form.project).err().unwrap_or("");
     render_detail(
         &state,
         session.0,
         graft,
         PatchStatus::Ok,
-        ConversationDetailView::from_new(&state, session.0, form, error),
+        ConversationDetailView::from_new(&state, session.0, form, ""),
     )
 }
 
@@ -129,7 +126,6 @@ impl NewForm {
         let mut digest = Sha256::new();
         // Bind incomplete draft fields without a provider prerequisite for directory selection.
         for value in [
-            &self.project,
             &self.provider,
             &self.model,
             &self.thinking,
@@ -224,16 +220,6 @@ impl NewForm {
     }
 }
 
-fn project(state: &AppState, raw: &str) -> Result<Option<ProjectId>, &'static str> {
-    if raw.is_empty() {
-        return Ok(None);
-    }
-    ProjectId::parse(raw)
-        .filter(|id| state.projects.get(id).is_some())
-        .map(Some)
-        .ok_or("Choose an available project.")
-}
-
 pub(super) fn model(
     state: &AppState,
     session: crate::sessions::SessionId,
@@ -304,6 +290,7 @@ pub(super) fn settings_snapshot(
             .with_host_approval(host_approval)
     })
     .ok_or("Enter valid conversation settings.")?;
+    let settings = super::settings::apply_git_destination(settings, &form.git_destination)?;
     let preset = state
         .presets
         .applied_draft(session, &form.preset_preview)
@@ -351,10 +338,6 @@ pub(super) async fn save(
             form,
         );
     }
-    let project = match project(&state, &form.project) {
-        Ok(project) => project,
-        Err(error) => return reject(PatchStatus::UnprocessableEntity, error, form),
-    };
     let model = match model(&state, session.0, &form) {
         Ok(model) => model,
         Err(error) => {
@@ -497,7 +480,6 @@ pub(super) async fn save(
         .collect();
     let record = match state.conversations.create_saved(
         id,
-        project,
         (!form.title.is_empty()).then(|| form.title.clone()),
         Some(model.clone()),
         approvals,

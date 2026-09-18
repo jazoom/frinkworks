@@ -18,10 +18,8 @@
     {% if directories.is_empty() %}
       {% if location_host %}
         {{ host_summary }}
-      {% else if attached_projects.is_empty() %}
-        No directory access
       {% else %}
-        No additional directories
+        No directory access
       {% endif %}
     {% else %}
       <span class="flex flex-wrap gap-x-2"

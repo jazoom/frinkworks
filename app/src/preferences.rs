@@ -231,6 +231,7 @@ impl Preferences {
             .collect()
     }
 
+    #[cfg(test)]
     pub(crate) fn select_settings(
         &self,
         kind: ProviderKind,

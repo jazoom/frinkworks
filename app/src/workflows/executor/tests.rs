@@ -4,13 +4,321 @@ use super::super::definition::{
     AgentAuthority, CandidateAuthority, GuestDirectoryAccess, SystemCommandId,
 };
 use super::{
-    StepOutcome, SuccessAttempt, active_step_label, attempt_spec, cleanup_after_start_failure,
-    guest_command, intersect_authority, publish_success, record_unknown_observed,
+    StepOutcome, SuccessAttempt, attempt_spec, cleanup_after_start_failure, guest_command,
+    intersect_authority, publish_success, record_unknown_observed,
 };
 use crate::agents::{AccessMode, AgentId, DirectoryPolicy, PolicyGrant};
 use crate::sandbox::GUEST_PROJECT;
 use crate::sessions::JobStatus;
 use crate::workflows::capabilities::{CapabilityDirectory, DirectoryRole};
+
+fn git_text(path: &std::path::Path, args: &[&str]) -> String {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(path)
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@localhost")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@localhost")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+#[test]
+fn directory_commit_recovery_restores_or_finalises_the_selected_root() {
+    use crate::workflows::{artefacts::*, commit::*, definition::*, run::*};
+    for reference_updated in [false, true] {
+        let state = crate::tests::test_state(crate::config::RuntimeConfig::development());
+        let root = tempfile::tempdir().unwrap();
+        let context = root.path().join("context");
+        let project = root.path().join("repository");
+        std::fs::create_dir(&context).unwrap();
+        std::fs::create_dir(&project).unwrap();
+        git_text(&project, &["init", "-q"]);
+        std::fs::write(project.join("file.txt"), "initial\n").unwrap();
+        git_text(&project, &["add", "."]);
+        git_text(&project, &["commit", "-qm", "initial"]);
+        let old = git_text(&project, &["rev-parse", "HEAD"]);
+        let reference = git_text(&project, &["symbolic-ref", "HEAD"]);
+        let original_index = std::fs::read(project.join(".git/index")).unwrap();
+        let mut context_grant =
+            crate::execution::DirectoryGrant::from_selected(&context, &[]).unwrap();
+        context_grant.access = crate::execution::DirectoryAccess::ReviewBeforeApply;
+        let mut destination = crate::execution::DirectoryGrant::from_selected(
+            &project,
+            std::slice::from_ref(&context_grant),
+        )
+        .unwrap();
+        destination.access = crate::execution::DirectoryAccess::ReviewBeforeApply;
+        let settings = crate::execution::ExecutionSettings::new(
+            crate::providers::ModelSelection::new(
+                crate::providers::ProviderKind::Xai,
+                "model".to_owned(),
+                None,
+            )
+            .unwrap(),
+            String::new(),
+            crate::agents::ToolId::ALL.to_vec(),
+            crate::tests::test_environment_id(),
+        )
+        .unwrap()
+        .with_directories(vec![context_grant, destination.clone()])
+        .unwrap()
+        .with_git_destination(Some(destination.id))
+        .unwrap();
+        let definition =
+            crate::workflows::seeds::correctness_security_definition(settings.environment)
+                .with_conversation_settings(&settings)
+                .unwrap();
+        let phases = definition
+            .steps()
+            .iter()
+            .filter(|step| matches!(step.action, StepAction::Agent(_)))
+            .map(|step| crate::workflows::PhaseModelSelection {
+                step: step.key.clone(),
+                selection: settings.model.clone(),
+                instructions: String::new(),
+                preset: None,
+                settings: Some(settings.clone()),
+            })
+            .collect();
+        let mut run = WorkflowRun::create_source_free_for_conversation(
+            crate::workflows::RunId::generate().unwrap(),
+            1,
+            crate::conversations::ConversationId::generate().unwrap(),
+            PinnedWorkflowDefinition::pin(None, definition.clone()),
+            crate::tests::test_environment_set(&definition),
+            phases,
+        );
+        run.kind = RunKind::Configured;
+        let capture = || {
+            CandidatePayload::Set(
+                CandidateCapture::capture_set(
+                    &settings.directories,
+                    state.local_data.root(),
+                    &state.workflow_artefacts,
+                )
+                .unwrap(),
+            )
+        };
+        let initial = capture();
+        std::fs::write(project.join("file.txt"), "target\n").unwrap();
+        let target = capture();
+        assert!(destination_pair(&run, &initial, &target).is_ok());
+        for selected in [None, Some(settings.directories[0].id)] {
+            let mut wrong_destination = run.clone();
+            for phase in &mut wrong_destination.phase_models {
+                phase.settings.as_mut().unwrap().git_destination = selected;
+            }
+            assert!(destination_pair(&wrong_destination, &initial, &target).is_err());
+        }
+        let mut read_only = run.clone();
+        for phase in &mut read_only.phase_models {
+            phase.settings.as_mut().unwrap().directories[1].access =
+                crate::execution::DirectoryAccess::ReadOnly;
+        }
+        assert!(destination_pair(&read_only, &initial, &target).is_err());
+        let publish = |payload: &CandidatePayload, producer: ArtefactProducer| {
+            let bytes = payload.manifest_bytes().unwrap();
+            ArtefactRecord {
+                id: crate::workflows::ArtefactId::generate().unwrap(),
+                kind: ArtefactKind::CandidateRevision,
+                artefact_hash: artefact_hash_for(ArtefactKind::CandidateRevision, 1, &bytes),
+                object_hash: state.workflow_artefacts.publish(&bytes).unwrap(),
+                payload_bytes: bytes.len() as u64,
+                created_at_ms: 1,
+                provenance: ArtefactProvenance {
+                    run_id: run.id,
+                    producer,
+                    inputs: Vec::new(),
+                },
+                summary: ArtefactSummary::Candidate {
+                    candidate: payload.candidate_hash(),
+                    entries: payload.entry_count(),
+                    bytes: payload.byte_count(),
+                    disposition: ProductionDisposition::RequiredOutput,
+                },
+            }
+        };
+        let initial_record = publish(&initial, ArtefactProducer::RunSourceCapture);
+        let target_record = publish(
+            &target,
+            ArtefactProducer::StepAttempt {
+                attempt_id: crate::workflows::AttemptId::generate().unwrap(),
+                step: StepKey::parse("implementer").unwrap(),
+                output: Some(OutputKey::parse("candidate").unwrap()),
+                disposition: ProductionDisposition::RequiredOutput,
+            },
+        );
+        run.record_initial_candidate(initial_record).unwrap();
+        let candidate = ArtefactReference {
+            id: target_record.id,
+            kind: target_record.kind,
+            artefact_hash: target_record.artefact_hash,
+        };
+        run.artefacts.push(target_record);
+        let RunSource::Captured { source } = &mut run.source else {
+            panic!("source")
+        };
+        source.accepted = candidate.clone();
+        source.observed = ObservedCandidate::Exact {
+            artefact: candidate.clone(),
+        };
+        let mut reviews = Vec::new();
+        let mut inputs = vec![AttemptArtefactInput {
+            key: InputKey::parse("candidate").unwrap(),
+            artefact: candidate.clone(),
+        }];
+        for name in ["correctness-review", "security-review"] {
+            let (bytes, object_hash, artefact_hash) = payload::encode_review(
+                target.candidate_hash(),
+                ReviewVerdict::Approved,
+                "approved",
+                None,
+            )
+            .unwrap();
+            state.workflow_artefacts.publish(&bytes).unwrap();
+            let record = ArtefactRecord {
+                id: crate::workflows::ArtefactId::generate().unwrap(),
+                kind: ArtefactKind::ReviewReport,
+                artefact_hash,
+                object_hash,
+                payload_bytes: bytes.len() as u64,
+                created_at_ms: 1,
+                provenance: ArtefactProvenance {
+                    run_id: run.id,
+                    producer: ArtefactProducer::StepAttempt {
+                        attempt_id: crate::workflows::AttemptId::generate().unwrap(),
+                        step: StepKey::parse(name).unwrap(),
+                        output: Some(OutputKey::parse("review").unwrap()),
+                        disposition: ProductionDisposition::RequiredOutput,
+                    },
+                    inputs: vec![candidate.clone()],
+                },
+                summary: ArtefactSummary::Review {
+                    candidate: target.candidate_hash(),
+                    verdict: ReviewVerdict::Approved,
+                },
+            };
+            let reference = ArtefactReference {
+                id: record.id,
+                kind: record.kind,
+                artefact_hash,
+            };
+            inputs.push(AttemptArtefactInput {
+                key: InputKey::parse(name).unwrap(),
+                artefact: reference.clone(),
+            });
+            reviews.push(reference);
+            run.artefacts.push(record);
+        }
+        let step = definition.steps().iter().find(|step| matches!(&step.action, StepAction::SystemCommand(action) if action.command == SystemCommandId::CommitCandidate)).unwrap();
+        assert!(require_commit_approval(&run, step, &inputs, &state.workflow_artefacts).is_ok());
+        run.state = RunState::Ready {
+            step: step.key.clone(),
+        };
+        let authority =
+            crate::execution::ProjectFreeAuthority::from_settings(1, &settings).unwrap();
+        let attempt = crate::workflows::AttemptId::generate().unwrap();
+        run.start_attempt(
+            attempt,
+            inputs,
+            crate::workflows::capabilities::AttemptCapabilities::derive_project_free(
+                step, &authority,
+            )
+            .unwrap(),
+            AttemptSandboxRecord {
+                kind: AttemptSandboxKind::IsolatedAttempt,
+                snapshot_digest: run
+                    .environments
+                    .steps
+                    .iter()
+                    .find(|binding| binding.step == step.key)
+                    .unwrap()
+                    .snapshot_digest
+                    .clone(),
+            },
+            2,
+        )
+        .unwrap();
+        let journal = state.commit_journals.create(run.id, attempt).unwrap();
+        git_text(&project, &["add", "."]);
+        let tree = git_text(&project, &["write-tree"]);
+        let commit = git_text(
+            &project,
+            &["commit-tree", &tree, "-p", &old, "-m", "candidate"],
+        );
+        let target_index = std::fs::read(project.join(".git/index")).unwrap();
+        std::fs::write(project.join(".git/index"), &original_index).unwrap();
+        journal
+            .write_index_backup("original.index", &original_index)
+            .unwrap();
+        journal
+            .write_index_backup("target.index", &target_index)
+            .unwrap();
+        journal.flush().unwrap();
+        if reference_updated {
+            git_text(&project, &["update-ref", &reference, &commit, &old]);
+        }
+        run.record_commit_transaction(
+            attempt,
+            CommitTransaction {
+                state: if reference_updated {
+                    CommitTransactionState::ReferenceUpdated {
+                        commit: commit.clone(),
+                    }
+                } else {
+                    CommitTransactionState::WorktreeApplied
+                },
+                candidate,
+                reviews,
+                approval: None,
+                expected_reference: reference,
+                old_object: Some(old.clone()),
+                target_tree: Some(tree),
+                expected_commit: Some(commit.clone()),
+                timestamp: "1700000000 +0000".to_owned(),
+            },
+        )
+        .unwrap();
+        let id = run.id;
+        state.workflow_runs.create(run).unwrap();
+        super::recover_commit_transactions(&state).unwrap();
+        if reference_updated {
+            let recovered = state.workflow_runs.get(&id).unwrap();
+            assert_eq!(recovered.state, RunState::Completed);
+            assert_eq!(
+                recovered.attempts[0].commit_result.as_ref().unwrap().commit,
+                commit
+            );
+            assert_eq!(
+                std::fs::read(project.join("file.txt")).unwrap(),
+                b"target\n"
+            );
+            assert_eq!(
+                std::fs::read(project.join(".git/index")).unwrap(),
+                target_index
+            );
+        } else {
+            assert_eq!(git_text(&project, &["rev-parse", "HEAD"]), old);
+            assert_eq!(
+                std::fs::read(project.join("file.txt")).unwrap(),
+                b"initial\n"
+            );
+            assert_eq!(
+                std::fs::read(project.join(".git/index")).unwrap(),
+                original_index
+            );
+        }
+        assert!(state.commit_journals.load(id, attempt).is_err());
+    }
+}
 
 #[test]
 fn project_free_mounts_require_direct_write_authority_for_live_host_writes() {
@@ -37,7 +345,10 @@ fn project_free_mounts_require_direct_write_authority_for_live_host_writes() {
     let mut direct = grant.clone();
     direct.access = crate::execution::DirectoryAccess::DirectWrite;
     for grants in [Vec::new(), vec![grant.clone()], vec![direct]] {
-        let settings = settings.clone().with_directories(grants.clone()).unwrap();
+        let mut settings = settings.clone().with_directories(grants.clone()).unwrap();
+        if let Some(first) = grants.first() {
+            settings = settings.with_git_destination(Some(first.id)).unwrap();
+        }
         let authority =
             crate::execution::ProjectFreeAuthority::from_settings(1, &settings).unwrap();
         let pinned = crate::workflows::pin_project_free_quick_task_with_directories(
@@ -184,6 +495,8 @@ fn read_only_review_mounts_the_pinned_copy_instead_of_live_host_files() {
     )
     .unwrap()
     .with_directories(vec![reference.clone(), reviewed.clone()])
+    .unwrap()
+    .with_git_destination(Some(reference.id))
     .unwrap();
     let authority = crate::execution::ProjectFreeAuthority::from_settings(1, &settings).unwrap();
     let definition = crate::workflows::seeds::implement_and_review_definition(settings.environment)
@@ -251,7 +564,6 @@ fn sensitive_dispatch_requires_live_consent_and_the_original_directory() {
         .create_saved(
             crate::conversations::ConversationId::generate().unwrap(),
             None,
-            None,
             Some(crate::conversations::ConversationModelConfiguration {
                 settings: settings.clone(),
                 preset: None,
@@ -291,7 +603,6 @@ fn sensitive_dispatch_requires_live_consent_and_the_original_directory() {
     let job = super::WorkflowJob {
         run_id,
         session_id: session,
-        project_id: None,
         agent_id: None,
         agent_revision: 0,
         conversation_id: Some(record.id),
@@ -299,7 +610,6 @@ fn sensitive_dispatch_requires_live_consent_and_the_original_directory() {
         host_policy: authority.policy.clone(),
         project_free_authority: Some(authority),
         grant_alias: grant.alias.clone(),
-        grant_access: AccessMode::ReadOnly,
         connection: crate::providers::ProviderConnection::with_key(
             crate::providers::ProviderKind::Xai,
             "key",
@@ -429,10 +739,6 @@ fn fixing_review_publication_is_atomic_across_failures() {
         Failure::RunMutation,
     ] {
         let (state, job, step, attempt, inputs, captured, drafts) = fixing_publication_fixture();
-        assert!(
-            active_step_label(&state.workflow_runs.get(&job.run_id).expect("run"), &step,)
-                .starts_with("Review ·")
-        );
         match failure {
             Failure::CandidatePublication => state.workflow_artefacts.fail_publish_after(0),
             Failure::ReportPublication => state.workflow_artefacts.fail_publish_after(1),
@@ -713,14 +1019,12 @@ fn fixing_publication_fixture() -> (
     let job = crate::workflows::WorkflowJob {
         run_id,
         session_id: token.id(),
-        project_id: Some(crate::projects::ProjectId::generate().expect("project")),
         agent_id: Some(AgentId::generate().expect("agent")),
         agent_revision: 1,
         conversation_id: None,
         authority: None,
         project_free_authority: None,
         grant_alias: "project".to_owned(),
-        grant_access: AccessMode::ReadWrite,
         connection: crate::providers::ProviderConnection::with_key(
             crate::providers::ProviderKind::Xai,
             "key",
@@ -910,14 +1214,12 @@ fn interruption_failure_restores_current_and_unprocessed_jobs() {
         let job = crate::workflows::WorkflowJob {
             run_id,
             session_id: session,
-            project_id: Some(crate::projects::ProjectId::generate().expect("project")),
             agent_id: Some(AgentId::generate().expect("agent")),
             agent_revision: 1,
             conversation_id: None,
             authority: None,
             project_free_authority: None,
             grant_alias: "project".to_owned(),
-            grant_access: AccessMode::ReadWrite,
             connection: crate::providers::ProviderConnection::with_key(provider, "key", "model"),
             phase_providers: Vec::new(),
             active_connection: std::sync::Arc::new(std::sync::Mutex::new(None)),
@@ -937,54 +1239,6 @@ fn interruption_failure_restores_current_and_unprocessed_jobs() {
     assert!(!state.gate_continuations.available(&all_runs[0], &session));
     assert!(state.gate_continuations.available(&all_runs[1], &session));
     assert!(state.gate_continuations.available(&all_runs[2], &session));
-}
-
-#[test]
-fn final_gate_completion_settles_the_session_job_successfully() {
-    let state = crate::tests::test_state(crate::config::RuntimeConfig::development());
-    let token = crate::sessions::generate_session_token().expect("token");
-    let session_id = token.id();
-    let agent_id = AgentId::generate().expect("agent");
-    let project_id = crate::projects::ProjectId::generate().expect("project");
-    let run_id = crate::workflows::RunId::generate().expect("run");
-    let key = crate::sessions::ConversationKey {
-        project_id,
-        agent_id,
-    };
-    state.sessions.insert(session_id);
-    let begun = state
-        .sessions
-        .begin_turn(&session_id, key, run_id, "Hello".to_owned())
-        .expect("turn");
-    let workflow = crate::workflows::WorkflowJob {
-        run_id,
-        session_id,
-        project_id: Some(project_id),
-        agent_id: Some(agent_id),
-        agent_revision: 1,
-        conversation_id: None,
-        authority: None,
-        project_free_authority: None,
-        grant_alias: "project".to_owned(),
-        grant_access: AccessMode::ReadWrite,
-        connection: crate::providers::ProviderConnection::with_key(
-            crate::providers::ProviderKind::Xai,
-            "key",
-            "model",
-        ),
-        phase_providers: Vec::new(),
-        active_connection: std::sync::Arc::new(std::sync::Mutex::new(None)),
-        host_policy: DirectoryPolicy::from_grants(Vec::new(), "project".to_owned()),
-        turns: Vec::new(),
-        job: begun.job.clone(),
-        eligible_reply: std::sync::Arc::new(std::sync::Mutex::new(String::new())),
-    };
-
-    super::settle_completed_job(&state, &workflow);
-
-    let snapshot = state.sessions.snapshot(&session_id, &key).expect("session");
-    assert!(!snapshot.session_busy);
-    assert_eq!(begun.job.snapshot().status, JobStatus::Completed);
 }
 
 #[test]
@@ -1374,387 +1628,6 @@ fn step_output_resolution_uses_the_latest_completed_producer_attempt() {
     assert_eq!(inputs[1].artefact, current_review);
 }
 
-#[test]
-fn commit_recovery_restores_before_the_reference_and_finalises_after_it() {
-    for reference_updated in [false, true] {
-        let state = crate::tests::test_state(crate::config::RuntimeConfig::development());
-        let project = tempfile::tempdir().expect("project");
-        assert!(
-            std::process::Command::new("git")
-                .args(["init", "-q"])
-                .current_dir(project.path())
-                .status()
-                .expect("init")
-                .success()
-        );
-        std::fs::write(project.path().join("file.txt"), b"initial\n").expect("initial");
-        assert!(
-            std::process::Command::new("git")
-                .args(["add", "file.txt"])
-                .current_dir(project.path())
-                .status()
-                .expect("add")
-                .success()
-        );
-        assert!(
-            std::process::Command::new("git")
-                .args([
-                    "-c",
-                    "user.name=Test",
-                    "-c",
-                    "user.email=test@localhost",
-                    "commit",
-                    "-q",
-                    "-m",
-                    "initial"
-                ])
-                .current_dir(project.path())
-                .status()
-                .expect("commit")
-                .success()
-        );
-        let old = git_text(project.path(), &["rev-parse", "HEAD"]);
-        let reference = git_text(project.path(), &["symbolic-ref", "HEAD"]);
-        let original_index = std::fs::read(project.path().join(".git/index")).expect("index");
-        let store = &state.workflow_artefacts;
-        let initial =
-            crate::workflows::artefacts::CandidateCapture::capture_host(project.path(), store)
-                .expect("capture initial");
-        let target_bytes = b"target\n";
-        std::fs::write(project.path().join("file.txt"), target_bytes).expect("target source");
-        let target =
-            crate::workflows::artefacts::CandidateCapture::capture_host(project.path(), store)
-                .expect("capture target");
-        std::fs::write(project.path().join("file.txt"), b"initial\n").expect("restore source");
-
-        let temporary_index = project.path().join(".git/recovery-test.index");
-        let index_env = temporary_index.to_string_lossy().into_owned();
-        assert!(
-            std::process::Command::new("git")
-                .args(["read-tree", "--empty"])
-                .env("GIT_INDEX_FILE", &index_env)
-                .current_dir(project.path())
-                .status()
-                .expect("empty index")
-                .success()
-        );
-        let blob = git_with_input(
-            project.path(),
-            &["hash-object", "-w", "--stdin"],
-            target_bytes,
-        );
-        assert!(
-            std::process::Command::new("git")
-                .args([
-                    "update-index",
-                    "--add",
-                    "--cacheinfo",
-                    &format!("100644,{blob},file.txt")
-                ])
-                .env("GIT_INDEX_FILE", &index_env)
-                .current_dir(project.path())
-                .status()
-                .expect("target index")
-                .success()
-        );
-        let tree = git_env_text(project.path(), &["write-tree"], Some((&index_env, "")));
-        let commit = git_commit_tree(project.path(), &tree, &old);
-        let target_index = std::fs::read(&temporary_index).expect("target index bytes");
-        std::fs::remove_file(temporary_index).expect("remove temporary index");
-
-        let agent = state
-            .agents
-            .create(crate::agents::AgentDraft {
-                name: format!("Recovery {reference_updated}"),
-                instructions: String::new(),
-                selection: None,
-                tools: crate::agents::ToolId::ALL.to_vec(),
-                network: crate::agents::NetworkAccess::None,
-                directories: vec![crate::agents::DirectoryGrant {
-                    alias: "project".to_owned(),
-                    host_path: project.path().to_path_buf(),
-                    access: AccessMode::ReadWrite,
-                }],
-                primary_directory: "project".to_owned(),
-            })
-            .expect("agent");
-        let project_record = state
-            .projects
-            .create(
-                format!("Recovery {reference_updated}"),
-                agent.directories[0].host_path.clone(),
-            )
-            .expect("project");
-        let definition = crate::workflows::seeds::correctness_security_definition(
-            crate::tests::test_environment_id(),
-        );
-        let environments = crate::tests::test_environment_set(&definition);
-        let mut run = crate::workflows::WorkflowRun::create(
-            crate::workflows::RunId::generate().expect("run"),
-            1,
-            project_record.id,
-            Some(agent.id),
-            crate::workflows::RunKind::Configured,
-            crate::workflows::definition::PinnedWorkflowDefinition::pin(None, definition),
-            environments,
-        );
-        let initial_record = candidate_record(&run, &initial, store, true);
-        run.record_initial_candidate(initial_record.clone())
-            .expect("source");
-        let target_record = candidate_record(&run, &target, store, false);
-        let target_reference = crate::workflows::artefacts::ArtefactReference {
-            id: target_record.id,
-            kind: target_record.kind,
-            artefact_hash: target_record.artefact_hash,
-        };
-        let correctness_record =
-            review_record(&run, target.candidate_hash, "correctness-review", store);
-        let correctness_reference = crate::workflows::artefacts::ArtefactReference {
-            id: correctness_record.id,
-            kind: correctness_record.kind,
-            artefact_hash: correctness_record.artefact_hash,
-        };
-        let security_record = review_record(&run, target.candidate_hash, "security-review", store);
-        let security_reference = crate::workflows::artefacts::ArtefactReference {
-            id: security_record.id,
-            kind: security_record.kind,
-            artefact_hash: security_record.artefact_hash,
-        };
-        run.artefacts
-            .extend([target_record, correctness_record, security_record]);
-        let crate::workflows::RunSource::Captured { source } = &mut run.source else {
-            panic!("source")
-        };
-        source.accepted = target_reference.clone();
-        source.observed = crate::workflows::run::ObservedCandidate::Exact {
-            artefact: target_reference.clone(),
-        };
-        let commit_key =
-            crate::workflows::definition::StepKey::parse("commit").expect("commit key");
-        run.state = crate::workflows::run::RunState::Ready {
-            step: commit_key.clone(),
-        };
-        let commit_step = run
-            .pinned
-            .definition
-            .step(&commit_key)
-            .expect("commit step")
-            .clone();
-        let capabilities = crate::workflows::capabilities::AttemptCapabilities::derive(
-            &commit_step,
-            &agent,
-            &agent.primary_directory,
-        )
-        .expect("capabilities");
-        let attempt = crate::workflows::AttemptId::generate().expect("attempt");
-        let inputs = vec![
-            crate::workflows::run::AttemptArtefactInput {
-                key: crate::workflows::definition::InputKey::parse("candidate").expect("key"),
-                artefact: target_reference.clone(),
-            },
-            crate::workflows::run::AttemptArtefactInput {
-                key: crate::workflows::definition::InputKey::parse("correctness-review")
-                    .expect("key"),
-                artefact: correctness_reference.clone(),
-            },
-            crate::workflows::run::AttemptArtefactInput {
-                key: crate::workflows::definition::InputKey::parse("security-review").expect("key"),
-                artefact: security_reference.clone(),
-            },
-        ];
-        let sandbox = crate::workflows::run::AttemptSandboxRecord {
-            kind: crate::workflows::run::AttemptSandboxKind::IsolatedAttempt,
-            snapshot_digest: run
-                .environments
-                .steps
-                .iter()
-                .find(|step| step.step == commit_key)
-                .expect("binding")
-                .snapshot_digest
-                .clone(),
-        };
-        run.start_attempt(attempt, inputs, capabilities, sandbox, 2)
-            .expect("start commit");
-        let run_id = run.id;
-        state.workflow_runs.create(run).expect("store run");
-        let journal = state
-            .commit_journals
-            .create(run_id, attempt)
-            .expect("journal");
-        journal
-            .write_index_backup("original.index", &original_index)
-            .expect("original index");
-        journal
-            .write_index_backup("target.index", &target_index)
-            .expect("target index");
-        journal.flush().expect("flush");
-        crate::workflows::artefacts::CandidateApply::apply(
-            project.path(),
-            &initial,
-            &target,
-            target_reference.artefact_hash,
-            store,
-        )
-        .expect("apply target");
-        if reference_updated {
-            assert!(
-                std::process::Command::new("git")
-                    .args(["update-ref", &reference, &commit, &old])
-                    .current_dir(project.path())
-                    .status()
-                    .expect("update ref")
-                    .success()
-            );
-        }
-        let transaction = crate::workflows::commit::CommitTransaction {
-            state: if reference_updated {
-                crate::workflows::commit::CommitTransactionState::ReferenceUpdated {
-                    commit: commit.clone(),
-                }
-            } else {
-                crate::workflows::commit::CommitTransactionState::WorktreeApplied
-            },
-            candidate: target_reference,
-            reviews: vec![correctness_reference, security_reference],
-            approval: None,
-            expected_reference: reference,
-            old_object: Some(old.clone()),
-            target_tree: Some(tree),
-            expected_commit: Some(commit.clone()),
-            timestamp: "1700000000 +0000".to_owned(),
-        };
-        state
-            .workflow_runs
-            .mutate(&run_id, |run| {
-                run.record_commit_transaction(attempt, transaction)
-            })
-            .expect("transaction");
-
-        super::recover_commit_transactions(&state).expect("recover");
-
-        let recovered = state.workflow_runs.get(&run_id).expect("recovered run");
-        if reference_updated {
-            assert_eq!(recovered.state, crate::workflows::run::RunState::Completed);
-            assert_eq!(
-                recovered.attempts[0]
-                    .commit_result
-                    .as_ref()
-                    .map(|result| result.commit.as_str()),
-                Some(commit.as_str())
-            );
-            assert_eq!(
-                std::fs::read(project.path().join("file.txt")).expect("target file"),
-                target_bytes
-            );
-            assert_eq!(
-                std::fs::read(project.path().join(".git/index")).expect("installed index"),
-                target_index
-            );
-        } else {
-            assert!(recovered.is_active());
-            assert_eq!(
-                std::fs::read(project.path().join("file.txt")).expect("restored file"),
-                b"initial\n"
-            );
-            assert_eq!(git_text(project.path(), &["rev-parse", "HEAD"]), old);
-            assert_eq!(
-                std::fs::read(project.path().join(".git/index")).expect("restored index"),
-                original_index
-            );
-        }
-        assert!(state.commit_journals.load(run_id, attempt).is_err());
-    }
-}
-
-fn git_text(project: &std::path::Path, args: &[&str]) -> String {
-    let output = std::process::Command::new("git")
-        .args(args)
-        .current_dir(project)
-        .output()
-        .expect("git");
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout)
-        .expect("utf8")
-        .trim()
-        .to_owned()
-}
-
-fn git_env_text(project: &std::path::Path, args: &[&str], index: Option<(&str, &str)>) -> String {
-    let mut command = std::process::Command::new("git");
-    command.args(args).current_dir(project);
-    if let Some((path, _)) = index {
-        command.env("GIT_INDEX_FILE", path);
-    }
-    let output = command.output().expect("git");
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout)
-        .expect("utf8")
-        .trim()
-        .to_owned()
-}
-
-fn git_with_input(project: &std::path::Path, args: &[&str], input: &[u8]) -> String {
-    use std::io::Write;
-    use std::process::Stdio;
-    let mut child = std::process::Command::new("git")
-        .args(args)
-        .current_dir(project)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .expect("git");
-    child
-        .stdin
-        .take()
-        .expect("stdin")
-        .write_all(input)
-        .expect("write");
-    let output = child.wait_with_output().expect("output");
-    assert!(output.status.success());
-    String::from_utf8(output.stdout)
-        .expect("utf8")
-        .trim()
-        .to_owned()
-}
-
-fn git_commit_tree(project: &std::path::Path, tree: &str, parent: &str) -> String {
-    let output = std::process::Command::new("git")
-        .args([
-            "commit-tree",
-            tree,
-            "-p",
-            parent,
-            "-m",
-            "Apply Power Plant workflow candidate",
-        ])
-        .current_dir(project)
-        .env("GIT_AUTHOR_NAME", "Power Plant")
-        .env("GIT_AUTHOR_EMAIL", "powerplant@localhost")
-        .env("GIT_COMMITTER_NAME", "Power Plant")
-        .env("GIT_COMMITTER_EMAIL", "powerplant@localhost")
-        .env("GIT_AUTHOR_DATE", "1700000000 +0000")
-        .env("GIT_COMMITTER_DATE", "1700000000 +0000")
-        .output()
-        .expect("commit tree");
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout)
-        .expect("utf8")
-        .trim()
-        .to_owned()
-}
-
 fn candidate_record(
     run: &crate::workflows::WorkflowRun,
     candidate: &crate::workflows::artefacts::candidate::CandidateRevisionArtefact,
@@ -1802,46 +1675,6 @@ fn candidate_record(
     }
 }
 
-fn review_record(
-    run: &crate::workflows::WorkflowRun,
-    candidate: crate::workflows::artefacts::CandidateHash,
-    step: &str,
-    store: &crate::workflows::WorkflowArtefactRepository,
-) -> crate::workflows::artefacts::ArtefactRecord {
-    let (bytes, object, hash) = crate::workflows::artefacts::payload::encode_review(
-        candidate,
-        crate::workflows::artefacts::ReviewVerdict::Approved,
-        "approved",
-        None,
-    )
-    .expect("review");
-    store.publish(&bytes).expect("publish review");
-    crate::workflows::artefacts::ArtefactRecord {
-        id: crate::workflows::ArtefactId::generate().expect("review id"),
-        kind: crate::workflows::definition::ArtefactKind::ReviewReport,
-        artefact_hash: hash,
-        object_hash: object,
-        payload_bytes: bytes.len() as u64,
-        created_at_ms: 1,
-        provenance: crate::workflows::artefacts::ArtefactProvenance {
-            run_id: run.id,
-            producer: crate::workflows::artefacts::ArtefactProducer::StepAttempt {
-                attempt_id: crate::workflows::AttemptId::generate().expect("producer"),
-                step: crate::workflows::definition::StepKey::parse(step).expect("step"),
-                output: Some(
-                    crate::workflows::definition::OutputKey::parse("review").expect("output"),
-                ),
-                disposition: crate::workflows::artefacts::ProductionDisposition::RequiredOutput,
-            },
-            inputs: Vec::new(),
-        },
-        summary: crate::workflows::artefacts::ArtefactSummary::Review {
-            candidate,
-            verdict: crate::workflows::artefacts::ReviewVerdict::Approved,
-        },
-    }
-}
-
 fn git_worktree() -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("dir");
     assert!(
@@ -1853,179 +1686,6 @@ fn git_worktree() -> tempfile::TempDir {
             .success()
     );
     dir
-}
-
-fn test_job(
-    project_id: crate::projects::ProjectId,
-    agent: &crate::agents::AgentRecord,
-) -> crate::workflows::WorkflowJob {
-    let run_id = crate::workflows::RunId::generate().expect("run");
-    crate::workflows::WorkflowJob {
-        run_id,
-        session_id: crate::sessions::generate_session_token()
-            .expect("session")
-            .id(),
-        project_id: Some(project_id),
-        agent_id: Some(agent.id),
-        agent_revision: agent.revision,
-        conversation_id: None,
-        authority: None,
-        project_free_authority: None,
-        grant_alias: agent.directories[0].alias.clone(),
-        grant_access: agent.directories[0].access,
-        connection: crate::providers::ProviderConnection::with_key(
-            crate::providers::ProviderKind::Xai,
-            "key",
-            "model",
-        ),
-        phase_providers: Vec::new(),
-        active_connection: std::sync::Arc::new(std::sync::Mutex::new(None)),
-        host_policy: DirectoryPolicy::from_record_with_primary(agent, &agent.primary_directory),
-        turns: Vec::new(),
-        job: crate::sessions::Job::new(crate::sessions::JobId::generate().expect("job"), run_id, 0),
-        eligible_reply: std::sync::Arc::new(std::sync::Mutex::new(String::new())),
-    }
-}
-
-#[test]
-fn source_capture_rejects_a_stale_agent_revision() {
-    let state = crate::tests::test_state(crate::config::RuntimeConfig::development());
-    let dir = git_worktree();
-    let project = state
-        .projects
-        .create("Desk".to_owned(), dir.path().to_path_buf())
-        .expect("project");
-    let agent = state
-        .agents
-        .create(crate::agents::AgentDraft {
-            name: "Desk agent".to_owned(),
-            instructions: String::new(),
-            selection: None,
-            tools: crate::agents::ToolId::ALL.to_vec(),
-            network: crate::agents::NetworkAccess::None,
-            directories: vec![crate::agents::DirectoryGrant {
-                alias: "project".to_owned(),
-                host_path: project.host_path.clone(),
-                access: AccessMode::ReadWrite,
-            }],
-            primary_directory: "project".to_owned(),
-        })
-        .expect("agent");
-    let job = test_job(project.id, &agent);
-    super::confirm_run_authority(&state, &job).expect("current");
-    state
-        .agents
-        .update(
-            &agent.id,
-            agent.revision,
-            crate::agents::AgentDraft {
-                name: agent.name.clone(),
-                instructions: agent.instructions.clone(),
-                selection: None,
-                tools: agent.tools.clone(),
-                network: agent.network.clone(),
-                directories: agent.directories.clone(),
-                primary_directory: agent.primary_directory.clone(),
-            },
-        )
-        .expect("update");
-    assert_eq!(
-        super::confirm_run_authority(&state, &job).unwrap_err(),
-        "The agent configuration changed. Try again."
-    );
-}
-
-#[test]
-fn commit_recovery_requires_an_exact_grant_and_a_supported_worktree() {
-    let state = crate::tests::test_state(crate::config::RuntimeConfig::development());
-    let dir = git_worktree();
-    let project = state
-        .projects
-        .create("Recover".to_owned(), dir.path().to_path_buf())
-        .expect("project");
-    let agent = state
-        .agents
-        .create(crate::agents::AgentDraft {
-            name: "Recovery agent".to_owned(),
-            instructions: String::new(),
-            selection: None,
-            tools: crate::agents::ToolId::ALL.to_vec(),
-            network: crate::agents::NetworkAccess::None,
-            directories: vec![crate::agents::DirectoryGrant {
-                alias: "project".to_owned(),
-                host_path: project.host_path.clone(),
-                access: AccessMode::ReadWrite,
-            }],
-            primary_directory: "project".to_owned(),
-        })
-        .expect("agent");
-    let definition = crate::tests::test_named_definition("Recover");
-    let environments = crate::tests::test_environment_set(&definition);
-    let run = crate::workflows::WorkflowRun::create(
-        crate::workflows::RunId::generate().expect("run"),
-        1,
-        project.id,
-        Some(agent.id),
-        crate::workflows::RunKind::Configured,
-        crate::workflows::definition::PinnedWorkflowDefinition::pin(None, definition),
-        environments,
-    );
-    assert_eq!(
-        super::recovery_project_path(&state, &run),
-        Ok(project.host_path.clone())
-    );
-
-    let other = git_worktree();
-    let changed = state
-        .agents
-        .update(
-            &agent.id,
-            agent.revision,
-            crate::agents::AgentDraft {
-                name: agent.name.clone(),
-                instructions: agent.instructions.clone(),
-                selection: None,
-                tools: agent.tools.clone(),
-                network: agent.network.clone(),
-                directories: vec![crate::agents::DirectoryGrant {
-                    alias: "project".to_owned(),
-                    host_path: other.path().to_path_buf(),
-                    access: AccessMode::ReadWrite,
-                }],
-                primary_directory: "project".to_owned(),
-            },
-        )
-        .expect("change grant");
-    assert!(super::recovery_project_path(&state, &run).is_err());
-
-    state
-        .agents
-        .update(
-            &agent.id,
-            changed.revision,
-            crate::agents::AgentDraft {
-                name: agent.name,
-                instructions: agent.instructions,
-                selection: None,
-                tools: agent.tools,
-                network: agent.network,
-                directories: agent.directories,
-                primary_directory: agent.primary_directory,
-            },
-        )
-        .expect("restore grant");
-    #[cfg(unix)]
-    {
-        let git = dir.path().join(".git");
-        std::fs::rename(&git, dir.path().join(".git-original")).expect("move git directory");
-        std::os::unix::fs::symlink(other.path().join(".git"), git).expect("link git directory");
-        assert!(super::recovery_project_path(&state, &run).is_err());
-    }
-}
-
-enum GateCandidate {
-    Unchanged,
-    Changed,
 }
 
 fn published_gate_candidate(
@@ -2060,6 +1720,11 @@ fn published_gate_candidate(
             disposition: crate::workflows::artefacts::ProductionDisposition::RequiredOutput,
         },
     }
+}
+
+enum GateCandidate {
+    Unchanged,
+    Changed,
 }
 
 fn gate_ready_fixture(
@@ -2103,7 +1768,6 @@ fn gate_ready_fixture(
     let mut run = crate::workflows::WorkflowRun::create(
         crate::workflows::RunId::generate().expect("run"),
         1,
-        crate::projects::ProjectId::generate().expect("project"),
         Some(AgentId::generate().expect("agent")),
         kind,
         pinned,
@@ -2182,16 +1846,12 @@ fn gate_ready_fixture(
     .expect("cleanup");
     run.complete_attempt(attempt, 3).expect("complete work");
     let run_id = run.id;
-    let project_id = run.project_id.expect("project");
     let agent_id = run.agent_id.expect("agent");
     state.workflow_runs.create(run).expect("store run");
     state.keep_temp_dir(project);
     let token = crate::sessions::generate_session_token().expect("token");
     let session_id = token.id();
-    let key = crate::sessions::ConversationKey {
-        project_id,
-        agent_id,
-    };
+    let key = crate::sessions::ConversationKey { agent_id };
     state.sessions.insert(session_id);
     let begun = state
         .sessions
@@ -2200,14 +1860,12 @@ fn gate_ready_fixture(
     let job = crate::workflows::WorkflowJob {
         run_id,
         session_id,
-        project_id: Some(project_id),
         agent_id: Some(agent_id),
         agent_revision: 1,
         conversation_id: None,
         authority: None,
         project_free_authority: None,
         grant_alias: "project".to_owned(),
-        grant_access: AccessMode::ReadWrite,
         connection: crate::providers::ProviderConnection::with_key(
             crate::providers::ProviderKind::Xai,
             "key",

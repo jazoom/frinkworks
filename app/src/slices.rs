@@ -11,7 +11,6 @@ mod environments;
 mod execution_settings;
 mod human_gates;
 mod presets;
-mod projects;
 mod settings;
 mod workflow_runs;
 mod workflows;
@@ -26,7 +25,6 @@ pub(crate) fn router() -> Router<AppState> {
         .merge(connect::router())
         .merge(attention::router())
         .merge(conversations::router())
-        .merge(projects::router())
         .merge(agents::router())
         .merge(chat::router())
         .merge(settings::router())
@@ -39,8 +37,6 @@ pub(crate) fn router() -> Router<AppState> {
 
 pub(crate) fn live_router() -> hypergraft::live::LiveRouter<AppState> {
     hypergraft::live::LiveRouter::new()
-        .merge(chat::live_router())
-        .expect("live projection paths are unique")
         .merge(conversations::live_router())
         .expect("live projection paths are unique")
 }

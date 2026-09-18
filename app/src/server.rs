@@ -60,10 +60,9 @@ pub(crate) async fn run(log_level: tracing::Level) -> Result<(), Box<dyn std::er
     #[cfg(feature = "dev")]
     let app = development::with_live_reload(app, static_dir);
     let listener = tokio::net::TcpListener::bind(&bind_address).await?;
+    tracing::info!(?environment);
     tracing::info!(
-        environment = ?environment,
-        bind_address,
-        "Power Plant is available at {public_origin}"
+        "Power Plant is available at:\n********************************\n{public_origin}\n********************************"
     );
     axum::serve(
         listener,

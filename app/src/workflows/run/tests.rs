@@ -14,7 +14,6 @@ impl WorkflowRun {
         Self::create(
             id,
             created_at_ms,
-            super::ProjectId::generate().expect("project"),
             Some(agent_id),
             super::RunKind::Configured,
             pinned,
@@ -123,16 +122,29 @@ fn sandbox_record(run: &WorkflowRun) -> AttemptSandboxRecord {
 
 fn start(run: &mut WorkflowRun) -> AttemptId {
     let attempt = AttemptId::generate().expect("attempt");
-    let caps = match run.pinned.definition.step(run.ready_step().expect("step")) {
-        Some(step)
-            if matches!(
-                step.action,
-                crate::workflows::definition::StepAction::SystemCommand(_)
-            ) =>
+    let step = run
+        .pinned
+        .definition
+        .step(run.ready_step().expect("step"))
+        .expect("step");
+    let caps = match run.directory_settings() {
+        Some(settings) => {
+            let effective = run.phase_settings(&step.key).cloned().unwrap_or(settings);
+            let authority = crate::execution::ProjectFreeAuthority::from_snapshot(1, &effective)
+                .expect("authority");
+            crate::workflows::capabilities::AttemptCapabilities::derive_project_free(
+                step, &authority,
+            )
+            .expect("project-free capabilities")
+        }
+        None if matches!(
+            step.action,
+            crate::workflows::definition::StepAction::SystemCommand(_)
+        ) =>
         {
             test_command_capabilities()
         }
-        _ => test_agent_capabilities(),
+        None => test_agent_capabilities(),
     };
     run.start_attempt(attempt, Vec::new(), caps, sandbox_record(run), 11)
         .expect("start");
@@ -1158,13 +1170,28 @@ fn run_records_round_trip() {
         None,
     )
     .expect("selection");
+    let directory = tempfile::tempdir().expect("directory");
+    let mut grant =
+        crate::execution::DirectoryGrant::from_selected(directory.path(), &[]).expect("grant");
+    grant.access = crate::execution::DirectoryAccess::ReviewBeforeApply;
     let settings = crate::execution::ExecutionSettings::new(
         selection.clone(),
         "Pinned instructions".to_owned(),
-        Vec::new(),
+        vec![ToolId::List],
         crate::tests::test_environment_id(),
     )
+    .unwrap()
+    .with_directories(vec![grant.clone()])
+    .unwrap()
+    .with_git_destination(Some(grant.id))
     .unwrap();
+    run.pinned = PinnedWorkflowDefinition::pin(
+        None,
+        run.pinned
+            .definition
+            .with_conversation_settings(&settings)
+            .expect("settings"),
+    );
     run.phase_models = vec![crate::workflows::PhaseModelSelection {
         step: phase,
         selection,
@@ -1218,7 +1245,6 @@ fn run_json_omits_the_transition_array() {
     let value = serde_json::to_value(run.to_file()).expect("json");
     assert_eq!(value["record-version"], 1);
     assert_eq!(value["kind"], "configured");
-    assert!(value.get("project-id").is_some());
     assert!(value.get("transitions").is_none());
     assert!(value["attempts"][0]["review-route"].is_null());
 }
@@ -1236,23 +1262,22 @@ fn obsolete_run_record_versions_are_rejected() {
 }
 
 #[test]
-fn project_identity_and_run_kind_round_trip() {
+fn run_kind_round_trips_without_a_project_catalogue() {
     for kind in [super::RunKind::Configured, super::RunKind::QuickTask] {
-        let project_id = crate::projects::ProjectId::generate().expect("project");
         let definition = definition();
         let environments = crate::tests::test_environment_set(&definition);
         let run = WorkflowRun::create(
             RunId::generate().expect("run"),
             10,
-            project_id,
             Some(crate::agents::AgentId::generate().expect("agent")),
             kind,
             PinnedWorkflowDefinition::pin(None, definition),
             environments,
         );
         let loaded = WorkflowRun::from_file(run.to_file()).expect("load");
-        assert_eq!(loaded.project_id, Some(project_id));
         assert_eq!(loaded.kind, kind);
+        assert!(loaded.conversation_id.is_none());
+        assert!(loaded.agent_id.is_some());
     }
 }
 
@@ -1277,12 +1302,10 @@ fn source_free_records_reject_source_and_identity_substitution() {
     );
 
     let loaded = WorkflowRun::from_file(run.to_file()).expect("load source-free run");
-    assert!(loaded.project_id.is_none());
     assert!(loaded.agent_id.is_none());
     assert!(matches!(loaded.source, super::RunSource::None));
     assert!(loaded.artefacts.is_empty());
     for tamper in [
-        |run: &mut WorkflowRun| run.project_id = Some(super::ProjectId::generate().unwrap()),
         |run: &mut WorkflowRun| run.agent_id = Some(super::AgentId::generate().unwrap()),
         |run: &mut WorkflowRun| run.conversation_id = None,
         |run: &mut WorkflowRun| run.source = super::RunSource::Pending,
@@ -1294,22 +1317,10 @@ fn source_free_records_reject_source_and_identity_substitution() {
             Some(super::RunRecordError::Corrupt)
         );
     }
-    let mut project_run = new_run();
-    project_run.project_id = None;
-    assert_eq!(
-        WorkflowRun::from_file(project_run.to_file()).err(),
-        Some(super::RunRecordError::Corrupt)
-    );
 }
 
 #[test]
-fn missing_or_unknown_project_identity_fails_load() {
-    let mut file = new_run().to_file();
-    file.project_id = Some("not-a-project-id".to_owned());
-    assert_eq!(
-        WorkflowRun::from_file(file).err(),
-        Some(super::RunRecordError::Corrupt)
-    );
+fn unknown_run_kind_fails_load() {
     let mut file = new_run().to_file();
     file.kind = "chat".to_owned();
     assert_eq!(
@@ -1481,7 +1492,6 @@ fn quick_task_run(kind: super::RunKind) -> WorkflowRun {
     WorkflowRun::create(
         RunId::generate().expect("run"),
         10,
-        crate::projects::ProjectId::generate().expect("project"),
         Some(crate::agents::AgentId::generate().expect("agent")),
         kind,
         pinned,

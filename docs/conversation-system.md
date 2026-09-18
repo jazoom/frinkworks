@@ -29,7 +29,7 @@ Ordinary messages with tools use directory-backed internal agent execution. The 
 
 Tool-free messages use the normal chat job. Host tools require explicit host consent and the selected command policy.
 
-Configured workflows retain their explicit sequences. Project-backed workflows pin directory identities for handoff and recovery.
+Configured workflows retain their explicit sequences. Directory grants pin folder identities for handoff and recovery. Git destination is explicit on those grants. Directory order never selects it.
 
 An ordinary execution cannot dispatch a registered commit step. A configured workflow can include an explicit commit operation.
 
@@ -82,7 +82,7 @@ Safe gates survive restart and session expiry. Restoration requires fresh runtim
 
 Restoration starts no model call and makes no gate decision. The original assessment, revision or application choice remains pending.
 
-Project-backed restoration retains the pinned directory identities. Run-only project authority grants no access to future conversation messages or workflows.
+Restoration retains the pinned directory identities. Run-only authority grants no access to future conversation messages or workflows.
 
 An unresolved gate prevents another message, another workflow or deletion of its owner conversation.
 

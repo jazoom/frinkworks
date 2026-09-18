@@ -16,7 +16,6 @@ use crate::{
         PreparationState, SnapshotAvailability,
     },
     preferences::Preferences,
-    projects::ProjectStore,
     providers::{ChatBackend, ProviderKind},
     state::AppState,
     vault::ProviderVault,
@@ -63,7 +62,6 @@ fn activation_state() -> AppState {
     state.vault = Arc::new(ProviderVault::open(root.join("providers.json")).expect("providers"));
     state.preferences = Arc::new(Preferences::open(root.join("preferences.json")));
     state.agents = Arc::new(AgentStore::open(root.join("agents")).expect("agents"));
-    state.projects = Arc::new(ProjectStore::open(root.join("projects.json")).expect("projects"));
     state.workflows = Arc::new(workflows);
     state.workflow_runs =
         Arc::new(WorkflowRunStore::open(root.join("workflow-runs")).expect("workflow runs"));
@@ -96,19 +94,6 @@ fn app(state: &AppState) -> axum::Router {
         .with_state(state.clone())
 }
 
-fn git_worktree() -> tempfile::TempDir {
-    let dir = tempfile::tempdir().expect("worktree");
-    assert!(
-        std::process::Command::new("git")
-            .args(["init", "-q"])
-            .current_dir(dir.path())
-            .status()
-            .expect("git")
-            .success()
-    );
-    dir
-}
-
 fn cookie(token: &str) -> String {
     format!("powerplant_session={token}")
 }
@@ -123,13 +108,6 @@ fn session_cookie(headers: &HeaderMap) -> String {
         header.find("powerplant_session=").expect("session name") + "powerplant_session=".len();
     let rest = &header[start..];
     rest[..rest.find(';').unwrap_or(rest.len())].to_owned()
-}
-
-fn navigate_target(text: &str) -> String {
-    let marker = "navigate=\"";
-    let start = text.find(marker).expect("navigate") + marker.len();
-    let end = text[start..].find('"').expect("navigate end") + start;
-    text[start..end].to_owned()
 }
 
 fn location(headers: &HeaderMap) -> String {
@@ -207,7 +185,6 @@ fn ready_alpine_git(state: &AppState) {
 async fn tool_free_activation_reaches_useful_chat_without_a_runtime() {
     let state = activation_state();
     assert!(!state.vault.has_providers());
-    assert!(state.projects.list().is_empty());
     assert!(state.agents.list().is_empty());
     assert!(!state.workflows.list().is_empty());
     let alpine = crate::workflows::alpine_git_id(&state.environments).expect("alpine-git");
@@ -247,50 +224,8 @@ async fn tool_free_activation_reaches_useful_chat_without_a_runtime() {
     assert_eq!(location(&headers), "/conversations");
     let token = session_cookie(&headers);
 
-    let (status, _, text) = send(&state, document("/projects/new", Some(&token))).await;
+    let (status, _, _) = send(&state, document("/conversations/new", Some(&token))).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(text.contains("Choose folder"));
-    assert!(text.contains("Git project folder"));
-    assert!(text.contains("formaction=\"/projects/folder\""));
-    assert!(text.contains("action=\"/projects\""));
-
-    let worktree = git_worktree();
-    let path = worktree.path().canonicalize().expect("canonical");
-    state.keep_temp_dir(worktree);
-    let create_body = format!("name=Desk&path={}", form_value(&path.to_string_lossy()));
-    let (status, _, text) = send(&state, patch("/projects", Some(&token), &create_body)).await;
-    assert_eq!(status, StatusCode::OK);
-    let project = &state.projects.list()[0];
-    assert_eq!(project.name, "Desk");
-    assert_eq!(project.host_path, path);
-    assert_eq!(
-        navigate_target(&text),
-        format!("/projects/{}", project.id.as_hex())
-    );
-
-    let project_path = format!("/projects/{}", project.id.as_hex());
-    let (status, _, text) = send(&state, document(&project_path, Some(&token))).await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(text.contains("New conversation"));
-    assert!(text.contains(&format!(
-        "href=\"/conversations/new?project={}\"",
-        project.id.as_hex()
-    )));
-
-    let (status, _, text) = send(
-        &state,
-        patch(
-            "/conversations",
-            Some(&token),
-            &format!("project={}", project.id),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        navigate_target(&text),
-        format!("/conversations/new?project={}", project.id)
-    );
     assert!(state.conversations.list().is_empty());
     let (status, _, _) = send(
         &state,
@@ -298,8 +233,7 @@ async fn tool_free_activation_reaches_useful_chat_without_a_runtime() {
             "/conversations/new",
             Some(&token),
             &format!(
-                "action=send&project={}&provider=xai&model=grok-4.6&thinking={}&message=Hello",
-                project.id,
+                "action=send&provider=xai&model=grok-4.6&thinking={}&message=Hello",
                 state
                     .models_dev
                     .effective_effort(ProviderKind::Xai, "grok-4.6", None)
@@ -329,21 +263,7 @@ async fn tool_free_activation_reaches_useful_chat_without_a_runtime() {
         .expect("saved conversation");
     let conversation_path = format!("/conversations/{}", conversation.id);
     assert!(state.agents.list().is_empty());
-    assert!(conversation.grants.is_empty());
     ready_alpine_git(&state);
-    let (status, _, _) = send(
-        &state,
-        patch(
-            &format!("{conversation_path}/access"),
-            Some(&token),
-            &format!(
-                "revision={}&project={}&access=read-write",
-                conversation.revision, project.id
-            ),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
     let conversation = state
         .conversations
         .get(&conversation.id)

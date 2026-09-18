@@ -102,3 +102,24 @@ fn replacement_at_the_same_path_invalidates_authority() {
         Err(crate::execution::DirectoryGrantError::Unavailable)
     );
 }
+
+#[test]
+fn directory_order_does_not_select_a_git_destination() {
+    let parent = tempfile::tempdir().unwrap();
+    let first_path = parent.path().join("first");
+    let second_path = parent.path().join("second");
+    std::fs::create_dir(&first_path).unwrap();
+    std::fs::create_dir(&second_path).unwrap();
+    let first = crate::execution::DirectoryGrant::from_selected(&first_path, &[]).unwrap();
+    let second =
+        crate::execution::DirectoryGrant::from_selected(&second_path, std::slice::from_ref(&first))
+            .unwrap();
+    let settings = settings()
+        .with_directories(vec![first.clone(), second.clone()])
+        .unwrap();
+    let authority = ProjectFreeAuthority::from_settings(1, &settings).unwrap();
+    assert_eq!(authority.policy.primary_alias(), "");
+    let selected = settings.with_git_destination(Some(second.id)).unwrap();
+    let authority = ProjectFreeAuthority::from_settings(1, &selected).unwrap();
+    assert_eq!(authority.policy.primary_alias(), second.alias);
+}

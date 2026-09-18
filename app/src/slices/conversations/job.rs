@@ -193,35 +193,11 @@ fn validate_piece(reply: &AssistantReply, text: &str) -> Result<(), Failure> {
     Ok(())
 }
 
-fn instructions(state: &AppState, record: &ConversationRecord) -> String {
-    let mut text = record
+fn instructions(_state: &AppState, record: &ConversationRecord) -> String {
+    record
         .model
         .as_ref()
-        .map_or_else(String::new, |model| model.settings.instructions.clone());
-    if record.projects.is_empty() {
-        return text;
-    }
-    if !text.is_empty() {
-        text.push_str("\n\n");
-    }
-    text.push_str("Related project references:\n");
-    for id in &record.projects {
-        match state.projects.get(id) {
-            Some(project) if project.host_path_is_available() => {
-                text.push_str("- ");
-                text.push_str(&project.name);
-                text.push('\n');
-            }
-            Some(project) => {
-                text.push_str("- ");
-                text.push_str(&project.name);
-                text.push_str(" (unavailable)\n");
-            }
-            None => text.push_str("- Project record unavailable\n"),
-        }
-    }
-    text.push_str("These references grant no file access, tools or network access.");
-    text
+        .map_or_else(String::new, |model| model.settings.instructions.clone())
 }
 
 pub(super) fn history_with_review(

@@ -103,9 +103,6 @@ pub(crate) struct JobSnapshot {
     pub(crate) output: AssistantReply,
     pub(crate) latest_seq: u64,
     pub(crate) assistant_index: usize,
-    pub(crate) cancel_requested: bool,
-    pub(crate) step_label: String,
-    pub(crate) workflow_name: String,
 }
 
 pub(crate) struct Job {
@@ -116,8 +113,6 @@ pub(crate) struct Job {
     notify: Notify,
     cancel: AtomicBool,
     output_visible: AtomicBool,
-    step_label: Mutex<String>,
-    workflow_name: Mutex<String>,
 }
 
 struct JobInner {
@@ -152,43 +147,11 @@ impl Job {
             notify: Notify::new(),
             cancel: AtomicBool::new(false),
             output_visible: AtomicBool::new(true),
-            step_label: Mutex::new(String::new()),
-            workflow_name: Mutex::new(String::new()),
         })
     }
 
     pub(crate) fn id(&self) -> JobId {
         self.id
-    }
-
-    pub(crate) fn set_step_label(&self, label: String) {
-        *self
-            .step_label
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = label;
-        self.notify.notify_waiters();
-    }
-
-    pub(crate) fn step_label(&self) -> String {
-        self.step_label
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
-    }
-
-    pub(crate) fn set_workflow_name(&self, name: String) {
-        *self
-            .workflow_name
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = name;
-        self.notify.notify_waiters();
-    }
-
-    pub(crate) fn workflow_name(&self) -> String {
-        self.workflow_name
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
     }
 
     pub(crate) fn assistant_index(&self) -> usize {
@@ -263,9 +226,6 @@ impl Job {
             output: inner.output.clone(),
             latest_seq: inner.latest_seq,
             assistant_index: self.assistant_index,
-            cancel_requested: self.cancel.load(Ordering::SeqCst),
-            step_label: self.step_label(),
-            workflow_name: self.workflow_name(),
         }
     }
 

@@ -76,12 +76,10 @@ fn plan_checkpoint_rejects_code_decisions_and_stale_plan_hashes() {
     let environment = crate::tests::test_environment_id();
     let definition = workflows::seeds::plan_then_implement_definition(environment);
     let pinned = workflows::definition::PinnedWorkflowDefinition::pin(None, definition.clone());
-    let project = crate::projects::ProjectId::parse(&"a".repeat(32)).expect("project");
     let agent = crate::agents::AgentId::generate().expect("agent");
     let mut run = workflows::WorkflowRun::create(
         workflows::RunId::generate().expect("run"),
         1,
-        project,
         Some(agent),
         RunKind::Configured,
         pinned,
@@ -342,7 +340,6 @@ struct GateFixture {
     run_id: workflows::RunId,
     gate_id: workflows::GateId,
     conversation_id: Option<crate::conversations::ConversationId>,
-    project_id: crate::projects::ProjectId,
     agent_id: crate::agents::AgentId,
     candidate: String,
     candidate_id: crate::workflows::ArtefactId,
@@ -360,7 +357,7 @@ impl GateFixture {
     }
 
     fn desk_path(&self) -> String {
-        crate::tests::desk_path(&self.project_id, &self.agent_id)
+        format!("/agents/{}/configuration", self.agent_id.as_hex())
     }
 
     fn decision_body(&self, candidate: &str) -> String {
@@ -473,13 +470,6 @@ fn awaiting_gate(kind: RunKind) -> GateFixture {
             primary_directory: "project".to_owned(),
         })
         .expect("agent");
-    let project = state
-        .projects
-        .create(
-            "Desk project".to_owned(),
-            agent.directories[0].host_path.clone(),
-        )
-        .expect("project");
     let pinned = workflows::pin_quick_task(
         AccessMode::ReadWrite,
         &[ToolId::List],
@@ -491,7 +481,6 @@ fn awaiting_gate(kind: RunKind) -> GateFixture {
     let mut run = workflows::WorkflowRun::create(
         workflows::RunId::generate().expect("run"),
         1,
-        project.id,
         Some(agent.id),
         kind,
         pinned,
@@ -581,7 +570,7 @@ fn awaiting_gate(kind: RunKind) -> GateFixture {
         .as_str()
         .to_owned();
     let run_id = run.id;
-    let host = project.host_path.clone();
+    let host = agent.directories[0].host_path.clone();
     state.workflow_runs.create(run).expect("store run");
     state.keep_temp_dir(project_dir);
     let token = sessions::generate_session_token().expect("session token");
@@ -595,28 +584,21 @@ fn awaiting_gate(kind: RunKind) -> GateFixture {
             "grok-4.6",
         ))
         .expect("vault");
-    let key = sessions::ConversationKey {
-        project_id: project.id,
-        agent_id: agent.id,
-    };
+    let key = sessions::ConversationKey { agent_id: agent.id };
     let begun = state
         .sessions
         .begin_turn(&session, key, run_id, "Change the file".to_owned())
         .expect("turn");
     begun.job.set_awaiting_decision();
-    begun.job.set_workflow_name("Quick task".to_owned());
-    begun.job.set_step_label("Awaiting decision".to_owned());
     let inserted = state.gate_continuations.insert(workflows::WorkflowJob {
         run_id,
         session_id: session,
-        project_id: Some(project.id),
         agent_id: Some(agent.id),
         agent_revision: agent.revision,
         conversation_id: None,
         authority: None,
         project_free_authority: None,
         grant_alias: "project".to_owned(),
-        grant_access: AccessMode::ReadWrite,
         connection: ProviderConnection::with_key(ProviderKind::Xai, "test-key", "grok-4.6"),
         phase_providers: Vec::new(),
         active_connection: Arc::new(std::sync::Mutex::new(None)),
@@ -636,7 +618,6 @@ fn awaiting_gate(kind: RunKind) -> GateFixture {
         run_id,
         gate_id,
         conversation_id: None,
-        project_id: project.id,
         agent_id: agent.id,
         candidate,
         candidate_id,
@@ -661,114 +642,275 @@ pub(crate) fn conversation_at_gate() -> (
 }
 
 fn conversation_awaiting_gate() -> GateFixture {
-    let mut fixture = awaiting_gate(RunKind::QuickTask);
-    let conversation = fixture
-        .state
+    use crate::workflows::definition::{InputKey, OutputKey, StepKey};
+
+    let state = test_state();
+    let project_dir = git_worktree();
+    std::fs::write(project_dir.path().join("file.txt"), b"candidate\n").expect("source");
+    let mut grant =
+        crate::execution::DirectoryGrant::from_selected(project_dir.path(), &[]).expect("grant");
+    grant.access = crate::execution::DirectoryAccess::ReviewBeforeApply;
+    let host = grant.host_path.clone();
+    let thinking = state
+        .models_dev
+        .effective_effort(ProviderKind::Xai, "grok-4.6", None)
+        .expect("thinking effort");
+    let settings = crate::execution::ExecutionSettings::new(
+        crate::providers::ModelSelection::new(
+            ProviderKind::Xai,
+            "grok-4.6".to_owned(),
+            Some(thinking),
+        )
+        .expect("selection"),
+        String::new(),
+        vec![ToolId::List],
+        crate::tests::test_environment_id(),
+    )
+    .unwrap()
+    .with_directories(vec![grant.clone()])
+    .unwrap()
+    .with_git_destination(Some(grant.id))
+    .unwrap();
+    let initial_capture = crate::workflows::artefacts::CandidateCapture::capture_set(
+        &settings.directories,
+        state.local_data.root(),
+        &state.workflow_artefacts,
+    )
+    .expect("initial capture");
+    std::fs::write(project_dir.path().join("file.txt"), b"changed\n").expect("change");
+    let produced_capture = crate::workflows::artefacts::CandidateCapture::capture_set(
+        &settings.directories,
+        state.local_data.root(),
+        &state.workflow_artefacts,
+    )
+    .expect("changed capture");
+    std::fs::write(project_dir.path().join("file.txt"), b"candidate\n").expect("restore source");
+    let pinned = crate::workflows::pin_agent_work(&settings).expect("quick task");
+    let environments = crate::tests::test_environment_set(&pinned.definition);
+    let mut run = workflows::WorkflowRun::create(
+        workflows::RunId::generate().expect("run"),
+        1,
+        None,
+        RunKind::QuickTask,
+        pinned,
+        environments,
+    );
+    let work = StepKey::parse("work").expect("work");
+    run.phase_models = vec![workflows::PhaseModelSelection {
+        step: work.clone(),
+        selection: settings.model.clone(),
+        instructions: settings.instructions.clone(),
+        preset: None,
+        settings: Some(settings.clone()),
+    }];
+    let publish = |run: &workflows::WorkflowRun,
+                   captured: &crate::workflows::artefacts::candidate::CandidateSetArtefact,
+                   producer: crate::workflows::artefacts::ArtefactProducer,
+                   inputs: Vec<crate::workflows::artefacts::ArtefactReference>| {
+        let bytes = captured.manifest_bytes().expect("manifest");
+        let object = state.workflow_artefacts.publish(&bytes).expect("publish");
+        crate::workflows::artefacts::ArtefactRecord {
+            id: crate::workflows::ArtefactId::generate().expect("artefact"),
+            kind: crate::workflows::definition::ArtefactKind::CandidateRevision,
+            artefact_hash: crate::workflows::artefacts::artefact_hash_for(
+                crate::workflows::definition::ArtefactKind::CandidateRevision,
+                captured.format_version,
+                &bytes,
+            ),
+            object_hash: object,
+            payload_bytes: bytes.len() as u64,
+            created_at_ms: 1,
+            provenance: crate::workflows::artefacts::ArtefactProvenance {
+                run_id: run.id,
+                producer,
+                inputs,
+            },
+            summary: crate::workflows::artefacts::ArtefactSummary::Candidate {
+                candidate: captured.candidate_hash,
+                entries: captured.roots.len() as u64,
+                bytes: 0,
+                disposition: crate::workflows::artefacts::ProductionDisposition::RequiredOutput,
+            },
+        }
+    };
+    let initial = publish(
+        &run,
+        &initial_capture,
+        crate::workflows::artefacts::ArtefactProducer::RunSourceCapture,
+        Vec::new(),
+    );
+    let initial_ref = crate::workflows::artefacts::ArtefactReference {
+        id: initial.id,
+        kind: initial.kind,
+        artefact_hash: initial.artefact_hash,
+    };
+    run.record_initial_candidate(initial).expect("initial");
+    let authority =
+        crate::execution::ProjectFreeAuthority::from_settings(1, &settings).expect("authority");
+    let capabilities = crate::workflows::capabilities::AttemptCapabilities::derive_project_free(
+        run.pinned.definition.step(&work).expect("work step"),
+        &authority,
+    )
+    .expect("capabilities");
+    let attempt = workflows::AttemptId::generate().expect("attempt");
+    run.start_attempt(
+        attempt,
+        vec![crate::workflows::run::AttemptArtefactInput {
+            key: InputKey::parse("candidate").expect("input"),
+            artefact: initial_ref.clone(),
+        }],
+        capabilities,
+        crate::workflows::run::AttemptSandboxRecord {
+            kind: crate::workflows::run::AttemptSandboxKind::IsolatedAttempt,
+            snapshot_digest: run
+                .environments
+                .steps
+                .iter()
+                .find(|binding| binding.step == work)
+                .expect("work environment")
+                .snapshot_digest
+                .clone(),
+        },
+        2,
+    )
+    .expect("start");
+    let produced = publish(
+        &run,
+        &produced_capture,
+        crate::workflows::artefacts::ArtefactProducer::StepAttempt {
+            attempt_id: attempt,
+            step: work.clone(),
+            output: Some(OutputKey::parse("candidate").expect("output")),
+            disposition: crate::workflows::artefacts::ProductionDisposition::RequiredOutput,
+        },
+        vec![initial_ref.clone()],
+    );
+    let produced_ref = crate::workflows::artefacts::ArtefactReference {
+        id: produced.id,
+        kind: produced.kind,
+        artefact_hash: produced.artefact_hash,
+    };
+    run.record_attempt_outputs(
+        attempt,
+        vec![produced],
+        vec![crate::workflows::run::AttemptArtefactOutput {
+            key: OutputKey::parse("candidate").expect("output"),
+            artefact: produced_ref.clone(),
+        }],
+        Some(produced_ref.clone()),
+        crate::workflows::run::ObservedCandidate::Exact {
+            artefact: produced_ref.clone(),
+        },
+    )
+    .expect("outputs");
+    run.record_cleanup(
+        attempt,
+        crate::workflows::run::AttemptCleanupRecord::Complete,
+    )
+    .expect("cleanup");
+    run.complete_attempt(attempt, 3).expect("complete work");
+    let gate_id = workflows::GateId::generate().expect("gate");
+    run.open_gate(gate_id, produced_ref, initial_ref, 4)
+        .expect("gate");
+    let candidate_id = run.gates[0].candidate.id;
+    let diff_base_id = run.gates[0].diff_base.id;
+    let candidate = run
+        .artefact(&candidate_id)
+        .and_then(crate::workflows::artefacts::ArtefactRecord::candidate_hash)
+        .expect("candidate")
+        .as_str()
+        .to_owned();
+    let conversation = state
         .conversations
-        .create("Implementation".to_owned())
+        .create_saved(
+            crate::conversations::ConversationId::generate().expect("id"),
+            Some("Implementation".to_owned()),
+            Some(crate::conversations::ConversationModelConfiguration {
+                settings: settings.clone(),
+                preset: None,
+            }),
+            Vec::new(),
+        )
         .expect("conversation");
-    let attached = fixture
-        .state
-        .conversations
-        .attach_project(&conversation.id, conversation.revision, fixture.project_id)
-        .expect("attach");
-    let granted = fixture
-        .state
-        .conversations
-        .grant_writable(&conversation.id, attached.revision, fixture.project_id, 1)
-        .expect("grant");
-    let old = fixture
-        .state
-        .gate_continuations
-        .take(&fixture.run_id)
-        .expect("old continuation");
-    drop(old);
+    run.conversation_id = Some(conversation.id);
+    let run_id = run.id;
+    state.workflow_runs.create(run).expect("store run");
+    state.keep_temp_dir(project_dir);
     let session_token = sessions::generate_session_token().expect("session token");
     let session = session_token.id();
-    fixture.state.sessions.insert(session);
-    let selection =
-        crate::providers::ModelSelection::new(ProviderKind::Xai, "grok-4.6".to_owned(), None)
-            .expect("selection");
-    let job = fixture
-        .state
+    state.sessions.insert(session);
+    state
+        .access_consent
+        .approve_handoff(run_id, session, conversation.id, vec![settings.clone()])
+        .expect("launch consent");
+    state
+        .vault
+        .put(ProviderConnection::with_key(
+            ProviderKind::Xai,
+            "test-key",
+            "grok-4.6",
+        ))
+        .expect("vault");
+    let job = state
         .sessions
         .begin_conversation_job(&session, conversation.id, 1)
         .expect("job");
-    fixture
-        .state
+    state
         .conversations
         .begin_message(
             &conversation.id,
-            granted.revision,
-            selection,
+            conversation.revision,
+            settings.model.clone(),
             job.id(),
             "Change the file".to_owned(),
         )
         .expect("message");
-    fixture
-        .state
-        .workflow_runs
-        .mutate(&fixture.run_id, |run| {
-            run.conversation_id = Some(conversation.id);
-            Ok(())
-        })
-        .expect("conversation run");
-    let run = fixture
-        .state
-        .workflow_runs
-        .get(&fixture.run_id)
-        .expect("run");
-    let authority = crate::conversations::resolve_workflow_authority(
-        &granted,
-        &fixture.state.projects,
-        &fixture.state.agents,
-    )
-    .expect("authority")
-    .expect("authority");
+    let private =
+        crate::execution::ProjectFreeAuthority::from_settings(conversation.revision, &settings)
+            .expect("authority");
     job.set_awaiting_decision();
     assert!(
-        fixture
-            .state
+        state
             .sessions
-            .owns_conversation_job(&session, conversation.id, job.id(),)
+            .owns_conversation_job(&session, conversation.id, job.id())
     );
-    assert!(
-        fixture
-            .state
-            .gate_continuations
-            .insert(workflows::WorkflowJob {
-                run_id: fixture.run_id,
-                session_id: session,
-                project_id: Some(fixture.project_id),
-                agent_id: run.agent_id,
-                agent_revision: authority.effective.revision,
-                conversation_id: Some(conversation.id),
-                authority: Some(authority.effective.clone()),
-                project_free_authority: None,
-                grant_alias: authority.effective.grant_alias.clone(),
-                grant_access: authority.effective.grant_access,
-                connection: ProviderConnection::with_key(ProviderKind::Xai, "test-key", "grok-4.6"),
-                phase_providers: Vec::new(),
-                active_connection: Arc::new(std::sync::Mutex::new(None)),
-                host_policy: authority.effective.policy.clone(),
-                turns: vec![crate::providers::ChatTurn::user(
-                    "Change the file".to_owned()
-                )],
-                job,
-                eligible_reply: std::sync::Arc::new(std::sync::Mutex::new(
-                    "Here is the change.".to_owned(),
-                )),
-            })
-    );
-    fixture.token = session_token.raw().as_str().to_owned();
-    fixture.session = session;
-    fixture.conversation_id = Some(conversation.id);
-    fixture.key = sessions::ConversationKey {
-        project_id: fixture.project_id,
-        agent_id: run.agent_id.expect("agent"),
-    };
-    fixture.agent_id = run.agent_id.expect("agent");
-    fixture
+    assert!(state.gate_continuations.insert(workflows::WorkflowJob {
+        run_id,
+        session_id: session,
+        agent_id: None,
+        agent_revision: conversation.revision,
+        conversation_id: Some(conversation.id),
+        authority: None,
+        project_free_authority: Some(private.clone()),
+        grant_alias: String::new(),
+        connection: ProviderConnection::with_key(ProviderKind::Xai, "test-key", "grok-4.6"),
+        phase_providers: Vec::new(),
+        active_connection: Arc::new(std::sync::Mutex::new(None)),
+        host_policy: private.policy.clone(),
+        turns: vec![crate::providers::ChatTurn::user(
+            "Change the file".to_owned()
+        )],
+        job,
+        eligible_reply: std::sync::Arc::new(std::sync::Mutex::new(
+            "Here is the change.".to_owned(),
+        )),
+    }));
+    GateFixture {
+        state,
+        token: session_token.raw().as_str().to_owned(),
+        session,
+        key: sessions::ConversationKey {
+            agent_id: crate::agents::AgentId::generate().expect("key agent"),
+        },
+        run_id,
+        gate_id,
+        conversation_id: Some(conversation.id),
+        agent_id: crate::agents::AgentId::generate().expect("fixture agent"),
+        candidate,
+        candidate_id,
+        diff_base_id,
+        host,
+    }
 }
 
 async fn get_gate(fixture: &GateFixture, graft: Option<&str>) -> axum::http::Response<Body> {
@@ -1022,10 +1164,24 @@ fn human_revisions_preserve_feedback_identity_and_exhaust_the_gate_step_limit() 
             .gate = workflows::GateId::generate().expect("other gate");
         assert!(packet(&substituted).is_err());
         let sandbox = run.attempts[0].sandbox.clone();
+        let revision_authority = crate::execution::ProjectFreeAuthority::from_snapshot(
+            1,
+            &run.directory_settings().expect("directory settings"),
+        )
+        .expect("revision authority");
+        let revision_capabilities =
+            crate::workflows::capabilities::AttemptCapabilities::derive_project_free(
+                run.pinned
+                    .definition
+                    .step(&reservation.target)
+                    .expect("revision step"),
+                &revision_authority,
+            )
+            .expect("revision capabilities");
         run.start_attempt(
             reservation.attempt,
             inputs,
-            crate::tests::test_agent_capabilities(),
+            revision_capabilities,
             sandbox,
             at + 1,
         )
@@ -1453,8 +1609,6 @@ async fn a_quick_task_gate_uses_apply_and_discard_labels() {
     let apply_at = text.find("Apply changes").expect("apply");
     assert!(safety_at < apply_at);
     assert!(text.contains("data-run-kind=\"quick-task\""));
-    assert!(text.contains(&format!("data-project=\"{}\"", fixture.project_id.as_hex())));
-    assert!(text.contains(&format!("/projects/{}", fixture.project_id.as_hex())));
 
     let navigation = get_gate(&fixture, Some("navigation")).await;
     assert_eq!(navigation.status(), axum::http::StatusCode::OK);
@@ -1473,46 +1627,6 @@ async fn a_configured_gate_keeps_revision_controls() {
 }
 
 #[tokio::test]
-async fn a_quick_task_approval_returns_to_project_detail() {
-    let fixture = awaiting_gate(RunKind::QuickTask);
-    let response = post_decision(
-        &fixture,
-        "approve",
-        fixture.decision_body(&fixture.candidate),
-        None,
-    )
-    .await;
-    assert_eq!(response.status(), axum::http::StatusCode::OK);
-    let text = body_text(response).await;
-    assert!(text.contains(&format!(
-        "navigate=\"/projects/{}\"",
-        fixture.project_id.as_hex()
-    )));
-    let run = fixture
-        .state
-        .workflow_runs
-        .get(&fixture.run_id)
-        .expect("run");
-    let decision = run.gates[0].decision.as_ref().expect("decision");
-    let record = run.artefact(&decision.id).expect("decision record");
-    let bytes = fixture
-        .state
-        .workflow_artefacts
-        .get(&record.object_hash)
-        .expect("decision object");
-    let payload = crate::workflows::artefacts::parse_typed_payload(record.kind, &bytes)
-        .expect("decision payload");
-    let crate::workflows::artefacts::TypedPayload::HumanDecision(payload) = payload else {
-        panic!("human decision");
-    };
-    assert_eq!(payload.candidate, fixture.candidate);
-    assert_eq!(
-        payload.decision,
-        crate::workflows::gates::HumanDecisionKind::Approved
-    );
-}
-
-#[tokio::test]
 async fn an_enhanced_quick_task_approval_navigates_to_project_detail() {
     let fixture = awaiting_gate(RunKind::QuickTask);
     let response = post_decision(
@@ -1523,10 +1637,7 @@ async fn an_enhanced_quick_task_approval_navigates_to_project_detail() {
     )
     .await;
     let text = body_text(response).await;
-    assert!(text.contains(&format!(
-        "navigate=\"/projects/{}\"",
-        fixture.project_id.as_hex()
-    )));
+    assert!(text.contains("navigate=\"/runs\""));
 }
 
 #[tokio::test]
@@ -1556,10 +1667,7 @@ async fn a_quick_task_discard_settles_the_transcript() {
     .await;
     assert_eq!(response.status(), axum::http::StatusCode::OK);
     let text = body_text(response).await;
-    assert!(text.contains(&format!(
-        "navigate=\"/projects/{}\"",
-        fixture.project_id.as_hex()
-    )));
+    assert!(text.contains("navigate=\"/runs\""));
     let run = fixture
         .state
         .workflow_runs
@@ -1662,69 +1770,6 @@ async fn a_wrong_candidate_decision_is_rejected() {
 }
 
 #[tokio::test]
-async fn a_pinned_phase_snapshot_does_not_require_a_live_preset() {
-    let fixture = conversation_awaiting_gate();
-    let agent = fixture.state.agents.get(&fixture.agent_id).expect("preset");
-    fixture
-        .state
-        .workflow_runs
-        .mutate(&fixture.run_id, |run| {
-            let step = run
-                .pinned
-                .definition
-                .steps()
-                .iter()
-                .find(|step| matches!(step.action, workflows::definition::StepAction::Agent(_)))
-                .expect("model phase");
-            run.phase_models = vec![workflows::PhaseModelSelection {
-                step: step.key.clone(),
-                selection: crate::providers::ModelSelection::new(
-                    ProviderKind::Xai,
-                    "grok-4.6".to_owned(),
-                    None,
-                )
-                .expect("model"),
-                instructions: agent.instructions.clone(),
-                preset: None,
-                settings: None,
-            }];
-            Ok(())
-        })
-        .expect("pin phase");
-    fixture
-        .state
-        .agents
-        .update(
-            &agent.id,
-            agent.revision,
-            AgentDraft {
-                name: agent.name,
-                instructions: agent.instructions,
-                selection: agent.selection,
-                tools: Vec::new(),
-                network: agent.network,
-                directories: agent.directories,
-                primary_directory: agent.primary_directory,
-            },
-        )
-        .expect("revoke tools");
-    let response = post_decision(
-        &fixture,
-        "approve",
-        fixture.decision_body(&fixture.candidate),
-        None,
-    )
-    .await;
-    assert_eq!(response.status(), axum::http::StatusCode::OK);
-    let run = fixture
-        .state
-        .workflow_runs
-        .get(&fixture.run_id)
-        .expect("run");
-    assert!(!matches!(run.state, workflows::run::RunState::Interrupted));
-}
-
-#[tokio::test]
 async fn a_stale_agent_revision_interrupts_without_host_mutation() {
     let fixture = awaiting_gate(RunKind::QuickTask);
     let agent = fixture.state.agents.get(&fixture.agent_id).expect("agent");
@@ -1754,10 +1799,7 @@ async fn a_stale_agent_revision_interrupts_without_host_mutation() {
     .await;
     assert_eq!(response.status(), axum::http::StatusCode::OK);
     let text = body_text(response).await;
-    assert!(text.contains(&format!(
-        "navigate=\"/projects/{}\"",
-        fixture.project_id.as_hex()
-    )));
+    assert!(text.contains("navigate=\"/runs\""));
     let run = fixture
         .state
         .workflow_runs
@@ -1831,7 +1873,7 @@ async fn a_changed_grant_interrupts_without_host_mutation() {
 
 #[tokio::test]
 async fn an_unavailable_path_keeps_the_continuation() {
-    let fixture = awaiting_gate(RunKind::QuickTask);
+    let fixture = conversation_awaiting_gate();
     std::fs::remove_dir_all(&fixture.host).expect("remove path");
     let response = post_decision(
         &fixture,
@@ -1858,12 +1900,12 @@ async fn an_unavailable_path_keeps_the_continuation() {
         run.state,
         crate::workflows::run::RunState::AwaitingHuman { .. }
     ));
-    let snapshot = fixture
+    let conversation = fixture
         .state
-        .sessions
-        .snapshot(&fixture.session, &fixture.key)
-        .expect("session");
-    assert!(snapshot.session_busy);
+        .conversations
+        .get(&fixture.conversation_id.expect("conversation"))
+        .expect("conversation");
+    assert!(conversation.active_job.is_some());
 }
 
 #[tokio::test]

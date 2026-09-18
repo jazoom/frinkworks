@@ -165,15 +165,6 @@ pub(crate) fn model_is_bounded(model: &str) -> bool {
         && !model.chars().any(|character| character.is_control())
 }
 
-pub(crate) fn resolve_model(kind: ProviderKind, model: &str) -> String {
-    let model = model.trim();
-    if model.is_empty() {
-        kind.default_model().to_owned()
-    } else {
-        model.to_owned()
-    }
-}
-
 #[derive(Clone)]
 pub(crate) struct SecretString(String);
 

@@ -48,31 +48,12 @@ fn connected(state: &AppState) -> String {
     token.raw().as_str().to_owned()
 }
 
-fn git_init(path: &std::path::Path) {
-    assert!(
-        std::process::Command::new("git")
-            .args(["init", "-q"])
-            .current_dir(path)
-            .status()
-            .expect("git")
-            .success()
-    );
-}
-
 fn stored_run(state: &AppState) -> RunId {
-    let dir = tempfile::tempdir().expect("dir");
-    git_init(dir.path());
-    let project = state
-        .projects
-        .create("Harbour".to_owned(), dir.path().to_path_buf())
-        .expect("project");
-    state.keep_temp_dir(dir);
     let definition = one_agent_definition(crate::tests::test_environment_id());
     let environments = crate::tests::test_environment_set(&definition);
     let run = WorkflowRun::create(
         RunId::generate().expect("run"),
         1,
-        project.id,
         Some(crate::agents::AgentId::generate().expect("agent")),
         crate::workflows::RunKind::Configured,
         PinnedWorkflowDefinition::pin(None, definition),
@@ -105,7 +86,6 @@ async fn a_runs_document_uses_chat_main() {
     assert_eq!(text.matches("id=\"chat-main\"").count(), 1);
     assert!(text.contains("href=\"/runs/"));
     assert!(text.contains("data-graft"));
-    assert!(text.contains("Harbour"));
 }
 
 #[tokio::test]
@@ -171,8 +151,6 @@ async fn a_detail_document_uses_chat_main() {
     assert!(text.contains("<!doctype html>"));
     assert_eq!(text.matches("id=\"run-detail\"").count(), 1);
     assert!(text.contains("Refresh"));
-    assert!(text.contains("Harbour"));
-    assert!(text.contains("href=\"/projects/"));
 }
 
 #[tokio::test]
@@ -775,13 +753,6 @@ async fn history_directory_filter_matches_stored_identities_before_the_limit() {
 #[tokio::test]
 async fn history_filter_applies_before_limit_newest_first() {
     let state = test_state();
-    let project_dir = tempfile::tempdir().expect("project");
-    git_init(project_dir.path());
-    let project = state
-        .projects
-        .create("Harbour".to_owned(), project_dir.path().to_path_buf())
-        .expect("project");
-    state.keep_temp_dir(project_dir);
     let root = tempfile::tempdir().expect("filter directories");
     let first = root.path().join("first");
     let second = root.path().join("second");
@@ -829,7 +800,6 @@ async fn history_filter_applies_before_limit_newest_first() {
         let mut run = WorkflowRun::create(
             id,
             (index + 1) as u64,
-            project.id,
             None,
             crate::workflows::RunKind::Configured,
             PinnedWorkflowDefinition::pin(None, definition.clone()),

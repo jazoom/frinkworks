@@ -733,8 +733,11 @@ impl WorkflowDefinition {
             if matches!(&step.action, StepAction::SystemCommand(action)
                 if action.command == SystemCommandId::CommitCandidate)
             {
-                // Git commands retain their explicit project binding. Directory order is not a binding.
-                return Err(DefinitionError::Authority);
+                let settings = combined.as_ref().unwrap_or(defaults);
+                if settings.git_destination_grant().is_none() {
+                    return Err(DefinitionError::Authority);
+                }
+                continue;
             }
             let resolved = match &step.action {
                 StepAction::Agent(_) => phases

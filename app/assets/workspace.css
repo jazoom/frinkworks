@@ -821,9 +821,7 @@ body:has(.workspace-catalogue) .app-frame {
     min-height: 42px;
 }
 #conversation-detail[data-work-open],
-#conversation-detail:has(
-    :is([id="conversation-settings"], [id="conversation-actions"]):popover-open
-) {
+#conversation-detail:has(:is([id="conversation-settings"]):popover-open) {
     grid-template-columns: minmax(0, 1fr) 400px;
     transition-duration: 320ms;
 }
@@ -1195,9 +1193,6 @@ body:has(.workspace-catalogue) .app-frame {
         padding-inline: 8px;
         font-size: 10px;
     }
-    .app-frame .setup-footer .btn {
-        min-height: 44px;
-    }
     #conversation-heading {
         font-size: 16px;
     }
@@ -1273,12 +1268,6 @@ body:has(.workspace-catalogue) .app-frame {
         min-height: 32px;
         align-items: center;
     }
-    .app-frame .setup-footer {
-        padding: 12px 21px calc(9px + env(safe-area-inset-bottom));
-    }
-    .setup-footer > p {
-        margin-bottom: 7px;
-    }
     .history-text strong {
         font-size: 14px;
     }
@@ -1324,21 +1313,6 @@ body:has(.workspace-catalogue) .app-frame {
 .setup-check-field small {
     display: block;
     margin-top: 3px;
-}
-.setup-footer {
-    padding: 16px 22px 10px;
-    gap: 0;
-}
-.setup-footer > p {
-    margin-bottom: 12px;
-    font-size: 11px;
-    text-align: center;
-}
-.setup-footer .btn {
-    width: 100%;
-}
-.setup-footer .btn-primary {
-    min-height: 40px;
 }
 
 .choice-row:hover {

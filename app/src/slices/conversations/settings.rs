@@ -46,6 +46,8 @@ pub(super) struct SettingsForm {
     pub(super) network: String,
     pub(super) network_domains: String,
     pub(super) directory_access: String,
+    #[serde(default)]
+    pub(super) git_destination: String,
 }
 
 #[derive(Clone)]
@@ -276,7 +278,8 @@ pub(super) async fn update(
         let settings = settings
             .with_directories(directories)
             .ok_or("The saved directory grants are not valid.")?;
-        replacement_directory_access(&settings, &form.directory_access)
+        let settings = replacement_directory_access(&settings, &form.directory_access)?;
+        apply_git_destination(settings, &form.git_destination)
     }) {
         Ok(settings) => settings,
         Err(error) => {
@@ -380,10 +383,11 @@ pub(super) async fn update(
                 state.access_consent.invalidate_conversation(record.id);
                 state.host_approvals.invalidate_conversation(record.id);
             }
-            let mut view =
-                detail_view(&state, session.0, &updated, &updated.title, "").open_settings();
-            view.notice = "Conversation settings saved. Future defaults are unchanged.";
-            render_detail_command(graft, PatchStatus::Ok, view)
+            render_detail_command(
+                graft,
+                PatchStatus::Ok,
+                detail_view(&state, session.0, &updated, &updated.title, "").open_settings(),
+            )
         }
         Err(error @ (ConversationError::Persist | ConversationError::Corrupt)) => {
             Err(AppError::new("store conversation settings", error))
@@ -652,6 +656,30 @@ pub(crate) fn replacement_directory_access(
             .ok_or("Choose an existing directory.")?;
         grant.access = crate::execution::DirectoryAccess::parse(&access)
             .ok_or("Choose valid directory strategies.")?;
+    }
+    Ok(settings)
+}
+
+pub(super) fn apply_git_destination(
+    settings: ExecutionSettings,
+    raw: &str,
+) -> Result<ExecutionSettings, &'static str> {
+    let raw = raw.trim();
+    let id = if raw.is_empty() {
+        None
+    } else {
+        Some(
+            crate::execution::DirectoryGrantId::parse(raw)
+                .ok_or("Choose a granted directory as the Git destination.")?,
+        )
+    };
+    let settings = settings
+        .with_git_destination(id)
+        .ok_or("Choose a granted directory as the Git destination.")?;
+    if let Some(grant) = settings.git_destination_grant()
+        && crate::workflows::artefacts::inspect_supported_worktree(&grant.host_path).is_err()
+    {
+        return Err("Choose a supported Git worktree as the Git destination.");
     }
     Ok(settings)
 }
@@ -1092,6 +1120,10 @@ pub(super) fn copy_settings_to_draft(
     form.network = settings.network.as_str().to_owned();
     form.network_domains = settings.network.domains().join("\n");
     form.set_directories(&settings.directories);
+    form.git_destination = settings
+        .git_destination
+        .map(crate::execution::DirectoryGrantId::as_hex)
+        .unwrap_or_default();
 }
 
 fn preset_preview_view(

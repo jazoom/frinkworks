@@ -312,117 +312,11 @@ async fn source_edits_and_other_sessions_cannot_consume_a_prepared_draft() {
     assert_eq!(state.conversations.list().len(), 1);
 }
 
-#[tokio::test]
-async fn project_workflow_handoff_pins_identity_and_grants_no_future_project_access() {
-    let (state, token, session, original) =
-        crate::slices::human_gates::tests::conversation_at_gate();
-    let source = state
-        .conversations
-        .get(&original.conversation_id.unwrap())
-        .unwrap();
-    let mut model = source.model.clone().unwrap();
-    model.settings.model.thinking =
-        state
-            .models_dev
-            .effective_effort(ProviderKind::Xai, "grok-4.6", None);
-    let mut continuation = state.gate_continuations.take(&original.id).unwrap();
-    continuation.agent_id = None;
-    let authority = continuation.authority.clone().unwrap();
-    let snapshot = crate::workflows::handoff::project::ProjectAuthority::capture(
-        &authority,
-        model.settings.clone(),
-    )
-    .unwrap();
-    let run = state
-        .workflow_runs
-        .mutate(&original.id, |run| {
-            run.agent_id = None;
-            run.kind = crate::workflows::RunKind::Configured;
-            run.project_authority = Some(snapshot.clone());
-            run.phase_models = run
-                .pinned
-                .definition
-                .steps()
-                .iter()
-                .filter(|step| {
-                    matches!(
-                        step.action,
-                        crate::workflows::definition::StepAction::Agent(_)
-                    )
-                })
-                .map(|step| crate::workflows::PhaseModelSelection {
-                    step: step.key.clone(),
-                    selection: model.settings.model.clone(),
-                    instructions: String::new(),
-                    preset: None,
-                    settings: None,
-                })
-                .collect();
-            Ok(())
-        })
-        .unwrap();
-    assert!(state.gate_continuations.insert(continuation));
-    assert!(run.transferable());
-    let draft = prepared_draft(&state, &token, &source, &run).await;
-    let response = app(&state)
-        .oneshot(command(
-            "/conversations/new",
-            &token,
-            &format!("{draft}&handoff_approval=continue-prepared"),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(
-        response.status(),
-        StatusCode::OK,
-        "{}",
-        text(response).await
-    );
-    let transferred = state.workflow_runs.get(&run.id).unwrap();
-    assert_eq!(transferred.source, run.source);
-    assert_eq!(transferred.gates, run.gates);
-    assert_eq!(transferred.project_authority, run.project_authority);
-    let owner = state
-        .conversations
-        .get(&transferred.conversation_id.unwrap())
-        .unwrap();
-    assert!(owner.grants.is_empty());
-    assert!(owner.projects.is_empty());
-    assert!(owner.directory_approvals.is_empty());
-    let pinned = transferred.project_authority.as_ref().unwrap();
-    assert!(pinned.approved(&state, &transferred, session));
-    let effective = pinned.resolve(&state, &transferred).unwrap();
-    assert_eq!(effective.policy, authority.policy);
-    assert_eq!(
-        effective.origin,
-        crate::agents::AuthorityOrigin::Conversation {
-            conversation_id: owner.id
-        }
-    );
-    let root = tempfile::tempdir().unwrap();
-    let runs = crate::workflows::WorkflowRunStore::open(root.path().to_owned()).unwrap();
-    runs.create(transferred.clone()).unwrap();
-    let reloaded = crate::workflows::WorkflowRunStore::open(root.path().to_owned())
-        .unwrap()
-        .get(&run.id)
-        .unwrap();
-    assert_eq!(reloaded, transferred);
-    let location = pinned.settings.directories[0].host_path.clone();
-    let replacement = location.with_extension("original");
-    std::fs::rename(&location, &replacement).unwrap();
-    std::fs::create_dir(&location).unwrap();
-    assert!(pinned.resolve(&state, &transferred).is_err());
-    std::fs::remove_dir(&location).unwrap();
-    std::fs::rename(&replacement, &location).unwrap();
-    assert!(state.gate_continuations.available(&run.id, &session));
-}
-
 fn source(state: &AppState) -> ConversationRecord {
     let record = state
         .conversations
         .create_saved(
             ConversationId::generate().unwrap(),
-            None,
             Some("CSV export".to_owned()),
             Some(ConversationModelConfiguration::direct(
                 ModelSelection {

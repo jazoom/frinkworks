@@ -19,7 +19,6 @@ fn fixture() -> (
         .create_saved(
             ConversationId::generate().unwrap(),
             None,
-            None,
             Some(ConversationModelConfiguration::direct(
                 crate::providers::ModelSelection::new(
                     crate::providers::ProviderKind::Xai,
@@ -46,7 +45,6 @@ fn fixture() -> (
         .conversations
         .create_saved(
             ConversationId::generate().unwrap(),
-            None,
             None,
             source.model.clone(),
             Vec::new(),
@@ -144,7 +142,6 @@ fn stale_source_revision_and_concurrent_transfers_cannot_move_the_same_run_twice
         .conversations
         .create_saved(
             ConversationId::generate().unwrap(),
-            None,
             None,
             source.model.clone(),
             Vec::new(),

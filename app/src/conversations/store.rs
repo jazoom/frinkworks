@@ -6,12 +6,10 @@ use std::sync::{Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
 
-use crate::agents::{AccessMode, AgentRecord, ToolId};
-use crate::projects::ProjectId;
+use crate::agents::{AgentRecord, ToolId};
 use crate::workflows::artefacts::{ArtefactHash, ArtefactReference};
 use crate::workflows::{ArtefactId, RunId};
 
-use super::access::ConversationGrant;
 use crate::providers::ModelSelection;
 use crate::sessions::JobId;
 
@@ -27,7 +25,6 @@ pub(crate) const MAXIMUM_TITLE_BYTES: usize = 120;
 pub(crate) const MAXIMUM_MESSAGES: usize = 512;
 pub(crate) const MAXIMUM_MESSAGE_BYTES: usize = 32 * 1024;
 pub(crate) const MAXIMUM_REPLY_BYTES: usize = 128 * 1024;
-pub(crate) const MAXIMUM_PROJECT_ASSOCIATIONS: usize = 8;
 const MAXIMUM_LINKED_REVIEWS: usize = 32;
 const MAXIMUM_REVIEW_BRIEF_BYTES: usize = MAXIMUM_MESSAGE_BYTES;
 
@@ -62,9 +59,6 @@ pub(crate) struct ConversationRecord {
     pub(crate) revision: u32,
     pub(crate) title: String,
     pub(crate) title_pending: bool,
-    pub(crate) projects: Vec<ProjectId>,
-    pub(crate) grants: Vec<ConversationGrant>,
-    pub(crate) execution_target: Option<ProjectId>,
     pub(crate) network: crate::agents::NetworkAccess,
     pub(crate) model: Option<ConversationModelConfiguration>,
     // Approvals survive restarts, but access settings changes revoke them.
@@ -215,11 +209,6 @@ pub(crate) enum ConversationError {
     Message,
     Active,
     Selection,
-    Projects,
-    DuplicateProject,
-    Access,
-    Target,
-    WriteTarget,
     Network,
     Directories,
     Review,
@@ -241,15 +230,6 @@ impl ConversationError {
             Self::Message => "Enter a message within the conversation limit.",
             Self::Active => "This conversation has an active request. Wait for it to finish.",
             Self::Selection => "Choose an available model before you send a message.",
-            Self::Projects => "This conversation can reference at most eight projects.",
-            Self::DuplicateProject => "That project is already a context reference.",
-            Self::Access => {
-                "Grant project access to an attached project before inspection or changes."
-            }
-            Self::Target => "Choose a granted project as the execution target.",
-            Self::WriteTarget => {
-                "Only one project can have writable access in a conversation. Revoke the other writable grant first."
-            }
             Self::Network => "Choose valid network access for this conversation.",
             Self::Directories => "Choose valid non-overlapping directories for this conversation.",
             Self::Review => "That plan review hand-off is no longer available.",
@@ -286,10 +266,6 @@ struct ConversationFile {
     title: String,
     #[serde(default)]
     title_pending: bool,
-    projects: Vec<String>,
-    grants: Vec<ConversationGrantFile>,
-    #[serde(deserialize_with = "crate::storage::required_option")]
-    execution_target: Option<String>,
     network: String,
     network_domains: Vec<String>,
     #[serde(deserialize_with = "crate::storage::required_option")]
@@ -306,15 +282,6 @@ struct ConversationFile {
     active_job: Option<String>,
     created_at_ms: u64,
     updated_at_ms: u64,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "kebab-case")]
-struct ConversationGrantFile {
-    project: String,
-    project_revision: u32,
-    authority_revision: u32,
-    access: AccessMode,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -425,7 +392,6 @@ impl ConversationStore {
     pub(crate) fn create_saved(
         &self,
         id: ConversationId,
-        project: Option<ProjectId>,
         title: Option<String>,
         model: Option<ConversationModelConfiguration>,
         directory_approvals: Vec<DirectoryApproval>,
@@ -452,7 +418,6 @@ impl ConversationStore {
             Some(title) => normalise_title(&title)?,
             None => "New conversation".to_owned(),
         };
-        let projects = project.into_iter().collect();
         let network = model
             .as_ref()
             .map(|model| model.settings.network.clone())
@@ -468,9 +433,6 @@ impl ConversationStore {
             revision: 1,
             title,
             title_pending,
-            projects,
-            grants: Vec::new(),
-            execution_target: None,
             network,
             model,
             directory_approvals,
@@ -552,9 +514,6 @@ impl ConversationStore {
             revision: 1,
             title,
             title_pending: false,
-            projects: Vec::new(),
-            grants: Vec::new(),
-            execution_target: None,
             network: crate::agents::NetworkAccess::None,
             model: Some(model),
             directory_approvals: Vec::new(),
@@ -644,158 +603,6 @@ impl ConversationStore {
         Ok(())
     }
 
-    pub(crate) fn attach_project(
-        &self,
-        id: &ConversationId,
-        expected_revision: u32,
-        project: ProjectId,
-    ) -> Result<ConversationRecord, ConversationError> {
-        self.replace(id, expected_revision, |current| {
-            if current.active_job.is_some() {
-                return Err(ConversationError::Active);
-            }
-            if current.projects.contains(&project) {
-                return Err(ConversationError::DuplicateProject);
-            }
-            if current.projects.len() >= MAXIMUM_PROJECT_ASSOCIATIONS {
-                return Err(ConversationError::Projects);
-            }
-            current.projects.push(project);
-            Ok(())
-        })
-    }
-
-    pub(crate) fn detach_project(
-        &self,
-        id: &ConversationId,
-        expected_revision: u32,
-        project: ProjectId,
-    ) -> Result<ConversationRecord, ConversationError> {
-        self.replace(id, expected_revision, |current| {
-            if current.active_job.is_some() {
-                return Err(ConversationError::Active);
-            }
-            let Some(index) = current.projects.iter().position(|item| *item == project) else {
-                return Err(ConversationError::Missing);
-            };
-            current.projects.remove(index);
-            current.grants.retain(|grant| grant.project_id != project);
-            if current.execution_target == Some(project) {
-                current.execution_target = None;
-            }
-            for grant in &mut current.grants {
-                grant.authority_revision = current.revision;
-            }
-            Ok(())
-        })
-    }
-
-    pub(crate) fn grant_read_only(
-        &self,
-        id: &ConversationId,
-        expected_revision: u32,
-        project: ProjectId,
-        project_revision: u32,
-    ) -> Result<ConversationRecord, ConversationError> {
-        self.grant_access(
-            id,
-            expected_revision,
-            project,
-            project_revision,
-            AccessMode::ReadOnly,
-        )
-    }
-
-    pub(crate) fn grant_writable(
-        &self,
-        id: &ConversationId,
-        expected_revision: u32,
-        project: ProjectId,
-        project_revision: u32,
-    ) -> Result<ConversationRecord, ConversationError> {
-        self.grant_access(
-            id,
-            expected_revision,
-            project,
-            project_revision,
-            AccessMode::ReadWrite,
-        )
-    }
-
-    pub(crate) fn grant_access(
-        &self,
-        id: &ConversationId,
-        expected_revision: u32,
-        project: ProjectId,
-        project_revision: u32,
-        access: AccessMode,
-    ) -> Result<ConversationRecord, ConversationError> {
-        self.replace(id, expected_revision, |current| {
-            if current.active_job.is_some() {
-                return Err(ConversationError::Active);
-            }
-            if !current.projects.contains(&project) {
-                return Err(ConversationError::Access);
-            }
-            if access.is_writable()
-                && current
-                    .grants
-                    .iter()
-                    .any(|grant| grant.project_id != project && grant.access.is_writable())
-            {
-                return Err(ConversationError::WriteTarget);
-            }
-            if let Some(grant) = current
-                .grants
-                .iter_mut()
-                .find(|grant| grant.project_id == project)
-            {
-                grant.project_revision = project_revision;
-                grant.authority_revision = current.revision;
-                grant.access = access;
-            } else {
-                current.grants.push(ConversationGrant {
-                    project_id: project,
-                    project_revision,
-                    authority_revision: current.revision,
-                    access,
-                });
-            }
-            if access.is_writable() || current.execution_target.is_none() {
-                current.execution_target = Some(project);
-            }
-            for grant in &mut current.grants {
-                grant.authority_revision = current.revision;
-            }
-            Ok(())
-        })
-    }
-
-    pub(crate) fn select_execution_target(
-        &self,
-        id: &ConversationId,
-        expected_revision: u32,
-        project: ProjectId,
-    ) -> Result<ConversationRecord, ConversationError> {
-        self.replace(id, expected_revision, |current| {
-            if current.active_job.is_some() {
-                return Err(ConversationError::Active);
-            }
-            if !current
-                .grants
-                .iter()
-                .any(|grant| grant.project_id == project)
-            {
-                return Err(ConversationError::Target);
-            }
-            current.execution_target = Some(project);
-            for grant in &mut current.grants {
-                grant.authority_revision = current.revision;
-            }
-            Ok(())
-        })
-    }
-
     pub(crate) fn set_network(
         &self,
         id: &ConversationId,
@@ -810,9 +617,6 @@ impl ConversationStore {
             current.network = network.clone();
             if let Some(model) = &mut current.model {
                 model.settings.network = network;
-            }
-            for grant in &mut current.grants {
-                grant.authority_revision = current.revision;
             }
             Ok(())
         })
@@ -850,9 +654,7 @@ impl ConversationStore {
             if current.active_job.is_some() {
                 return Err(ConversationError::Active);
             }
-            current.grants.clear();
             current.directory_approvals.clear();
-            current.execution_target = None;
             current.network = preset.settings.network.clone();
             current.model = Some(ConversationModelConfiguration::from_preset(preset));
             Ok(())
@@ -1257,8 +1059,6 @@ fn record_from_file(file: ConversationFile) -> Result<ConversationRecord, Conver
     if file.revision == 0
         || file.updated_at_ms < file.created_at_ms
         || file.messages.len() > MAXIMUM_MESSAGES
-        || file.projects.len() > MAXIMUM_PROJECT_ASSOCIATIONS
-        || file.grants.len() > MAXIMUM_PROJECT_ASSOCIATIONS
     {
         return Err(ConversationError::Corrupt);
     }
@@ -1296,45 +1096,6 @@ fn record_from_file(file: ConversationFile) -> Result<ConversationRecord, Conver
     if candidate_review_context
         .as_ref()
         .is_some_and(|context| source_candidate_review.as_ref() != Some(&context.source))
-    {
-        return Err(ConversationError::Corrupt);
-    }
-    let mut projects = Vec::with_capacity(file.projects.len());
-    for raw in file.projects {
-        let project = ProjectId::parse(&raw).ok_or(ConversationError::Corrupt)?;
-        if projects.contains(&project) {
-            return Err(ConversationError::Corrupt);
-        }
-        projects.push(project);
-    }
-    let mut grants = Vec::with_capacity(file.grants.len());
-    for grant in file.grants {
-        let project_id = ProjectId::parse(&grant.project).ok_or(ConversationError::Corrupt)?;
-        if grant.project_revision == 0
-            || grant.authority_revision == 0
-            || !projects.contains(&project_id)
-            || grants
-                .iter()
-                .any(|item: &ConversationGrant| item.project_id == project_id)
-        {
-            return Err(ConversationError::Corrupt);
-        }
-        grants.push(ConversationGrant {
-            project_id,
-            project_revision: grant.project_revision,
-            authority_revision: grant.authority_revision,
-            access: grant.access,
-        });
-    }
-    if file
-        .execution_target
-        .as_ref()
-        .is_some_and(|target| ProjectId::parse(target).is_none())
-    {
-        return Err(ConversationError::Corrupt);
-    }
-    let execution_target = file.execution_target.as_deref().and_then(ProjectId::parse);
-    if execution_target.is_some_and(|target| !grants.iter().any(|grant| grant.project_id == target))
     {
         return Err(ConversationError::Corrupt);
     }
@@ -1376,22 +1137,11 @@ fn record_from_file(file: ConversationFile) -> Result<ConversationRecord, Conver
     } {
         return Err(ConversationError::Corrupt);
     }
-    if grants
-        .iter()
-        .filter(|grant| grant.access.is_writable())
-        .count()
-        > 1
-    {
-        return Err(ConversationError::Corrupt);
-    }
     Ok(ConversationRecord {
         id,
         revision: file.revision,
         title,
         title_pending: file.title_pending,
-        projects,
-        grants,
-        execution_target,
         network,
         model,
         directory_approvals,
@@ -1708,18 +1458,6 @@ fn record_to_file(record: &ConversationRecord) -> ConversationFile {
         revision: record.revision,
         title: record.title.clone(),
         title_pending: record.title_pending,
-        projects: record.projects.iter().map(ProjectId::as_hex).collect(),
-        grants: record
-            .grants
-            .iter()
-            .map(|grant| ConversationGrantFile {
-                project: grant.project_id.as_hex(),
-                project_revision: grant.project_revision,
-                authority_revision: grant.authority_revision,
-                access: grant.access,
-            })
-            .collect(),
-        execution_target: record.execution_target.map(|project| project.as_hex()),
         network: record.network.as_str().to_owned(),
         network_domains: record.network.domains().to_vec(),
         model: record.model.as_ref().map(model_to_file),

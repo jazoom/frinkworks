@@ -7,9 +7,7 @@ mod store;
 mod tool_id;
 
 pub(crate) use id::AgentId;
-pub(crate) use policy::{
-    AuthorityError, AuthorityOrigin, DirectoryPolicy, EffectiveAuthority, PolicyGrant,
-};
+pub(crate) use policy::{DirectoryPolicy, EffectiveAuthority, PolicyGrant};
 pub(crate) use prompt::compose_role;
 pub(crate) use record::{
     AccessMode, AgentDraft, AgentError, AgentRecord, DirectoryGrant, GUEST_PROJECT, MAXIMUM_GRANTS,
@@ -17,5 +15,5 @@ pub(crate) use record::{
     NetworkAccess, guest_path_for,
 };
 pub(crate) use run::{AgentLeaseCoordinator, LeaseGuard};
-pub(crate) use store::{AgentStore, StarterAgent};
+pub(crate) use store::AgentStore;
 pub(crate) use tool_id::ToolId;

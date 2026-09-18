@@ -3,8 +3,8 @@ use crate::workflows::artefacts::candidate::{
     CandidateEntryKind, CandidateRevisionArtefact, GitObjectFormat, GitObjectId,
 };
 use crate::workflows::artefacts::{
-    ArtefactProducer, ArtefactRecord, ArtefactReference, ReviewVerdict, TypedPayload,
-    WorkflowArtefactRepository, artefact_hash_for, parse_typed_payload,
+    ArtefactProducer, ArtefactRecord, ArtefactReference, CandidatePayload, ReviewVerdict,
+    TypedPayload, WorkflowArtefactRepository, artefact_hash_for, parse_typed_payload,
 };
 use crate::workflows::definition::{ArtefactKind, CommitPolicy};
 use crate::workflows::run::{AttemptArtefactInput, FailureCategory, WorkflowRun};
@@ -82,14 +82,7 @@ pub(crate) fn require_commit_approval(
     commit_step: &crate::workflows::definition::StepDefinition,
     inputs: &[AttemptArtefactInput],
     store: &WorkflowArtefactRepository,
-) -> Result<
-    (
-        ArtefactRecord,
-        Vec<ArtefactRecord>,
-        CandidateRevisionArtefact,
-    ),
-    CommitError,
-> {
+) -> Result<(ArtefactRecord, Vec<ArtefactRecord>, CandidatePayload), CommitError> {
     match run.pinned.definition.commit_policy() {
         CommitPolicy::NoCommit => return Err(CommitError::Assurance),
         CommitPolicy::HumanApproval
@@ -182,11 +175,11 @@ pub(crate) fn require_commit_approval(
     {
         return Err(CommitError::Assurance);
     }
-    let candidate = CandidateRevisionArtefact::from_manifest_bytes(&candidate_bytes)
-        .ok_or(CommitError::Assurance)?;
+    let candidate =
+        CandidatePayload::from_manifest_bytes(&candidate_bytes).ok_or(CommitError::Assurance)?;
     let artefact_hash = artefact_hash_for(
         ArtefactKind::CandidateRevision,
-        candidate.format_version,
+        crate::workflows::artefacts::CANDIDATE_SCHEMA,
         &candidate_bytes,
     );
     if artefact_hash != candidate_record.artefact_hash {
@@ -207,7 +200,7 @@ pub(crate) fn require_commit_approval(
         };
         let bound = crate::workflows::artefacts::CandidateHash::parse(&report.candidate)
             .ok_or(CommitError::Assurance)?;
-        if report.verdict != ReviewVerdict::Approved || bound != candidate.candidate_hash {
+        if report.verdict != ReviewVerdict::Approved || bound != candidate.candidate_hash() {
             return Err(CommitError::Assurance);
         }
         let declared_source = commit_step
@@ -298,7 +291,7 @@ pub(crate) fn require_commit_approval(
             || gate.decision.as_ref() != Some(&input.artefact)
             || gate.step != *step
             || gate.output != *output
-            || bound != candidate.candidate_hash
+            || bound != candidate.candidate_hash()
             || diff_base != base
             || !named_gate_output
         {
@@ -308,14 +301,96 @@ pub(crate) fn require_commit_approval(
     Ok((candidate_record, review_records, candidate))
 }
 
+pub(crate) fn destination_revision<'a>(
+    run: &WorkflowRun,
+    payload: &'a CandidatePayload,
+) -> Result<&'a CandidateRevisionArtefact, CommitError> {
+    match payload {
+        CandidatePayload::Revision(revision) => Ok(revision),
+        CandidatePayload::Set(set) => {
+            let settings = run.directory_settings().ok_or(CommitError::Authority)?;
+            let grant = settings
+                .git_destination_grant()
+                .ok_or(CommitError::Authority)?;
+            if grant.access != crate::execution::DirectoryAccess::ReviewBeforeApply {
+                return Err(CommitError::Authority);
+            }
+            set.roots
+                .iter()
+                .find(|root| {
+                    root.grant_id == grant.id
+                        && root.alias == grant.alias
+                        && root.identity == grant.identity
+                })
+                .map(|root| &root.candidate)
+                .ok_or(CommitError::Authority)
+        }
+    }
+}
+
+pub(crate) fn destination_pair<'a>(
+    run: &WorkflowRun,
+    initial: &'a CandidatePayload,
+    target: &'a CandidatePayload,
+) -> Result<(&'a CandidateRevisionArtefact, &'a CandidateRevisionArtefact), CommitError> {
+    let before = destination_revision(run, initial)?;
+    let after = destination_revision(run, target)?;
+    // A single-repository transaction cannot apply changes in other roots or
+    // remove excluded tracked paths through its replacement index.
+    if !before.exclusions.is_empty() || !after.exclusions.is_empty() {
+        return Err(CommitError::Preflight);
+    }
+    match (initial, target) {
+        (CandidatePayload::Set(initial), CandidatePayload::Set(target)) => {
+            let destination = run
+                .directory_settings()
+                .and_then(|settings| settings.git_destination)
+                .ok_or(CommitError::Authority)?;
+            if initial.roots.len() != target.roots.len()
+                || initial
+                    .roots
+                    .iter()
+                    .zip(&target.roots)
+                    .any(|(left, right)| {
+                        left.grant_id != right.grant_id
+                            || left.alias != right.alias
+                            || left.identity != right.identity
+                            || (left.grant_id != destination && left != right)
+                    })
+            {
+                return Err(CommitError::Preflight);
+            }
+        }
+        (CandidatePayload::Revision(_), CandidatePayload::Revision(_)) => {}
+        _ => return Err(CommitError::Preflight),
+    }
+    Ok((before, after))
+}
+
+pub(crate) fn capture_revision(
+    project: &std::path::Path,
+    template: &CandidateRevisionArtefact,
+    store: &WorkflowArtefactRepository,
+) -> Result<CandidateRevisionArtefact, CommitError> {
+    let captured = if template.ordinary {
+        crate::workflows::artefacts::CandidateCapture::capture_directory(
+            project,
+            &template.exclusions,
+            store,
+        )
+    } else {
+        crate::workflows::artefacts::CandidateCapture::capture_host(project, store)
+    };
+    captured.map_err(|_| CommitError::Preflight)
+}
+
 pub(crate) fn require_unchanged_project(
     project: &std::path::Path,
     initial: &CandidateRevisionArtefact,
     target: &CandidateRevisionArtefact,
     store: &WorkflowArtefactRepository,
 ) -> Result<(), CommitError> {
-    let live = crate::workflows::artefacts::CandidateCapture::capture_host(project, store)
-        .map_err(|_| CommitError::Preflight)?;
+    let live = capture_revision(project, initial, store)?;
     if live != *initial
         || target.repository != initial.repository
         || target.git_admin != initial.git_admin

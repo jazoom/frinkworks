@@ -54,7 +54,7 @@ pub(in crate::slices::conversations) fn draft_run(
 }
 
 pub(in crate::slices::conversations) fn settings_text(run: &WorkflowRun) -> String {
-    let phases = run.model_phases().filter_map(|phase| phase.settings.as_ref().or_else(|| run.project_authority.as_ref().map(|authority| &authority.settings)).map(|settings| {
+    let phases = run.model_phases().filter_map(|phase| phase.settings.as_ref().map(|settings| {
         let directories = settings.directories.iter().map(|grant| format!("{}: {} ({})", grant.alias, grant.host_path.display(), grant.access.as_str())).collect::<Vec<_>>().join("\n");
         let environment = run.environments.steps.iter().find(|binding| binding.step == phase.step).map(|binding| format!("{} / {}", binding.environment_id.as_hex(), binding.snapshot_digest.as_str())).unwrap_or_else(|| "Host execution".to_owned());
         format!("Step: {}\nModel: {} / {}\nThinking: {}\nTools: {}\nLocation: {}\nHost command policy: {}\nNetwork: {:?}\nEnvironment: {}\nDirectories:\n{}\nInstructions:\n{}", phase.step.as_str(), phase.selection.provider.as_str(), phase.selection.model, phase.selection.thinking.as_ref().map_or("Not available", |effort| effort.as_str()), settings.tools.iter().map(|tool| tool.as_str()).collect::<Vec<_>>().join(", "), settings.location.as_str(), settings.host_approval.as_str(), settings.network, environment, directories, phase.instructions)
@@ -84,9 +84,6 @@ pub(in crate::slices::conversations) fn settings_text(run: &WorkflowRun) -> Stri
 }
 
 pub(super) fn validate_pinned(state: &AppState, run: &WorkflowRun) -> Result<(), &'static str> {
-    if let Some(authority) = &run.project_authority {
-        authority.resolve(state, run)?;
-    }
     for phase in run.model_phases() {
         crate::workflows::validate_phase_selection(state, &phase.selection)
             .map_err(|_| "Connect each pinned provider before continuation.")?;

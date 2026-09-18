@@ -728,34 +728,6 @@
           </button>
         </div>
         <div class="mx-auto w-full max-w-3xl">
-          {% if self.is_new() %}
-            <p
-              data-conversation-project-summary
-              class="text-composer-quiet mb-2 text-xs"
-              {% if self.draft_project().is_empty() %}hidden{% endif %}
-            >
-              {% for project in attachable_projects %}{% if project.selected %}
-                {{ project.name }}
-                · No file access
-              {% endif %}{% endfor %}
-            </p>
-          {% endif %}
-          {% if !attached_projects.is_empty() %}
-            <p class="text-composer-quiet mb-2 text-xs">
-              {% for project in attached_projects %}
-                <span class="mr-3 inline-block"
-                  >{{ project.name }} ·
-                  {% if project.writable %}
-                    Writable access
-                  {% else if project.access_granted %}
-                    Read-only access
-                  {% else %}
-                    No file access
-                  {% endif %}</span
-                >
-              {% endfor %}
-            </p>
-          {% endif %}
           <form
             id="conversation-composer"
             data-island="composer"
@@ -963,283 +935,6 @@
       </div>
       {% include "conversations/templates/effective_settings.html" %}
       <section
-        id="conversation-project-settings"
-        popover
-        class="conversation-panel fixed inset-x-4 top-40 m-0 max-h-[65dvh] w-auto min-w-0 space-y-4 overflow-y-auto p-5 [position-anchor:--conversation-project] supports-[position-area:bottom]:top-2 supports-[position-area:bottom]:max-h-[min(65dvh,calc(100%-1.5rem))] supports-[position-area:bottom]:[position-area:bottom_span-all] md:left-72 md:max-w-[40rem] md:supports-[left:anchor(left)]:left-[anchor(left)]"
-        aria-labelledby="conversation-project-heading"
-      >
-        <div class="flex items-center justify-between gap-3">
-          <h2 id="conversation-project-heading" class="text-lg font-semibold">
-            Project access
-          </h2>
-          <button
-            type="button"
-            class="btn btn-ghost btn-sm min-h-11"
-            popovertarget="conversation-project-settings"
-            popovertargetaction="hide"
-          >
-            Close
-          </button>
-        </div>
-        {% if self.is_new() %}
-          <label class="flex flex-col gap-1"
-            ><span class="text-sm">Project context</span
-            ><select
-              form="conversation-composer"
-              name="project"
-              class="select select-bordered"
-            >
-              <option value="">No project</option>
-              {% for project in attachable_projects %}
-                <option
-                  value="{{ project.id }}"
-                  {% if project.selected %}selected{% endif %}
-                >
-                  {{ project.name }}
-                </option>
-              {% endfor %}
-            </select></label
-          >
-          <p class="text-quiet text-sm">
-            Project context grants no file access. Saved conversations offer
-            explicit access controls.
-          </p>
-          {% if attachable_projects.is_empty() %}
-            <p class="text-quiet text-sm">
-              <a href="/projects/new" data-graft class="link">Add a project</a>
-              to make its files available here.
-            </p>
-          {% endif %}
-        {% else if let Some(saved) = self.saved() %}
-          <div>
-            <p class="text-quiet mt-1 max-w-[60ch] text-sm">
-              Project attachments identify related work. They grant no access
-              until you select an access level below. Read-only access permits
-              List, Read and Run. Writable target access also permits Write in
-              the candidate workspace. Sandbox network access starts at Off.
-            </p>
-          </div>
-          {% if attached_projects.is_empty() %}
-            <p class="text-quiet text-sm">
-              No projects are attached to this conversation. Attach one before
-              you grant access.
-            </p>
-          {% else %}
-            <ul class="record-list" aria-label="Project context">
-              {% for project in attached_projects %}
-                <li class="record-row flex-wrap gap-3">
-                  <div class="min-w-0 flex-1">
-                    <p class="font-medium break-words">{{ project.name }}</p>
-                    <p class="text-quiet mt-1 text-xs">{{ project.status }}</p>
-                    {% if project.secondary_context %}
-                      <p class="text-quiet mt-1 font-mono text-xs">
-                        Guest path: /access/{{ project.alias }}
-                      </p>
-                    {% endif %}
-                    {% if project.access_granted %}
-                      {% if project.execution_target %}
-                        <p class="mt-1 text-xs font-medium">Execution target</p>
-                      {% else %}
-                        <form
-                          data-graft
-                          method="post"
-                          action="/conversations/{{ saved.id }}/target"
-                          class="mt-2"
-                        >
-                          <input
-                            type="hidden"
-                            name="revision"
-                            value="{{ saved.revision }}"
-                          />
-                          <input
-                            type="hidden"
-                            name="project"
-                            value="{{ project.id }}"
-                          />
-                          <button
-                            class="btn btn-secondary btn-xs"
-                            type="submit"
-                            {% if job_active %}disabled{% endif %}
-                          >
-                            Use as execution target
-                          </button>
-                        </form>
-                      {% endif %}
-                      {% if !project.writable %}
-                        <form
-                          data-graft
-                          method="post"
-                          action="/conversations/{{ saved.id }}/access"
-                          class="mt-3"
-                        >
-                          <input
-                            type="hidden"
-                            name="revision"
-                            value="{{ saved.revision }}"
-                          />
-                          <input
-                            type="hidden"
-                            name="project"
-                            value="{{ project.id }}"
-                          />
-                          <input
-                            type="hidden"
-                            name="access"
-                            value="read-write"
-                          />
-                          <p class="text-quiet mb-2 text-xs">
-                            Grant effect: List, Read, Run and Write in the
-                            candidate workspace. Network access stays unchanged.
-                          </p>
-                          <button
-                            class="btn btn-secondary btn-xs"
-                            type="submit"
-                            {% if job_active %}disabled{% endif %}
-                          >
-                            Grant writable target access
-                          </button>
-                        </form>
-                      {% endif %}
-                    {% else %}
-                      <div class="mt-2 flex flex-wrap gap-3">
-                        <form
-                          data-graft
-                          method="post"
-                          action="/conversations/{{ saved.id }}/access"
-                        >
-                          <input
-                            type="hidden"
-                            name="revision"
-                            value="{{ saved.revision }}"
-                          />
-                          <input
-                            type="hidden"
-                            name="project"
-                            value="{{ project.id }}"
-                          />
-                          <input
-                            type="hidden"
-                            name="access"
-                            value="read-only"
-                          />
-                          <p class="text-quiet mb-2 text-xs">
-                            Grant effect: List, Read and Run. Network access
-                            stays unchanged.
-                          </p>
-                          <button
-                            class="btn btn-secondary btn-xs"
-                            type="submit"
-                            {% if job_active %}disabled{% endif %}
-                          >
-                            Grant read-only access
-                          </button>
-                        </form>
-                        <form
-                          data-graft
-                          method="post"
-                          action="/conversations/{{ saved.id }}/access"
-                        >
-                          <input
-                            type="hidden"
-                            name="revision"
-                            value="{{ saved.revision }}"
-                          />
-                          <input
-                            type="hidden"
-                            name="project"
-                            value="{{ project.id }}"
-                          />
-                          <input
-                            type="hidden"
-                            name="access"
-                            value="read-write"
-                          />
-                          <p class="text-quiet mb-2 text-xs">
-                            Grant effect: List, Read, Run and Write in the
-                            candidate workspace. Network access stays unchanged.
-                          </p>
-                          <button
-                            class="btn btn-secondary btn-xs"
-                            type="submit"
-                            {% if job_active %}disabled{% endif %}
-                          >
-                            Grant writable target access
-                          </button>
-                        </form>
-                      </div>
-                    {% endif %}
-                  </div>
-                  <form
-                    data-graft
-                    method="post"
-                    action="/conversations/{{ saved.id }}/projects/{{ project.id }}"
-                  >
-                    <input
-                      type="hidden"
-                      name="revision"
-                      value="{{ saved.revision }}"
-                    />
-                    <button
-                      class="btn btn-ghost btn-sm"
-                      type="submit"
-                      {% if job_active %}disabled{% endif %}
-                    >
-                      Detach
-                    </button>
-                  </form>
-                </li>
-              {% endfor %}
-            </ul>
-          {% endif %}
-          {% if saved.project_limit_reached %}
-            <p class="text-quiet text-sm">
-              This conversation has the maximum of eight project references.
-            </p>
-          {% else if attachable_projects.is_empty() %}
-            <p class="text-quiet text-sm">
-              <a href="/projects/new" data-graft class="link">Add a project</a>
-              to make its files available here.
-            </p>
-          {% else %}
-            <form
-              data-graft
-              method="post"
-              action="/conversations/{{ saved.id }}/projects"
-              class="flex max-w-xl flex-wrap items-end gap-3"
-            >
-              <input
-                type="hidden"
-                name="revision"
-                value="{{ saved.revision }}"
-              />
-              <label
-                class="flex min-w-56 flex-1 flex-col gap-1"
-                for="conversation-project"
-              >
-                <span class="text-sm">Attach a project</span>
-                <select
-                  id="conversation-project"
-                  class="select select-bordered"
-                  name="project"
-                  {% if job_active %}disabled{% endif %}
-                >
-                  {% for project in attachable_projects %}
-                    <option value="{{ project.id }}">{{ project.name }}</option>
-                  {% endfor %}
-                </select>
-              </label>
-              <button
-                class="btn btn-secondary"
-                type="submit"
-                {% if job_active %}disabled{% endif %}
-              >
-                Attach project
-              </button>
-            </form>
-          {% endif %}
-        {% endif %}
-      </section>
-      <section
         id="conversation-settings"
         popover
         data-settings-open="{% if settings_open || directories_open %}true{% else %}false{% endif %}"
@@ -1355,6 +1050,9 @@
                   name="revision"
                   value="{{ saved.revision }}"
                 />
+                <button type="submit" hidden tabindex="-1">
+                  Save settings
+                </button>
               </form>
               <form
                 data-graft
@@ -1368,8 +1066,8 @@
                   value="{{ saved.revision }}"
                 />
                 <p class="text-quiet text-sm">
-                  Changes apply only to this conversation. Future defaults use
-                  saved settings, not unsaved edits or access approval.
+                  This stores this conversation's current settings for later
+                  conversations. Access approval remains separate.
                 </p>
                 <button type="submit" class="btn btn-outline btn-sm">
                   Use saved settings as future defaults
@@ -1495,8 +1193,7 @@
                         </h4>
                         <p class="text-quiet mt-1 text-xs">
                           This preset replaces all settings, including directory
-                          and project permissions. Sensitive access needs new
-                          approval.
+                          access. Sensitive access needs new approval.
                         </p>
                       </div>
                       <dl class="grid gap-2 text-sm sm:grid-cols-[7rem_1fr]">
@@ -2498,16 +2195,33 @@
                     read-only access until you approve write access.
                   </p>
                 {% endif %}
-                <p class="text-quiet text-xs">
-                  <button
-                    type="button"
-                    class="link"
-                    popovertarget="conversation-project-settings"
-                    popovertargetaction="show"
+                <label class="mt-4 flex max-w-xl flex-col gap-1">
+                  <span class="text-sm font-semibold">Git destination</span>
+                  <select
+                    form="{% if self.is_new() %}conversation-composer{% else %}conversation-settings-form{% endif %}"
+                    name="git_destination"
+                    class="select select-bordered"
+                    {% if job_active %}disabled{% endif %}
                   >
-                    Manage project context
-                  </button>
-                  attaches related work without granting file access.
+                    <option
+                      value=""
+                      {% if git_destination.is_empty() %}selected{% endif %}
+                    >
+                      None
+                    </option>
+                    {% for option in git_destination_options %}
+                      <option
+                        value="{{ option.id }}"
+                        {% if option.selected %}selected{% endif %}
+                      >
+                        {{ option.name }}
+                      </option>
+                    {% endfor %}
+                  </select>
+                </label>
+                <p class="text-quiet text-xs">
+                  File work does not need a Git destination. A commit step does.
+                  Directory order never selects it.
                 </p>
               </section>
             </section>
@@ -2543,9 +2257,8 @@
                       <div>
                         <h4 class="font-semibold">Change execution settings</h4>
                         <p class="mt-1 text-sm">
-                          This change does not save edits to the model,
-                          instructions, tools or network access. Those edits
-                          need Save settings afterwards.
+                          This reviews execution settings only. Instructions,
+                          tools and network access apply when you change them.
                         </p>
                         {% if change.backend_changes %}
                           <p class="mt-1 text-sm break-words">
@@ -2770,57 +2483,6 @@
             </div>
           </div>
         </div>
-        {% if !self.is_new() %}
-          <div
-            data-settings-footer
-            class="setup-footer border-base-300 flex shrink-0 flex-col gap-2 border-t px-5 py-3 sm:px-6"
-          >
-            <p class="text-quiet text-xs">
-              Changes stay draft until you apply the setup.
-            </p>
-            <button
-              form="conversation-settings-form"
-              data-settings-save
-              class="btn btn-primary"
-              type="submit"
-              {% if job_active %}disabled{% endif %}
-            >
-              Save settings
-            </button>
-            {% if let Some(saved) = self.saved() %}
-              <a
-                href="/conversations/{{ saved.id }}"
-                data-graft
-                data-settings-cancel
-                class="btn btn-ghost"
-              >
-                Cancel setup changes
-              </a>
-            {% endif %}
-          </div>
-        {% else %}
-          <div
-            data-settings-footer
-            class="setup-footer border-base-300 flex shrink-0 flex-col gap-2 border-t px-5 py-3 sm:px-6"
-          >
-            <p class="text-quiet text-xs">
-              Changes stay draft until you apply the setup.
-            </p>
-            <button
-              form="conversation-composer"
-              name="action"
-              value="settings"
-              formnovalidate
-              class="btn btn-primary"
-              type="submit"
-            >
-              Keep draft settings
-            </button>
-            <button type="button" class="btn btn-ghost" data-settings-cancel>
-              Cancel setup changes
-            </button>
-          </div>
-        {% endif %}
       </section>
     {% endblock conversation_detail %}
   </section>

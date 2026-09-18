@@ -17,7 +17,6 @@ use crate::{
     agents::{AgentDraft, AgentError, AgentId, AgentRecord},
     error::{AppError, AppResult},
     local_data::HOST_PATH_RESET_PENDING,
-    projects::{ProjectId, ProjectRecord},
     providers::ModelSelection,
     responses,
     sessions::RequiredSession,
@@ -42,10 +41,8 @@ pub(super) fn router() -> Router<AppState> {
 }
 
 #[derive(Default, Deserialize)]
-struct AgentQuery {
-    #[serde(default)]
-    project: String,
-}
+#[serde(default)]
+struct AgentQuery {}
 
 async fn catalogue(
     State(state): State<AppState>,
@@ -59,18 +56,14 @@ async fn new_agent(
     State(state): State<AppState>,
     _session: RequiredSession,
     graft: GraftRequest,
-    Query(query): Query<AgentQuery>,
+    Query(_query): Query<AgentQuery>,
 ) -> AppResult<Response> {
-    let starter = load_starter_project(&state, &query.project);
-    if starter_project_is_missing(&query.project, starter.as_ref()) {
-        return Ok(responses::request_navigation(graft, "/projects"));
-    }
     render_form_page(
         &state,
         graft,
         PatchStatus::Ok,
         page::NEW_TITLE,
-        create_form_view(&state, starter.as_ref(), starter_form(starter.as_ref()), ""),
+        create_form_view(&state, starter_form(), ""),
     )
 }
 
@@ -78,13 +71,9 @@ async fn create(
     State(state): State<AppState>,
     _session: RequiredSession,
     graft: PatchGraft,
-    Query(query): Query<AgentQuery>,
+    Query(_query): Query<AgentQuery>,
     Form(pairs): Form<Vec<(String, String)>>,
 ) -> AppResult<Response> {
-    let starter = load_starter_project(&state, &query.project);
-    if starter_project_is_missing(&query.project, starter.as_ref()) {
-        return Ok(responses::command_navigation("/projects"));
-    }
     let (mut form, intent) = match AgentFormState::parse(pairs) {
         Ok(parsed) => parsed,
         Err(error) => {
@@ -93,12 +82,7 @@ async fn create(
                 graft,
                 PatchStatus::UnprocessableEntity,
                 page::NEW_TITLE,
-                create_form_view(
-                    &state,
-                    starter.as_ref(),
-                    starter_form(starter.as_ref()),
-                    error.message(),
-                ),
+                create_form_view(&state, starter_form(), error.message()),
             );
         }
     };
@@ -109,7 +93,7 @@ async fn create(
                 graft,
                 PatchStatus::UnprocessableEntity,
                 page::NEW_TITLE,
-                create_form_view(&state, starter.as_ref(), form, error.message()),
+                create_form_view(&state, form, error.message()),
             );
         }
         return render_form_command(
@@ -117,7 +101,7 @@ async fn create(
             graft,
             PatchStatus::Ok,
             page::NEW_TITLE,
-            create_form_view(&state, starter.as_ref(), form, ""),
+            create_form_view(&state, form, ""),
         );
     }
     let Ok(_permit) = state.local_data.begin_host_path_mutation().await else {
@@ -126,13 +110,9 @@ async fn create(
             graft,
             PatchStatus::Conflict,
             page::NEW_TITLE,
-            create_form_view(&state, starter.as_ref(), form, HOST_PATH_RESET_PENDING),
+            create_form_view(&state, form, HOST_PATH_RESET_PENDING),
         );
     };
-    if let Some(project) = &starter {
-        // The project record owns this path. Submitted path_0 values cannot replace it.
-        form.assign_project_path(&project.host_path);
-    }
     let draft = match form.draft() {
         Ok(draft) => draft,
         Err(error) => {
@@ -141,7 +121,7 @@ async fn create(
                 graft,
                 PatchStatus::UnprocessableEntity,
                 page::NEW_TITLE,
-                create_form_view(&state, starter.as_ref(), form, error.message()),
+                create_form_view(&state, form, error.message()),
             );
         }
     };
@@ -151,17 +131,14 @@ async fn create(
             graft,
             PatchStatus::UnprocessableEntity,
             page::NEW_TITLE,
-            create_form_view(&state, starter.as_ref(), form, error),
+            create_form_view(&state, form, error),
         );
     }
     match state.agents.create(draft) {
-        Ok(record) => {
-            let destination = match &starter {
-                Some(project) => format!("/projects/{}", project.id.as_hex()),
-                None => format!("/agents/{}/configuration", record.id.as_hex()),
-            };
-            Ok(responses::command_navigation(&destination))
-        }
+        Ok(record) => Ok(responses::command_navigation(&format!(
+            "/agents/{}/configuration",
+            record.id.as_hex()
+        ))),
         Err(error @ (AgentError::Random | AgentError::Persist | AgentError::Corrupt)) => {
             Err(AppError::new("store agent", error))
         }
@@ -170,7 +147,7 @@ async fn create(
             graft,
             PatchStatus::UnprocessableEntity,
             page::NEW_TITLE,
-            create_form_view(&state, starter.as_ref(), form, error.message()),
+            create_form_view(&state, form, error.message()),
         ),
     }
 }
@@ -424,31 +401,12 @@ fn load_agent(state: &AppState, raw: &str) -> Option<AgentRecord> {
     AgentId::parse(raw).and_then(|id| state.agents.get(&id))
 }
 
-fn load_starter_project(state: &AppState, raw: &str) -> Option<ProjectRecord> {
-    ProjectId::parse(raw).and_then(|id| state.projects.get(&id))
+fn starter_form() -> AgentFormState {
+    AgentFormState::blank()
 }
 
-fn starter_project_is_missing(raw: &str, loaded: Option<&ProjectRecord>) -> bool {
-    !raw.is_empty() && loaded.is_none()
-}
-
-fn starter_form(project: Option<&ProjectRecord>) -> AgentFormState {
-    match project {
-        Some(record) => AgentFormState::for_project(&record.name),
-        None => AgentFormState::blank(),
-    }
-}
-
-fn create_form_view(
-    state: &AppState,
-    project: Option<&ProjectRecord>,
-    form: AgentFormState,
-    error: &'static str,
-) -> AgentFormView {
-    match project {
-        Some(record) => AgentFormView::create_for_project(state, form, error, record),
-        None => AgentFormView::create(state, form, error),
-    }
+fn create_form_view(state: &AppState, form: AgentFormState, error: &'static str) -> AgentFormView {
+    AgentFormView::create(state, form, error)
 }
 
 fn render_configuration_error(
@@ -489,12 +447,7 @@ fn render_catalogue(
     status: PatchStatus,
     error: &'static str,
 ) -> AppResult<Response> {
-    let view = CatalogueView::from_parts(
-        &state.agents.list(),
-        &state.projects.list(),
-        state.sandboxes.orphans(),
-        error,
-    );
+    let view = CatalogueView::from_parts(&state.agents.list(), state.sandboxes.orphans(), error);
     render_desk(state, graft, status, page::CATALOGUE_TITLE, &view)
 }
 

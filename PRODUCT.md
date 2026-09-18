@@ -24,7 +24,7 @@ New with same settings copies requested settings into an independent draft. It c
 
 Conversation settings stay local. Use saved settings as future defaults explicitly stores an independent settings snapshot.
 
-New drafts copy those requested defaults without authority. Unsaved edits do not change effective settings.
+New drafts copy those requested defaults without authority. Ordinary setup controls apply when they change. Execution review, consent and preset replacement stay behind their own confirmations.
 
 ## Workflows
 
@@ -76,7 +76,7 @@ Ask each time is the default host command policy. Run without approval requires 
 
 Command approval covers the submitted command. Power Plant does not inspect script internals. The hosted model receives command output.
 
-The project catalogue supplies context, not file authority. Directory order never selects an implicit Git destination.
+The catalogue supplies no file authority. Conversations point at folders only through directory grants. Git destination is an explicit pointer on those grants. Directory order never selects it.
 
 ## Handoff
 
@@ -99,11 +99,9 @@ Restart preserves safe gates. The destination requires fresh run-only consent be
 
 ## Resources
 
-The resource navigation links directly to Workflows, Presets, Environments and Providers. More resources contains Projects and Agents.
+The resource navigation links directly to Workflows, Presets, Environments and Providers. More resources contains Agents.
 
 Catalogue navigation creates no conversation or execution. It grants no access.
-
-Projects have a name and one immutable Git worktree path. Unavailable projects retain their labels. Project registration does not grant access.
 
 Agents supply reusable instructions and requested settings. A saved agent is not a subagent or an implicit workflow participant.
 
@@ -139,13 +137,13 @@ The available themes are:
 
 The system preference selects Springfield or Sector 7-G unless the user selects a theme explicitly.
 
-Real links provide native navigation fallback. Hypergraft supplies command patches and live projections.
+The application requires JavaScript. Real links carry ordinary navigation. Hypergraft supplies command patches and live projections.
 
 The transcript preserves its scroll position when the reader leaves the end. Jump to latest returns to new output.
 
 On mobile, an open companion excludes hidden conversation controls from interaction. Closure restores focus to a conversation control.
 
-Settings feedback remains outside the scroll area. The message distinguishes conversation-local settings from future defaults.
+Use saved settings as future defaults shows a status message outside the scroll area.
 
 ## Development constraints
 

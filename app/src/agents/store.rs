@@ -5,20 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
 use super::id::AgentId;
-use super::record::{
-    AccessMode, AgentDraft, AgentError, AgentFile, AgentRecord, DEFAULT_PRIMARY_ALIAS,
-    DirectoryGrant, MAXIMUM_AGENTS, MAXIMUM_NAME_BYTES, NetworkAccess,
-};
-use super::tool_id::ToolId;
-use crate::projects::{ProjectRecord, exact_grant};
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum StarterAgent {
-    One(AgentRecord),
-    Several,
-    Created(AgentRecord),
-}
-
+use super::record::{AgentDraft, AgentError, AgentFile, AgentRecord, MAXIMUM_AGENTS};
 #[cfg(test)]
 mod tests;
 
@@ -49,46 +36,6 @@ impl AgentStore {
         let draft = draft.validate()?;
         let mut agents = self.lock();
         insert_created(self.dir.as_deref(), &mut agents, draft)
-    }
-
-    // Exact host-path equality matches crate::projects::exact_grant. The catalogue
-    // lock covers that check and the optional create so two starter commands cannot
-    // add a second eligible agent.
-    pub(crate) fn ensure_starter(
-        &self,
-        project: &ProjectRecord,
-    ) -> Result<StarterAgent, AgentError> {
-        let mut agents = self.lock();
-        let eligible: Vec<AgentRecord> = agents
-            .values()
-            .filter(|agent| exact_grant(agent, project).is_some())
-            .cloned()
-            .collect();
-        match eligible.as_slice() {
-            [] => {
-                let draft = AgentDraft {
-                    name: starter_name(&project.name),
-                    instructions: String::new(),
-                    selection: None,
-                    tools: ToolId::ALL.to_vec(),
-                    network: NetworkAccess::None,
-                    directories: vec![DirectoryGrant {
-                        alias: DEFAULT_PRIMARY_ALIAS.to_owned(),
-                        host_path: project.host_path.clone(),
-                        access: AccessMode::ReadWrite,
-                    }],
-                    primary_directory: DEFAULT_PRIMARY_ALIAS.to_owned(),
-                }
-                .validate()?;
-                // Validation canonicalises host paths. Reject a changed resolution so the grant stays equal to stored project authority.
-                if draft.directories[0].host_path != project.host_path {
-                    return Err(AgentError::PathAccess);
-                }
-                insert_created(self.dir.as_deref(), &mut agents, draft).map(StarterAgent::Created)
-            }
-            [agent] => Ok(StarterAgent::One(agent.clone())),
-            _ => Ok(StarterAgent::Several),
-        }
     }
 
     pub(crate) fn update(
@@ -175,16 +122,6 @@ fn load_dir(dir: &Path) -> Result<BTreeMap<AgentId, AgentRecord>, AgentError> {
         }
     }
     Ok(agents)
-}
-
-pub(crate) fn starter_name(project_name: &str) -> String {
-    const SUFFIX: &str = " agent";
-    let maximum_project_bytes = MAXIMUM_NAME_BYTES - SUFFIX.len();
-    let mut end = project_name.len().min(maximum_project_bytes);
-    while end > 0 && !project_name.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}{}", project_name[..end].trim_end(), SUFFIX)
 }
 
 fn insert_created(

@@ -386,28 +386,6 @@ fn owner_only_permissions_cover_the_run_directory() {
 }
 
 #[test]
-fn summaries_include_project_identity() {
-    let store = WorkflowRunStore::in_memory();
-    let project_id = crate::projects::ProjectId::generate().expect("project");
-    let definition = definition("Named");
-    let environments = crate::tests::test_environment_set(&definition);
-    let run = store
-        .create(WorkflowRun::create(
-            RunId::generate().expect("run"),
-            1,
-            project_id,
-            Some(crate::agents::AgentId::generate().expect("agent")),
-            crate::workflows::RunKind::Configured,
-            crate::workflows::definition::PinnedWorkflowDefinition::pin(None, definition),
-            environments,
-        ))
-        .expect("create");
-    let summaries = store.summaries();
-    assert_eq!(summaries[0].id, run.id);
-    assert_eq!(summaries[0].project_id, Some(project_id));
-}
-
-#[test]
 fn an_unsupported_run_schema_fails_startup() {
     let dir = tempfile::tempdir().expect("dir");
     let store = WorkflowRunStore::open(dir.path().to_path_buf()).expect("open");

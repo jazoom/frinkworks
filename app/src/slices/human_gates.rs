@@ -488,11 +488,6 @@ pub(in crate::slices) fn application_destination(
                 .join(", ")
         })
         .filter(|destination| !destination.is_empty())
-        .or_else(|| {
-            run.project_id
-                .and_then(|id| state.projects.get(&id))
-                .map(|project| project.host_path.display().to_string())
-        })
         .unwrap_or_default()
 }
 
@@ -1194,10 +1189,7 @@ fn decision_destination(run: &crate::workflows::WorkflowRun) -> String {
         (RunKind::QuickTask, Some(conversation)) => {
             format!("/conversations/{}", conversation.as_hex())
         }
-        (RunKind::QuickTask, None) => format!(
-            "/projects/{}",
-            run.project_id.expect("project-backed run").as_hex()
-        ),
+        (RunKind::QuickTask, None) => "/runs".to_owned(),
         (RunKind::Configured, _) => format!("/runs/{}", run.id.as_hex()),
     }
 }
@@ -1214,14 +1206,13 @@ fn continuation_authority(
     continuation: &crate::workflows::WorkflowJob,
 ) -> ContinuationAuthority {
     if continuation.run_id != run.id
-        || continuation.project_id != run.project_id
         || continuation.agent_id != run.agent_id
         || continuation.conversation_id != run.conversation_id
         || run.pending_handoff.is_some()
     {
         return ContinuationAuthority::Stale;
     }
-    if run.project_id.is_none() {
+    if run.conversation_id.is_some() {
         let (Some(conversation_id), Some(pinned)) = (
             run.conversation_id,
             continuation.project_free_authority.as_ref(),
@@ -1237,9 +1228,22 @@ fn continuation_authority(
         else {
             return ContinuationAuthority::Stale;
         };
-        if !crate::execution::ProjectFreeAuthority::from_settings(pinned.revision, &settings)
-            .is_ok_and(|authority| authority == *pinned)
-            || !state.sessions.contains_live(&continuation.session_id)
+        match crate::execution::ProjectFreeAuthority::from_settings(pinned.revision, &settings) {
+            Ok(authority) if authority == *pinned => {}
+            Ok(_) => return ContinuationAuthority::Stale,
+            Err(crate::execution::DirectoryGrantError::Unavailable) => {
+                return ContinuationAuthority::Unavailable;
+            }
+            Err(_) => return ContinuationAuthority::Stale,
+        }
+        if !state.sessions.contains_live(&continuation.session_id) {
+            return ContinuationAuthority::Stale;
+        }
+        if settings
+            .directories
+            .iter()
+            .any(|grant| grant.access != crate::execution::DirectoryAccess::ReadOnly)
+            && !source_is_unchanged(state, run, &settings)
         {
             return ContinuationAuthority::Stale;
         }
@@ -1250,9 +1254,6 @@ fn continuation_authority(
                     state.local_data.root(),
                 )
         }) {
-            if grant.revalidate().is_err() {
-                return ContinuationAuthority::Unavailable;
-            }
             if !state.access_consent.authorised_conversation(
                 continuation.session_id,
                 conversation_id,
@@ -1279,118 +1280,31 @@ fn continuation_authority(
         }
         return ContinuationAuthority::Ready;
     }
-    let Some(project) = run.project_id.and_then(|id| state.projects.get(&id)) else {
-        return ContinuationAuthority::Stale;
-    };
-    if let Some(conversation_id) = run.conversation_id {
-        if continuation.conversation_id != Some(conversation_id) {
-            return ContinuationAuthority::Stale;
-        }
-        let Some(pinned) = continuation.authority.as_ref() else {
-            return ContinuationAuthority::Stale;
-        };
-        if !project.host_path_is_available() {
-            return ContinuationAuthority::Unavailable;
-        }
-        if let Some(snapshot) = &run.project_authority
-            && snapshot.approved(state, run, continuation.session_id)
-        {
-            if !snapshot
-                .resolve(state, run)
-                .is_ok_and(|authority| authority == *pinned)
-            {
-                return ContinuationAuthority::Stale;
-            }
-            return if pinned.grant_access.is_writable()
-                && !source_is_unchanged(state, run, &project)
-            {
-                ContinuationAuthority::Stale
-            } else {
-                ContinuationAuthority::Ready
-            };
-        }
-        if !run.ownership_history.is_empty() {
-            return ContinuationAuthority::Stale;
-        }
-        let current = match state.conversations.get(&conversation_id) {
-            Some(record) => match crate::conversations::resolve_workflow_authority(
-                &record,
-                &state.projects,
-                &state.agents,
-            ) {
-                Ok(Some(authority)) => authority.effective,
-                Ok(None) | Err(_) => return ContinuationAuthority::Stale,
-            },
-            None => return ContinuationAuthority::Stale,
-        };
-        if current != *pinned {
-            return ContinuationAuthority::Stale;
-        }
-        if pinned.revalidate_project(&project).is_err() {
-            return ContinuationAuthority::Stale;
-        }
-        if continuation.grant_access.is_writable() && !source_is_unchanged(state, run, &project) {
-            return ContinuationAuthority::Stale;
-        }
-        return ContinuationAuthority::Ready;
-    }
-    let Some(agent) = run.agent_id.and_then(|id| state.agents.get(&id)) else {
-        return ContinuationAuthority::Stale;
-    };
-    if agent.revision != continuation.agent_revision {
-        return ContinuationAuthority::Stale;
-    }
-    let Some(grant) = crate::projects::exact_grant(&agent, &project) else {
-        return ContinuationAuthority::Stale;
-    };
-    let pinned = continuation
-        .host_policy
-        .grants()
-        .iter()
-        .find(|item| item.alias == continuation.grant_alias);
-    let Some(pinned) = pinned else {
-        return ContinuationAuthority::Stale;
-    };
-    if continuation.host_policy.primary_alias() != continuation.grant_alias
-        || grant.alias != continuation.grant_alias
-        || grant.access != continuation.grant_access
-        || pinned.host_path != project.host_path
-        || pinned.access != continuation.grant_access
-    {
-        return ContinuationAuthority::Stale;
-    }
-    if !project.host_path_is_available() || grant.host_path != project.host_path {
-        return ContinuationAuthority::Unavailable;
-    }
-    ContinuationAuthority::Ready
+    ContinuationAuthority::Stale
 }
 
+// A writable continuation must match the exact source it captured. The initial
+// candidate hash covers every pinned root, so a later host edit invalidates it.
 fn source_is_unchanged(
     state: &AppState,
     run: &crate::workflows::WorkflowRun,
-    project: &crate::projects::ProjectRecord,
+    settings: &crate::execution::ExecutionSettings,
 ) -> bool {
     let crate::workflows::RunSource::Captured { source } = &run.source else {
         return false;
     };
-    let Some(initial_record) = run.artefact(&source.initial.id) else {
-        return false;
-    };
-    let Ok(bytes) = state.workflow_artefacts.get(&initial_record.object_hash) else {
-        return false;
-    };
-    let Some(initial) =
-        crate::workflows::artefacts::candidate::CandidateRevisionArtefact::from_manifest_bytes(
-            &bytes,
-        )
+    let Some(initial) = run
+        .artefact(&source.initial.id)
+        .and_then(crate::workflows::artefacts::ArtefactRecord::candidate_hash)
     else {
         return false;
     };
-    crate::workflows::artefacts::CandidateCapture::capture_host(
-        &project.host_path,
+    crate::workflows::artefacts::CandidateCapture::capture_set(
+        &settings.directories,
+        state.local_data.root(),
         &state.workflow_artefacts,
     )
-    .is_ok_and(|current| current == initial)
+    .is_ok_and(|current| current.candidate_hash == initial)
 }
 
 fn interrupt_and_redirect(

@@ -6,7 +6,6 @@ use crate::environments::snapshot::{OciManifestDigest, RecordedIntegrity, Snapsh
 use crate::environments::{
     EnvironmentId, EnvironmentRecipeVersion, PreparationId, PreparedSnapshot, SnapshotDigest,
 };
-use crate::projects::ProjectId;
 use crate::providers::{ModelSelection, ProviderKind, ThinkingEffort};
 
 use super::apply::{ApplyRoot, ApplyRootOutcome, ApplyTransaction, ApplyTransactionState};
@@ -31,11 +30,9 @@ pub(crate) const RUN_RECORD_VERSION: u32 = 1;
 pub(crate) struct WorkflowRun {
     pub(crate) id: RunId,
     pub(crate) created_at_ms: u64,
-    pub(crate) project_id: Option<ProjectId>,
     pub(crate) conversation_id: Option<ConversationId>,
     pub(crate) ownership_history: Vec<ConversationId>,
     pub(crate) pending_handoff: Option<super::handoff::PendingHandoff>,
-    pub(crate) project_authority: Option<super::handoff::project::ProjectAuthority>,
     pub(crate) launch_brief: String,
 
     pub(crate) kind: RunKind,
@@ -280,12 +277,9 @@ pub(super) struct RunFile {
     id: String,
     created_at_ms: u64,
     #[serde(deserialize_with = "crate::storage::required_option")]
-    project_id: Option<String>,
-    #[serde(deserialize_with = "crate::storage::required_option")]
     conversation_id: Option<String>,
     ownership_history: Vec<String>,
     pending_handoff: Option<super::handoff::PendingHandoff>,
-    project_authority: Option<super::handoff::project::ProjectAuthority>,
     launch_brief: String,
 
     kind: String,
@@ -669,10 +663,10 @@ struct PinnedIntegrityFile {
 }
 
 impl WorkflowRun {
+    #[cfg(test)]
     pub(crate) fn create(
         id: RunId,
         created_at_ms: u64,
-        project_id: ProjectId,
         agent_id: Option<AgentId>,
         kind: RunKind,
         pinned: PinnedWorkflowDefinition,
@@ -682,11 +676,9 @@ impl WorkflowRun {
         Self {
             id,
             created_at_ms,
-            project_id: Some(project_id),
             conversation_id: None,
             ownership_history: Vec::new(),
             pending_handoff: None,
-            project_authority: None,
             launch_brief: String::new(),
 
             kind,
@@ -704,16 +696,11 @@ impl WorkflowRun {
     }
 
     pub(crate) fn directory_settings(&self) -> Option<crate::execution::ExecutionSettings> {
-        self.project_id
-            .is_none()
-            .then(|| {
-                crate::execution::ExecutionSettings::combined(
-                    self.phase_models
-                        .iter()
-                        .filter_map(|phase| phase.settings.as_ref()),
-                )
-            })
-            .flatten()
+        crate::execution::ExecutionSettings::combined(
+            self.phase_models
+                .iter()
+                .filter_map(|phase| phase.settings.as_ref()),
+        )
     }
 
     pub(crate) fn phase_settings(
@@ -778,11 +765,9 @@ impl WorkflowRun {
         Self {
             id,
             created_at_ms,
-            project_id: None,
             conversation_id: Some(conversation_id),
             ownership_history: Vec::new(),
             pending_handoff: None,
-            project_authority: None,
             launch_brief: String::new(),
 
             kind: RunKind::QuickTask,
@@ -801,32 +786,6 @@ impl WorkflowRun {
             gates: Vec::new(),
             revision_reservation: None,
         }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn create_configured_for_conversation(
-        id: RunId,
-        created_at_ms: u64,
-        project_id: ProjectId,
-        conversation_id: ConversationId,
-        launch_brief: String,
-        pinned: PinnedWorkflowDefinition,
-        environments: ResolvedEnvironmentSet,
-        phase_models: Vec<PhaseModelSelection>,
-    ) -> Self {
-        let mut run = Self::create(
-            id,
-            created_at_ms,
-            project_id,
-            None,
-            RunKind::Configured,
-            pinned,
-            environments,
-        );
-        run.conversation_id = Some(conversation_id);
-        run.launch_brief = launch_brief;
-        run.phase_models = phase_models;
-        run
     }
 
     pub(crate) fn record_initial_candidate(
@@ -1992,7 +1951,6 @@ impl WorkflowRun {
             record_version: RUN_RECORD_VERSION,
             id: self.id.as_hex(),
             created_at_ms: self.created_at_ms,
-            project_id: self.project_id.map(|id| id.as_hex()),
             conversation_id: self
                 .conversation_id
                 .map(|conversation| conversation.as_hex()),
@@ -2002,7 +1960,6 @@ impl WorkflowRun {
                 .map(|id| id.as_hex())
                 .collect(),
             pending_handoff: self.pending_handoff.clone(),
-            project_authority: self.project_authority.clone(),
             launch_brief: self.launch_brief.clone(),
 
             kind: self.kind.as_str().to_owned(),
@@ -2029,10 +1986,6 @@ impl WorkflowRun {
             return Err(RunRecordError::Corrupt);
         }
         let id = RunId::parse(&file.id).ok_or(RunRecordError::Corrupt)?;
-        let project_id = match file.project_id.as_deref() {
-            Some(value) => Some(ProjectId::parse(value).ok_or(RunRecordError::Corrupt)?),
-            None => None,
-        };
         let conversation_id = match file.conversation_id.as_deref() {
             Some(value) => Some(ConversationId::parse(value).ok_or(RunRecordError::Corrupt)?),
             None => None,
@@ -2084,7 +2037,6 @@ impl WorkflowRun {
         let run = Self {
             id,
             created_at_ms: file.created_at_ms,
-            project_id,
             conversation_id,
             ownership_history: file
                 .ownership_history
@@ -2092,7 +2044,6 @@ impl WorkflowRun {
                 .map(|id| ConversationId::parse(id).ok_or(RunRecordError::Corrupt))
                 .collect::<Result<Vec<_>, _>>()?,
             pending_handoff: file.pending_handoff,
-            project_authority: file.project_authority,
             launch_brief: file.launch_brief,
             kind,
             agent_id,
@@ -2110,11 +2061,6 @@ impl WorkflowRun {
             gates,
             revision_reservation,
         };
-        if run.project_authority.as_ref().is_some_and(|authority| {
-            !authority.valid() || run.project_id.is_none() || run.conversation_id.is_none()
-        }) {
-            return Err(RunRecordError::Corrupt);
-        }
         if run.ownership_history.iter().enumerate().any(|(index, id)| {
             Some(*id) == run.conversation_id || run.ownership_history[..index].contains(id)
         }) || run.pending_handoff.as_ref().is_some_and(|pending| {
@@ -2140,17 +2086,17 @@ impl WorkflowRun {
             .checked_add(self.gates.len())
             .ok_or(RunRecordError::Corrupt)?;
         let source_free = matches!(self.source, RunSource::None);
-        let reviewed_project_free = self.project_id.is_none()
-            && matches!(self.source, RunSource::Pending | RunSource::Captured { .. })
-            && self.conversation_id.is_some()
-            && self.agent_id.is_none()
-            && self.pinned.definition.steps().iter().any(|step| {
-                step.inputs.iter().any(|input| {
-                    input.kind == crate::workflows::definition::ArtefactKind::CandidateRevision
-                })
-            });
-        if (source_free && self.project_id.is_some())
-            || (!source_free && self.project_id.is_none() && !reviewed_project_free)
+        let reviewed_directory =
+            matches!(self.source, RunSource::Pending | RunSource::Captured { .. })
+                && self.conversation_id.is_some()
+                && self.agent_id.is_none()
+                && self.pinned.definition.steps().iter().any(|step| {
+                    step.inputs.iter().any(|input| {
+                        input.kind == crate::workflows::definition::ArtefactKind::CandidateRevision
+                    })
+                });
+        let desk = self.conversation_id.is_none() && self.agent_id.is_some();
+        if (!source_free && !reviewed_directory && !desk)
             || (self.conversation_id.is_none() && self.agent_id.is_none())
             || (source_free
                 && (self.agent_id.is_some()
@@ -2607,9 +2553,7 @@ fn validate_phase_models(run: &WorkflowRun) -> Result<(), RunRecordError> {
     for selection in &run.phase_models {
         if !seen.iter().all(|step: &StepKey| step != &selection.step)
             || (selection.preset.is_some() && selection.settings.is_none())
-            || (run.project_id.is_none()
-                && run.kind == RunKind::Configured
-                && selection.settings.is_none())
+            || (run.kind == RunKind::Configured && selection.settings.is_none())
             || selection.settings.as_ref().is_some_and(|settings| {
                 settings.model != selection.selection
                     || settings.instructions != selection.instructions
@@ -4697,7 +4641,7 @@ fn predicted_from_gate(
 
 fn validate_source(run: &WorkflowRun) -> Result<(), RunRecordError> {
     match &run.source {
-        RunSource::None if run.project_id.is_none() && run.agent_id.is_none() => Ok(()),
+        RunSource::None if run.agent_id.is_none() => Ok(()),
         RunSource::None => Err(RunRecordError::Corrupt),
         RunSource::Pending => Ok(()),
         RunSource::Captured { source } => {

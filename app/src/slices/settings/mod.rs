@@ -136,7 +136,6 @@ async fn reset_local_data(
         .request_reset(
             &state.workflow_execution,
             crate::local_data::ResetCatalogues {
-                projects: &state.projects,
                 agents: &state.agents,
                 conversations: &state.conversations,
                 presets: &state.presets,

@@ -24,6 +24,10 @@ describe.each(["new", "saved"])("%s conversation settings", (state) => {
                 <input name="network" type="radio" value="none" checked>
                 <input name="network" type="radio" value="restricted">
                 <textarea name="network_domains"></textarea>
+                <input name="location" type="radio" value="sandbox" checked>
+                <input name="location" type="radio" value="host">
+                <input name="directory_access" value="">
+                <select name="git_destination"><option value="">None</option><option value="repository">Repository</option></select>
             </form>
         </section>`;
         root = document.querySelector<HTMLElement>("#conversation-detail")!;
@@ -92,7 +96,7 @@ describe.each(["new", "saved"])("%s conversation settings", (state) => {
         expect(value("network")).toBe("none");
     });
 
-    if (state === "saved")
+    if (state === "saved") {
         test("model responses retain unsaved authority fields but accept the new model and revision", () => {
             const original = root.innerHTML;
             edit();
@@ -110,4 +114,94 @@ describe.each(["new", "saved"])("%s conversation settings", (state) => {
             reconcile("conversation-rename");
             expect(value("revision")).toBe("4");
         });
+
+        test("ordinary saved fields submit without dirty execution values", () => {
+            const form = root.querySelector<HTMLFormElement>("form")!;
+            const submitted: Array<{
+                location: FormDataEntryValue | null;
+                network: FormDataEntryValue | null;
+            }> = [];
+            form.requestSubmit = () => {
+                const data = new FormData(form);
+                submitted.push({
+                    location: data.get("location"),
+                    network: data.get("network"),
+                });
+            };
+            const host = root.querySelector<HTMLInputElement>(
+                '[name="location"][value="host"]',
+            )!;
+            host.checked = true;
+            host.dispatchEvent(new Event("input", { bubbles: true }));
+            const network = root.querySelector<HTMLInputElement>(
+                '[name="network"][value="restricted"]',
+            )!;
+            network.checked = true;
+            network.dispatchEvent(new Event("change", { bubbles: true }));
+            expect(submitted).toEqual([
+                { location: "sandbox", network: "restricted" },
+            ]);
+            expect(
+                root.querySelector<HTMLInputElement>(
+                    '[name="location"][value="host"]',
+                )!.checked,
+            ).toBe(true);
+        });
+
+        test("a queued tool revocation survives the earlier save response", () => {
+            const original = root.innerHTML;
+            const form = root.querySelector<HTMLFormElement>("form")!;
+            const submitted: Array<FormDataEntryValue | null> = [];
+            form.requestSubmit = () =>
+                submitted.push(new FormData(form).get("tool_read"));
+            const read = form.elements.namedItem(
+                "tool_read",
+            ) as HTMLInputElement;
+            read.checked = true;
+            read.dispatchEvent(new Event("change", { bubbles: true }));
+            read.checked = false;
+            read.dispatchEvent(new Event("change", { bubbles: true }));
+            root.innerHTML = original;
+            const updated = root.querySelector<HTMLFormElement>("form")!;
+            (
+                updated.elements.namedItem("tool_read") as HTMLInputElement
+            ).checked = true;
+            updated.requestSubmit = () =>
+                submitted.push(new FormData(updated).get("tool_read"));
+            reconcile("conversation-settings-form");
+            expect(submitted).toEqual(["read", null]);
+            expect(value("tool_read")).toBeNull();
+        });
+
+        test("Git destination changes save and survive unrelated patches", () => {
+            const original = root.innerHTML;
+            const form = root.querySelector<HTMLFormElement>("form")!;
+            const submitted: Array<FormDataEntryValue | null> = [];
+            form.requestSubmit = () =>
+                submitted.push(new FormData(form).get("git_destination"));
+            const destination = form.elements.namedItem(
+                "git_destination",
+            ) as HTMLSelectElement;
+            destination.value = "repository";
+            destination.dispatchEvent(new Event("change", { bubbles: true }));
+            expect(submitted).toEqual(["repository"]);
+            root.innerHTML = original;
+            reconcile("conversation-rename");
+            expect(value("git_destination")).toBe("repository");
+        });
+
+        test("settings patches keep uncommitted execution fields", () => {
+            const original = root.innerHTML;
+            const host = root.querySelector<HTMLInputElement>(
+                '[name="location"][value="host"]',
+            )!;
+            host.checked = true;
+            host.dispatchEvent(new Event("input", { bubbles: true }));
+            edit();
+            root.innerHTML = original;
+            reconcile("conversation-settings-form");
+            expect(value("instructions")).toBe("");
+            expect(value("location")).toBe("host");
+        });
+    }
 });

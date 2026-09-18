@@ -36,8 +36,7 @@ impl ProjectFreeAuthority {
             .map(|grant| grant.alias.clone())
             .collect::<Vec<_>>();
         let primary_alias = settings
-            .directories
-            .first()
+            .git_destination_grant()
             .map(|grant| grant.alias.clone())
             .unwrap_or_default();
         let grants = settings

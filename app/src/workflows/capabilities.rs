@@ -67,15 +67,29 @@ impl AttemptCapabilities {
         authority: &crate::execution::ProjectFreeAuthority,
     ) -> Result<Self, CapabilityError> {
         if let StepAction::SystemCommand(action) = &step.action {
-            if action.command != SystemCommandId::ApplyChanges
-                || authority.reviewed_aliases.is_empty()
-            {
-                return Err(CapabilityError::Authority);
-            }
-            return Ok(apply_capabilities(
-                authority.revision,
-                &authority.reviewed_aliases,
-            ));
+            return match action.command {
+                SystemCommandId::ApplyChanges if !authority.reviewed_aliases.is_empty() => Ok(
+                    apply_capabilities(authority.revision, &authority.reviewed_aliases),
+                ),
+                SystemCommandId::CommitCandidate | SystemCommandId::RepositoryStatus => {
+                    let primary = authority.policy.primary_alias();
+                    if primary.is_empty()
+                        || (action.command == SystemCommandId::CommitCandidate
+                            && !authority
+                                .reviewed_aliases
+                                .iter()
+                                .any(|alias| alias == primary))
+                    {
+                        return Err(CapabilityError::Authority);
+                    }
+                    Ok(commit_or_read_only(
+                        action.command,
+                        authority.revision,
+                        primary,
+                    ))
+                }
+                _ => Err(CapabilityError::Authority),
+            };
         }
         let StepAction::Agent(action) = &step.action else {
             return Err(CapabilityError::Authority);

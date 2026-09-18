@@ -122,10 +122,6 @@ impl ModelsDevCatalogue {
         }
     }
 
-    pub(crate) fn subscribe(&self) -> tokio::sync::broadcast::Receiver<()> {
-        self.invalidations.subscribe()
-    }
-
     pub(crate) fn models(&self, kind: ProviderKind) -> Vec<ModelMetadata> {
         let active = self.read();
         active

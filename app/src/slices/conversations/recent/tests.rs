@@ -17,7 +17,6 @@ async fn recent_projection_is_bounded_escaped_and_uses_the_canonical_catalogue_r
             .conversations
             .create_saved(
                 crate::conversations::ConversationId::generate().expect("id"),
-                None,
                 Some("<script>title</script>".to_owned()),
                 None,
                 vec![],

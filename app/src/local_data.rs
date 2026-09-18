@@ -11,7 +11,6 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use crate::agents::{AgentRecord, AgentStore};
 use crate::config::StartupConfig;
 use crate::conversations::{ConversationRecord, ConversationStore};
-use crate::projects::{ProjectRecord, ProjectStore};
 use crate::storage::{self, PersistError};
 use crate::workflows::{ExecutionGuard, WorkflowExecution};
 
@@ -28,7 +27,6 @@ pub(crate) enum ResetRequest {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CatalogueResetConflict {
-    Project,
     AgentGrant,
     ConversationGrant,
     PresetGrant,
@@ -37,7 +35,6 @@ pub(crate) enum CatalogueResetConflict {
 }
 
 pub(crate) struct ResetCatalogues<'a> {
-    pub(crate) projects: &'a ProjectStore,
     pub(crate) agents: &'a AgentStore,
     pub(crate) conversations: &'a ConversationStore,
     pub(crate) presets: &'a crate::presets::PresetStore,
@@ -55,7 +52,6 @@ pub(crate) enum ResetError {
 impl CatalogueResetConflict {
     pub(crate) fn message(self) -> &'static str {
         match self {
-            Self::Project => "A project path is inside the Power Plant data directory.",
             Self::AgentGrant => "An agent grant is inside the Power Plant data directory.",
             Self::ConversationGrant => {
                 "A conversation grant is inside the Power Plant data directory."
@@ -174,7 +170,6 @@ impl LocalDataReset {
             return Ok(ResetRequest::Pending);
         }
         if let Some(conflict) = self.catalogue_conflict(
-            &catalogues.projects.list(),
             &catalogues.agents.list(),
             &catalogues.conversations.list(),
             &catalogues.presets.list(),
@@ -204,18 +199,11 @@ impl LocalDataReset {
 
     fn catalogue_conflict(
         &self,
-        projects: &[ProjectRecord],
         agents: &[AgentRecord],
         conversations: &[ConversationRecord],
         presets: &[crate::presets::PresetRecord],
         workflows: &[crate::workflows::WorkflowRecord],
     ) -> Option<CatalogueResetConflict> {
-        if projects
-            .iter()
-            .any(|project| path_under_root(&self.root, &project.host_path))
-        {
-            return Some(CatalogueResetConflict::Project);
-        }
         if agents.iter().any(|agent| {
             agent
                 .directories

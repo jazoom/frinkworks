@@ -133,7 +133,7 @@ Conversation pages carry their own header with the mobile menu trigger. The sepa
 
 Needs your attention lists real unresolved decisions with owning context links. An optional conversation identifier selects the return destination only: valid context shows Back to conversation, while any other value omits the return link. Refresh and decision pages preserve valid context, and every decision stays visible. History connects conversations to runs and evidence.
 
-The sidebar resource group links directly to Workflows, Presets, Environments and Providers. More resources contains Projects and Agents. Settings stays separate below the group.
+The sidebar resource group links directly to Workflows, Presets, Environments and Providers. More resources contains Agents. Settings stays separate below the group.
 
 The sidebar has no local status footer. Catalogue headers omit generic return links to conversations.
 
@@ -151,7 +151,7 @@ The model control opens a searchable popover above the composer. It lists connec
 
 Thinking effort stays visible beside the model as a borderless value and caret. Both controls use identical buttons with the same hover size. The effort popover uses padded options and a tick for the current value. Models without adjustable effort show a disabled Not available control. Saved conversations apply model and effort changes immediately without changes to other settings. Unsent messages and unsaved setup fields survive those commands.
 
-The composer uses two rows with an 8000 character editor limit. The persisted message bound stays in the conversation store. The send control reads Send message. Effective directory access appears below it with a folder or shield icon and a visible Sandbox label. Project access stays beside the composer even with no attached project. An empty project catalogue links to project registration. Host mode names unrestricted access. Job-bound cancellation reads Stop in the composer in place of Send. It posts without a confirmation step. Current work keeps the same Stop control when the composer is inert. The composer stays locked while a candidate or host command awaits a decision.
+The composer uses two rows with an 8000 character editor limit. The persisted message bound stays in the conversation store. The send control reads Send message. Effective directory access appears below it with a folder or shield icon and a visible Sandbox label. Host mode names unrestricted access. Job-bound cancellation reads Stop in the composer in place of Send. It posts without a confirmation step. Current work keeps the same Stop control when the composer is inert. The composer stays locked while a candidate or host command awaits a decision.
 
 Jump to latest appears when the reader leaves the transcript end. New output does not move the reader away from earlier messages.
 
@@ -195,17 +195,15 @@ The visible sections are:
 
 New forms select the available tools by default. An explicit empty tool choice stays empty after validation and on copied records.
 
-Saved conversations submit through Save settings. New conversations offer Keep draft settings. Cancel setup changes retains its existing behaviour.
+Ordinary setup controls apply when they change. There is no Save, Done, Keep draft or Cancel footer. Close hides Setup. The application requires JavaScript.
 
-A successful settings save shows a status message outside the scroll area. The message distinguishes local settings from future defaults.
+Use saved settings as future defaults is a separate explicit action. Its explanation distinguishes stored conversation settings from access approval.
 
-Use saved settings as future defaults is a separate explicit action. Its explanation distinguishes saved values from unsaved edits and access approval.
-
-The execution-switch preview retains its existing settlement paths. Requested values stay draft until the save or approval command succeeds.
+The execution-switch preview retains its existing settlement paths. Requested execution values stay uncommitted until the review command succeeds. Consent and preset replacement keep their own confirmations.
 
 Setup and workflow companions follow the actual header height. Long mobile titles remain visible above the open companion.
 
-Section changes retain unsaved fields. Validation reveals affected controls before focus moves. Effective summaries change only after a successful settings command. Model and effort controls remain in the composer, outside Setup.
+Section changes retain uncommitted execution fields. Validation reveals affected controls before focus moves. Effective summaries follow applied ordinary settings. Model and effort controls remain in the composer, outside Setup.
 
 Closure restores focus even after a command replaces the original trigger. Escape closes the navigation menu before the companion.
 
@@ -259,7 +257,7 @@ First-time provider connection starts with a focused provider chooser in a compa
 
 The provider choice precedes the connection form. Method descriptions align right on wider screens and sit below provider names on narrow screens.
 
-Provider links use `/connect?provider=…` with native navigation fallback. Change provider returns to the chooser. API-only forms omit the redundant introductory sentence.
+Provider links use `/connect?provider=…`. Change provider returns to the chooser. API-only forms omit the redundant introductory sentence.
 
 Pending plan sign-in and validation errors remain within the form. Successful plan polling navigates to conversations.
 
@@ -287,6 +285,7 @@ Browser evidence does not establish successful hosted-model generation or hosted
 - Use Tailwind utilities in Askama templates for layout.
 - Keep feature presentation within its slice.
 - Keep native links for ordinary navigation.
+- Do not add noscript fallbacks.
 - Keep exact candidate and revision fields on consequential commands.
 - Keep effective access separate from unsaved settings.
 - Keep plans and checklists as ordinary content.

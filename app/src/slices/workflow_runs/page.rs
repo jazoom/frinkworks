@@ -3,7 +3,6 @@ use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
 use crate::environments::EnvironmentCatalogue;
-use crate::projects::ProjectStore;
 use crate::state::AppState;
 use crate::workflows::summary::ProcessPhase;
 use crate::workflows::{RunSummary, WorkflowCatalogue, WorkflowRun};
@@ -320,7 +319,7 @@ impl RunIndexView {
                     })
             })
             .map(|summary| {
-                let mut row = index_row_from_run(&summary, &state.projects);
+                let mut row = index_row_from_run(&summary);
                 let owner = state
                     .workflow_runs
                     .get(&summary.id)
@@ -372,8 +371,8 @@ fn conversation_presentation(
     }
 }
 
-fn index_row_from_run(summary: &RunSummary, projects: &ProjectStore) -> IndexRow {
-    let (_, project_name) = project_presentation(summary.project_id, projects);
+fn index_row_from_run(summary: &RunSummary) -> IndexRow {
+    let (_, project_name) = project_presentation();
     IndexRow {
         id: summary.id.as_hex(),
         href: format!("/runs/{}", summary.id.as_hex()),
@@ -468,11 +467,10 @@ impl RunDetailView {
         run: &WorkflowRun,
         workflows: &WorkflowCatalogue,
         environments: &EnvironmentCatalogue,
-        projects: &ProjectStore,
         evidence: &crate::workflows::WorkflowEvidenceStore,
     ) -> Self {
         let (name_href, catalogue_note) = catalogue_presentation(run, workflows);
-        let (project_href, mut project_name) = project_presentation(run.project_id, projects);
+        let (project_href, mut project_name) = project_presentation();
         if let Some(settings) = run.directory_settings()
             && !settings.directories.is_empty()
         {
@@ -1257,15 +1255,8 @@ fn pinned_environments(
         .collect()
 }
 
-fn project_presentation(
-    project_id: Option<crate::projects::ProjectId>,
-    projects: &ProjectStore,
-) -> (String, String) {
-    match project_id.and_then(|id| projects.get(&id)) {
-        Some(project) => (format!("/projects/{}", project.id.as_hex()), project.name),
-        None if project_id.is_none() => (String::new(), "Private workspace".to_owned()),
-        None => (String::new(), "Unknown project".to_owned()),
-    }
+fn project_presentation() -> (String, String) {
+    (String::new(), "Private workspace".to_owned())
 }
 
 fn catalogue_presentation(run: &WorkflowRun, catalogue: &WorkflowCatalogue) -> (String, String) {

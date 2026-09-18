@@ -10,11 +10,10 @@ use crate::{
     agents::AgentRecord,
     conversations::{
         ConversationId, ConversationMessage, ConversationModelConfiguration, ConversationRecord,
-        MAXIMUM_PROJECT_ASSOCIATIONS, MessageRole, MessageStatus,
+        MessageRole, MessageStatus,
     },
     environments::{EnvironmentCatalogue, EnvironmentId, EnvironmentSnapshotRepository},
     models::models_dev::ModelsDevCatalogue,
-    projects::ProjectRecord,
     providers::ModelSelection,
     sessions::{JobSnapshot, JobStatus},
     vault::ProviderVault,
@@ -29,12 +28,6 @@ pub(super) struct ConversationListItem {
     pub(super) status: &'static str,
     pub(super) dot: &'static str,
     pub(super) meta: String,
-}
-
-pub(super) struct CatalogueProjectOption {
-    pub(super) id: String,
-    pub(super) name: String,
-    pub(super) selected: bool,
 }
 
 pub(super) struct DirectoryView {
@@ -54,15 +47,10 @@ pub(super) struct DirectoryView {
     pub(super) exclusions: Vec<String>,
 }
 
-pub(super) struct ProjectContextView {
+pub(super) struct GitDestinationOption {
     pub(super) id: String,
     pub(super) name: String,
-    pub(super) alias: String,
-    pub(super) status: &'static str,
-    pub(super) access_granted: bool,
-    pub(super) writable: bool,
-    pub(super) execution_target: bool,
-    pub(super) secondary_context: bool,
+    pub(super) selected: bool,
 }
 
 #[derive(Clone)]
@@ -308,7 +296,6 @@ pub(super) struct ModelSources<'a> {
     pub(super) models: &'a ModelsDevCatalogue,
     pub(super) environments: &'a EnvironmentCatalogue,
     pub(super) environment_snapshots: &'a EnvironmentSnapshotRepository,
-    pub(super) projects: &'a [ProjectRecord],
     pub(super) presets: &'a [crate::presets::PresetRecord],
 }
 
@@ -405,7 +392,7 @@ pub(super) struct SubmittedSettingsFields<'a> {
 }
 
 pub(super) enum ConversationPageState {
-    New { project: String, message: String },
+    New { message: String },
     Saved(Box<SavedConversationState>),
 }
 
@@ -431,9 +418,9 @@ pub(super) struct ConversationDetailView {
     pub(super) preset_name: String,
     pub(super) preset_source: String,
     pub(super) preset_preview: Option<PresetPreviewView>,
-    pub(super) attached_projects: Vec<ProjectContextView>,
-    pub(super) attachable_projects: Vec<CatalogueProjectOption>,
     pub(super) directories: Vec<DirectoryView>,
+    pub(super) git_destination: String,
+    pub(super) git_destination_options: Vec<GitDestinationOption>,
     pub(super) data_root: String,
     pub(super) consent_path: String,
     pub(super) consent_request: String,
@@ -477,7 +464,6 @@ pub(super) struct ConversationDetailView {
 pub(super) struct SavedConversationState {
     pub(super) id: String,
     pub(super) revision: String,
-    pub(super) project_limit_reached: bool,
     pub(super) job_id: String,
     pub(super) cursor: u64,
     pub(super) pending_gate: Option<PendingCodeGateView>,
@@ -603,18 +589,7 @@ impl ConversationDetailView {
                 form.preset_name.clone()
             },
             preset_preview: None,
-            attachable_projects: state
-                .projects
-                .list()
-                .into_iter()
-                .map(|project| CatalogueProjectOption {
-                    id: project.id.as_hex(),
-                    name: project.name,
-                    selected: project.id.as_hex() == form.project,
-                })
-                .collect(),
             state: ConversationPageState::New {
-                project: form.project,
                 message: form.message,
             },
             error,
@@ -625,8 +600,12 @@ impl ConversationDetailView {
             companion_title: String::new(),
 
             omitted_messages: 0,
-            attached_projects: Vec::new(),
             directories,
+            git_destination: form.git_destination.clone(),
+            git_destination_options: git_destination_options(
+                &draft_directories,
+                crate::execution::DirectoryGrantId::parse(form.git_destination.trim()),
+            ),
             data_root: state.local_data.root().to_string_lossy().into_owned(),
             consent_path,
             consent_request: form.consent_request,
@@ -714,13 +693,6 @@ impl ConversationDetailView {
                 || self.pending_host_command.is_some()
                 || self.prepared_recovery.is_some()
         })
-    }
-
-    fn draft_project(&self) -> &str {
-        match &self.state {
-            ConversationPageState::New { project, .. } => project,
-            ConversationPageState::Saved(_) => "",
-        }
     }
 
     fn draft_message(&self) -> &str {
@@ -862,77 +834,6 @@ impl ConversationDetailView {
                     .is_some_and(|preset| preset.id == record.id),
             })
             .collect();
-        let attached_projects = record
-            .projects
-            .iter()
-            .map(|id| {
-                let access = record
-                    .grants
-                    .iter()
-                    .find(|grant| grant.project_id == *id)
-                    .map(|grant| grant.access);
-                let access_granted = access.is_some();
-                let writable = access == Some(crate::agents::AccessMode::ReadWrite);
-                let execution_target = record.execution_target == Some(*id);
-                let secondary_context = access_granted && !execution_target;
-                let alias = if secondary_context {
-                    crate::conversations::secondary_alias(*id)
-                } else {
-                    String::new()
-                };
-                match sources.projects.iter().find(|project| project.id == *id) {
-                    Some(project) if project.host_path_is_available() => ProjectContextView {
-                        id: id.as_hex(),
-                        name: project.name.clone(),
-                        alias: alias.clone(),
-                        status: if execution_target && writable {
-                            "Writable access granted. This is the execution target. Tools: List, Read, Run and Write in the candidate workspace. Network: None by default."
-                        } else if secondary_context {
-                            "Read-only context. Tools: List, Read and Run. Writes are blocked. Network: None by default."
-                        } else if access_granted {
-                            "Read-only access granted. This is the execution target. Tools: List, Read and Run. Network: None by default."
-                        } else {
-                            "Context reference only. File access is not granted."
-                        },
-                        access_granted,
-                        writable,
-                        execution_target,
-                        secondary_context,
-                    },
-                    Some(project) => ProjectContextView {
-                        id: id.as_hex(),
-                        name: project.name.clone(),
-                        alias: String::new(),
-                        status: "Project unavailable. It remains a context reference without file access.",
-                        access_granted: false,
-                        writable: false,
-                        execution_target: false,
-                        secondary_context: false,
-                    },
-                    None => ProjectContextView {
-                        id: id.as_hex(),
-                        name: "Project record unavailable".to_owned(),
-                        alias: String::new(),
-                        status: "This context reference has no file access.",
-                        access_granted: false,
-                        writable: false,
-                        execution_target: false,
-                        secondary_context: false,
-                    },
-                }
-            })
-            .collect();
-        let mut attachable_projects: Vec<_> = sources
-            .projects
-            .iter()
-            .filter(|project| !record.projects.contains(&project.id))
-            .map(|project| CatalogueProjectOption {
-                id: project.id.as_hex(),
-                name: project.name.clone(),
-                selected: false,
-            })
-            .collect();
-        attachable_projects.sort_by(|left, right| left.name.cmp(&right.name));
         let (job_id, cursor, job_active, observe_active) = match job {
             Some(job) if job.status == JobStatus::Running => {
                 (job.id.as_hex(), job.latest_seq, true, true)
@@ -1016,10 +917,20 @@ impl ConversationDetailView {
                 .map(|configuration| crate::presets::suggested_name(&configuration.settings))
                 .unwrap_or_else(|| "Untitled preset".to_owned()),
             preset_preview: None,
-            attached_projects,
-            attachable_projects,
             directories: configuration
                 .map(|configuration| directory_views(&configuration.settings.directories))
+                .unwrap_or_default(),
+            git_destination: configuration
+                .and_then(|configuration| configuration.settings.git_destination)
+                .map(crate::execution::DirectoryGrantId::as_hex)
+                .unwrap_or_default(),
+            git_destination_options: configuration
+                .map(|configuration| {
+                    git_destination_options(
+                        &configuration.settings.directories,
+                        configuration.settings.git_destination,
+                    )
+                })
                 .unwrap_or_default(),
             data_root: String::new(),
             consent_path: String::new(),
@@ -1078,7 +989,6 @@ impl ConversationDetailView {
             state: ConversationPageState::Saved(Box::new(SavedConversationState {
                 id: record.id.as_hex(),
                 revision: record.revision.to_string(),
-                project_limit_reached: record.projects.len() >= MAXIMUM_PROJECT_ASSOCIATIONS,
                 job_id,
                 cursor,
                 pending_gate,
@@ -1531,6 +1441,28 @@ fn directory_view(grant: &crate::execution::DirectoryGrant) -> DirectoryView {
         access_label: crate::slices::execution_settings::page::directory_access_label(grant.access),
         exclusions: Vec::new(),
     }
+}
+
+fn git_destination_options(
+    grants: &[crate::execution::DirectoryGrant],
+    selected: Option<crate::execution::DirectoryGrantId>,
+) -> Vec<GitDestinationOption> {
+    grants
+        .iter()
+        .filter(|grant| {
+            Some(grant.id) == selected
+                || crate::workflows::artefacts::inspect_supported_worktree(&grant.host_path).is_ok()
+        })
+        .map(|grant| GitDestinationOption {
+            id: grant.id.as_hex(),
+            name: grant
+                .host_path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| grant.host_path.to_string_lossy().into_owned()),
+            selected: Some(grant.id) == selected,
+        })
+        .collect()
 }
 
 fn environment_summary(

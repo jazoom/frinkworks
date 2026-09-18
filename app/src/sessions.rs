@@ -14,7 +14,7 @@ pub(crate) use job::JobEventKind;
 pub(crate) use job::{Job, JobId, JobOwner, JobSnapshot, JobStatus};
 pub(crate) use language::BrowserLanguage;
 pub(crate) use live::LiveSessionGuard;
-pub(crate) use store::{ConversationKey, SessionSnapshot, SessionStore};
+pub(crate) use store::{ConversationKey, SessionStore};
 pub(crate) use tokens::{SessionId, ValidatedToken, generate as generate_session_token};
 
 use std::time::Duration;

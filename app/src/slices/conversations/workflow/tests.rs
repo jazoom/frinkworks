@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::AccessMode;
 use axum::{
     body::{Body, to_bytes},
     http::{Request, StatusCode, header},
@@ -138,7 +139,6 @@ fn directory_launch_pins_non_git_roots_and_read_only_review_authority() {
         loaded.directory_settings().unwrap().instructions,
         "Use the pinned instructions."
     );
-    assert!(loaded.project_id.is_none());
     assert!(loaded.agent_id.is_none());
     std::fs::rename(root.path().join("second"), root.path().join("old-second")).unwrap();
     std::fs::create_dir(root.path().join("second")).unwrap();
@@ -149,18 +149,6 @@ fn directory_launch_pins_non_git_roots_and_read_only_review_authority() {
         )
         .is_err()
     );
-}
-
-#[test]
-fn a_directory_launch_form_does_not_require_a_project_target() {
-    let (form, _) = parse_fields::<WorkflowLaunchForm>(vec![
-        ("revision".to_owned(), "1".to_owned()),
-        ("workflow".to_owned(), "selected".to_owned()),
-        ("brief".to_owned(), "Prepare a plan".to_owned()),
-    ])
-    .unwrap();
-    assert!(form.target.is_empty());
-    assert!(form.preview_target.is_empty());
 }
 
 #[test]
@@ -314,7 +302,6 @@ fn sensitive_workflow_launch_needs_live_destination_consent() {
         .create_saved(
             crate::conversations::ConversationId::generate().unwrap(),
             None,
-            None,
             Some(crate::conversations::ConversationModelConfiguration {
                 settings: settings.clone(),
                 preset: None,
@@ -455,7 +442,7 @@ async fn chooser_lists_starters_in_approved_order_with_custom_workflows_last() {
         .conversations
         .create("Ordering".to_owned())
         .expect("conversation");
-    let view = launch_view(&state, &conversation, None, None, "", "", &[], "").await;
+    let view = launch_view(&state, &conversation, None, "", "", &[], "").await;
     let names: Vec<_> = view
         .workflows
         .iter()
@@ -510,7 +497,7 @@ async fn host_preview_does_not_describe_sandbox_boundaries() {
         definition_version: workflow.definition_version,
     }
     .as_token();
-    let (_, access, _) = launch_readiness(&state, &record, None, &selection).await;
+    let (_, access, _) = launch_readiness(&state, &record, &selection).await;
     assert!(access.contains("Unrestricted host access"));
     assert!(access.contains("Run without approval"));
     assert!(!access.contains("/workspace"));
@@ -568,7 +555,7 @@ async fn launch_rejects_stale_definitions_without_reserving_the_conversation() {
                 .header(hypergraft::GRAFT_REQUEST, "patch")
                 .header(header::ACCEPT, hypergraft::MEDIA_TYPE)
                 .body(Body::from(format!(
-                    "revision={}&workflow={selection}&brief=Inspect&target=&phase=first&phase=second",
+                    "revision={}&workflow={selection}&brief=Inspect&phase=first&phase=second",
                     conversation.revision
                 )))
                 .expect("request"),
@@ -669,8 +656,7 @@ async fn unavailable_environments_block_sandbox_launch_without_substitution() {
         definition_version: workflow.definition_version,
     }
     .as_token();
-    let (_, _, environment_summary) =
-        launch_readiness(&state, &conversation, None, &selection).await;
+    let (_, _, environment_summary) = launch_readiness(&state, &conversation, &selection).await;
     assert_eq!(
         environment_summary,
         "That environment is no longer in the catalogue."
@@ -692,8 +678,6 @@ async fn unavailable_environments_block_sandbox_launch_without_substitution() {
     serialiser.append_pair("revision", &conversation.revision.to_string());
     serialiser.append_pair("workflow", &selection);
     serialiser.append_pair("preview_workflow", &selection);
-    serialiser.append_pair("target", "");
-    serialiser.append_pair("preview_target", "");
     serialiser.append_pair("brief", "Inspect the code");
     for phase in &phases {
         serialiser.append_pair("phase", phase);
@@ -771,7 +755,7 @@ async fn brief_defaults_to_the_conversation_request_not_sample_text() {
         request: None,
     }];
     let brief = async |brief: &str, record: &ConversationRecord| {
-        launch_view(&state, record, None, None, brief, "", &[], "")
+        launch_view(&state, record, None, brief, "", &[], "")
             .await
             .brief
             .clone()
@@ -822,7 +806,6 @@ async fn review_reports_automatic_commit_without_promising_a_human_decision() {
         &state,
         &conversation,
         Some(&selection),
-        None,
         "Implement the change",
         "automatic-after-review",
         &[],
@@ -871,7 +854,7 @@ async fn launch_preview_mismatch_starts_no_work() {
             .oneshot(
                 Request::builder()
                     .uri(format!(
-                        "/conversations/{}/workflow?stage={stage}&workflow={selection}&brief=Implement&revision=1&preview_workflow=stale&preview_target=&preview_commit_policy=&confirm_additional_access=forged",
+                        "/conversations/{}/workflow?stage={stage}&workflow={selection}&brief=Implement&revision=1&preview_workflow=stale&preview_commit_policy=&confirm_additional_access=forged",
                         conversation.id.as_hex()
                     ))
                     .header(
@@ -924,6 +907,137 @@ async fn launch_preview_mismatch_starts_no_work() {
     )
     .expect("text");
     assert!(body.contains("The selection changed."));
+    assert!(
+        state
+            .workflow_runs
+            .for_conversation(&conversation.id)
+            .is_empty()
+    );
+}
+
+#[test]
+fn commit_capable_settings_refuse_without_an_explicit_git_destination() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("work");
+    std::fs::create_dir(&path).unwrap();
+    let mut grant = crate::execution::DirectoryGrant::from_selected(&path, &[]).unwrap();
+    grant.access = crate::execution::DirectoryAccess::ReviewBeforeApply;
+    let settings = directory_settings()
+        .with_directories(vec![grant.clone()])
+        .unwrap();
+    let definition = commit_capable_definition();
+    let phases: Vec<_> = phase_steps(&definition)
+        .into_iter()
+        .map(|step| (step.key.clone(), settings.clone()))
+        .collect();
+    assert_eq!(
+        definition
+            .clone()
+            .with_phase_settings(&settings, &phases)
+            .err(),
+        Some(workflows::definition::DefinitionError::Authority)
+    );
+    let selected = settings.with_git_destination(Some(grant.id)).unwrap();
+    let phases: Vec<_> = phase_steps(&definition)
+        .into_iter()
+        .map(|step| (step.key.clone(), selected.clone()))
+        .collect();
+    let pinned = definition.with_phase_settings(&selected, &phases).unwrap();
+    assert!(pinned.steps().iter().any(|step| {
+        matches!(
+            &step.action,
+            workflows::definition::StepAction::SystemCommand(action)
+                if action.command == workflows::commands::SystemCommandId::CommitCandidate
+        )
+    }));
+}
+
+fn commit_capable_definition() -> workflows::definition::WorkflowDefinition {
+    let source =
+        workflows::seeds::implement_with_approval_definition(crate::tests::test_environment_id());
+    let mut steps = source.steps().to_vec();
+    for step in &mut steps {
+        if let workflows::definition::StepAction::SystemCommand(action) = &mut step.action
+            && action.command == workflows::commands::SystemCommandId::ApplyChanges
+        {
+            action.command = workflows::commands::SystemCommandId::CommitCandidate;
+        }
+    }
+    workflows::definition::WorkflowDefinition::from_parts(
+        source.name().to_owned(),
+        crate::tests::test_environment_id(),
+        source.roles().to_vec(),
+        steps,
+    )
+    .unwrap()
+}
+
+#[tokio::test]
+async fn launch_refuses_a_commit_workflow_without_a_git_destination() {
+    let state = connected_state();
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("work");
+    std::fs::create_dir(&path).unwrap();
+    let grant = crate::execution::DirectoryGrant::from_selected(&path, &[]).unwrap();
+    let settings = directory_settings().with_directories(vec![grant]).unwrap();
+    let conversation = state
+        .conversations
+        .create("Commit launch".to_owned())
+        .expect("conversation");
+    let conversation = state
+        .conversations
+        .update_execution_settings(&conversation.id, conversation.revision, settings)
+        .expect("settings");
+    let workflow = state
+        .workflows
+        .create(commit_capable_definition())
+        .expect("workflow");
+    let selection = WorkflowSelection {
+        workflow_id: workflow.id,
+        definition_version: workflow.definition_version,
+    }
+    .as_token();
+    let token = crate::sessions::generate_session_token().expect("session");
+    state.sessions.insert(token.id());
+    let app = crate::slices::router()
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::sessions::resolve_session,
+        ))
+        .layer(axum::middleware::from_fn(hypergraft::middleware::classify))
+        .with_state(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/conversations/{}/workflow",
+                    conversation.id.as_hex()
+                ))
+                .header(
+                    header::COOKIE,
+                    format!("powerplant_session={}", token.raw().as_str()),
+                )
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .header(hypergraft::GRAFT_REQUEST, "patch")
+                .header(header::ACCEPT, hypergraft::MEDIA_TYPE)
+                .body(Body::from(format!(
+                    "revision={}&workflow={selection}&preview_workflow={selection}&brief=Implement",
+                    conversation.revision
+                )))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body = String::from_utf8(
+        to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .expect("body")
+            .to_vec(),
+    )
+    .expect("text");
+    assert!(body.contains("Choose a Git destination before you start this workflow."));
     assert!(
         state
             .workflow_runs

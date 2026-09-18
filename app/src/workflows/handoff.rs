@@ -1,5 +1,3 @@
-pub(crate) mod project;
-
 use std::{collections::HashMap, sync::Mutex};
 
 use crate::{conversations::ConversationId, sessions::SessionId};
@@ -85,11 +83,6 @@ impl WorkflowRun {
     pub(crate) fn handoff_settings(&self) -> Vec<crate::execution::ExecutionSettings> {
         self.model_phases()
             .filter_map(|phase| phase.settings.clone())
-            .chain(
-                self.project_authority
-                    .as_ref()
-                    .map(|authority| authority.settings.clone()),
-            )
             .collect()
     }
 
@@ -118,11 +111,7 @@ impl WorkflowRun {
     pub(crate) fn recoverable_gate(&self) -> bool {
         self.conversation_id.is_some()
             && self.agent_id.is_none()
-            && (self.directory_settings().is_some()
-                || self
-                    .project_authority
-                    .as_ref()
-                    .is_some_and(project::ProjectAuthority::valid))
+            && self.directory_settings().is_some()
             && matches!(self.state, super::run::RunState::AwaitingHuman { .. })
             && matches!(self.source, super::RunSource::Captured { .. })
             && self
