@@ -363,7 +363,8 @@ body {
     font-size: 12px;
 }
 .workspace-navigation > a,
-.workspace-resources a {
+.workspace-resources a,
+.workspace-local a {
     display: flex;
     align-items: center;
     gap: 10px;
@@ -540,8 +541,9 @@ body:has(.workspace-catalogue) .app-frame {
     padding-top: 12px;
     border-top: 1px solid var(--workspace-cover-rule);
 }
-.workspace-settings {
+.workspace-local {
     margin-top: 12px;
+    padding-top: 12px;
     border-top: 1px solid var(--workspace-cover-rule);
 }
 .workspace-menu {

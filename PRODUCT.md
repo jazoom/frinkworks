@@ -99,7 +99,7 @@ Restart preserves safe gates. The destination requires fresh run-only consent be
 
 ## Resources
 
-The resource navigation links directly to Workflows, Presets, Environments and Providers. More resources contains Agents.
+The resource navigation links directly to Workflows, Presets, Environments and Agents. Providers and Settings stay separate below the group.
 
 Catalogue navigation creates no conversation or execution. It grants no access.
 

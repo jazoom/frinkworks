@@ -133,7 +133,7 @@ Conversation pages carry their own header with the mobile menu trigger. The sepa
 
 Needs your attention lists real unresolved decisions with owning context links. An optional conversation identifier selects the return destination only: valid context shows Back to conversation, while any other value omits the return link. Refresh and decision pages preserve valid context, and every decision stays visible. History connects conversations to runs and evidence.
 
-The sidebar resource group links directly to Workflows, Presets, Environments and Providers. More resources contains Agents. Settings stays separate below the group.
+The sidebar resource group links directly to Workflows, Presets, Environments and Agents. Providers and Settings stay separate below the group.
 
 The sidebar has no local status footer. Catalogue headers omit generic return links to conversations.
 

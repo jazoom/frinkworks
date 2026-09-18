@@ -131,13 +131,8 @@ export function initWorkspace(
         const section = root.querySelector<HTMLElement>(
             "#chat-main > [data-section]",
         )?.dataset.section;
-        if (section === "projects" || section === "agents") {
-            root.querySelector<HTMLDetailsElement>(
-                ".workspace-resources details",
-            )?.setAttribute("open", "");
-        }
         root.querySelectorAll<HTMLAnchorElement>(
-            ".workspace-navigation > a, .workspace-resources a",
+            ".workspace-navigation > a, .workspace-resources a, .workspace-local a",
         ).forEach((link) => {
             if (
                 section &&
