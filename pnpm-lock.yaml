@@ -15,8 +15,8 @@ importers:
         specifier: ^5.2.8
         version: 5.3.0
       hypergraft:
-        specifier: link:../hypergraft
-        version: link:../hypergraft
+        specifier: 0.1.0
+        version: 0.1.0
     devDependencies:
       '@tailwindcss/vite':
         specifier: ^4.3.1
@@ -550,6 +550,10 @@ packages:
     resolution: {integrity: sha512-Hldbg8AdAa5a5oDcZpjqnGitp7JB0hqWmfv/8qr+kft4vzSD8BHsbdRfzYvL/0QcbKcURC/yyoygbeDQarPvYg==}
     engines: {node: '>=20.0.0'}
 
+  hypergraft@0.1.0:
+    resolution: {integrity: sha512-4MdNmu3z1TxFPn8riMoXbnLjnS9kK7rYK5038Y9t3wHUtOqDJmI+f6bklSEku1mSjRw9PeU7Vd8EJHq7RVDA0A==}
+    engines: {node: '>=22.12.0'}
+
   jiti@2.7.0:
     resolution: {integrity: sha512-AC/7JofJvZGrrneWNaEnJeOLUx+JlGt7tNa0wZiRPT4MY1wmfKjt2+6O2p2uz2+skll8OZZmJMNqeke7kKbNgQ==}
     hasBin: true
@@ -704,6 +708,9 @@ packages:
 
   magic-string@0.30.21:
     resolution: {integrity: sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==}
+
+  morphlex@1.4.0:
+    resolution: {integrity: sha512-20/rnlsvvzExLmdq8o9yRz4btq7ZV8bmFaRbkgvlmWYUyFQ31nvORHyKgvCdBIx83HWzxulPAoKNq2Hq1VjYmg==}
 
   nanoid@3.3.18:
     resolution: {integrity: sha512-DTg4MJbGMWkfi6VZFdNt2/caMbQy4Ou+Op/hJQvGEWcnVfoA1QA+xzRKAzw9jD6+GVOOeYr/mIcuDSdug6F6+w==}
@@ -1302,6 +1309,10 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
+  hypergraft@0.1.0:
+    dependencies:
+      morphlex: 1.4.0
+
   jiti@2.7.0: {}
 
   lightningcss-android-arm64@1.32.0:
@@ -1405,6 +1416,8 @@ snapshots:
   magic-string@0.30.21:
     dependencies:
       '@jridgewell/sourcemap-codec': 1.5.5
+
+  morphlex@1.4.0: {}
 
   nanoid@3.3.18: {}
 

@@ -17,7 +17,7 @@ cap-std = "4.0.3"
 clap = { version = "4.6.6", features = ["derive"] }
 cookie = "0.18.2"
 futures-util = "0.3.34"
-hypergraft = { path = "../../hypergraft" }
+hypergraft = "0.1.0"
 microsandbox = "0.6.15"
 nix = { version = "0.31.3", default-features = false, features = ["process", "signal", "user"] }
 pulldown-cmark = "0.13.4"
