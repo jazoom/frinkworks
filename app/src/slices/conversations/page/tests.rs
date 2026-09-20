@@ -29,6 +29,7 @@ fn escaped_history_keeps_the_latest_message_within_the_patch_bound() {
             status: MessageStatus::Complete,
             error: None,
             request: None,
+            completion: None,
         })
         .collect();
     let view = ConversationDetailView::from_record(
@@ -244,6 +245,7 @@ fn command_output_escapes_untrusted_stream_text() {
         "",
         &[crate::providers::AssistantActivity::Tool(tool)],
         &[],
+        false,
         false,
     );
     assert!(!html.contains("<script>"));

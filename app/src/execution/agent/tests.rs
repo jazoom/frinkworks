@@ -220,3 +220,163 @@ fn model_reply_overflow_remains_an_error() {
     ));
     assert_eq!(reply.text.len(), MAXIMUM_MODEL_REPLY_BYTES);
 }
+
+fn conversation_job(
+    state: &crate::state::AppState,
+) -> (
+    crate::conversations::ConversationRecord,
+    std::sync::Arc<Job>,
+) {
+    use crate::sessions::generate_session_token;
+    let token = generate_session_token().expect("session");
+    state.sessions.insert(token.id());
+    let record = state
+        .conversations
+        .create("Discussion".to_owned())
+        .expect("conversation");
+    let job = state
+        .sessions
+        .begin_conversation_job(&token.id(), record.id)
+        .expect("job");
+    let record = state
+        .conversations
+        .begin_message_with_model(
+            &record.id,
+            record.revision,
+            None,
+            job.id(),
+            "Read the file".to_owned(),
+        )
+        .expect("message");
+    (record, job)
+}
+
+fn read_spec(
+    connection: crate::providers::ProviderConnection,
+    conversation: crate::conversations::ConversationId,
+    revision: u32,
+) -> super::AgentRunSpec {
+    use crate::agents::{DirectoryPolicy, ToolId};
+    use crate::execution::ToolLocation;
+    super::AgentRunSpec {
+        agent_id: None,
+        revision,
+        preamble: String::new(),
+        tools: crate::tools::definitions_for(&[ToolId::Read], ToolLocation::Sandbox),
+        tool_ids: vec![ToolId::Read],
+        policy: DirectoryPolicy::from_grants(Vec::new(), String::new()),
+        connection,
+        location: ToolLocation::Sandbox,
+        sandbox: None,
+        host: None,
+        output_drafts: None,
+        required_outputs: Vec::new(),
+        evidence: None,
+        output_scope: None,
+        conversation: Some(conversation),
+    }
+}
+
+#[tokio::test]
+async fn truncated_tool_arguments_do_not_dispatch() {
+    use crate::config::RuntimeConfig;
+    use crate::providers::{
+        AssistantActivity, ChatBackend, ChatTurn, CompletionReason, ModelEvent, ProviderConnection,
+        ProviderKind,
+    };
+    use crate::sessions::JobEventKind;
+    let mut state = crate::tests::test_state(RuntimeConfig::development());
+    let backend = crate::tests::ScriptedBackend::events(vec![
+        Ok(ModelEvent::ToolCall {
+            id: "call-1".to_owned(),
+            name: "read".to_owned(),
+            arguments: serde_json::json!({"path": "main.rs"}),
+        }),
+        Ok(ModelEvent::Complete {
+            reason: CompletionReason::Length,
+        }),
+    ]);
+    state.chat = std::sync::Arc::new(ChatBackend::Scripted(backend));
+    let connection = ProviderConnection::with_key(ProviderKind::Xai, "test-key", "grok-4.6");
+    state.vault.put(connection.clone()).expect("provider");
+    let (record, job) = conversation_job(&state);
+    let ended = super::run_agent_action(
+        &state,
+        read_spec(connection, record.id, record.revision),
+        vec![ChatTurn::user("Read the file".to_owned())],
+        job.clone(),
+    )
+    .await;
+    assert_eq!(ended.outcome, super::AgentOutcome::ProviderFailure);
+    assert_eq!(ended.reply.completion, Some(CompletionReason::Length));
+    assert!(ended.reply.tools.is_empty());
+    assert!(
+        ended.reply.activity.iter().any(|activity| {
+            matches!(activity, AssistantActivity::ToolCall { result: None, .. })
+        })
+    );
+    assert!(
+        !job.events_after(0)
+            .iter()
+            .any(|event| { matches!(event.kind, JobEventKind::ToolFinished { .. }) })
+    );
+}
+
+#[tokio::test]
+async fn unsafe_batches_do_not_dispatch_any_call() {
+    use crate::config::RuntimeConfig;
+    use crate::providers::{
+        ChatBackend, ChatTurn, CompletionReason, ModelEvent, ProviderConnection, ProviderKind,
+    };
+    use crate::sessions::JobEventKind;
+    let mut state = crate::tests::test_state(RuntimeConfig::development());
+    for (id, name, arguments) in [
+        ("call-1", "read", serde_json::json!({"path": "other.rs"})),
+        ("call-2", "read", serde_json::json!({"path": 42})),
+        ("call-2", "write", serde_json::json!({"path": "other.rs"})),
+        ("call-2", "read", serde_json::json!({"path": "test-key"})),
+        (
+            "call-2",
+            "read",
+            serde_json::json!({"path": "x".repeat(65537)}),
+        ),
+    ] {
+        let backend = crate::tests::ScriptedBackend::events(vec![
+            Ok(ModelEvent::ToolCall {
+                id: "call-1".to_owned(),
+                name: "read".to_owned(),
+                arguments: serde_json::json!({"path": "main.rs"}),
+            }),
+            Ok(ModelEvent::ToolCall {
+                id: id.to_owned(),
+                name: name.to_owned(),
+                arguments,
+            }),
+            Ok(ModelEvent::Complete {
+                reason: CompletionReason::ToolCalls,
+            }),
+        ]);
+        state.chat = std::sync::Arc::new(ChatBackend::Scripted(backend));
+        let connection = ProviderConnection::with_key(ProviderKind::Xai, "test-key", "grok-4.6");
+        state.vault.put(connection.clone()).expect("provider");
+        let (record, job) = conversation_job(&state);
+        let mut spec = read_spec(connection, record.id, record.revision);
+        spec.conversation = None;
+        let ended = super::run_agent_action(
+            &state,
+            spec,
+            vec![ChatTurn::user("Read the file".to_owned())],
+            job.clone(),
+        )
+        .await;
+        assert_eq!(ended.outcome, super::AgentOutcome::ProviderFailure);
+        assert!(ended.reply.tools.is_empty());
+        assert!(
+            !job.events_after(0)
+                .iter()
+                .any(|event| { matches!(event.kind, JobEventKind::ToolFinished { .. }) })
+        );
+        assert!(!format!("{:?}", ended.reply).contains("test-key"));
+        assert!(!format!("{:?}", job.events_after(0)).contains("test-key"));
+    }
+}

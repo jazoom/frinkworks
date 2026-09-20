@@ -7,10 +7,11 @@ use rig_core::completion::{AssistantContent, Message};
 
 use crate::{
     agents::{AgentId, DirectoryPolicy, ToolId},
+    conversations::ConversationId,
     execution::ToolLocation,
     providers::{
-        AssistantActivity, AssistantReply, ChatTurn, ModelEvent, ModelUsage, ProviderConnection,
-        ProviderError, ToolOutput,
+        AssistantActivity, AssistantReply, ChatTurn, CompletionReason, ModelEvent, ModelUsage,
+        ProviderConnection, ProviderError, ToolOutput,
     },
     sandbox::GuestSandbox,
     sessions::Job,
@@ -37,6 +38,7 @@ pub(crate) struct AgentRunSpec {
     pub(crate) required_outputs: Vec<crate::workflows::definition::RequiredOutput>,
     pub(crate) evidence: Option<crate::workflows::AttemptEvidenceContext>,
     pub(crate) output_scope: Option<crate::execution::OutputScope>,
+    pub(crate) conversation: Option<ConversationId>,
 }
 
 pub(super) const MIN_PROGRESS_INTERVAL: Duration = if cfg!(test) {
@@ -100,9 +102,10 @@ pub(crate) async fn run_agent_action(
     let mut event_count = 0usize;
 
     for _ in 0..MAXIMUM_TOOL_ROUNDS {
-        if let Err(error) = persist_output(state, &job, &reply, false) {
+        if let Err(error) = persist_output(state, spec.conversation, &job, &reply, false) {
             return store_failure(&reply, error);
         }
+        reply.completion = Some(CompletionReason::Unknown);
         thinking_progress.begin_phase();
         if job.cancel_requested() {
             return cancel_action(&job, &reply);
@@ -115,10 +118,18 @@ pub(crate) async fn run_agent_action(
         {
             request_tools.push(tools::read_output_definition());
         }
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(600);
         let mut events = tokio::select! {
             biased;
             _ = job.cancelled() => {
                 return cancel_action(&job, &reply);
+            }
+            _ = tokio::time::sleep_until(deadline) => {
+                return AgentActionEnd {
+                    outcome: AgentOutcome::ProviderFailure,
+                    error: Some(ProviderError::Unreachable.message().to_owned()),
+                    reply,
+                };
             }
             result = state.chat.stream_turn(
                 &spec.connection,
@@ -147,8 +158,9 @@ pub(crate) async fn run_agent_action(
 
         let mut text = String::new();
         let mut calls = Vec::new();
+        let mut completion = None;
         loop {
-            if let Err(error) = persist_output(state, &job, &reply, false) {
+            if let Err(error) = persist_output(state, spec.conversation, &job, &reply, false) {
                 return store_failure(&reply, error);
             }
             let thinking_deadline = thinking_progress.deadline(&reply.thinking);
@@ -162,6 +174,14 @@ pub(crate) async fn run_agent_action(
                 biased;
                 _ = job.cancelled() => {
                     return cancel_action(&job, &reply);
+                }
+                _ = tokio::time::sleep_until(deadline) => {
+                    reply.completion = Some(CompletionReason::Unknown);
+                    return AgentActionEnd {
+                        outcome: AgentOutcome::ProviderFailure,
+                        error: Some(ProviderError::Unreachable.message().to_owned()),
+                        reply,
+                    };
                 }
                 _ = wait_for_thinking => {
                     thinking_progress.publish_due(&job, &reply.thinking, Instant::now());
@@ -203,6 +223,7 @@ pub(crate) async fn run_agent_action(
                         &mut output_visible,
                     );
                     if truncated {
+                        reply.completion = Some(CompletionReason::Length);
                         publish_reply_remaining(
                             &job,
                             &reply,
@@ -278,11 +299,18 @@ pub(crate) async fn run_agent_action(
                             reply,
                         };
                     }
-                    if !arguments.is_object()
-                        || crate::conversations::history::contains_credential(
-                            &(&id, &name, &arguments),
-                            secret,
-                        )
+                    if !arguments.is_object() {
+                        return AgentActionEnd {
+                            outcome: AgentOutcome::ProviderFailure,
+                            error: Some(ProviderError::Refused.message().to_owned()),
+                            reply,
+                        };
+                    }
+                    if crate::conversations::history::contains_credential(
+                        &(&id, &name, &arguments),
+                        secret,
+                    ) || serde_json::to_vec(&arguments)
+                        .map_or(true, |bytes| bytes.len() > 64 * 1024)
                     {
                         return AgentActionEnd {
                             outcome: AgentOutcome::ProviderFailure,
@@ -326,7 +354,16 @@ pub(crate) async fn run_agent_action(
                         };
                     }
                 }
+                Ok(ModelEvent::Complete { reason }) => {
+                    completion = match completion {
+                        Some(previous) if previous != reason => Some(CompletionReason::Unknown),
+                        Some(previous) => Some(previous),
+                        None => Some(reason),
+                    };
+                    reply.completion = completion;
+                }
                 Err(error) => {
+                    reply.completion = Some(CompletionReason::Unknown);
                     thinking_progress.flush(&job, &reply.thinking);
                     publish_reply_remaining(
                         &job,
@@ -346,6 +383,7 @@ pub(crate) async fn run_agent_action(
         if job.cancel_requested() {
             return cancel_action(&job, &reply);
         }
+        reply.completion = Some(completion.unwrap_or(CompletionReason::Unknown));
 
         if calls.is_empty() {
             let response_tail = response_redactor.finish();
@@ -365,24 +403,43 @@ pub(crate) async fn run_agent_action(
                 published_response,
                 thinking_progress.published,
             );
-            if truncated || reply.text.trim().is_empty() {
+            if truncated {
+                reply.completion = Some(CompletionReason::Length);
                 return AgentActionEnd {
                     outcome: AgentOutcome::ProviderFailure,
-                    error: Some(
-                        if truncated {
-                            ProviderError::ReplyTooLong
-                        } else {
-                            ProviderError::EmptyReply
-                        }
-                        .message()
-                        .to_owned(),
-                    ),
+                    error: Some(ProviderError::ReplyTooLong.message().to_owned()),
                     reply: reply.clone(),
                 };
             }
+            return finish_without_tools(&reply, completion);
+        }
+        let _ = response_redactor.finish_boundary();
+        let _ = thinking_redactor.finish_boundary();
+        if !completion.is_some_and(CompletionReason::allows_tool_dispatch) {
+            thinking_progress.flush(&job, &reply.thinking);
+            publish_reply_remaining(
+                &job,
+                &reply,
+                published_response,
+                thinking_progress.published,
+            );
             return AgentActionEnd {
-                outcome: AgentOutcome::Completed,
-                error: None,
+                outcome: AgentOutcome::ProviderFailure,
+                error: Some(ProviderError::Incomplete.message().to_owned()),
+                reply: reply.clone(),
+            };
+        }
+        if let Err(error) = validate_tool_batch(&calls, &request_tools) {
+            thinking_progress.flush(&job, &reply.thinking);
+            publish_reply_remaining(
+                &job,
+                &reply,
+                published_response,
+                thinking_progress.published,
+            );
+            return AgentActionEnd {
+                outcome: AgentOutcome::ProviderFailure,
+                error: Some(error.message().to_owned()),
                 reply: reply.clone(),
             };
         }
@@ -424,7 +481,7 @@ pub(crate) async fn run_agent_action(
             output_drafts: spec.output_drafts.as_deref(),
             required_outputs: &spec.required_outputs,
         };
-        if let Err(error) = persist_output(state, &job, &reply, true) {
+        if let Err(error) = persist_output(state, spec.conversation, &job, &reply, true) {
             return store_failure(&reply, error);
         }
         let mut resolved_calls: Vec<crate::providers::ChatToolCall> = Vec::new();
@@ -496,7 +553,7 @@ pub(crate) async fn run_agent_action(
                     command: command.clone(),
                 },
             );
-            if let Err(error) = persist_output(state, &job, &reply, true) {
+            if let Err(error) = persist_output(state, spec.conversation, &job, &reply, true) {
                 return store_failure(&reply, error);
             }
             if let Some(visible) =
@@ -599,6 +656,78 @@ impl<'a> StreamRedactor<'a> {
 }
 
 const TOOL_LOOP_LIMIT: &str = "The agent stopped after too many tool calls. Try again.";
+
+fn finish_without_tools(
+    reply: &AssistantReply,
+    completion: Option<CompletionReason>,
+) -> AgentActionEnd {
+    let error = match completion {
+        Some(CompletionReason::Stop) if !reply.text.trim().is_empty() => None,
+        Some(CompletionReason::Stop) => Some(ProviderError::EmptyReply),
+        Some(CompletionReason::Refusal) => Some(ProviderError::Refused),
+        Some(
+            CompletionReason::Length | CompletionReason::Unknown | CompletionReason::ToolCalls,
+        )
+        | None => Some(ProviderError::Incomplete),
+    };
+    AgentActionEnd {
+        outcome: if error.is_some() {
+            AgentOutcome::ProviderFailure
+        } else {
+            AgentOutcome::Completed
+        },
+        error: error.map(|error| error.message().to_owned()),
+        reply: reply.clone(),
+    }
+}
+
+fn validate_tool_batch(
+    calls: &[(String, String, serde_json::Value)],
+    definitions: &[rig_core::completion::ToolDefinition],
+) -> Result<(), ProviderError> {
+    let mut seen = std::collections::BTreeSet::new();
+    for (id, name, arguments) in calls {
+        if id.is_empty()
+            || name.is_empty()
+            || id.len() > crate::conversations::history::MAXIMUM_CALL_IDENTIFIER_BYTES
+            || name.len() > crate::conversations::history::MAXIMUM_CALL_IDENTIFIER_BYTES
+            || !arguments.is_object()
+        {
+            return Err(ProviderError::Refused);
+        }
+        if !seen.insert(id) {
+            return Err(ProviderError::Refused);
+        }
+        let definition = definitions
+            .iter()
+            .find(|definition| definition.name == *name)
+            .ok_or(ProviderError::Refused)?;
+        let schema = &definition.parameters;
+        if schema["required"].as_array().is_some_and(|required| {
+            required
+                .iter()
+                .any(|key| key.as_str().is_none_or(|key| arguments.get(key).is_none()))
+        }) {
+            return Err(ProviderError::Refused);
+        }
+        for (key, value) in arguments.as_object().ok_or(ProviderError::Refused)? {
+            let property = &schema["properties"][key];
+            let valid_type = match property["type"].as_str() {
+                Some("string") => value.as_str().is_some_and(|text| !text.contains('\0')),
+                Some("integer") => value.as_u64().is_some(),
+                _ => false,
+            };
+            if !valid_type
+                || property["enum"]
+                    .as_array()
+                    .is_some_and(|values| !values.contains(value))
+            {
+                return Err(ProviderError::Refused);
+            }
+        }
+    }
+    Ok(())
+}
 
 fn assistant_tool_message(text: &str, calls: &[(String, String, serde_json::Value)]) -> Message {
     let mut content = Vec::new();
@@ -878,13 +1007,18 @@ pub(crate) fn bound_reply(reply: &AssistantReply) -> AssistantReply {
 
 fn persist_output(
     state: &AppState,
+    conversation: Option<ConversationId>,
     job: &Job,
     reply: &AssistantReply,
     checkpoint: bool,
 ) -> Result<(), crate::conversations::ConversationError> {
-    let snapshot = job.snapshot();
-    let crate::sessions::JobOwner::Conversation(conversation) = snapshot.owner;
-    if reply.is_empty() || state.conversations.get(&conversation).is_none() {
+    let Some(conversation) = conversation else {
+        return Ok(());
+    };
+    if job.snapshot().owner != crate::sessions::JobOwner::Conversation(conversation)
+        || reply.is_empty()
+        || state.conversations.get(&conversation).is_none()
+    {
         return Ok(());
     }
     if checkpoint {

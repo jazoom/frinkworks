@@ -4,7 +4,7 @@
   {% endif %}<strong
     >{% if message.user %}You{% else %}Power Plant{% endif %}</strong
   >
-  {% if message.status != "" && message.error == "" %}
+  {% if message.status != "" && (message.error == "" || message.status != "Failed") %}
     <span class="inline-flex items-center gap-1.5 text-xs" role="status">
       {% if message.streaming %}
         <span

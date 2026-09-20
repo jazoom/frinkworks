@@ -289,6 +289,34 @@ pub(crate) struct ToolProgress {
     pub(crate) text: String,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum CompletionReason {
+    Stop,
+    ToolCalls,
+    Length,
+    Refusal,
+    Unknown,
+}
+
+impl CompletionReason {
+    pub(crate) fn allows_tool_dispatch(self) -> bool {
+        matches!(self, Self::ToolCalls)
+    }
+
+    pub(crate) fn incomplete(self) -> bool {
+        matches!(self, Self::Length | Self::Refusal | Self::Unknown)
+    }
+
+    pub(crate) fn status_label(self) -> Option<&'static str> {
+        match self {
+            Self::Length | Self::Unknown => Some("Incomplete response"),
+            Self::Refusal => Some("Response refused"),
+            Self::Stop | Self::ToolCalls => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct AssistantReply {
     pub(crate) text: String,
@@ -300,6 +328,7 @@ pub(crate) struct AssistantReply {
     pub(crate) continuation: Vec<crate::conversations::ContinuationMetadata>,
     /// Transient live output for an active command. It is not durable history.
     pub(crate) progress: Vec<ToolProgress>,
+    pub(crate) completion: Option<CompletionReason>,
 }
 
 impl AssistantReply {
@@ -488,6 +517,7 @@ pub(crate) enum ProviderError {
     },
     EmptyReply,
     ReplyTooLong,
+    Incomplete,
     Detail(String),
 }
 
@@ -516,6 +546,7 @@ impl ProviderError {
             Self::ReplyTooLong => {
                 "Power Plant truncated the model reply because it was too long. Try again."
             }
+            Self::Incomplete => "The model response was incomplete. No tool ran.",
             Self::Detail(text) => text,
         }
     }
@@ -532,6 +563,7 @@ impl ProviderError {
             | Self::Unreachable
             | Self::EmptyReply
             | Self::ReplyTooLong
+            | Self::Incomplete
             | Self::Detail(_) => hypergraft::PatchStatus::UnprocessableEntity,
         }
     }
@@ -640,6 +672,9 @@ pub(crate) enum ModelEvent {
     },
     Usage {
         input_tokens: u64,
+    },
+    Complete {
+        reason: CompletionReason,
     },
 }
 

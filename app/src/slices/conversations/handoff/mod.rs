@@ -13,6 +13,7 @@ use hypergraft::{GraftRequest, PageGraft, PatchGraft, PatchStatus};
 use crate::{
     conversations::{ConversationRecord, MAXIMUM_MESSAGE_BYTES},
     error::{AppError, AppResult},
+    execution::StreamRedactor,
     providers::{ChatTurn, ModelEvent, ProviderConnection},
     responses,
     sessions::RequiredSession,
@@ -342,6 +343,11 @@ async fn request_prompt(
         return Err("The redacted conversation exceeds the handoff context limit.");
     }
     let turns = [ChatTurn::user(context)];
+    let secret = match connection.auth {
+        crate::providers::AuthMethod::ApiKey => Some(connection.api_key.expose()),
+        crate::providers::AuthMethod::Plan => None,
+    };
+    let mut redactor = StreamRedactor::new(secret);
     let mut stream = state
         .chat
         .stream_turn(connection, &turns, &[], &[], INSTRUCTIONS)
@@ -354,6 +360,7 @@ async fn request_prompt(
         events += 1;
         match event.map_err(|_| "The handoff response stopped before completion.")? {
             ModelEvent::Text(text) => {
+                let text = redactor.push(&text);
                 bytes = bytes.saturating_add(text.len());
                 if prompt.len().saturating_add(text.len()) > MAXIMUM_MESSAGE_BYTES {
                     return Err(
@@ -365,6 +372,11 @@ async fn request_prompt(
             ModelEvent::Thinking(text) => bytes = bytes.saturating_add(text.len()),
             ModelEvent::Continuation(_) => {}
             ModelEvent::Usage { .. } => {}
+            ModelEvent::Complete { reason } => {
+                if reason.incomplete() {
+                    return Err("The handoff response was incomplete. Try again.");
+                }
+            }
             ModelEvent::ToolCall { .. } => {
                 return Err("The model requested a tool during handoff. No tool ran. Try again.");
             }
@@ -373,6 +385,7 @@ async fn request_prompt(
             return Err("The handoff response exceeds the response limit. Try again.");
         }
     }
+    prompt.push_str(&redactor.finish());
     let prompt = redact(state, &prompt);
     crate::conversations::normalise_message(&prompt)
         .map_err(|_| "The model returned an empty or invalid handoff prompt. Try again.")

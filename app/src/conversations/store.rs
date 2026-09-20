@@ -348,6 +348,8 @@ struct MessageFile {
     error: Option<String>,
     #[serde(deserialize_with = "crate::storage::required_option")]
     request: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    completion: Option<crate::providers::CompletionReason>,
 }
 
 impl ConversationStore {
@@ -813,6 +815,7 @@ impl ConversationStore {
                 status: MessageStatus::Complete,
                 error: None,
                 request: None,
+                completion: None,
             });
             current.messages.push(ConversationMessage {
                 id: assistant_id,
@@ -823,6 +826,7 @@ impl ConversationStore {
                 status: MessageStatus::Pending,
                 error: None,
                 request: Some(request),
+                completion: None,
             });
             current.active_job = Some(request);
             Ok(())
@@ -872,6 +876,7 @@ impl ConversationStore {
             message.text = reply.text;
             message.activity = reply.activity;
             message.continuation = reply.continuation;
+            message.completion = reply.completion;
         }
         super::history::validate_exchange(&updated.messages)
             .map_err(|_| ConversationError::Message)?;
@@ -940,6 +945,7 @@ impl ConversationStore {
             message.continuation = reply.continuation;
             message.status = status;
             message.error = error;
+            message.completion = reply.completion;
             current.active_job = None;
             Ok(())
         })
@@ -1511,6 +1517,7 @@ fn message_from_file(file: MessageFile) -> Result<ConversationMessage, Conversat
         || matches!(file.role, MessageRole::User) != request.is_none()
         || (file.role == MessageRole::User
             && (file.status != MessageStatus::Complete
+                || file.completion.is_some()
                 || normalise_message(&file.text).as_ref() != Ok(&file.text)))
     {
         return Err(ConversationError::Corrupt);
@@ -1524,6 +1531,7 @@ fn message_from_file(file: MessageFile) -> Result<ConversationMessage, Conversat
         status: file.status,
         error: file.error,
         request,
+        completion: file.completion,
     })
 }
 
@@ -1688,6 +1696,7 @@ fn record_to_file(record: &ConversationRecord) -> ConversationFile {
                 status: message.status,
                 error: message.error.clone(),
                 request: message.request.map(|request| request.as_hex()),
+                completion: message.completion,
             })
             .collect(),
         active_job: record.active_job.map(|request| request.as_hex()),

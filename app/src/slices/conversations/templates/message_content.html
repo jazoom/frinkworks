@@ -113,6 +113,8 @@
           </div>
         {% endfor %}
       </section>
+    {% else if block.kind == "incomplete" %}
+      <p class="text-quiet text-sm" role="status">Incomplete response</p>
     {% else %}
       <div class="text-quiet flex flex-wrap items-center gap-2 text-sm">
         {% if block.active %}

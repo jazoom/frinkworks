@@ -649,10 +649,16 @@ async fn network_tool_reply_uses_private_workspace_without_catalogue_identity() 
                 name: "run".to_owned(),
                 arguments: serde_json::json!({"command": "wget -qO- https://example.com"}),
             }),
+            Ok(ModelEvent::Complete {
+                reason: crate::providers::CompletionReason::ToolCalls,
+            }),
         ],
         vec![
             Ok(ModelEvent::Thinking(String::new())),
             Ok(ModelEvent::Text("The network check completed.".to_owned())),
+            Ok(ModelEvent::Complete {
+                reason: crate::providers::CompletionReason::Stop,
+            }),
         ],
     ]);
     state.chat = std::sync::Arc::new(crate::providers::ChatBackend::Scripted(backend));

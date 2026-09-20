@@ -4,7 +4,7 @@ use futures_util::StreamExt;
 use rig_core::{
     client::CompletionClient,
     completion::{
-        AssistantContent, CompletionError, CompletionModel, Message, ToolDefinition,
+        AssistantContent, CompletionError, CompletionModel, FinishReason, Message, ToolDefinition,
         message::ReasoningContent,
     },
     providers::{chatgpt, deepseek, openai, openrouter, xai},
@@ -12,8 +12,8 @@ use rig_core::{
 };
 
 use super::{
-    AuthMethod, ChatTurn, DEEPSEEK_BASE_URL, ModelEvent, ModelStream, OPENROUTER_BASE_URL,
-    ProviderConnection, ProviderError, ProviderKind, Role, SYNTHETIC_BASE_URL,
+    AuthMethod, ChatTurn, CompletionReason, DEEPSEEK_BASE_URL, ModelEvent, ModelStream,
+    OPENROUTER_BASE_URL, ProviderConnection, ProviderError, ProviderKind, Role, SYNTHETIC_BASE_URL,
     classify_failure_status_for, classify_verify_status, with_json_detail, with_provider_detail,
     xai_plan,
 };
@@ -453,19 +453,32 @@ where
                     events
                 }
                 Ok(StreamedAssistantContent::Final(final_response)) => {
+                    let mut events = Vec::new();
                     if final_response.usage.input_tokens > 0 {
-                        vec![Ok(ModelEvent::Usage {
+                        events.push(Ok(ModelEvent::Usage {
                             input_tokens: final_response.usage.input_tokens,
-                        })]
-                    } else {
-                        Vec::new()
+                        }));
                     }
+                    events.push(Ok(ModelEvent::Complete {
+                        reason: map_finish_reason(final_response.finish_reason.as_ref()),
+                    }));
+                    events
                 }
                 Ok(_) => Vec::new(),
                 Err(error) => vec![Err(classify_completion_for(error, auth))],
             };
         futures_util::stream::iter(events)
     })))
+}
+
+pub(super) fn map_finish_reason(reason: Option<&FinishReason>) -> CompletionReason {
+    match reason {
+        Some(FinishReason::Stop) => CompletionReason::Stop,
+        Some(FinishReason::ToolCalls) => CompletionReason::ToolCalls,
+        Some(FinishReason::Length) => CompletionReason::Length,
+        Some(FinishReason::ContentFilter) => CompletionReason::Refusal,
+        Some(FinishReason::Other(_)) | None => CompletionReason::Unknown,
+    }
 }
 
 fn continuation_block(block: &crate::conversations::ContinuationBlock) -> ReasoningContent {

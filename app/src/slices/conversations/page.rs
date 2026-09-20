@@ -1760,13 +1760,19 @@ pub(super) fn message_view(
                 &message.activity,
                 &[],
                 streaming,
+                message
+                    .completion
+                    .is_some_and(crate::providers::CompletionReason::incomplete),
             )
         },
         status: match message.status {
             MessageStatus::Complete => "",
             MessageStatus::Pending => reply_status(&message.activity),
             MessageStatus::Interrupted => "Interrupted",
-            MessageStatus::Failed => "Failed",
+            MessageStatus::Failed => message
+                .completion
+                .and_then(crate::providers::CompletionReason::status_label)
+                .unwrap_or("Failed"),
         },
         error: message_error(message),
         streaming: message.status == MessageStatus::Pending,
@@ -1788,13 +1794,19 @@ pub(super) fn reply_view(
             &reply.activity,
             &reply.progress,
             streaming,
+            reply
+                .completion
+                .is_some_and(crate::providers::CompletionReason::incomplete),
         ),
         id,
         user: false,
         status: if streaming {
             reply_status(&reply.activity)
         } else {
-            ""
+            reply
+                .completion
+                .and_then(crate::providers::CompletionReason::status_label)
+                .unwrap_or("")
         },
         error: String::new(),
         streaming,
@@ -1872,6 +1884,7 @@ fn activity_html(
     activity: &[crate::providers::AssistantActivity],
     progress: &[crate::providers::ToolProgress],
     streaming: bool,
+    incomplete: bool,
 ) -> String {
     use crate::providers::AssistantActivity;
     let output_base = format!("/conversations/{}/output/", conversation.as_hex());
@@ -1949,6 +1962,17 @@ fn activity_html(
     };
     let mut blocks = blocks;
     blocks.extend(progress_blocks);
+    if incomplete && !streaming {
+        blocks.push(MessageBlock {
+            kind: "incomplete",
+            html: String::new(),
+            label: String::new(),
+            output: String::new(),
+            active: false,
+            command: None,
+            progress: Vec::new(),
+        });
+    }
     MessageContent {
         id,
         output_base: &output_base,

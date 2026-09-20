@@ -1,3 +1,4 @@
+pub(crate) mod agent;
 mod approval;
 pub(crate) mod authority;
 pub(crate) mod command;
@@ -9,6 +10,7 @@ mod overrides;
 mod settings;
 pub(crate) use overrides::{SettingsOverrides, SettingsOverridesFile};
 
+pub(crate) use agent::{AgentOutcome, AgentRunSpec, StreamRedactor, bound_reply, run_agent_action};
 pub(crate) use approval::{
     ApprovalError, HostApprovalStore, HostCommandDecision, HostCommandRequest, command_token,
 };

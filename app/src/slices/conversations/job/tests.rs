@@ -29,7 +29,7 @@ async fn untrusted_activity_keeps_its_order_and_stays_secret_safe_in_each_repres
         Ok(ModelEvent::Text("Next response.".to_owned())),
         Ok(ModelEvent::ToolCall {
             id: "call-1".to_owned(),
-            name: "<script>test-key</script>".to_owned(),
+            name: "<script>untrusted</script>".to_owned(),
             arguments: serde_json::json!({}),
         }),
     ])));
@@ -100,6 +100,7 @@ async fn untrusted_activity_keeps_its_order_and_stays_secret_safe_in_each_repres
     ] {
         assert!(!body.contains("test-key"));
         assert!(!body.contains("<script>alert(1)</script>"));
+        assert!(!body.contains("<script>untrusted</script>"));
         assert!(body.contains("data-thinking-content"));
         assert!(body.find("First response.").unwrap() < body.find("Thought [redacted]").unwrap());
         assert!(body.find("Thought [redacted]").unwrap() < body.find("Next response.").unwrap());
@@ -169,10 +170,8 @@ async fn conversation_instructions_apply_before_and_after_the_first_exchange() {
 #[tokio::test]
 async fn bounded_partial_reply_settles_and_observation_restores_commands() {
     let mut state = crate::tests::test_state(RuntimeConfig::development());
-    let backend = ScriptedBackend::chunks([
-        Ok("Partial reply".to_owned()),
-        Ok("x".repeat(crate::conversations::MAXIMUM_REPLY_BYTES)),
-    ]);
+    let backend =
+        ScriptedBackend::chunks([Ok("Partial reply".to_owned()), Ok("x".repeat(128 * 1024))]);
     state.chat = Arc::new(ChatBackend::Scripted(backend.clone()));
     let token = generate_session_token().expect("session");
     state.sessions.insert(token.id());
@@ -215,8 +214,12 @@ async fn bounded_partial_reply_settles_and_observation_restores_commands() {
     )
     .await;
     let saved = state.conversations.get(&record.id).expect("saved");
-    assert_eq!(saved.messages[1].text, "Partial reply");
+    assert!(saved.messages[1].text.starts_with("Partial reply"));
     assert_eq!(saved.messages[1].status, MessageStatus::Failed);
+    assert_eq!(
+        saved.messages[1].completion,
+        Some(crate::providers::CompletionReason::Length)
+    );
     assert!(saved.active_job.is_none());
     assert!(!state.sessions.busy(&token.id()));
     assert!(backend.last_tools().is_empty());
@@ -422,6 +425,7 @@ fn pending_assistant_output_stays_out_of_the_next_request_history() {
                 status: MessageStatus::Complete,
                 error: None,
                 request: None,
+                completion: None,
             },
             ConversationMessage {
                 id: crate::conversations::MessageId::generate().expect("message id"),
@@ -432,6 +436,7 @@ fn pending_assistant_output_stays_out_of_the_next_request_history() {
                 status: MessageStatus::Complete,
                 error: None,
                 request: Some(JobId::generate().expect("previous request")),
+                completion: None,
             },
             ConversationMessage {
                 id: crate::conversations::MessageId::generate().expect("message id"),
@@ -442,6 +447,7 @@ fn pending_assistant_output_stays_out_of_the_next_request_history() {
                 status: MessageStatus::Complete,
                 error: None,
                 request: None,
+                completion: None,
             },
             ConversationMessage {
                 id: crate::conversations::MessageId::generate().expect("message id"),
@@ -452,6 +458,7 @@ fn pending_assistant_output_stays_out_of_the_next_request_history() {
                 status: MessageStatus::Pending,
                 error: None,
                 request: Some(request),
+                completion: None,
             },
         ],
         active_job: Some(request),

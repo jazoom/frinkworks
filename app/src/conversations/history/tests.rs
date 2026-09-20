@@ -37,6 +37,7 @@ fn assistant(activity: Vec<AssistantActivity>) -> ConversationMessage {
         status: MessageStatus::Complete,
         error: None,
         request: None,
+        completion: None,
     }
 }
 
@@ -52,6 +53,7 @@ fn projection_keeps_tool_exchanges_and_matches_results() {
             status: MessageStatus::Complete,
             error: None,
             request: None,
+            completion: None,
         },
         assistant(vec![tool_call("call-1", Some(output()))]),
     ];

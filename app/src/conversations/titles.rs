@@ -4,6 +4,7 @@ use futures_util::StreamExt;
 
 use super::{ConversationId, ConversationRecord, MAXIMUM_TITLE_BYTES, MessageRole, MessageStatus};
 use crate::{
+    execution::StreamRedactor,
     providers::{AuthMethod, ModelEvent, ProviderConnection},
     sessions::BrowserLanguage,
     state::AppState,
@@ -70,6 +71,8 @@ async fn request_title(
     if prompt.len() + instructions.len() > crate::models::models_dev::TITLE_INPUT_TOKENS as usize {
         return None;
     }
+    let secret = (connection.auth == AuthMethod::ApiKey).then(|| connection.api_key.expose());
+    let mut redactor = StreamRedactor::new(secret);
     let mut stream = state
         .chat
         .stream_title(connection, prompt, &instructions)
@@ -82,6 +85,7 @@ async fn request_title(
         events += 1;
         match event.ok()? {
             ModelEvent::Text(text) => {
+                let text = redactor.push(&text);
                 if title.len().saturating_add(text.len()) > MAXIMUM_TITLE_BYTES + 16 {
                     return None;
                 }
@@ -91,13 +95,18 @@ async fn request_title(
             ModelEvent::Thinking(text) => bytes = bytes.saturating_add(text.len()),
             ModelEvent::Continuation(_) => {}
             ModelEvent::Usage { .. } => {}
+            ModelEvent::Complete { reason } => {
+                if reason.incomplete() {
+                    return None;
+                }
+            }
             ModelEvent::ToolCall { .. } => return None,
         }
         if bytes > 4096 || events > 256 {
             return None;
         }
     }
-    let secret = (connection.auth == AuthMethod::ApiKey).then(|| connection.api_key.expose());
+    title.push_str(&redactor.finish());
     valid_title(&title, secret)
 }
 

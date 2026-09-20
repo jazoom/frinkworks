@@ -50,6 +50,7 @@ async fn title_request_excludes_tools_presets_and_later_history() {
         status: super::super::MessageStatus::Complete,
         error: None,
         request: None,
+        completion: None,
     });
     let mut headers = axum::http::HeaderMap::new();
     headers.insert(

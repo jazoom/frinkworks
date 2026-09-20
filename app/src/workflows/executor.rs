@@ -4,10 +4,10 @@ use std::time::{Duration, Instant};
 use crate::agents::{AccessMode, DirectoryPolicy, EffectiveAuthority, LeaseGuard, PolicyGrant};
 use crate::conversations::ConversationId;
 
+use crate::execution::{AgentOutcome, AgentRunSpec};
 use crate::providers::{ChatTurn, ProviderConnection};
 use crate::sandbox::{CommandEvent, GUEST_PROJECT, GuestExec, GuestSandbox};
 use crate::sessions::{Job, JobStatus, SessionId};
-use crate::slices::{AgentOutcome, AgentRunSpec};
 use crate::state::AppState;
 
 use super::definition::{
@@ -2535,13 +2535,14 @@ async fn run_agent_step(
                 attempt: Some(attempt_id),
             },
         }),
+        conversation: job.conversation_id,
     };
     // Conversation workflow output belongs to attempt evidence, not the conversation reply.
     if job.conversation_id.is_some() && run.kind == super::run::RunKind::Configured {
         job.job.set_output_visible(false);
     }
     let turns = packet.request_messages();
-    let ended = crate::slices::run_agent_action(state, spec, turns, job.job.clone()).await;
+    let ended = crate::execution::run_agent_action(state, spec, turns, job.job.clone()).await;
     let terminal_state = match ended.outcome {
         AgentOutcome::Completed => crate::workflows::evidence::TerminalState::Completed,
         AgentOutcome::ProviderFailure | AgentOutcome::ToolFailure => {
@@ -3910,7 +3911,7 @@ fn settle_with_reply(
     };
     let error = error
         .and_then(|text| crate::providers::sanitise_detail(&crate::tools::redact(text, secret)));
-    let reply = crate::slices::bound_reply(reply);
+    let reply = crate::execution::bound_reply(reply);
     let conversation_reply = {
         state
             .workflow_runs

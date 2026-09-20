@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use super::{
     MAXIMUM_PROVIDER_DETAIL_BYTES, ProviderConnection, ProviderError, ProviderKind, SecretString,
     ThinkingEffort, classify_failure_status, classify_verify_status, provider_detail,
-    rig::{VERIFY_TIMEOUT, thinking_parameters, verify_at},
+    rig::{VERIFY_TIMEOUT, map_finish_reason, thinking_parameters, verify_at},
     with_json_detail, with_provider_detail,
 };
 
@@ -43,6 +43,33 @@ fn thinking_levels_map_to_each_provider_request_shape() {
         thinking_parameters(&connection),
         Some(serde_json::json!({"thinking": {"type": "enabled"}, "reasoning_effort": "high"}))
     );
+}
+
+#[test]
+fn finish_reasons_map_from_provider_data_not_output_text() {
+    use super::CompletionReason;
+    use rig_core::completion::FinishReason;
+    assert_eq!(
+        map_finish_reason(Some(&FinishReason::Stop)),
+        CompletionReason::Stop
+    );
+    assert_eq!(
+        map_finish_reason(Some(&FinishReason::ToolCalls)),
+        CompletionReason::ToolCalls
+    );
+    assert_eq!(
+        map_finish_reason(Some(&FinishReason::Length)),
+        CompletionReason::Length
+    );
+    assert_eq!(
+        map_finish_reason(Some(&FinishReason::ContentFilter)),
+        CompletionReason::Refusal
+    );
+    assert_eq!(
+        map_finish_reason(Some(&FinishReason::Other("max_tokens".to_owned()))),
+        CompletionReason::Unknown
+    );
+    assert_eq!(map_finish_reason(None), CompletionReason::Unknown);
 }
 
 #[test]
@@ -406,8 +433,8 @@ mod scripted_fixture {
     use rig_core::completion::{Message, ToolDefinition};
 
     use super::super::{
-        ChatTurn, ModelEvent, ModelStream, ProviderConnection, ProviderError, ProviderKind,
-        ThinkingEffort,
+        ChatTurn, CompletionReason, ModelEvent, ModelStream, ProviderConnection, ProviderError,
+        ProviderKind, ThinkingEffort,
     };
 
     #[derive(Clone)]
@@ -480,15 +507,26 @@ mod scripted_fixture {
             Self {
                 verify_result: Ok(()),
                 script: Ok(Script::Rounds(vec![
-                    vec![Ok(ModelEvent::ToolCall {
-                        id: "call-1".to_owned(),
-                        name: name.to_owned(),
-                        arguments,
-                    })],
-                    chunk_reply(reply)
-                        .into_iter()
-                        .map(|text| Ok(ModelEvent::Text(text)))
-                        .collect(),
+                    vec![
+                        Ok(ModelEvent::ToolCall {
+                            id: "call-1".to_owned(),
+                            name: name.to_owned(),
+                            arguments,
+                        }),
+                        Ok(ModelEvent::Complete {
+                            reason: CompletionReason::ToolCalls,
+                        }),
+                    ],
+                    {
+                        let mut items: Vec<_> = chunk_reply(reply)
+                            .into_iter()
+                            .map(|text| Ok(ModelEvent::Text(text)))
+                            .collect();
+                        items.push(Ok(ModelEvent::Complete {
+                            reason: CompletionReason::Stop,
+                        }));
+                        items
+                    },
                 ])),
                 round: Arc::new(AtomicUsize::new(0)),
                 last_preamble: Arc::new(Mutex::new(None)),
@@ -577,9 +615,19 @@ mod scripted_fixture {
                 .unwrap_or_else(|poisoned| poisoned.into_inner()) =
                 tools.iter().map(|tool| tool.name.clone()).collect();
             match self.script.clone() {
-                Ok(Script::Chunks(items)) => Ok(Box::pin(futures_util::stream::iter(
-                    items.into_iter().map(|item| item.map(ModelEvent::Text)),
-                ))),
+                Ok(Script::Chunks(items)) => {
+                    let failed = items.iter().any(Result::is_err);
+                    let mut events: Vec<_> = items
+                        .into_iter()
+                        .map(|item| item.map(ModelEvent::Text))
+                        .collect();
+                    if !failed {
+                        events.push(Ok(ModelEvent::Complete {
+                            reason: CompletionReason::Stop,
+                        }));
+                    }
+                    Ok(Box::pin(futures_util::stream::iter(events)))
+                }
                 Ok(Script::Rounds(rounds)) => {
                     let index = self.round.fetch_add(1, Ordering::SeqCst);
                     let items = rounds.into_iter().nth(index).unwrap_or_default();

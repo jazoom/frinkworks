@@ -210,6 +210,7 @@ fn apply_handoff(
             status: MessageStatus::Complete,
             error: None,
             request: None,
+            completion: None,
         });
         record.messages.push(ConversationMessage {
             id: MessageId::generate().map_err(|_| ConversationError::Random)?,
@@ -220,6 +221,7 @@ fn apply_handoff(
             status: MessageStatus::Pending,
             error: None,
             request: Some(job),
+            completion: None,
         });
         record.active_job = Some(job);
         record.revision = record

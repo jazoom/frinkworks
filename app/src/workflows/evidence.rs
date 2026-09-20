@@ -230,6 +230,8 @@ pub(crate) struct TerminalResponse {
     pub(crate) tools: Vec<EvidenceTool>,
     pub(crate) error: Option<String>,
     pub(crate) truncated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) completion: Option<crate::providers::CompletionReason>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -517,6 +519,7 @@ impl WorkflowEvidenceStore {
             tools,
             error,
             truncated: text_truncated || thinking_truncated || tools_truncated || error_truncated,
+            completion: reply.completion,
         };
         if next
             .terminal

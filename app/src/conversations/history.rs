@@ -6,7 +6,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::providers::{AssistantActivity, ChatToolCall, ChatTurn, ModelSelection, ToolOutput};
+use crate::providers::{
+    AssistantActivity, ChatToolCall, ChatTurn, CompletionReason, ModelSelection, ToolOutput,
+};
 use crate::sessions::JobId;
 
 use super::id::MessageId;
@@ -44,6 +46,7 @@ pub(crate) struct ConversationMessage {
     pub(crate) status: MessageStatus,
     pub(crate) error: Option<String>,
     pub(crate) request: Option<JobId>,
+    pub(crate) completion: Option<CompletionReason>,
 }
 
 /// Opaque blocks require the original provider and model. A provider change

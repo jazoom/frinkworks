@@ -1,13 +1,14 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures_util::StreamExt;
 use hypergraft::{PatchSet, PatchStatus};
 use tokio::sync::mpsc;
 
 use crate::{
-    conversations::{ConversationId, ConversationRecord, MAXIMUM_REPLY_BYTES, MessageStatus},
-    providers::{AssistantReply, ChatTurn, ModelEvent, ProviderConnection, ProviderError},
+    agents::DirectoryPolicy,
+    conversations::{ConversationId, ConversationRecord, MessageStatus},
+    execution::{AgentOutcome, AgentRunSpec, ToolLocation},
+    providers::{AssistantReply, ChatTurn, ProviderConnection},
     sessions::{Job, JobStatus, SessionId},
     state::AppState,
 };
@@ -31,113 +32,45 @@ pub(super) async fn run(
         language.append_instructions(&mut instructions);
     }
     let secret = match connection.auth {
-        crate::providers::AuthMethod::ApiKey => Some(connection.api_key.expose()),
+        crate::providers::AuthMethod::ApiKey => Some(connection.api_key.expose().to_owned()),
         crate::providers::AuthMethod::Plan => None,
     };
-    let mut reply = AssistantReply::default();
-    let mut redactor = crate::slices::chat::StreamRedactor::new(secret);
-    let mut thinking = false;
-    let mut event_count = 0usize;
-    let result = tokio::select! {
-        biased;
-        _ = job.cancelled() => Err(Failure::Cancelled),
-        _ = tokio::time::sleep(Duration::from_secs(600)) => Err(Failure::Provider(ProviderError::Unreachable)),
-        result = async {
-            let history = history_with_review(&state, &record, secret).map_err(Failure::Context)?;
-            let mut stream = state.chat.stream_turn(&connection, &history, &[], &[], &instructions).await.map_err(Failure::Provider)?;
-            while let Some(event) = tokio::select! {
-                biased;
-                _ = job.cancelled() => return Err(Failure::Cancelled),
-                event = stream.next() => event,
-            } {
-                event_count += 1;
-                if event_count > 4096 || reply.activity.len() >= 256 {
-                    return Err(Failure::Provider(ProviderError::ReplyTooLong));
-                }
-                match event.map_err(Failure::Provider)? {
-                    ModelEvent::Text(text) => {
-                        if thinking {
-                            append_piece(&mut reply, &job, redactor.finish_boundary(), thinking)?;
-                        }
-                        thinking = false;
-                        validate_piece(&reply, &text)?;
-                        append_piece(&mut reply, &job, redactor.push(&text), thinking)?;
-                        state.conversations.append_output(&conversation, job.id(), reply.clone()).map_err(Failure::Store)?;
-                    }
-                    ModelEvent::Thinking(text) => {
-                        if !thinking {
-                            append_piece(&mut reply, &job, redactor.finish_boundary(), thinking)?;
-                        }
-                        thinking = true;
-                        validate_piece(&reply, &text)?;
-                        append_piece(&mut reply, &job, redactor.push(&text), thinking)?;
-                        state.conversations.append_output(&conversation, job.id(), reply.clone()).map_err(Failure::Store)?;
-                    }
-                    ModelEvent::Usage { input_tokens } => {
-                        job.push_usage(crate::providers::ModelUsage {
-                            provider: connection.kind,
-                            model: connection.model.clone(),
-                            input_tokens,
-                        });
-                    }
-                    ModelEvent::Continuation(metadata) => {
-                        reply.continuation.push(metadata);
-                        if !crate::conversations::history::valid_continuation(&reply.continuation)
-                            || crate::conversations::history::contains_credential(&reply.continuation, secret)
-                        {
-                            reply.continuation.pop();
-                            return Err(Failure::Provider(ProviderError::Detail(
-                                crate::conversations::history::HistoryError::Continuation.message().to_owned(),
-                            )));
-                        }
-                    }
-                    ModelEvent::ToolCall { id, name, .. } => {
-                        append_piece(&mut reply, &job, redactor.finish_boundary(), thinking)?;
-                        if id.len() <= 512 && name.len() <= 512 && !id.contains('\0') && !name.contains('\0') {
-                            let id = crate::tools::redact(&id, secret);
-                            let name = crate::tools::redact(&name, secret);
-                            if id.len() > 512 || name.len() > 512 {
-                                return Err(Failure::Provider(ProviderError::ReplyTooLong));
-                            }
-                            reply.start_tool(id.clone(), name.clone(), serde_json::json!({}));
-                            job.start_tool(id, name, serde_json::json!({}));
-                        }
-                        return Err(Failure::Provider(ProviderError::Refused));
-                    }
-                }
-            }
-            append_piece(&mut reply, &job, redactor.finish(), thinking)?;
-            if reply.text.trim().is_empty() {
-                return Err(Failure::Provider(ProviderError::EmptyReply));
-            }
-            Ok(())
-        } => result,
-    };
-    let tail = redactor.finish_boundary();
-    if !tail.is_empty() {
-        let _ = append_piece(&mut reply, &job, tail, thinking);
-    }
-    let (status, message_status, error) = match result {
-        Ok(()) => (JobStatus::Completed, MessageStatus::Complete, None),
-        Err(Failure::Cancelled)
-        | Err(Failure::Store(crate::conversations::ConversationError::Conflict)) => {
-            (JobStatus::Cancelled, MessageStatus::Interrupted, None)
+    let secret = secret.as_deref();
+    let (reply, outcome, error) = match history_with_review(&state, &record, secret) {
+        Ok(history) => {
+            let spec = AgentRunSpec {
+                agent_id: None,
+                revision: record.revision,
+                preamble: instructions,
+                tools: Vec::new(),
+                tool_ids: Vec::new(),
+                policy: DirectoryPolicy::from_grants(Vec::new(), String::new()),
+                connection,
+                location: ToolLocation::Sandbox,
+                sandbox: None,
+                host: None,
+                output_drafts: None,
+                required_outputs: Vec::new(),
+                evidence: None,
+                output_scope: None,
+                conversation: Some(conversation),
+            };
+            let ended =
+                crate::execution::run_agent_action(&state, spec, history, job.clone()).await;
+            (ended.reply, ended.outcome, ended.error)
         }
-        Err(Failure::Provider(error)) => (
-            JobStatus::Failed,
-            MessageStatus::Failed,
-            Some(error.message().to_owned()),
-        ),
-        Err(Failure::Context(error)) => (
-            JobStatus::Failed,
-            MessageStatus::Failed,
+        Err(error) => (
+            AssistantReply::default(),
+            AgentOutcome::ProviderFailure,
             Some(error.to_owned()),
         ),
-        Err(Failure::Store(error)) => (
-            JobStatus::Failed,
-            MessageStatus::Failed,
-            Some(error.message().to_owned()),
-        ),
+    };
+    let (status, message_status) = match outcome {
+        AgentOutcome::Completed => (JobStatus::Completed, MessageStatus::Complete),
+        AgentOutcome::Cancelled => (JobStatus::Cancelled, MessageStatus::Interrupted),
+        AgentOutcome::ProviderFailure | AgentOutcome::ToolFailure => {
+            (JobStatus::Failed, MessageStatus::Failed)
+        }
     };
     let error = error
         .and_then(|text| crate::providers::sanitise_detail(&crate::tools::redact(&text, secret)));
@@ -162,44 +95,6 @@ pub(super) async fn run(
             Some("Power Plant could not store the reply. Try again."),
         );
     }
-}
-
-enum Failure {
-    Context(&'static str),
-    Provider(ProviderError),
-    Store(crate::conversations::ConversationError),
-    Cancelled,
-}
-
-fn append_piece(
-    reply: &mut AssistantReply,
-    job: &Job,
-    text: String,
-    thinking: bool,
-) -> Result<(), Failure> {
-    validate_piece(reply, &text)?;
-    if thinking {
-        reply.push_thinking(&text);
-        job.push_thinking(text);
-    } else {
-        reply.push_response(&text);
-        job.push_response(text);
-    }
-    Ok(())
-}
-
-fn validate_piece(reply: &AssistantReply, text: &str) -> Result<(), Failure> {
-    if text.contains('\0')
-        || reply
-            .text
-            .len()
-            .saturating_add(reply.thinking.len())
-            .saturating_add(text.len())
-            > MAXIMUM_REPLY_BYTES
-    {
-        return Err(Failure::Provider(ProviderError::ReplyTooLong));
-    }
-    Ok(())
 }
 
 fn instructions(_state: &AppState, record: &ConversationRecord) -> String {

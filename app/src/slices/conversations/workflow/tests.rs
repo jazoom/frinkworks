@@ -755,6 +755,7 @@ async fn brief_defaults_to_the_conversation_request_not_sample_text() {
         status: crate::conversations::MessageStatus::Complete,
         error: None,
         request: None,
+        completion: None,
     }];
     let brief = async |brief: &str, record: &ConversationRecord| {
         launch_view(&state, record, None, brief, "", &[], "")
