@@ -254,6 +254,9 @@ pub(crate) enum Role {
 pub(crate) struct ToolOutput {
     pub(crate) label: String,
     pub(crate) output: String,
+    /// Structured host-command outcome for command tools. Plain tools leave it unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) command: Option<crate::execution::CommandResult>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]

@@ -11,6 +11,10 @@ use tokio::{
 
 use crate::sessions::Job;
 
+use super::command::{
+    CommandCapture, CommandFailure, CommandResult, CommandStream, CommandTermination,
+};
+
 pub(crate) const COMMAND_TIMEOUT: Duration = if cfg!(test) {
     Duration::from_millis(200)
 } else {
@@ -61,7 +65,7 @@ pub(crate) async fn run_shell(
     directory: &Path,
     job: &Job,
     timeout: Duration,
-) -> Result<String, &'static str> {
+) -> Result<CommandResult, CommandFailure> {
     run_shell_inner(command, directory, job, timeout, false).await
 }
 
@@ -70,7 +74,7 @@ pub(crate) async fn run_workflow_shell(
     directory: &Path,
     job: &Job,
     timeout: Duration,
-) -> Result<String, &'static str> {
+) -> Result<CommandResult, CommandFailure> {
     run_shell_inner(command, directory, job, timeout, true).await
 }
 
@@ -80,20 +84,22 @@ async fn run_shell_inner(
     job: &Job,
     timeout: Duration,
     require_success: bool,
-) -> Result<String, &'static str> {
+) -> Result<CommandResult, CommandFailure> {
     if job.cancel_requested() {
-        return Err("Stopped.");
+        return Err(not_dispatched("Stopped."));
     }
     if command.is_empty() || command.contains('\0') {
-        return Err("Enter a command.");
+        return Err(not_dispatched("Enter a command."));
     }
     if !directory.is_absolute() {
-        return Err("The command directory is not valid.");
+        return Err(not_dispatched("The command directory is not valid."));
     }
-    let metadata =
-        std::fs::metadata(directory).map_err(|_| "The command directory is not available.")?;
+    let metadata = match std::fs::metadata(directory) {
+        Ok(metadata) => metadata,
+        Err(_) => return Err(not_dispatched("The command directory is not available.")),
+    };
     if !metadata.is_dir() {
-        return Err("The command directory is not available.");
+        return Err(not_dispatched("The command directory is not available."));
     }
     let mut child = Command::new("/bin/sh");
     child
@@ -110,15 +116,21 @@ async fn run_shell_inner(
     {
         child.process_group(0);
     }
-    let mut child = child
-        .spawn()
-        .map_err(|_| "Power Plant could not start the command. Try again.")?;
+    let mut child = match child.spawn() {
+        Ok(child) => child,
+        Err(_) => {
+            return Err(not_dispatched(
+                "Power Plant could not start the command. Try again.",
+            ));
+        }
+    };
     // The group outlives the shell when a descendant retains an output pipe.
     let _group = ProcessGroup(child.id());
     let mut stdout = child.stdout.take();
     let mut stderr = child.stderr.take();
-    let mut stdout_text = String::new();
-    let mut stderr_text = String::new();
+    let mut stdout_buffer = [0_u8; 4096];
+    let mut stderr_buffer = [0_u8; 4096];
+    let mut capture = CommandCapture::new();
     let deadline = tokio::time::Instant::now() + timeout;
     let mut status = None;
     loop {
@@ -130,86 +142,126 @@ async fn run_shell_inner(
             _ = job.cancelled() => {
                 terminate(&mut child);
                 let _ = child.wait().await;
-                return Err("Stopped.");
+                return Err(command_failure(
+                    &mut capture,
+                    CommandTermination::Cancelled,
+                    "Stopped.",
+                ));
             }
             _ = tokio::time::sleep_until(deadline) => {
                 terminate(&mut child);
                 let _ = child.wait().await;
-                return Err("The command exceeded the time limit.");
+                return Err(command_failure(
+                    &mut capture,
+                    CommandTermination::TimedOut,
+                    "The command exceeded the time limit.",
+                ));
             }
-            result = read_pipe(stdout.as_mut(), &mut stdout_text) => {
-                let count = result?;
-                if count.is_none() {
-                    stdout = None;
-                }
-                if count == Some(true) {
-                    terminate(&mut child);
-                    let _ = child.wait().await;
-                    let mut output = merge_output(stdout_text, stderr_text);
-                    crate::tools::mark_truncated(&mut output);
-                    return if require_success {
-                        Err("The command exceeded the output limit. Host effects can remain incomplete.")
-                    } else {
-                        Ok(output)
-                    };
+            result = read_pipe(stdout.as_mut(), &mut stdout_buffer) => {
+                let count = match result {
+                    Ok(count) => count,
+                    Err(message) => {
+                        terminate(&mut child);
+                        let _ = child.wait().await;
+                        return Err(command_failure(
+                            &mut capture,
+                            CommandTermination::Unknown,
+                            message,
+                        ));
+                    }
+                };
+                match count {
+                    None => stdout = None,
+                    Some(count) => {
+                        if capture.push(CommandStream::Stdout, &stdout_buffer[..count]) {
+                            terminate(&mut child);
+                            let _ = child.wait().await;
+                            return output_limit(&mut capture, require_success);
+                        }
+                    }
                 }
             }
-            result = read_pipe(stderr.as_mut(), &mut stderr_text) => {
-                let count = result?;
-                if count.is_none() {
-                    stderr = None;
-                }
-                if count == Some(true) {
-                    terminate(&mut child);
-                    let _ = child.wait().await;
-                    let mut output = merge_output(stdout_text, stderr_text);
-                    crate::tools::mark_truncated(&mut output);
-                    return if require_success {
-                        Err("The command exceeded the output limit. Host effects can remain incomplete.")
-                    } else {
-                        Ok(output)
-                    };
+            result = read_pipe(stderr.as_mut(), &mut stderr_buffer) => {
+                let count = match result {
+                    Ok(count) => count,
+                    Err(message) => {
+                        terminate(&mut child);
+                        let _ = child.wait().await;
+                        return Err(command_failure(
+                            &mut capture,
+                            CommandTermination::Unknown,
+                            message,
+                        ));
+                    }
+                };
+                match count {
+                    None => stderr = None,
+                    Some(count) => {
+                        if capture.push(CommandStream::Stderr, &stderr_buffer[..count]) {
+                            terminate(&mut child);
+                            let _ = child.wait().await;
+                            return output_limit(&mut capture, require_success);
+                        }
+                    }
                 }
             }
             result = child.wait(), if status.is_none() => {
-                status = Some(result.map_err(|_| "Power Plant lost the command result. Try again.")?);
+                status = Some(match result {
+                    Ok(status) => status,
+                    Err(_) => {
+                        return Err(command_failure(
+                            &mut capture,
+                            CommandTermination::Unknown,
+                            "Power Plant lost the command result. Try again.",
+                        ));
+                    }
+                });
             }
         }
     }
-    let status = status.ok_or("Power Plant lost the command result. Try again.")?;
-    if require_success && !status.success() {
-        return Err("The host command failed. Earlier host effects remain unchanged.");
+    let termination = match status.and_then(|status| status.code()) {
+        Some(code) => CommandTermination::Exited(code),
+        None => CommandTermination::Unknown,
+    };
+    let result = capture.into_result(termination);
+    if require_success && !result.is_success() {
+        return Err(CommandFailure::new(
+            result,
+            "The host command failed. Earlier host effects remain unchanged.",
+        ));
     }
-    let mut output = merge_output(stdout_text, stderr_text);
-    if output.len() > tools_limit() {
-        crate::tools::mark_truncated(&mut output);
-        return Ok(output);
-    }
-    match status.code() {
-        Some(0) => Ok(empty_output(output)),
-        None => Err("Power Plant lost the command result. Try again."),
-        Some(code) => {
-            if !output.is_empty() && !output.ends_with('\n') {
-                output.push('\n');
-            }
-            output.push_str(&format!("The command exited with code {code}."));
-            if output.len() > tools_limit() {
-                crate::tools::mark_truncated(&mut output);
-            }
-            Ok(output)
-        }
-    }
+    Ok(result)
 }
 
-fn tools_limit() -> usize {
-    crate::tools::MAXIMUM_TOOL_BYTES
+fn not_dispatched(message: &'static str) -> CommandFailure {
+    CommandFailure::new(
+        CommandResult::new(Vec::new(), CommandTermination::NotDispatched),
+        message,
+    )
 }
 
-fn empty_output(output: String) -> String {
-    if output.is_empty() {
-        "(no output)".to_owned()
+fn command_failure(
+    capture: &mut CommandCapture,
+    termination: CommandTermination,
+    message: &'static str,
+) -> CommandFailure {
+    let chunks = capture.finish();
+    CommandFailure::new(CommandResult::new(chunks, termination), message)
+}
+
+fn output_limit(
+    capture: &mut CommandCapture,
+    require_success: bool,
+) -> Result<CommandResult, CommandFailure> {
+    let chunks = capture.finish();
+    let result = CommandResult::new(chunks, CommandTermination::ResourceLimit);
+    if require_success {
+        Err(CommandFailure::new(
+            result,
+            "The command exceeded the output limit. Host effects can remain incomplete.",
+        ))
     } else {
-        output
+        Ok(result)
     }
 }
 
@@ -259,43 +311,21 @@ fn terminate(child: &mut tokio::process::Child) {
     let _ = child.start_kill();
 }
 
-fn merge_output(stdout: String, stderr: String) -> String {
-    let mut output = stdout;
-    output.push_str(&stderr);
-    output
-}
-
 async fn read_pipe<R: AsyncRead + Unpin>(
     pipe: Option<&mut R>,
-    output: &mut String,
-) -> Result<Option<bool>, &'static str> {
+    buffer: &mut [u8],
+) -> Result<Option<usize>, &'static str> {
     let Some(pipe) = pipe else {
         return std::future::pending().await;
     };
-    let mut buffer = [0_u8; 4096];
     let count = pipe
-        .read(&mut buffer)
+        .read(buffer)
         .await
         .map_err(|_| "Power Plant lost the command result. Try again.")?;
     if count == 0 {
         return Ok(None);
     }
-    Ok(Some(append_output(output, &buffer[..count])))
-}
-
-fn append_output(output: &mut String, bytes: &[u8]) -> bool {
-    let piece = String::from_utf8_lossy(bytes);
-    let remaining = crate::tools::MAXIMUM_TOOL_BYTES.saturating_sub(output.len());
-    if piece.len() <= remaining {
-        output.push_str(&piece);
-        return false;
-    }
-    let mut end = remaining;
-    while end > 0 && !piece.is_char_boundary(end) {
-        end -= 1;
-    }
-    output.push_str(&piece[..end]);
-    true
+    Ok(Some(count))
 }
 
 #[cfg(unix)]

@@ -42,6 +42,7 @@ fn a_large_tool_result_does_not_consume_the_model_reply_limit() {
     let tool = visible_tool_output(
         "read `/project/large.txt`".to_owned(),
         &"x".repeat(crate::tools::MAXIMUM_TOOL_BYTES),
+        None,
         &mut visible_tool_bytes,
     )
     .expect("visible tool output");
@@ -55,6 +56,34 @@ fn a_large_tool_result_does_not_consume_the_model_reply_limit() {
     ));
     assert!(tool.output.ends_with("[output truncated]"));
     assert_eq!(reply.text.len(), MAXIMUM_MODEL_REPLY_BYTES);
+}
+
+#[test]
+fn command_status_survives_an_exhausted_display_budget() {
+    use crate::execution::command::{
+        CommandChunk, CommandResult, CommandStream, CommandTermination,
+    };
+    let mut bytes = super::MAXIMUM_VISIBLE_TOOL_BYTES;
+    let tool = visible_tool_output(
+        "run".to_owned(),
+        "partial output",
+        Some(CommandResult::new(
+            vec![CommandChunk {
+                stream: CommandStream::Stderr,
+                text: "partial output".to_owned(),
+            }],
+            CommandTermination::Cancelled,
+        )),
+        &mut bytes,
+    )
+    .expect("retain the outcome even without output space");
+    assert_eq!(bytes, super::MAXIMUM_VISIBLE_TOOL_BYTES);
+    let mut reply = AssistantReply::default();
+    reply.push_tool(tool);
+    let reply = super::bound_reply(&reply);
+    let command = reply.tools[0].command.as_ref().unwrap();
+    assert_eq!(command.termination, CommandTermination::Cancelled);
+    assert!(command.chunks.is_empty());
 }
 
 fn job() -> std::sync::Arc<Job> {
@@ -161,6 +190,7 @@ fn pending_thinking_is_published_before_a_tool() {
     job.push_tool(ToolOutput {
         label: "read `/project/file`".to_owned(),
         output: "contents".to_owned(),
+        command: None,
     });
 
     let events = job.events_after(0);

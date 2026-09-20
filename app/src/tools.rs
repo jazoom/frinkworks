@@ -200,6 +200,31 @@ pub(crate) struct ToolTrace {
     pub(crate) label: String,
     pub(crate) output: String,
     pub(crate) failed: bool,
+    pub(crate) command: Option<crate::execution::CommandResult>,
+}
+
+struct ToolRun {
+    label: String,
+    output: String,
+    command: Option<crate::execution::CommandResult>,
+}
+
+impl ToolRun {
+    fn plain(label: String, output: String) -> Self {
+        Self {
+            label,
+            output,
+            command: None,
+        }
+    }
+}
+
+enum ToolFailure {
+    Message(&'static str),
+    Command {
+        label: String,
+        failure: crate::execution::CommandFailure,
+    },
 }
 
 pub(crate) async fn invoke(
@@ -212,6 +237,7 @@ pub(crate) async fn invoke(
             label: name.to_owned(),
             output: "Stopped.".to_owned(),
             failed: true,
+            command: None,
         };
     }
     if name == SUBMIT_WORKFLOW_OUTPUT {
@@ -222,18 +248,27 @@ pub(crate) async fn invoke(
             label: name.to_owned(),
             output: "That tool is not available.".to_owned(),
             failed: true,
+            command: None,
         };
     };
     match dispatch(context, kind, arguments).await {
-        Ok((label, output)) => ToolTrace {
-            label,
-            output,
+        Ok(run) => ToolTrace {
+            label: run.label,
+            output: run.output,
             failed: false,
+            command: run.command,
         },
-        Err(message) => ToolTrace {
+        Err(ToolFailure::Message(message)) => ToolTrace {
             label: kind.as_str().to_owned(),
             output: message.to_owned(),
             failed: true,
+            command: None,
+        },
+        Err(ToolFailure::Command { label, failure }) => ToolTrace {
+            label,
+            output: failure.report(),
+            failed: true,
+            command: Some(failure.result),
         },
     }
 }
@@ -248,6 +283,7 @@ fn submit_output(context: &AgentToolContext<'_>, arguments: &serde_json::Value) 
             label: SUBMIT_WORKFLOW_OUTPUT.to_owned(),
             output: "That tool is not available.".to_owned(),
             failed: true,
+            command: None,
         };
     };
     let key = arguments
@@ -265,6 +301,7 @@ fn submit_output(context: &AgentToolContext<'_>, arguments: &serde_json::Value) 
                 .message()
                 .to_owned(),
             failed: true,
+            command: None,
         };
     };
     let markdown = arguments
@@ -292,12 +329,20 @@ fn submit_output(context: &AgentToolContext<'_>, arguments: &serde_json::Value) 
             label: format!("submit `{key}`"),
             output: "Stored.".to_owned(),
             failed: false,
+            command: None,
         },
         Err(error) => ToolTrace {
             label: SUBMIT_WORKFLOW_OUTPUT.to_owned(),
             output: error.message().to_owned(),
             failed: true,
+            command: None,
         },
+    }
+}
+
+impl From<&'static str> for ToolFailure {
+    fn from(message: &'static str) -> Self {
+        Self::Message(message)
     }
 }
 
@@ -305,9 +350,11 @@ async fn dispatch(
     context: &AgentToolContext<'_>,
     kind: ToolId,
     arguments: &serde_json::Value,
-) -> Result<(String, String), &'static str> {
+) -> Result<ToolRun, ToolFailure> {
     if context.location == ToolLocation::Host && kind != ToolId::Run {
-        return Err("That tool is not available on this computer.");
+        return Err(ToolFailure::Message(
+            "That tool is not available on this computer.",
+        ));
     }
     match kind {
         ToolId::List => {
@@ -318,7 +365,7 @@ async fn dispatch(
                 confined_existing_command(&path, &context.policy.guest_roots(), "ls", &["-la"]),
             )
             .await?;
-            Ok((format!("list `{path}`"), output))
+            Ok(ToolRun::plain(format!("list `{path}`"), output))
         }
         ToolId::Read => {
             let args: PathArgs = parse_args(arguments)?;
@@ -330,7 +377,7 @@ async fn dispatch(
                     .iter()
                     .any(|grant| grant.guest_path == path)
             {
-                return Err("Choose a file to read.");
+                return Err(ToolFailure::Message("Choose a file to read."));
             }
             let maximum = MAXIMUM_TOOL_BYTES.to_string();
             let output = capture(
@@ -343,13 +390,13 @@ async fn dispatch(
                 ),
             )
             .await?;
-            Ok((format!("read `{path}`"), output))
+            Ok(ToolRun::plain(format!("read `{path}`"), output))
         }
         ToolId::Write => {
             let args: WriteArgs = parse_args(arguments)?;
             let (path, access) = context.policy.resolve(&args.path)?;
             if !access.is_writable() {
-                return Err("That path is read-only.");
+                return Err(ToolFailure::Message("That path is read-only."));
             }
             if path == context.policy.primary_guest()
                 || context
@@ -358,10 +405,10 @@ async fn dispatch(
                     .iter()
                     .any(|grant| grant.guest_path == path)
             {
-                return Err("Choose a file to write.");
+                return Err(ToolFailure::Message("Choose a file to write."));
             }
             if args.contents.len() > MAXIMUM_WRITE_BYTES {
-                return Err("That file is too large to write.");
+                return Err(ToolFailure::Message("That file is too large to write."));
             }
             let output = capture(
                 context,
@@ -374,20 +421,22 @@ async fn dispatch(
             } else {
                 output
             };
-            Ok((format!("write `{path}`"), body))
+            Ok(ToolRun::plain(format!("write `{path}`"), body))
         }
         ToolId::Run => {
             let args: RunArgs = parse_args(arguments)?;
             let command = args.command.trim();
             if command.is_empty() {
-                return Err("Enter a command.");
+                return Err(ToolFailure::Message("Enter a command."));
             }
             if command.len() > MAXIMUM_COMMAND_BYTES {
-                return Err("That command is too long.");
+                return Err(ToolFailure::Message("That command is too long."));
             }
             if context.location == ToolLocation::Host {
                 if args.explanation.trim().is_empty() {
-                    return Err("Explain why this command is necessary.");
+                    return Err(ToolFailure::Message(
+                        "Explain why this command is necessary.",
+                    ));
                 }
                 return host_run(context, command, args.explanation.trim()).await;
             }
@@ -396,7 +445,7 @@ async fn dispatch(
                 GuestExec::shell(command).in_dir(context.policy.primary_guest()),
             )
             .await?;
-            Ok((format!("run `{command}`"), output))
+            Ok(ToolRun::plain(format!("run `{command}`"), output))
         }
     }
 }
@@ -405,11 +454,12 @@ async fn host_run(
     context: &AgentToolContext<'_>,
     command: &str,
     explanation: &str,
-) -> Result<(String, String), &'static str> {
+) -> Result<ToolRun, ToolFailure> {
+    let label = format!("run `{command}`");
     let host = context
         .host
         .as_ref()
-        .ok_or("Host execution is not available.")?;
+        .ok_or(ToolFailure::Message("Host execution is not available."))?;
     validate_host_dispatch(host, context.job)?;
     let mut request = crate::execution::HostCommandRequest {
         token: String::new(),
@@ -425,27 +475,28 @@ async fn host_run(
         attempt: host.attempt.clone(),
     };
     if host.settings.automatic_host_commands() {
-        request.token = crate::execution::command_token().map_err(|error| error.message())?;
-        return dispatch_host_command(host, context.job, command, &request).await;
+        request.token = crate::execution::command_token()
+            .map_err(|error| ToolFailure::Message(error.message()))?;
+        return dispatch_host_command(host, context.job, label, &request).await;
     }
     let approvals = &host.state.host_approvals;
     let token = approvals
         .submit(request.clone())
-        .map_err(|error| error.message())?;
+        .map_err(|error| ToolFailure::Message(error.message()))?;
     request.token = token.clone();
-    if let Err(error) = record_host_evidence(host, &request, "awaiting_approval", "") {
+    if let Err(error) = record_host_evidence(host, &request, "awaiting_approval", "", None) {
         approvals.invalidate_job(context.job.id());
-        return Err(error);
+        return Err(ToolFailure::Message(error));
     }
     if context.job.set_awaiting_decision().is_none() && context.job.cancel_requested() {
         approvals.invalidate_job(context.job.id());
-        return Err("Stopped.");
+        return Err(ToolFailure::Message("Stopped."));
     }
     let decision = approvals.wait(&token, context.job).await;
     let _ = context.job.resume();
     match decision {
         Ok(crate::execution::HostCommandDecision::Approved) => {
-            dispatch_host_command(host, context.job, command, &request).await
+            dispatch_host_command(host, context.job, label, &request).await
         }
         Ok(crate::execution::HostCommandDecision::Rejected) => {
             record_host_evidence(
@@ -453,15 +504,16 @@ async fn host_run(
                 &request,
                 "rejected",
                 "The user rejected this command.",
+                None,
             )?;
-            Ok((
-                format!("run `{command}`"),
+            Ok(ToolRun::plain(
+                label,
                 "The user rejected this command.".to_owned(),
             ))
         }
         Err(error) => {
-            record_host_evidence(host, &request, "invalidated", error.message())?;
-            Err(error.message())
+            record_host_evidence(host, &request, "invalidated", error.message(), None)?;
+            Err(ToolFailure::Message(error.message()))
         }
     }
 }
@@ -471,24 +523,25 @@ fn record_host_evidence(
     request: &crate::execution::HostCommandRequest,
     status: &str,
     output: &str,
+    command: Option<&crate::execution::CommandResult>,
 ) -> Result<(), &'static str> {
     host.state
         .workflow_evidence
-        .host_command(request, status, output, host.secret)
+        .host_command(request, status, output, host.secret, command)
         .map_err(|error| error.message())
 }
 
 async fn dispatch_host_command(
     host: &HostToolContext<'_>,
     job: &Job,
-    command: &str,
+    label: String,
     request: &crate::execution::HostCommandRequest,
-) -> Result<(String, String), &'static str> {
+) -> Result<ToolRun, ToolFailure> {
     validate_host_dispatch(host, job)?;
-    record_host_evidence(host, request, "dispatching", "")?;
+    record_host_evidence(host, request, "dispatching", "", None)?;
     let result = if host.run.is_some() {
         crate::execution::run_workflow_shell(
-            command,
+            &request.command,
             &host.directory,
             job,
             crate::execution::COMMAND_TIMEOUT,
@@ -496,21 +549,42 @@ async fn dispatch_host_command(
         .await
     } else {
         crate::execution::run_shell(
-            command,
+            &request.command,
             &host.directory,
             job,
             crate::execution::COMMAND_TIMEOUT,
         )
         .await
     };
-    let output = result.as_deref().unwrap_or_else(|error| error);
-    record_host_evidence(
-        host,
-        request,
-        if result.is_ok() { "finished" } else { "failed" },
-        output,
-    )?;
-    Ok((format!("run `{command}`"), result?))
+    match result {
+        Ok(command) => {
+            let command = command.redacted(host.secret);
+            let output = command.report();
+            if let Err(message) =
+                record_host_evidence(host, request, "finished", &output, Some(&command))
+            {
+                return Err(ToolFailure::Command {
+                    label,
+                    failure: crate::execution::CommandFailure::new(command, message),
+                });
+            }
+            Ok(ToolRun {
+                label,
+                output,
+                command: Some(command),
+            })
+        }
+        Err(mut failure) => {
+            failure.result = failure.result.redacted(host.secret);
+            let output = failure.report();
+            if let Err(message) =
+                record_host_evidence(host, request, "failed", &output, Some(&failure.result))
+            {
+                failure.message = message;
+            }
+            Err(ToolFailure::Command { label, failure })
+        }
+    }
 }
 
 fn validate_host_dispatch(host: &HostToolContext<'_>, job: &Job) -> Result<(), &'static str> {

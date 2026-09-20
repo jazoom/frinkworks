@@ -209,6 +209,8 @@ pub(crate) struct EvidenceTool {
     pub(crate) label: String,
     pub(crate) output: String,
     pub(crate) truncated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) command: Option<crate::execution::CommandResult>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -279,6 +281,7 @@ impl WorkflowEvidenceStore {
         status: &str,
         output: &str,
         secret: Option<&str>,
+        command: Option<&crate::execution::CommandResult>,
     ) -> Result<(), EvidenceError> {
         if request.token.len() != 64 || !request.token.bytes().all(|byte| byte.is_ascii_hexdigit())
         {
@@ -301,6 +304,12 @@ impl WorkflowEvidenceStore {
         }
         let text =
             |value: &str, maximum| bounded_text(&crate::tools::redact(value, secret), maximum).0;
+        let command = command.map(|command| {
+            command
+                .redacted(secret)
+                .bounded(crate::tools::MAXIMUM_TOOL_BYTES)
+                .0
+        });
         let record = serde_json::json!({
             "version": 1,
             "conversation": request.conversation.to_string(),
@@ -314,6 +323,7 @@ impl WorkflowEvidenceStore {
             "attempt": request.attempt.clone().unwrap_or_default(),
             "status": status,
             "output": text(output, crate::tools::MAXIMUM_TOOL_BYTES),
+            "result": command,
         });
         let bytes = serde_json::to_vec(&record).map_err(|_| EvidenceError::Persist)?;
         crate::storage::write_private(&path, &bytes).map_err(|_| EvidenceError::Persist)
@@ -454,14 +464,32 @@ impl WorkflowEvidenceStore {
                 MAXIMUM_TERMINAL_TOOL_BYTES.min(output_limit),
             );
             let item_truncated = label_truncated || output_truncated;
-            tools_truncated |= item_truncated;
-            tool_bytes = tool_bytes
+            let after_output = tool_bytes
                 .saturating_add(label.len())
                 .saturating_add(output.len());
+            let command_budget = MAXIMUM_TERMINAL_CONTENT_BYTES.saturating_sub(after_output);
+            let (command, command_truncated) = match tool.command.as_ref() {
+                Some(command) => {
+                    let (bounded, truncated) = command.redacted(secret).bounded(command_budget);
+                    (Some(bounded), truncated)
+                }
+                None => (None, false),
+            };
+            let command_bytes = command.as_ref().map_or(0, |command| {
+                command
+                    .chunks
+                    .iter()
+                    .map(|chunk| chunk.text.len())
+                    .sum::<usize>()
+            });
+            tool_bytes = after_output.saturating_add(command_bytes);
+            let item_truncated = item_truncated || command_truncated;
+            tools_truncated |= item_truncated;
             tools.push(EvidenceTool {
                 label,
                 output,
                 truncated: item_truncated,
+                command,
             });
         }
         tools_truncated |= reply.tools.len() > MAXIMUM_TERMINAL_TOOLS;
@@ -611,11 +639,26 @@ fn validate_record(record: &AttemptEvidence) -> Result<(), EvidenceError> {
             || terminal.tools.iter().any(|tool| {
                 tool.label.len() > MAXIMUM_ACTIVITY_TEXT_BYTES
                     || tool.output.len() > MAXIMUM_TERMINAL_TOOL_BYTES
+                    || tool
+                        .command
+                        .as_ref()
+                        .is_some_and(|command| !command.is_bounded())
             })
             || terminal
                 .tools
                 .iter()
-                .map(|tool| tool.label.len().saturating_add(tool.output.len()))
+                .map(|tool| {
+                    tool.label
+                        .len()
+                        .saturating_add(tool.output.len())
+                        .saturating_add(tool.command.as_ref().map_or(0, |command| {
+                            command
+                                .chunks
+                                .iter()
+                                .map(|chunk| chunk.text.len())
+                                .sum::<usize>()
+                        }))
+                })
                 .sum::<usize>()
                 > MAXIMUM_TERMINAL_CONTENT_BYTES)
     {

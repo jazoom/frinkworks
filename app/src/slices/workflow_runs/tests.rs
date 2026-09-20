@@ -408,6 +408,7 @@ async fn evidence_routes_reject_cross_run_attempts_and_unsupported_patches() {
         crate::providers::ToolOutput {
             label: reply.text.clone(),
             output: reply.text.clone(),
+            command: None,
         };
         8
     ];

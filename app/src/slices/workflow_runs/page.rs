@@ -92,6 +92,19 @@ pub(super) struct AttemptToolView {
     pub(super) label: String,
     pub(super) output: String,
     pub(super) truncated: bool,
+    pub(super) command: Option<AttemptCommandView>,
+}
+
+pub(super) struct AttemptCommandView {
+    pub(super) chunks: Vec<AttemptCommandChunkView>,
+    pub(super) status: String,
+    pub(super) error: bool,
+}
+
+pub(super) struct AttemptCommandChunkView {
+    pub(super) stream: &'static str,
+    pub(super) stderr: bool,
+    pub(super) text: String,
 }
 
 #[derive(Template)]
@@ -984,6 +997,19 @@ pub(super) fn attempt_result_view(
                 label: tool.label,
                 output: tool.output,
                 truncated: tool.truncated,
+                command: tool.command.map(|command| AttemptCommandView {
+                    chunks: command
+                        .chunks
+                        .iter()
+                        .map(|chunk| AttemptCommandChunkView {
+                            stream: chunk.stream.label(),
+                            stderr: chunk.stream.is_stderr(),
+                            text: chunk.text.clone(),
+                        })
+                        .collect(),
+                    status: command.status_text(),
+                    error: command.is_error(),
+                }),
             })
             .collect(),
     }

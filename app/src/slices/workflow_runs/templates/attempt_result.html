@@ -56,11 +56,38 @@
           <ul class="border-base-300 mt-2 divide-y border-y">
             {% for tool in tools %}
               <li class="space-y-2 py-3">
-                <p class="font-mono text-xs">{{ tool.label }}</p>
-                <pre
-                  class="bg-base-200 overflow-x-auto p-3 text-sm whitespace-pre-wrap"
-                >
+                <p class="flex flex-wrap items-center gap-2 font-mono text-xs">
+                  <span>{{ tool.label }}</span>
+                  {% if let Some(command) = tool.command %}
+                    {% if command.error %}
+                      <span class="badge badge-error badge-sm" role="status"
+                        >Error</span
+                      >
+                    {% endif %}
+                    <span
+                      class="{% if command.error %}text-error{% else %}text-quiet{% endif %} font-sans font-medium"
+                      >{{ command.status }}</span
+                    >
+                  {% endif %}
+                </p>
+                {% if let Some(command) = tool.command %}
+                  {% for chunk in command.chunks %}
+                    <div>
+                      <p class="text-quiet text-xs tracking-wide uppercase">
+                        {{ chunk.stream }}
+                      </p>
+                      <pre
+                        class="bg-base-200 {% if chunk.stderr %}text-error{% endif %} overflow-x-auto p-3 text-sm whitespace-pre-wrap"
+                      >
+{{ chunk.text }}</pre>
+                    </div>
+                  {% endfor %}
+                {% else %}
+                  <pre
+                    class="bg-base-200 overflow-x-auto p-3 text-sm whitespace-pre-wrap"
+                  >
 {{ tool.output }}</pre>
+                {% endif %}
                 {% if tool.truncated %}
                   <p class="text-quiet text-xs">
                     This tool output is truncated.

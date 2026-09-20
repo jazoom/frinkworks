@@ -30,6 +30,7 @@ fn output_events_are_monotonic_and_reconstructable() {
         job.push_tool(ToolOutput {
             label: "read `/project/src/lib.rs`".to_owned(),
             output: "source".to_owned(),
+            command: None,
         }),
         Some(3)
     );
@@ -50,6 +51,7 @@ fn thinking_after_a_tool_starts_a_new_activity_phase() {
     job.push_tool(ToolOutput {
         label: "read `/project/src/lib.rs`".to_owned(),
         output: "source".to_owned(),
+        command: None,
     });
     job.push_thinking("Use the result".to_owned());
 

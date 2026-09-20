@@ -32,7 +32,7 @@ fn host_evidence_redacts_secrets_and_rejects_path_tokens() {
         attempt: None,
     };
     store
-        .host_command(&request, "dispatching", secret, Some(secret))
+        .host_command(&request, "dispatching", secret, Some(secret), None)
         .unwrap();
     let bytes = fs::read(
         root.path()
@@ -43,7 +43,7 @@ fn host_evidence_redacts_secrets_and_rejects_path_tokens() {
     assert!(!String::from_utf8(bytes).unwrap().contains(secret));
     request.token = "../escape".to_owned();
     assert_eq!(
-        store.host_command(&request, "dispatching", "", None),
+        store.host_command(&request, "dispatching", "", None, None),
         Err(EvidenceError::Corrupt)
     );
     assert!(!root.path().join("escape.json").exists());
@@ -109,6 +109,7 @@ fn terminal_records_redact_credentials_before_persistence() {
     reply.tools.push(ToolOutput {
         label: "read".to_owned(),
         output: format!("Output {secret}"),
+        command: None,
     });
 
     store
@@ -306,7 +307,8 @@ fn escaped_activity_cannot_displace_the_terminal_result() {
     reply.tools = vec![
         ToolOutput {
             label: text.clone(),
-            output: text.clone()
+            output: text.clone(),
+            command: None,
         };
         4
     ];

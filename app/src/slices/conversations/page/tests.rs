@@ -210,3 +210,35 @@ fn partial_progress_links_the_exact_attempt_and_settlement_identity() {
     assert!(html.contains("value=\"bbb\""));
     assert!(html.contains("value=\"recovered\""));
 }
+
+#[test]
+fn command_output_escapes_untrusted_stream_text() {
+    use crate::execution::command::{CommandChunk, CommandStream, CommandTermination};
+    let tool = crate::providers::ToolOutput {
+        label: "run `exit 3`".to_owned(),
+        output: "oute\nrrer\nThe command exited with code 3.".to_owned(),
+        command: Some(crate::execution::CommandResult::new(
+            vec![
+                CommandChunk {
+                    stream: CommandStream::Stdout,
+                    text: "<script>alert(1)</script>".to_owned(),
+                },
+                CommandChunk {
+                    stream: CommandStream::Stderr,
+                    text: "<img src=x onerror=alert(1)>".to_owned(),
+                },
+            ],
+            CommandTermination::Exited(3),
+        )),
+    };
+    let html = activity_html(
+        "message-1",
+        "",
+        &[crate::providers::AssistantActivity::Tool(tool)],
+        false,
+    );
+    assert!(!html.contains("<script>"));
+    assert!(!html.contains("<img"));
+    assert!(html.contains("alert(1)"));
+    assert!(html.contains("img src=x onerror=alert(1)"));
+}

@@ -588,6 +588,7 @@ fn completed_and_interrupted_messages_survive_restart() {
             crate::providers::ToolOutput {
                 label: "list".to_owned(),
                 output: "Empty workspace".to_owned(),
+                command: None,
             },
         );
         reply.push_response(" reply");
@@ -629,6 +630,61 @@ fn completed_and_interrupted_messages_survive_restart() {
         ),
         Err(ConversationError::Conflict)
     );
+}
+
+#[test]
+fn command_outcomes_survive_restart_with_stream_identity() {
+    use crate::execution::command::{CommandChunk, CommandStream, CommandTermination};
+    let dir = tempfile::tempdir().expect("directory");
+    let store = ConversationStore::open(dir.path().to_path_buf()).expect("store");
+    let record = store.create("Commands".to_owned()).expect("conversation");
+    let selection =
+        ModelSelection::new(ProviderKind::Xai, "grok-4.6".to_owned(), None).expect("model");
+    let request = JobId::generate().expect("request");
+    let record = store
+        .begin_message(
+            &record.id,
+            record.revision,
+            selection,
+            request,
+            "Run it".to_owned(),
+        )
+        .expect("start");
+    let mut reply = crate::providers::AssistantReply::default();
+    reply.push_tool(crate::providers::ToolOutput {
+        label: "run `exit 3`".to_owned(),
+        output: "The command exited with code 3.".to_owned(),
+        command: Some(crate::execution::CommandResult::new(
+            vec![
+                CommandChunk {
+                    stream: CommandStream::Stdout,
+                    text: "out".to_owned(),
+                },
+                CommandChunk {
+                    stream: CommandStream::Stderr,
+                    text: "err".to_owned(),
+                },
+            ],
+            CommandTermination::Exited(3),
+        )),
+    });
+    store
+        .settle_message(&record.id, request, reply, MessageStatus::Complete, None)
+        .expect("settle");
+    drop(store);
+    let store = ConversationStore::open(dir.path().to_path_buf()).expect("restart");
+    let recovered = store.get(&record.id).expect("recovered");
+    let command = recovered.messages[1]
+        .activity
+        .iter()
+        .find_map(|activity| match activity {
+            crate::providers::AssistantActivity::Tool(tool) => tool.command.clone(),
+            _ => None,
+        })
+        .expect("command outcome");
+    assert_eq!(command.exit_code(), Some(3));
+    assert_eq!(command.chunks[0].stream, CommandStream::Stdout);
+    assert_eq!(command.chunks[1].stream, CommandStream::Stderr);
 }
 
 #[test]

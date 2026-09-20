@@ -1804,6 +1804,35 @@ struct MessageBlock {
     label: String,
     output: String,
     active: bool,
+    command: Option<CommandView>,
+}
+
+struct CommandView {
+    chunks: Vec<CommandChunkView>,
+    status: String,
+    error: bool,
+}
+
+struct CommandChunkView {
+    stream: &'static str,
+    stderr: bool,
+    text: String,
+}
+
+fn command_view(command: &crate::execution::CommandResult) -> CommandView {
+    CommandView {
+        chunks: command
+            .chunks
+            .iter()
+            .map(|chunk| CommandChunkView {
+                stream: chunk.stream.label(),
+                stderr: chunk.stream.is_stderr(),
+                text: chunk.text.clone(),
+            })
+            .collect(),
+        status: command.status_text(),
+        error: command.is_error(),
+    }
 }
 
 fn activity_html(
@@ -1820,6 +1849,7 @@ fn activity_html(
             label: String::new(),
             output: String::new(),
             active: streaming,
+            command: None,
         }]
     } else {
         activity
@@ -1833,6 +1863,7 @@ fn activity_html(
                     label: String::new(),
                     output: String::new(),
                     active,
+                    command: None,
                 };
                 match item {
                     AssistantActivity::Response(text) => {
@@ -1850,6 +1881,7 @@ fn activity_html(
                         block.kind = "tool";
                         block.label = tool.label.clone();
                         block.output = tool.output.clone();
+                        block.command = tool.command.as_ref().map(command_view);
                         block.active = false;
                     }
                     AssistantActivity::ToolCall {

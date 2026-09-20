@@ -1,5 +1,6 @@
 mod approval;
 pub(crate) mod authority;
+pub(crate) mod command;
 mod consent;
 mod directory_picker;
 mod host;
@@ -11,6 +12,7 @@ pub(crate) use approval::{
     ApprovalError, HostApprovalStore, HostCommandDecision, HostCommandRequest, command_token,
 };
 pub(crate) use authority::ProjectFreeAuthority;
+pub(crate) use command::{CommandFailure, CommandResult};
 pub(crate) use consent::{AccessConsentStore, draft_nonce, settings_digest};
 pub(crate) use directory_picker::{DirectoryPick, DirectoryPicker};
 pub(crate) use host::{

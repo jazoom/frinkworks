@@ -379,27 +379,30 @@ pub(crate) async fn run_agent_action(
         for (id, name, arguments) in calls {
             persist_output(state, &job);
             let trace = tools::invoke(&context, &name, &arguments).await;
-            if job.cancel_requested() {
-                return cancel_action(&job, &reply);
-            }
             let output = tools::redact(&trace.output, secret);
+            let label = tools::redact(&trace.label, secret);
+            let command = trace.command.map(|command| command.redacted(secret));
             if let Some(evidence) = &spec.evidence {
                 evidence.tool(
                     &ToolOutput {
-                        label: trace.label.clone(),
+                        label: label.clone(),
                         output: output.clone(),
+                        command: command.clone(),
                     },
                     secret,
                 );
             }
             if let Some(visible) =
-                visible_tool_output(trace.label, &output, &mut visible_tool_bytes)
+                visible_tool_output(label, &output, command, &mut visible_tool_bytes)
             {
                 let visible_id = tools::redact(&id, secret);
                 job.finish_tool(visible_id.clone(), visible.clone());
                 reply.finish_tool(&visible_id, visible);
                 persist_output(state, &job);
                 output_visible = true;
+            }
+            if job.cancel_requested() {
+                return cancel_action(&job, &reply);
             }
             if trace.failed && spec.host.as_ref().is_some_and(|host| host.run.is_some()) {
                 return AgentActionEnd {
@@ -525,17 +528,41 @@ fn append_thinking_piece(reply: &mut AssistantReply, piece: &str, thinking_bytes
 fn visible_tool_output(
     label: String,
     output: &str,
+    command: Option<crate::execution::CommandResult>,
     visible_tool_bytes: &mut usize,
 ) -> Option<ToolOutput> {
-    const MARKER: &str = "\n[output truncated]";
-    let label = label.replace('\0', "\u{fffd}");
+    let mut label = label.replace('\0', "\u{fffd}");
     let output = output.replace('\0', "\u{fffd}");
     let remaining = MAXIMUM_VISIBLE_TOOL_BYTES.saturating_sub(*visible_tool_bytes);
-    let output_limit = remaining.checked_sub(label.len())?;
-    if output_limit == 0 {
+    if remaining <= label.len() && command.is_none() {
         return None;
     }
-    let visible = if output.len() <= output_limit {
+    truncate_utf8(&mut label, remaining);
+    *visible_tool_bytes += label.len();
+    // Keep structured output before its duplicate plain-text projection.
+    let command = command.map(|command| {
+        let remaining = MAXIMUM_VISIBLE_TOOL_BYTES.saturating_sub(*visible_tool_bytes);
+        let (bounded, _) = command.bounded(remaining);
+        *visible_tool_bytes += bounded
+            .chunks
+            .iter()
+            .map(|chunk| chunk.text.len())
+            .sum::<usize>();
+        bounded
+    });
+    let output_limit = MAXIMUM_VISIBLE_TOOL_BYTES.saturating_sub(*visible_tool_bytes);
+    let visible = bound_visible_text(&output, output_limit);
+    *visible_tool_bytes += visible.len();
+    Some(ToolOutput {
+        label,
+        output: visible,
+        command,
+    })
+}
+
+fn bound_visible_text(output: &str, output_limit: usize) -> String {
+    const MARKER: &str = "\n[output truncated]";
+    if output.len() <= output_limit {
         output.to_owned()
     } else if output_limit > MARKER.len() {
         let mut end = output_limit - MARKER.len();
@@ -549,12 +576,7 @@ fn visible_tool_output(
             end -= 1;
         }
         output[..end].to_owned()
-    };
-    *visible_tool_bytes += label.len().saturating_add(visible.len());
-    Some(ToolOutput {
-        label,
-        output: visible,
-    })
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -650,8 +672,9 @@ pub(crate) fn bound_reply(reply: &AssistantReply) -> AssistantReply {
         truncate_utf8(&mut bounded.thinking, MAXIMUM_THINKING_BYTES);
         let mut tool_bytes = 0usize;
         bounded.tools.retain_mut(|tool| {
+            let command = tool.command.take();
             let Some(visible) =
-                visible_tool_output(tool.label.clone(), &tool.output, &mut tool_bytes)
+                visible_tool_output(tool.label.clone(), &tool.output, command, &mut tool_bytes)
             else {
                 return false;
             };
@@ -687,7 +710,12 @@ pub(crate) fn bound_reply(reply: &AssistantReply) -> AssistantReply {
             }
             AssistantActivity::ToolCall { id, name, result } => {
                 let result = result.and_then(|tool| {
-                    visible_tool_output(tool.label, &tool.output, &mut tool_bytes)
+                    let ToolOutput {
+                        label,
+                        output,
+                        command,
+                    } = tool;
+                    visible_tool_output(label, &output, command, &mut tool_bytes)
                 });
                 if let Some(tool) = &result {
                     bounded.tools.push(tool.clone());
@@ -702,8 +730,12 @@ pub(crate) fn bound_reply(reply: &AssistantReply) -> AssistantReply {
                 activities.push(AssistantActivity::Thinking(thinking));
             }
             AssistantActivity::Tool(tool) => {
-                let ToolOutput { label, output } = tool;
-                if let Some(tool) = visible_tool_output(label, &output, &mut tool_bytes) {
+                let ToolOutput {
+                    label,
+                    output,
+                    command,
+                } = tool;
+                if let Some(tool) = visible_tool_output(label, &output, command, &mut tool_bytes) {
                     bounded.tools.push(tool.clone());
                     activities.push(AssistantActivity::Tool(tool));
                 }

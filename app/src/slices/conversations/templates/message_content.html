@@ -39,13 +39,48 @@
         <summary class="collapse-title min-h-0 py-3 text-sm">
           <span class="text-quiet">Tool result · </span
           ><span class="font-mono break-words">{{ block.label }}</span>
+          {% if let Some(command) = block.command %}
+            <span
+              class="ml-2 inline-flex flex-wrap items-center gap-1 align-middle"
+            >
+              {% if command.error %}
+                <span class="badge badge-error badge-sm" role="status"
+                  >Error</span
+                >
+              {% endif %}
+              <span
+                class="{% if command.error %}text-error{% else %}text-quiet{% endif %} text-xs font-medium"
+                >{{ command.status }}</span
+              >
+            </span>
+          {% endif %}
         </summary>
         <div class="collapse-content">
-          <pre
-            class="max-h-80 overflow-auto text-xs break-words whitespace-pre-wrap"
-            tabindex="0"
-            aria-label="Tool output"
-          ><code>{{ block.output }}</code></pre>
+          {% if let Some(command) = block.command %}
+            {% for chunk in command.chunks %}
+              <div class="mt-2 first:mt-0">
+                <p
+                  class="text-quiet mb-1 font-mono text-xs tracking-wide uppercase"
+                >
+                  {{ chunk.stream }}
+                </p>
+                <pre
+                  class="{% if chunk.stderr %}text-error{% endif %} max-h-80 overflow-auto text-xs break-words whitespace-pre-wrap"
+                  tabindex="0"
+                  aria-label="{{ chunk.stream }} output"
+                ><code>{{ chunk.text }}</code></pre>
+              </div>
+            {% endfor %}
+            {% if command.chunks.is_empty() %}
+              <p class="text-quiet text-xs">No command output is retained.</p>
+            {% endif %}
+          {% else %}
+            <pre
+              class="max-h-80 overflow-auto text-xs break-words whitespace-pre-wrap"
+              tabindex="0"
+              aria-label="Tool output"
+            ><code>{{ block.output }}</code></pre>
+          {% endif %}
         </div>
       </details>
     {% else %}

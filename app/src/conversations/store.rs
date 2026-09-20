@@ -1376,14 +1376,31 @@ fn valid_activity(activity: &[crate::providers::AssistantActivity], text: &str) 
                 vec![value]
             }
             AssistantActivity::Thinking(value) => vec![value],
-            AssistantActivity::Tool(tool) => vec![&tool.label, &tool.output],
+            AssistantActivity::Tool(tool) => {
+                if !valid_command(tool.command.as_ref()) {
+                    return false;
+                }
+                let mut parts = vec![tool.label.as_str(), tool.output.as_str()];
+                if let Some(command) = &tool.command {
+                    parts.extend(command.chunks.iter().map(|chunk| chunk.text.as_str()));
+                }
+                parts
+            }
             AssistantActivity::ToolCall { id, name, result } => {
                 if id.len() > 512 || name.len() > 512 {
+                    return false;
+                }
+                if let Some(command) = result.as_ref().and_then(|tool| tool.command.as_ref())
+                    && !valid_command(Some(command))
+                {
                     return false;
                 }
                 let mut parts = vec![id.as_str(), name.as_str()];
                 if let Some(tool) = result {
                     parts.extend([tool.label.as_str(), tool.output.as_str()]);
+                    if let Some(command) = &tool.command {
+                        parts.extend(command.chunks.iter().map(|chunk| chunk.text.as_str()));
+                    }
                 }
                 parts
             }
@@ -1396,6 +1413,10 @@ fn valid_activity(activity: &[crate::providers::AssistantActivity], text: &str) 
         }
     }
     response == text
+}
+
+fn valid_command(command: Option<&crate::execution::CommandResult>) -> bool {
+    command.is_none_or(crate::execution::CommandResult::is_bounded)
 }
 
 fn valid_message_error(status: MessageStatus, error: Option<&str>) -> bool {
