@@ -32,9 +32,10 @@ async fn host_output_is_bounded_even_when_both_pipes_produce_output() {
         .iter()
         .map(|chunk| chunk.text.len())
         .sum::<usize>();
-    assert!(bytes <= crate::tools::MAXIMUM_TOOL_BYTES);
+    assert!(bytes <= crate::execution::output::MAXIMUM_RETAINED_BYTES);
     assert_eq!(result.termination, CommandTermination::ResourceLimit);
-    assert!(result.is_bounded());
+    let (bounded, _) = result.bounded(crate::tools::MAXIMUM_TOOL_BYTES);
+    assert!(bounded.is_bounded());
     assert!(result.report().contains("resource limit"));
 }
 
@@ -98,6 +99,68 @@ async fn host_timeout_stops_descendant_side_effects() {
     assert_eq!(failure.message, "The command exceeded the time limit.");
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert!(!directory.path().join("escaped").exists());
+}
+
+#[tokio::test]
+async fn slow_commands_publish_replayable_progress_and_retain_cancelled_output() {
+    use crate::execution::output::{OutputKey, OutputScope, OutputStore};
+
+    let directory = tempfile::tempdir().unwrap();
+    let scope =
+        OutputScope::conversation(crate::conversations::ConversationId::generate().unwrap());
+    let store = OutputStore::open(directory.path().join("output")).unwrap();
+    let job = job();
+    job.start_tool("slow".to_owned(), "run".to_owned());
+    let reporter = super::CommandReporter {
+        tool_call: "slow",
+        secret: Some("secret"),
+        outputs: &store,
+        output_key: OutputKey {
+            scope: scope.clone(),
+            job: job.id(),
+            tool_call: "slow".to_owned(),
+        },
+    };
+    let command = super::run_shell_reported(
+        "printf 'before secret'; printf diagnostic >&2; sleep 5",
+        directory.path(),
+        &job,
+        Duration::from_secs(10),
+        false,
+        &reporter,
+    );
+    let observe = async {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let snapshot = job.snapshot();
+                if !snapshot.output.progress.is_empty() {
+                    assert!(
+                        !snapshot
+                            .output
+                            .progress
+                            .iter()
+                            .any(|piece| piece.text.contains("secret"))
+                    );
+                    assert_eq!(job.output_up_to(snapshot.latest_seq), snapshot.output);
+                    break;
+                }
+                job.wait_after(snapshot.latest_seq, Duration::from_millis(100))
+                    .await;
+            }
+        })
+        .await
+        .expect("progress before exit");
+        job.request_cancel();
+    };
+    let (result, ()) = tokio::join!(command, observe);
+    let failure = result.expect_err("cancelled command");
+    assert_eq!(failure.result.termination, CommandTermination::Cancelled);
+    let reopened = OutputStore::open(directory.path().join("output")).unwrap();
+    let page = reopened
+        .page(failure.result.retained_reference().unwrap(), &scope, 0)
+        .unwrap();
+    assert_eq!(page.chunks, failure.result.chunks);
+    assert!(!page.chunks.is_empty());
 }
 
 #[tokio::test]
@@ -178,9 +241,9 @@ async fn a_silent_non_zero_exit_reports_the_code_and_output_state() {
 #[test]
 fn capture_preserves_split_utf8_sequences() {
     let mut capture = CommandCapture::new();
-    assert!(!capture.push(CommandStream::Stdout, &[0xe2]));
-    assert!(!capture.push(CommandStream::Stdout, &[0x82]));
-    assert!(!capture.push(CommandStream::Stdout, &[0xac]));
+    assert!(!capture.push(CommandStream::Stdout, &[0xe2]).overflow);
+    assert!(!capture.push(CommandStream::Stdout, &[0x82]).overflow);
+    assert!(!capture.push(CommandStream::Stdout, &[0xac]).overflow);
     let chunks = capture.finish();
     let text = chunks
         .iter()
@@ -193,8 +256,8 @@ fn capture_preserves_split_utf8_sequences() {
 #[test]
 fn capture_stops_at_the_resource_limit_and_retains_partial_output() {
     let mut capture = CommandCapture::with_limit(8);
-    assert!(!capture.push(CommandStream::Stdout, b"12345"));
-    assert!(capture.push(CommandStream::Stdout, b"67890"));
+    assert!(!capture.push(CommandStream::Stdout, b"12345").overflow);
+    assert!(capture.push(CommandStream::Stdout, b"67890").overflow);
     let chunks = capture.finish();
     let text = chunks
         .iter()
@@ -213,9 +276,9 @@ fn capture_flushes_invalid_tail_and_enforces_chunk_bounds() {
 
     let mut capture = CommandCapture::new();
     for _ in 0..super::super::command::MAXIMUM_COMMAND_CHUNKS {
-        assert!(!capture.push(CommandStream::Stderr, b"x"));
+        assert!(!capture.push(CommandStream::Stderr, b"x").overflow);
     }
-    assert!(capture.push(CommandStream::Stdout, b"overflow"));
+    assert!(capture.push(CommandStream::Stdout, b"overflow").overflow);
     let result = capture.into_result(CommandTermination::Exited(0));
     assert!(result.is_bounded());
     assert_eq!(result.termination, CommandTermination::ResourceLimit);

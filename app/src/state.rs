@@ -8,7 +8,7 @@ use crate::{
     environments::{
         EnvironmentCatalogue, EnvironmentPreparationScheduler, EnvironmentSnapshotRepository,
     },
-    execution::{AccessConsentStore, DirectoryPicker, HostApprovalStore},
+    execution::{AccessConsentStore, DirectoryPicker, HostApprovalStore, OutputStore},
     local_data::LocalDataReset,
     models::models_dev::ModelsDevCatalogue,
     plan_login::PlanLogin,
@@ -43,6 +43,7 @@ pub(crate) struct AppState {
     pub(crate) host_approvals: Arc<HostApprovalStore>,
     pub(crate) local_data: LocalDataReset,
     pub(crate) sandboxes: Arc<SandboxFleet>,
+    pub(crate) outputs: Arc<OutputStore>,
     pub(crate) agent_leases: Arc<AgentLeaseCoordinator>,
     pub(crate) workflows: Arc<WorkflowCatalogue>,
     pub(crate) workflow_runs: Arc<WorkflowRunStore>,
@@ -96,6 +97,21 @@ pub(crate) async fn build(
         EnvironmentSnapshotRepository::open(data_dir.join("environment-snapshots"))
             .map_err(|_| "The environment snapshot store is unreadable.".to_owned())?;
     let sandboxes = SandboxFleet::prepare().await;
+    let outputs = OutputStore::open(data_dir.join("command-output"))
+        .map_err(|error| error.message().to_owned())?;
+    outputs
+        .remove_abandoned(|scope| {
+            if let Some(conversation) = scope.conversation {
+                conversations.get(&conversation).is_some()
+            } else {
+                scope.run.zip(scope.attempt).is_some_and(|(run, attempt)| {
+                    workflow_runs
+                        .get(&run)
+                        .is_some_and(|run| run.attempts.iter().any(|record| record.id == attempt))
+                })
+            }
+        })
+        .map_err(|error| error.message().to_owned())?;
     let guest_recovery = sandboxes.recover_transient_guests().await;
     for environment in environments.list() {
         let Some(ready) = environment.ready_preparation else {
@@ -141,6 +157,7 @@ pub(crate) async fn build(
         host_approvals: Arc::new(HostApprovalStore::new()),
         local_data,
         sandboxes: Arc::new(sandboxes),
+        outputs: Arc::new(outputs),
         agent_leases: Arc::new(AgentLeaseCoordinator::new()),
         workflows: Arc::new(workflows),
         workflow_runs: Arc::new(workflow_runs),

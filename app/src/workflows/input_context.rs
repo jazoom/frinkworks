@@ -140,7 +140,7 @@ async fn read_instructions_at(
         .await
         .map_err(|_| InstructionError::Read)?;
     let deadline = Instant::now() + INSTRUCTION_READ_DEADLINE;
-    let mut text = String::new();
+    let mut text_bytes = Vec::new();
     let mut exited = None;
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
@@ -161,13 +161,17 @@ async fn read_instructions_at(
             break;
         };
         match event {
-            CommandEvent::Output(piece) => {
-                if text.len().saturating_add(piece.len()) > MAXIMUM_PROJECT_INSTRUCTION_BYTES {
+            CommandEvent::Output { stream, bytes } => {
+                if stream != crate::execution::CommandStream::Stdout {
+                    continue;
+                }
+                if text_bytes.len().saturating_add(bytes.len()) > MAXIMUM_PROJECT_INSTRUCTION_BYTES
+                {
                     command.kill().await;
                     command.close().await;
                     return Err(InstructionError::Bound);
                 }
-                text.push_str(&piece);
+                text_bytes.extend_from_slice(&bytes);
             }
             CommandEvent::Exited(code) => exited = Some(code),
             CommandEvent::Failed => {
@@ -177,6 +181,7 @@ async fn read_instructions_at(
         }
     }
     command.close().await;
+    let text = String::from_utf8_lossy(&text_bytes).into_owned();
     if let Some(instructions) = classify_instruction_exit(exited, text.is_empty())? {
         return Ok(instructions);
     }

@@ -14,7 +14,11 @@ use super::SandboxError;
 use super::lock_mutex;
 
 pub(crate) enum CommandEvent {
-    Output(String),
+    /// Raw bytes in adapter receive order. Incomplete UTF-8 is decoded later.
+    Output {
+        stream: crate::execution::CommandStream,
+        bytes: Vec<u8>,
+    },
     Exited(i32),
     Failed,
 }
@@ -64,14 +68,23 @@ impl CommandSession {
         match &mut self.inner {
             CommandInner::Microsandbox(command) => loop {
                 match command.exec.recv().await? {
-                    microsandbox::ExecEvent::Stdout(data)
-                    | microsandbox::ExecEvent::Stderr(data) => {
+                    microsandbox::ExecEvent::Stdout(data) => {
                         if data.is_empty() {
                             continue;
                         }
-                        return Some(CommandEvent::Output(
-                            String::from_utf8_lossy(&data).into_owned(),
-                        ));
+                        return Some(CommandEvent::Output {
+                            stream: crate::execution::CommandStream::Stdout,
+                            bytes: data.to_vec(),
+                        });
+                    }
+                    microsandbox::ExecEvent::Stderr(data) => {
+                        if data.is_empty() {
+                            continue;
+                        }
+                        return Some(CommandEvent::Output {
+                            stream: crate::execution::CommandStream::Stderr,
+                            bytes: data.to_vec(),
+                        });
                     }
                     microsandbox::ExecEvent::Exited { code } => {
                         return Some(CommandEvent::Exited(code));

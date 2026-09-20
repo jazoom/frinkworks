@@ -12,7 +12,13 @@ impl CommandSession {
 impl ScriptedCommand {
     pub(crate) fn output(text: String, code: i32) -> Self {
         Self {
-            events: Mutex::new(vec![CommandEvent::Output(text), CommandEvent::Exited(code)]),
+            events: Mutex::new(vec![
+                CommandEvent::Output {
+                    stream: crate::execution::CommandStream::Stdout,
+                    bytes: text.into_bytes(),
+                },
+                CommandEvent::Exited(code),
+            ]),
             hang: false,
             killed: Mutex::new(false),
             notify: Arc::new(Notify::new()),

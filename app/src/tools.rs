@@ -1,14 +1,24 @@
 use rig_core::completion::ToolDefinition;
 use serde::Deserialize;
+use std::time::Duration;
 
 use crate::agents::{DirectoryPolicy, ToolId};
-use crate::execution::ToolLocation;
+use crate::execution::{
+    CommandFailure, CommandResult, CommandTermination, OutputScope, ToolLocation,
+};
 use crate::sandbox::{GuestExec, GuestSandbox};
 use crate::sessions::Job;
 
 pub(crate) const MAXIMUM_TOOL_BYTES: usize = 64 * 1024;
 pub(crate) const MAXIMUM_WRITE_BYTES: usize = 256 * 1024;
 pub(crate) const MAXIMUM_COMMAND_BYTES: usize = 32_768;
+
+/// A sandbox command deadline. It is separate from host command timeouts.
+pub(crate) const SANDBOX_COMMAND_TIMEOUT: Duration = if cfg!(test) {
+    Duration::from_secs(30)
+} else {
+    Duration::from_secs(120)
+};
 
 impl ToolId {
     fn description_for(self, location: ToolLocation) -> &'static str {
@@ -93,6 +103,31 @@ pub(crate) fn definitions_for(selected: &[ToolId], location: ToolLocation) -> Ve
             parameters: kind.parameters(location),
         })
         .collect()
+}
+
+pub(crate) const READ_OUTPUT: &str = "read_output";
+
+pub(crate) fn read_output_definition() -> ToolDefinition {
+    ToolDefinition {
+        name: READ_OUTPUT.to_owned(),
+        description: "Read a later page of a retained command result. Use the reference shown with a command result. The cursor continues from the previous page.".to_owned(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "reference": {
+                    "type": "string",
+                    "description": "The reference shown with a retained command result."
+                },
+                "cursor": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Byte position from the previous page. Omit for the first page."
+                }
+            },
+            "required": ["reference"],
+            "additionalProperties": false
+        }),
+    }
 }
 
 pub(crate) fn definitions_for_step(
@@ -191,6 +226,9 @@ pub(crate) struct AgentToolContext<'a> {
     pub(crate) tools: &'a [ToolId],
     pub(crate) location: ToolLocation,
     pub(crate) host: Option<HostToolContext<'a>>,
+    pub(crate) secret: Option<&'a str>,
+    pub(crate) outputs: Option<&'a crate::execution::OutputStore>,
+    pub(crate) output_scope: Option<OutputScope>,
     pub(crate) output_drafts:
         Option<&'a std::sync::Mutex<crate::workflows::artefacts::output::OutputDrafts>>,
     pub(crate) required_outputs: &'a [crate::workflows::definition::RequiredOutput],
@@ -229,6 +267,7 @@ enum ToolFailure {
 
 pub(crate) async fn invoke(
     context: &AgentToolContext<'_>,
+    call_id: &str,
     name: &str,
     arguments: &serde_json::Value,
 ) -> ToolTrace {
@@ -243,6 +282,9 @@ pub(crate) async fn invoke(
     if name == SUBMIT_WORKFLOW_OUTPUT {
         return submit_output(context, arguments);
     }
+    if name == READ_OUTPUT {
+        return read_output(context, arguments);
+    }
     let Some(kind) = authorised_tool(context.tools, name, context.location) else {
         return ToolTrace {
             label: name.to_owned(),
@@ -251,11 +293,11 @@ pub(crate) async fn invoke(
             command: None,
         };
     };
-    match dispatch(context, kind, arguments).await {
+    match dispatch(context, call_id, kind, arguments).await {
         Ok(run) => ToolTrace {
             label: run.label,
             output: run.output,
-            failed: false,
+            failed: run.command.as_ref().is_some_and(CommandResult::is_error),
             command: run.command,
         },
         Err(ToolFailure::Message(message)) => ToolTrace {
@@ -275,6 +317,81 @@ pub(crate) async fn invoke(
 
 fn authorised_tool(selected: &[ToolId], name: &str, location: ToolLocation) -> Option<ToolId> {
     ToolId::parse(name).filter(|kind| advertised(selected, location).contains(kind))
+}
+
+fn read_output(context: &AgentToolContext<'_>, arguments: &serde_json::Value) -> ToolTrace {
+    let Some(outputs) = context.outputs else {
+        return plain_failure(READ_OUTPUT, "That command output is not available.");
+    };
+    let Some(scope) = context.output_scope.clone() else {
+        return plain_failure(READ_OUTPUT, "That command output is not available.");
+    };
+    let reference = arguments
+        .get("reference")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    if !valid_output_reference(reference) {
+        return plain_failure(READ_OUTPUT, "That command output reference is not valid.");
+    }
+    let cursor = match arguments.get("cursor") {
+        None | Some(serde_json::Value::Null) => 0,
+        Some(value) => match value.as_u64() {
+            Some(value) => value as usize,
+            None => return plain_failure(READ_OUTPUT, "That output cursor is not valid."),
+        },
+    };
+    match outputs.page(reference, &scope, cursor) {
+        Ok(page) => {
+            let mut output = String::new();
+            for chunk in &page.chunks {
+                if !output.is_empty() && !output.ends_with('\n') {
+                    output.push('\n');
+                }
+                output.push_str(chunk.stream.label());
+                output.push_str(": ");
+                output.push_str(&chunk.text);
+            }
+            if let Some(next) = page.next {
+                if !output.is_empty() && !output.ends_with('\n') {
+                    output.push('\n');
+                }
+                output.push_str(&format!(
+                    "More output remains. Read again with cursor={next}."
+                ));
+            }
+            if page.truncated {
+                if !output.is_empty() && !output.ends_with('\n') {
+                    output.push('\n');
+                }
+                output.push_str("The retained output reached its storage limit.");
+            }
+            if output.is_empty() {
+                output.push_str("(no output)");
+            }
+            ToolTrace {
+                label: format!("read_output `{reference}`"),
+                output,
+                failed: false,
+                command: None,
+            }
+        }
+        Err(error) => plain_failure(READ_OUTPUT, error.message()),
+    }
+}
+
+fn plain_failure(label: &str, message: &'static str) -> ToolTrace {
+    ToolTrace {
+        label: label.to_owned(),
+        output: message.to_owned(),
+        failed: true,
+        command: None,
+    }
+}
+
+/// A reference is server-generated lowercase hexadecimal. A model-supplied path
+/// can never select stored output.
+pub(crate) fn valid_output_reference(reference: &str) -> bool {
+    reference.len() == 32 && reference.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn submit_output(context: &AgentToolContext<'_>, arguments: &serde_json::Value) -> ToolTrace {
@@ -348,6 +465,7 @@ impl From<&'static str> for ToolFailure {
 
 async fn dispatch(
     context: &AgentToolContext<'_>,
+    call_id: &str,
     kind: ToolId,
     arguments: &serde_json::Value,
 ) -> Result<ToolRun, ToolFailure> {
@@ -360,11 +478,14 @@ async fn dispatch(
         ToolId::List => {
             let args: PathArgs = parse_args(arguments)?;
             let (path, _) = context.policy.resolve(&args.path)?;
-            let output = capture(
-                context,
-                confined_existing_command(&path, &context.policy.guest_roots(), "ls", &["-la"]),
-            )
-            .await?;
+            let output = plain_capture(
+                capture(
+                    context,
+                    call_id,
+                    confined_existing_command(&path, &context.policy.guest_roots(), "ls", &["-la"]),
+                )
+                .await,
+            )?;
             Ok(ToolRun::plain(format!("list `{path}`"), output))
         }
         ToolId::Read => {
@@ -380,16 +501,19 @@ async fn dispatch(
                 return Err(ToolFailure::Message("Choose a file to read."));
             }
             let maximum = MAXIMUM_TOOL_BYTES.to_string();
-            let output = capture(
-                context,
-                confined_existing_command(
-                    &path,
-                    &context.policy.guest_roots(),
-                    "head",
-                    &["-c", &maximum],
-                ),
-            )
-            .await?;
+            let output = plain_capture(
+                capture(
+                    context,
+                    call_id,
+                    confined_existing_command(
+                        &path,
+                        &context.policy.guest_roots(),
+                        "head",
+                        &["-c", &maximum],
+                    ),
+                )
+                .await,
+            )?;
             Ok(ToolRun::plain(format!("read `{path}`"), output))
         }
         ToolId::Write => {
@@ -410,12 +534,15 @@ async fn dispatch(
             if args.contents.len() > MAXIMUM_WRITE_BYTES {
                 return Err(ToolFailure::Message("That file is too large to write."));
             }
-            let output = capture(
-                context,
-                confined_write_command(&path, &context.policy.writable_roots())
-                    .with_stdin(args.contents.into_bytes()),
-            )
-            .await?;
+            let output = plain_capture(
+                capture(
+                    context,
+                    call_id,
+                    confined_write_command(&path, &context.policy.writable_roots())
+                        .with_stdin(args.contents.into_bytes()),
+                )
+                .await,
+            )?;
             let body = if output.trim().is_empty() {
                 "Wrote the file.".to_owned()
             } else {
@@ -438,20 +565,46 @@ async fn dispatch(
                         "Explain why this command is necessary.",
                     ));
                 }
-                return host_run(context, command, args.explanation.trim()).await;
+                return host_run(context, call_id, command, args.explanation.trim()).await;
             }
-            let output = capture(
+            let label = format!("run `{command}`");
+            match capture(
                 context,
+                call_id,
                 GuestExec::shell(command).in_dir(context.policy.primary_guest()),
             )
-            .await?;
-            Ok(ToolRun::plain(format!("run `{command}`"), output))
+            .await
+            {
+                Ok(result) => {
+                    let output = result.report();
+                    Ok(ToolRun {
+                        label,
+                        output,
+                        command: Some(result),
+                    })
+                }
+                Err(failure) => Err(ToolFailure::Command { label, failure }),
+            }
         }
+    }
+}
+
+fn plain_capture(result: Result<CommandResult, CommandFailure>) -> Result<String, ToolFailure> {
+    match result {
+        Ok(result) if result.is_success() => Ok(result
+            .chunks
+            .iter()
+            .filter(|chunk| chunk.stream == crate::execution::CommandStream::Stdout)
+            .map(|chunk| chunk.text.as_str())
+            .collect()),
+        Ok(_) => Err(ToolFailure::Message("The file tool command failed.")),
+        Err(failure) => Err(ToolFailure::Message(failure.message)),
     }
 }
 
 async fn host_run(
     context: &AgentToolContext<'_>,
+    call_id: &str,
     command: &str,
     explanation: &str,
 ) -> Result<ToolRun, ToolFailure> {
@@ -477,7 +630,7 @@ async fn host_run(
     if host.settings.automatic_host_commands() {
         request.token = crate::execution::command_token()
             .map_err(|error| ToolFailure::Message(error.message()))?;
-        return dispatch_host_command(host, context.job, label, &request).await;
+        return dispatch_host_command(host, context.job, call_id, label, &request).await;
     }
     let approvals = &host.state.host_approvals;
     let token = approvals
@@ -496,7 +649,7 @@ async fn host_run(
     let _ = context.job.resume();
     match decision {
         Ok(crate::execution::HostCommandDecision::Approved) => {
-            dispatch_host_command(host, context.job, label, &request).await
+            dispatch_host_command(host, context.job, call_id, label, &request).await
         }
         Ok(crate::execution::HostCommandDecision::Rejected) => {
             record_host_evidence(
@@ -534,31 +687,38 @@ fn record_host_evidence(
 async fn dispatch_host_command(
     host: &HostToolContext<'_>,
     job: &Job,
+    call_id: &str,
     label: String,
     request: &crate::execution::HostCommandRequest,
 ) -> Result<ToolRun, ToolFailure> {
     validate_host_dispatch(host, job)?;
     record_host_evidence(host, request, "dispatching", "", None)?;
-    let result = if host.run.is_some() {
-        crate::execution::run_workflow_shell(
-            &request.command,
-            &host.directory,
-            job,
-            crate::execution::COMMAND_TIMEOUT,
-        )
-        .await
-    } else {
-        crate::execution::run_shell(
-            &request.command,
-            &host.directory,
-            job,
-            crate::execution::COMMAND_TIMEOUT,
-        )
-        .await
+    let visible_call_id = redact(call_id, host.secret);
+    let reporter = crate::execution::CommandReporter {
+        tool_call: &visible_call_id,
+        secret: host.secret,
+        outputs: &host.state.outputs,
+        output_key: crate::execution::OutputKey {
+            scope: host_output_scope(host, request),
+            job: job.id(),
+            tool_call: visible_call_id.clone(),
+        },
     };
+    let require_success = host.run.is_some();
+    let result = crate::execution::run_shell_reported(
+        &request.command,
+        &host.directory,
+        job,
+        crate::execution::COMMAND_TIMEOUT,
+        require_success,
+        &reporter,
+    )
+    .await;
+    let scope = host_output_scope(host, request);
     match result {
         Ok(command) => {
             let command = command.redacted(host.secret);
+            let command = retain_command(host.state, scope, job.id(), call_id, command);
             let output = command.report();
             if let Err(message) =
                 record_host_evidence(host, request, "finished", &output, Some(&command))
@@ -576,6 +736,7 @@ async fn dispatch_host_command(
         }
         Err(mut failure) => {
             failure.result = failure.result.redacted(host.secret);
+            failure.result = retain_command(host.state, scope, job.id(), call_id, failure.result);
             let output = failure.report();
             if let Err(message) =
                 record_host_evidence(host, request, "failed", &output, Some(&failure.result))
@@ -584,6 +745,44 @@ async fn dispatch_host_command(
             }
             Err(ToolFailure::Command { label, failure })
         }
+    }
+}
+
+fn host_output_scope(
+    host: &HostToolContext<'_>,
+    request: &crate::execution::HostCommandRequest,
+) -> OutputScope {
+    OutputScope {
+        conversation: Some(host.conversation),
+        run: request
+            .run
+            .as_deref()
+            .and_then(crate::workflows::RunId::parse),
+        attempt: request
+            .attempt
+            .as_deref()
+            .and_then(crate::workflows::AttemptId::parse),
+    }
+}
+
+pub(crate) fn retain_command(
+    state: &crate::state::AppState,
+    scope: OutputScope,
+    job: crate::sessions::JobId,
+    tool_call: &str,
+    command: CommandResult,
+) -> CommandResult {
+    if command.chunks.is_empty() || command.retained.is_some() {
+        return command;
+    }
+    let key = crate::execution::OutputKey {
+        scope,
+        job,
+        tool_call: tool_call.to_owned(),
+    };
+    match state.outputs.store(&key, &command) {
+        Ok(retained) => command.retain(retained),
+        Err(_) => command.into_storage_limit(),
     }
 }
 
@@ -829,14 +1028,34 @@ fn encode_roots(roots: &[String]) -> String {
 
 async fn capture(
     context: &AgentToolContext<'_>,
+    call_id: &str,
     request: GuestExec,
-) -> Result<String, &'static str> {
-    let sandbox = context.sandbox.ok_or("That tool is not available.")?;
-    let mut session = sandbox
-        .exec_cmd(request)
-        .await
-        .map_err(|error| error.message())?;
-    let mut output = String::new();
+) -> Result<CommandResult, CommandFailure> {
+    let Some(sandbox) = context.sandbox else {
+        return Err(command_not_dispatched("That tool is not available."));
+    };
+    let visible_call_id = redact(call_id, context.secret);
+    let mut capture = match (context.outputs, &context.output_scope) {
+        (Some(store), Some(scope)) => crate::execution::command::CommandCapture::with_output(
+            context.secret,
+            store,
+            &crate::execution::OutputKey {
+                scope: scope.clone(),
+                job: context.job.id(),
+                tool_call: visible_call_id.clone(),
+            },
+        )
+        .map_err(|error| command_not_dispatched(error.message()))?,
+        _ => crate::execution::command::CommandCapture::with_secret(context.secret),
+    };
+    let mut session = match sandbox.exec_cmd(request).await {
+        Ok(session) => session,
+        Err(error) => return Err(command_not_dispatched(error.message())),
+    };
+    let deadline = tokio::time::Instant::now() + SANDBOX_COMMAND_TIMEOUT;
+    let mut progress = crate::execution::command::CommandProgress::new();
+    let mut progress_tick = tokio::time::interval(Duration::from_millis(100));
+    progress_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut exit = None;
     loop {
         let event = tokio::select! {
@@ -844,7 +1063,20 @@ async fn capture(
             _ = context.job.cancelled() => {
                 session.kill().await;
                 session.close().await;
-                return Err("Stopped.");
+                return Err(command_failure(capture, CommandTermination::Cancelled, "Stopped."));
+            }
+            _ = tokio::time::sleep_until(deadline) => {
+                session.kill().await;
+                session.close().await;
+                return Err(command_failure(
+                    capture,
+                    CommandTermination::TimedOut,
+                    "The command exceeded the time limit.",
+                ));
+            }
+            _ = progress_tick.tick() => {
+                progress.publish(context.job, &visible_call_id);
+                continue;
             }
             event = session.recv() => event,
         };
@@ -852,12 +1084,19 @@ async fn capture(
             break;
         };
         match event {
-            crate::sandbox::CommandEvent::Output(text) => {
-                if append_bounded(&mut output, &text) {
+            crate::sandbox::CommandEvent::Output { stream, bytes } => {
+                let push = capture.push(stream, &bytes);
+                for chunk in push.safe {
+                    progress.push(chunk.stream, chunk.text);
+                }
+                if push.overflow {
                     session.kill().await;
                     session.close().await;
-                    mark_truncated(&mut output);
-                    return Ok(output);
+                    return Err(command_failure(
+                        capture,
+                        CommandTermination::ResourceLimit,
+                        "The command exceeded the output resource limit.",
+                    ));
                 }
             }
             crate::sandbox::CommandEvent::Exited(code) => {
@@ -865,28 +1104,46 @@ async fn capture(
                 break;
             }
             crate::sandbox::CommandEvent::Failed => {
+                session.kill().await;
                 session.close().await;
-                return Err("Power Plant could not run the command. Try again.");
+                return Err(command_failure(
+                    capture,
+                    CommandTermination::Unknown,
+                    "Power Plant could not run the command. Try again.",
+                ));
             }
         }
+    }
+    if exit.is_none() {
+        session.kill().await;
     }
     session.close().await;
-    match exit {
-        Some(0) => Ok(empty_output(output)),
-        None => Err("Power Plant lost the command result. Try again."),
-        Some(code) => {
-            let mut failed = output;
-            if !failed.is_empty() && !failed.ends_with('\n') {
-                failed.push('\n');
-            }
-            failed.push_str(&format!("The command exited with code {code}."));
-            Ok(failed)
-        }
-    }
+    let termination = match exit {
+        Some(code) => CommandTermination::Exited(code),
+        None => CommandTermination::Unknown,
+    };
+    Ok(capture.into_result(termination))
 }
 
+fn command_not_dispatched(message: &'static str) -> CommandFailure {
+    CommandFailure::new(
+        CommandResult::new(Vec::new(), CommandTermination::NotDispatched),
+        message,
+    )
+}
+
+fn command_failure(
+    capture: crate::execution::command::CommandCapture,
+    termination: CommandTermination,
+    message: &'static str,
+) -> CommandFailure {
+    CommandFailure::new(capture.into_result(termination), message)
+}
+
+#[cfg(test)]
 const TRUNCATED_OUTPUT: &str = "\n[output truncated]";
 
+#[cfg(test)]
 pub(super) fn mark_truncated(output: &mut String) {
     let maximum = MAXIMUM_TOOL_BYTES.saturating_sub(TRUNCATED_OUTPUT.len());
     let mut end = output.len().min(maximum);
@@ -895,28 +1152,6 @@ pub(super) fn mark_truncated(output: &mut String) {
     }
     output.truncate(end);
     output.push_str(TRUNCATED_OUTPUT);
-}
-
-fn empty_output(output: String) -> String {
-    if output.is_empty() {
-        "(no output)".to_owned()
-    } else {
-        output
-    }
-}
-
-fn append_bounded(buffer: &mut String, piece: &str) -> bool {
-    let remaining = MAXIMUM_TOOL_BYTES.saturating_sub(buffer.len());
-    if piece.len() <= remaining {
-        buffer.push_str(piece);
-        return false;
-    }
-    let mut end = remaining;
-    while end > 0 && !piece.is_char_boundary(end) {
-        end -= 1;
-    }
-    buffer.push_str(&piece[..end]);
-    true
 }
 
 pub(crate) fn redact(text: &str, secret: Option<&str>) -> String {

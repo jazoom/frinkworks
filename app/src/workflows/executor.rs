@@ -2525,6 +2525,16 @@ async fn run_agent_step(
         output_drafts: Some(drafts),
         required_outputs: action.required_outputs.clone(),
         evidence: Some(evidence.clone()),
+        output_scope: Some(match (run.kind, job.conversation_id) {
+            (super::run::RunKind::QuickTask, Some(conversation)) => {
+                crate::execution::OutputScope::conversation(conversation)
+            }
+            _ => crate::execution::OutputScope {
+                conversation: job.conversation_id,
+                run: Some(run.id),
+                attempt: Some(attempt_id),
+            },
+        }),
     };
     // Conversation workflow output belongs to attempt evidence, not the conversation reply.
     if job.conversation_id.is_some() && run.kind == super::run::RunKind::Configured {
@@ -2617,7 +2627,7 @@ async fn run_git_capture(
         .await
         .map_err(|_| crate::workflows::commit::CommitError::Command)?;
     let deadline = Instant::now() + COMMAND_DEADLINE;
-    let mut output = String::new();
+    let mut output = Vec::new();
     let mut exit = None;
     loop {
         if cancellable && job.cancel_requested() {
@@ -2659,13 +2669,16 @@ async fn run_git_capture(
             break;
         };
         match event {
-            CommandEvent::Output(text) => {
-                if output.len().saturating_add(text.len()) > COMMAND_OUTPUT_LIMIT {
+            CommandEvent::Output { stream, bytes } => {
+                if stream != crate::execution::CommandStream::Stdout {
+                    continue;
+                }
+                if output.len().saturating_add(bytes.len()) > COMMAND_OUTPUT_LIMIT {
                     session.kill().await;
                     session.close().await;
                     return Err(crate::workflows::commit::CommitError::Command);
                 }
-                output.push_str(&text);
+                output.extend_from_slice(&bytes);
             }
             CommandEvent::Exited(code) => exit = Some(code),
             CommandEvent::Failed => {
@@ -2678,7 +2691,7 @@ async fn run_git_capture(
     if exit != Some(0) {
         return Err(crate::workflows::commit::CommitError::Command);
     }
-    Ok(output)
+    Ok(String::from_utf8_lossy(&output).into_owned())
 }
 
 async fn run_system_exec(sandbox: &GuestSandbox, job: &Job, exec: GuestExec) -> StepOutcome {
@@ -2730,8 +2743,8 @@ async fn run_system_exec(sandbox: &GuestSandbox, job: &Job, exec: GuestExec) -> 
             break;
         };
         match event {
-            CommandEvent::Output(text) => {
-                drained = drained.saturating_add(text.len());
+            CommandEvent::Output { bytes, .. } => {
+                drained = drained.saturating_add(bytes.len());
                 if drained > COMMAND_OUTPUT_LIMIT {
                     session.kill().await;
                     session.close().await;

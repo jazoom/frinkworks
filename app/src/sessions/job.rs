@@ -15,6 +15,10 @@ use crate::conversations::ConversationId;
 use crate::hex;
 use crate::providers::{AssistantReply, ModelUsage, ToolOutput};
 
+/// Live progress is bounded separately from terminal tool results.
+pub(crate) const MAXIMUM_TOOL_PROGRESS_EVENTS: usize = 256;
+pub(crate) const MAXIMUM_TOOL_PROGRESS_BYTES: usize = 32 * 1024;
+
 #[derive(Clone, Copy, Eq, PartialEq, Hash)]
 pub(crate) struct JobId([u8; 16]);
 
@@ -79,11 +83,28 @@ pub(crate) enum JobStatus {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum JobEventKind {
-    Response { delta: String },
-    Thinking { delta: String },
-    ToolStarted { id: String, name: String },
-    ToolFinished { id: String, output: ToolOutput },
-    Usage { usage: ModelUsage },
+    Response {
+        delta: String,
+    },
+    Thinking {
+        delta: String,
+    },
+    ToolStarted {
+        id: String,
+        name: String,
+    },
+    ToolProgress {
+        id: String,
+        stream: crate::execution::CommandStream,
+        delta: String,
+    },
+    ToolFinished {
+        id: String,
+        output: ToolOutput,
+    },
+    Usage {
+        usage: ModelUsage,
+    },
     Completed,
     Failed,
     Cancelled,
@@ -121,6 +142,9 @@ struct JobInner {
     output: AssistantReply,
     latest_seq: u64,
     error: Option<String>,
+    progress_events: usize,
+    progress_bytes: usize,
+    progress_truncated: bool,
 }
 
 impl Job {
@@ -143,6 +167,9 @@ impl Job {
                 output: AssistantReply::default(),
                 latest_seq: 0,
                 error: None,
+                progress_events: 0,
+                progress_bytes: 0,
+                progress_truncated: false,
             }),
             notify: Notify::new(),
             cancel: AtomicBool::new(false),
@@ -257,6 +284,39 @@ impl Job {
         self.push_output_event(JobEventKind::ToolStarted { id, name })
     }
 
+    /// Publish a bounded slice of live command output. The final tool result
+    /// replaces progress, so dropping progress never loses the terminal status.
+    pub(crate) fn push_tool_progress(
+        &self,
+        id: String,
+        stream: crate::execution::CommandStream,
+        delta: String,
+    ) -> Option<u64> {
+        if delta.is_empty() || !self.output_visible.load(Ordering::SeqCst) {
+            return None;
+        }
+        let mut inner = self.lock();
+        if inner.status != JobStatus::Running || inner.progress_truncated {
+            return None;
+        }
+        if inner.progress_events >= MAXIMUM_TOOL_PROGRESS_EVENTS
+            || inner.progress_bytes.saturating_add(delta.len()) > MAXIMUM_TOOL_PROGRESS_BYTES
+        {
+            inner.progress_truncated = true;
+            return None;
+        }
+        inner.progress_events += 1;
+        inner.progress_bytes += delta.len();
+        inner.latest_seq += 1;
+        let seq = inner.latest_seq;
+        let kind = JobEventKind::ToolProgress { id, stream, delta };
+        apply_output_event(&mut inner.output, &kind);
+        inner.events.push(JobEvent { seq, kind });
+        drop(inner);
+        self.notify.notify_waiters();
+        Some(seq)
+    }
+
     pub(crate) fn finish_tool(&self, id: String, output: ToolOutput) -> Option<u64> {
         self.push_output_event(JobEventKind::ToolFinished { id, output })
     }
@@ -270,6 +330,7 @@ impl Job {
             JobEventKind::Response { delta } => delta.is_empty(),
             JobEventKind::Thinking { .. }
             | JobEventKind::ToolStarted { .. }
+            | JobEventKind::ToolProgress { .. }
             | JobEventKind::ToolFinished { .. }
             | JobEventKind::Usage { .. } => false,
             JobEventKind::Completed | JobEventKind::Failed | JobEventKind::Cancelled => true,
@@ -385,6 +446,9 @@ fn apply_output_event(output: &mut AssistantReply, event: &JobEventKind) {
         JobEventKind::Response { delta } => output.push_response(delta),
         JobEventKind::Thinking { delta } => output.push_thinking(delta),
         JobEventKind::ToolStarted { id, name } => output.start_tool(id.clone(), name.clone()),
+        JobEventKind::ToolProgress { id, stream, delta } => {
+            output.push_tool_progress(id, *stream, delta)
+        }
         JobEventKind::ToolFinished { id, output: tool } => output.finish_tool(id, tool.clone()),
         JobEventKind::Usage { usage } => output.usage = Some(usage.clone()),
         JobEventKind::Completed | JobEventKind::Failed | JobEventKind::Cancelled => {}

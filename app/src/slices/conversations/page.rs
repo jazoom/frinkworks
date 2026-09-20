@@ -1743,9 +1743,11 @@ pub(super) fn message_view(
             )
         } else {
             activity_html(
+                conversation,
                 &message_id(conversation, index),
                 &message.text,
                 &message.activity,
+                &[],
                 streaming,
             )
         },
@@ -1768,7 +1770,14 @@ pub(super) fn reply_view(
 ) -> MessageView {
     let id = message_id(conversation, index);
     MessageView {
-        html: activity_html(&id, &reply.text, &reply.activity, streaming),
+        html: activity_html(
+            conversation,
+            &id,
+            &reply.text,
+            &reply.activity,
+            &reply.progress,
+            streaming,
+        ),
         id,
         user: false,
         status: if streaming {
@@ -1795,6 +1804,7 @@ fn reply_status(activity: &[crate::providers::AssistantActivity]) -> &'static st
 #[template(path = "conversations/templates/message_content.html")]
 struct MessageContent<'a> {
     id: &'a str,
+    output_base: &'a str,
     blocks: Vec<MessageBlock>,
 }
 
@@ -1805,15 +1815,23 @@ struct MessageBlock {
     output: String,
     active: bool,
     command: Option<CommandView>,
+    progress: Vec<ProgressChunkView>,
 }
 
 struct CommandView {
     chunks: Vec<CommandChunkView>,
     status: String,
     error: bool,
+    reference: Option<String>,
 }
 
 struct CommandChunkView {
+    stream: &'static str,
+    stderr: bool,
+    text: String,
+}
+
+struct ProgressChunkView {
     stream: &'static str,
     stderr: bool,
     text: String,
@@ -1832,16 +1850,36 @@ fn command_view(command: &crate::execution::CommandResult) -> CommandView {
             .collect(),
         status: command.status_text(),
         error: command.is_error(),
+        reference: command.retained_reference().map(str::to_owned),
     }
 }
 
 fn activity_html(
+    conversation: &ConversationId,
     id: &str,
     text: &str,
     activity: &[crate::providers::AssistantActivity],
+    progress: &[crate::providers::ToolProgress],
     streaming: bool,
 ) -> String {
     use crate::providers::AssistantActivity;
+    let output_base = format!("/conversations/{}/output/", conversation.as_hex());
+    let progress_blocks: Vec<MessageBlock> = progress
+        .iter()
+        .map(|progress| MessageBlock {
+            kind: "progress",
+            html: String::new(),
+            label: String::new(),
+            output: String::new(),
+            active: true,
+            command: None,
+            progress: vec![ProgressChunkView {
+                stream: progress.stream.label(),
+                stderr: progress.stream.is_stderr(),
+                text: progress.text.clone(),
+            }],
+        })
+        .collect();
     let blocks = if activity.is_empty() {
         vec![MessageBlock {
             kind: "response",
@@ -1850,6 +1888,7 @@ fn activity_html(
             output: String::new(),
             active: streaming,
             command: None,
+            progress: Vec::new(),
         }]
     } else {
         activity
@@ -1864,6 +1903,7 @@ fn activity_html(
                     output: String::new(),
                     active,
                     command: None,
+                    progress: Vec::new(),
                 };
                 match item {
                     AssistantActivity::Response(text) => {
@@ -1896,9 +1936,15 @@ fn activity_html(
             })
             .collect()
     };
-    MessageContent { id, blocks }
-        .render()
-        .expect("message content template")
+    let mut blocks = blocks;
+    blocks.extend(progress_blocks);
+    MessageContent {
+        id,
+        output_base: &output_base,
+        blocks,
+    }
+    .render()
+    .expect("message content template")
 }
 
 pub(super) fn message_error(message: &ConversationMessage) -> String {

@@ -4,6 +4,7 @@ mod handoff;
 mod job;
 mod model_favourites;
 mod new;
+mod output;
 
 pub(crate) mod recent;
 mod title;
@@ -90,6 +91,10 @@ pub(super) fn router() -> Router<AppState> {
             post(directories::remove_new),
         )
         .route("/conversations/{conversation_id}", get(detail))
+        .route(
+            "/conversations/{conversation_id}/output/{reference}",
+            get(output::show),
+        )
         .route(
             "/conversations/{conversation_id}/activity",
             get(activity::show),
@@ -1737,6 +1742,9 @@ async fn delete_conversation(
     }
     match state.conversations.delete(&record.id, revision) {
         Ok(()) | Err(ConversationError::Missing) => {
+            state
+                .outputs
+                .remove_scope(&crate::execution::OutputScope::conversation(record.id));
             Ok(responses::command_navigation("/conversations"))
         }
         Err(

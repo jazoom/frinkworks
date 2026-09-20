@@ -1,5 +1,6 @@
 use super::{
     MAXIMUM_TOOL_BYTES, advertised, authorised_tool, definitions_for, mark_truncated, redact,
+    valid_output_reference,
 };
 use crate::agents::{AccessMode, AgentId, AgentRecord, DirectoryGrant, DirectoryPolicy, ToolId};
 use crate::execution::ToolLocation;
@@ -129,4 +130,47 @@ fn truncated_tool_output_carries_a_bounded_marker() {
     mark_truncated(&mut output);
     assert_eq!(output.len(), MAXIMUM_TOOL_BYTES);
     assert!(output.ends_with("[output truncated]"));
+}
+
+#[test]
+fn file_tools_require_success_and_exclude_stderr_from_content() {
+    use crate::execution::command::{
+        CommandChunk, CommandResult, CommandStream, CommandTermination,
+    };
+
+    let chunks = vec![
+        CommandChunk {
+            stream: CommandStream::Stdout,
+            text: "file contents".to_owned(),
+        },
+        CommandChunk {
+            stream: CommandStream::Stderr,
+            text: "diagnostic".to_owned(),
+        },
+    ];
+    assert_eq!(
+        super::plain_capture(Ok(CommandResult::new(
+            chunks.clone(),
+            CommandTermination::Exited(0)
+        )))
+        .ok(),
+        Some("file contents".to_owned()),
+    );
+    for termination in [
+        CommandTermination::Exited(1),
+        CommandTermination::Unknown,
+        CommandTermination::ResourceLimit,
+    ] {
+        assert!(super::plain_capture(Ok(CommandResult::new(chunks.clone(), termination))).is_err());
+    }
+}
+
+#[test]
+fn only_server_generated_references_resolve_retained_output() {
+    assert!(valid_output_reference(&"a".repeat(32)));
+    assert!(!valid_output_reference("../../../etc/passwd"));
+    assert!(!valid_output_reference(""));
+    assert!(!valid_output_reference(&"a".repeat(31)));
+    assert!(!valid_output_reference(&"z".repeat(32)));
+    assert!(!valid_output_reference("/tmp/output"));
 }

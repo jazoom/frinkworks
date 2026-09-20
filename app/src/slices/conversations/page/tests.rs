@@ -231,10 +231,13 @@ fn command_output_escapes_untrusted_stream_text() {
             CommandTermination::Exited(3),
         )),
     };
+    let conversation = crate::conversations::ConversationId::generate().expect("conversation");
     let html = activity_html(
+        &conversation,
         "message-1",
         "",
         &[crate::providers::AssistantActivity::Tool(tool)],
+        &[],
         false,
     );
     assert!(!html.contains("<script>"));

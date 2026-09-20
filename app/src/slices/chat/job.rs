@@ -36,6 +36,7 @@ pub(crate) struct AgentRunSpec {
         Option<std::sync::Arc<std::sync::Mutex<crate::workflows::artefacts::output::OutputDrafts>>>,
     pub(crate) required_outputs: Vec<crate::workflows::definition::RequiredOutput>,
     pub(crate) evidence: Option<crate::workflows::AttemptEvidenceContext>,
+    pub(crate) output_scope: Option<crate::execution::OutputScope>,
 }
 
 pub(super) const MIN_PROGRESS_INTERVAL: Duration = if cfg!(test) {
@@ -104,6 +105,14 @@ pub(crate) async fn run_agent_action(
         if job.cancel_requested() {
             return cancel_action(&job, &reply);
         }
+        let mut request_tools = spec.tools.clone();
+        if spec
+            .output_scope
+            .as_ref()
+            .is_some_and(|scope| state.outputs.has_scope(scope))
+        {
+            request_tools.push(tools::read_output_definition());
+        }
         let mut events = tokio::select! {
             biased;
             _ = job.cancelled() => {
@@ -113,7 +122,7 @@ pub(crate) async fn run_agent_action(
                 &spec.connection,
                 &turns,
                 &extra,
-                &spec.tools,
+                &request_tools,
                 &spec.preamble,
             ) => match result {
                 Ok(stream) => stream,
@@ -373,15 +382,52 @@ pub(crate) async fn run_agent_action(
             tools: &spec.tool_ids,
             location: spec.location,
             host,
+            secret,
+            outputs: Some(&state.outputs),
+            output_scope: spec.output_scope.clone(),
             output_drafts: spec.output_drafts.as_deref(),
             required_outputs: &spec.required_outputs,
         };
         for (id, name, arguments) in calls {
             persist_output(state, &job);
-            let trace = tools::invoke(&context, &name, &arguments).await;
+            let trace = tools::invoke(&context, &id, &name, &arguments).await;
             let output = tools::redact(&trace.output, secret);
+
             let label = tools::redact(&trace.label, secret);
             let command = trace.command.map(|command| command.redacted(secret));
+            let command = command.map(|command| match &spec.output_scope {
+                Some(scope) => tools::retain_command(state, scope.clone(), job.id(), &id, command),
+                None => command,
+            });
+            let failed = trace.failed
+                || command
+                    .as_ref()
+                    .is_some_and(crate::execution::CommandResult::is_error);
+            let blocked = command.as_ref().is_some_and(|command| {
+                matches!(
+                    command.termination,
+                    crate::execution::CommandTermination::StorageFailure
+                        | crate::execution::CommandTermination::ResourceLimit
+                        | crate::execution::CommandTermination::Unknown
+                )
+            });
+            let footer = command.as_ref().map(|command| {
+                let mut footer = format!("\nCommand outcome: {}.", command.status_text());
+                if let Some(retained) = &command.retained {
+                    footer.push_str(&format!(
+                        "\nRetained output reference: {}. Read with read_output, cursor 0. Retained bytes: {}. Storage truncated: {}.",
+                        retained.reference, retained.bytes, retained.truncated,
+                    ));
+                }
+                footer
+            }).unwrap_or_default();
+            let output = format!(
+                "{}{footer}",
+                bound_visible_text(
+                    &output,
+                    crate::tools::MAXIMUM_TOOL_BYTES.saturating_sub(footer.len()),
+                )
+            );
             if let Some(evidence) = &spec.evidence {
                 evidence.tool(
                     &ToolOutput {
@@ -404,7 +450,7 @@ pub(crate) async fn run_agent_action(
             if job.cancel_requested() {
                 return cancel_action(&job, &reply);
             }
-            if trace.failed && spec.host.as_ref().is_some_and(|host| host.run.is_some()) {
+            if blocked || (failed && spec.host.as_ref().is_some_and(|host| host.run.is_some())) {
                 return AgentActionEnd {
                     outcome: AgentOutcome::ToolFailure,
                     error: Some(output),
@@ -541,7 +587,9 @@ fn visible_tool_output(
     *visible_tool_bytes += label.len();
     // Keep structured output before its duplicate plain-text projection.
     let command = command.map(|command| {
-        let remaining = MAXIMUM_VISIBLE_TOOL_BYTES.saturating_sub(*visible_tool_bytes);
+        let remaining = MAXIMUM_VISIBLE_TOOL_BYTES
+            .saturating_sub(*visible_tool_bytes)
+            .min(crate::execution::OUTPUT_PREVIEW_BYTES);
         let (bounded, _) = command.bounded(remaining);
         *visible_tool_bytes += bounded
             .chunks
@@ -667,6 +715,8 @@ fn publish_progress(
 
 pub(crate) fn bound_reply(reply: &AssistantReply) -> AssistantReply {
     let mut bounded = reply.clone();
+    // Live progress is not durable terminal content.
+    bounded.progress.clear();
     truncate_utf8(&mut bounded.text, MAXIMUM_MODEL_REPLY_BYTES);
     if bounded.activity.is_empty() {
         truncate_utf8(&mut bounded.thinking, MAXIMUM_THINKING_BYTES);

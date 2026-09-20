@@ -38,6 +38,7 @@ pub(crate) enum CommandTermination {
     TimedOut,
     /// Retained output reached its resource limit before the process ended.
     ResourceLimit,
+    StorageFailure,
     NotDispatched,
     /// No trustworthy termination is available.
     Unknown,
@@ -50,6 +51,10 @@ pub(crate) struct CommandResult {
     /// preserved even when stdout and stderr interleave.
     pub(crate) chunks: Vec<CommandChunk>,
     pub(crate) termination: CommandTermination,
+    /// A server-generated reference to the full retained output. The chunks above
+    /// hold only the bounded display and model projection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) retained: Option<super::output::RetainedOutput>,
 }
 
 impl CommandResult {
@@ -57,7 +62,26 @@ impl CommandResult {
         Self {
             chunks,
             termination,
+            retained: None,
         }
+    }
+
+    pub(crate) fn retain(mut self, retained: super::output::RetainedOutput) -> Self {
+        self.retained = Some(retained);
+        self
+    }
+
+    pub(crate) fn retained_reference(&self) -> Option<&str> {
+        self.retained
+            .as_ref()
+            .map(|retained| retained.reference.as_str())
+    }
+
+    /// Mark a result whose retained storage failed. Captured output stays visible.
+    pub(crate) fn into_storage_limit(mut self) -> Self {
+        self.termination = CommandTermination::StorageFailure;
+        self.retained = None;
+        self
     }
 
     pub(crate) fn exit_code(&self) -> Option<i32> {
@@ -78,6 +102,7 @@ impl CommandResult {
             CommandTermination::Cancelled => "Cancelled".to_owned(),
             CommandTermination::TimedOut => "Timed out".to_owned(),
             CommandTermination::ResourceLimit => "Output limit reached".to_owned(),
+            CommandTermination::StorageFailure => "Output storage failed".to_owned(),
             CommandTermination::NotDispatched => "Not started".to_owned(),
             CommandTermination::Unknown => "Result unknown".to_owned(),
         }
@@ -89,6 +114,7 @@ impl CommandResult {
             CommandTermination::Cancelled
             | CommandTermination::TimedOut
             | CommandTermination::ResourceLimit
+            | CommandTermination::StorageFailure
             | CommandTermination::NotDispatched
             | CommandTermination::Unknown => true,
         }
@@ -110,6 +136,9 @@ impl CommandResult {
             }
             CommandTermination::ResourceLimit => {
                 Some("The command exceeded the output resource limit.".to_owned())
+            }
+            CommandTermination::StorageFailure => {
+                Some("Power Plant could not store command output.".to_owned())
             }
             CommandTermination::Cancelled => Some("The command was cancelled.".to_owned()),
             CommandTermination::TimedOut => Some("The command exceeded the time limit.".to_owned()),
@@ -207,6 +236,7 @@ impl CommandResult {
         Self {
             chunks,
             termination: self.termination,
+            retained: self.retained.clone(),
         }
     }
 
@@ -250,6 +280,7 @@ impl CommandResult {
             Self {
                 chunks,
                 termination: self.termination,
+                retained: self.retained.clone(),
             },
             true,
         )
@@ -265,6 +296,11 @@ pub(crate) struct CommandFailure {
 
 impl CommandFailure {
     pub(crate) fn new(result: CommandResult, message: &'static str) -> Self {
+        let message = if result.termination == CommandTermination::StorageFailure {
+            "Power Plant could not store command output. Command effects can remain incomplete."
+        } else {
+            message
+        };
         Self { result, message }
     }
 
@@ -283,73 +319,239 @@ impl CommandFailure {
     }
 }
 
-/// Ordered capture of observed stream bytes. Incomplete UTF-8 waits for the next read.
-pub(crate) struct CommandCapture {
+/// The result of one capture read. `safe` is already redacted.
+pub(crate) struct CapturePush {
+    pub(crate) overflow: bool,
+    pub(crate) safe: Vec<CommandChunk>,
+}
+
+/// Buffer throttled progress so publication never skips an earlier chunk.
+pub(crate) struct CommandProgress {
     chunks: Vec<CommandChunk>,
-    stdout: Vec<u8>,
-    stderr: Vec<u8>,
+    bytes: usize,
+    full: bool,
+}
+
+impl CommandProgress {
+    pub(crate) fn new() -> Self {
+        Self {
+            chunks: Vec::new(),
+            bytes: 0,
+            full: false,
+        }
+    }
+
+    pub(crate) fn push(&mut self, stream: CommandStream, mut text: String) {
+        if text.is_empty() || self.full {
+            return;
+        }
+        if self.chunks.len() >= MAXIMUM_COMMAND_CHUNKS {
+            self.full = true;
+            return;
+        }
+        let remaining = super::output::OUTPUT_PREVIEW_BYTES.saturating_sub(self.bytes);
+        if text.len() > remaining {
+            let mut end = remaining;
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            text.truncate(end);
+            self.full = true;
+        }
+        self.bytes += text.len();
+        if let Some(last) = self
+            .chunks
+            .last_mut()
+            .filter(|chunk| chunk.stream == stream)
+        {
+            last.text.push_str(&text);
+        } else {
+            self.chunks.push(CommandChunk { stream, text });
+        }
+    }
+
+    pub(crate) fn publish(&mut self, job: &crate::sessions::Job, call: &str) {
+        for chunk in self.chunks.drain(..) {
+            job.push_tool_progress(call.to_owned(), chunk.stream, chunk.text);
+        }
+    }
+}
+
+/// Ordered capture of observed stream bytes. Incomplete UTF-8 waits for the next read.
+pub(crate) struct CommandCapture<'a> {
+    chunks: Vec<CommandChunk>,
+    pending: Vec<(CommandStream, Vec<u8>)>,
+    pending_bytes: usize,
+    secret: Option<String>,
+    store: Option<&'a super::output::OutputStore>,
+    retained: Option<super::output::RetainedOutput>,
+    storage_failed: bool,
     bytes: usize,
     overflowed: bool,
     limit: usize,
 }
 
-impl CommandCapture {
+impl<'a> CommandCapture<'a> {
+    #[cfg(test)]
     pub(crate) fn new() -> Self {
-        Self::with_limit(crate::tools::MAXIMUM_TOOL_BYTES)
+        Self::with_limit(super::output::MAXIMUM_RETAINED_BYTES)
     }
 
+    #[cfg(test)]
     pub(crate) fn with_limit(limit: usize) -> Self {
+        Self::with_secret_limit(None, limit)
+    }
+
+    pub(crate) fn with_secret(secret: Option<&str>) -> Self {
+        Self::with_secret_limit(secret, super::output::MAXIMUM_RETAINED_BYTES)
+    }
+
+    pub(crate) fn with_output(
+        secret: Option<&str>,
+        store: &'a super::output::OutputStore,
+        key: &super::output::OutputKey,
+    ) -> Result<Self, super::output::OutputError> {
+        let retained = store.store(
+            key,
+            &CommandResult::new(Vec::new(), CommandTermination::Unknown),
+        )?;
+        let mut capture = Self::with_secret(secret);
+        capture.store = Some(store);
+        capture.retained = Some(retained);
+        Ok(capture)
+    }
+
+    pub(crate) fn with_secret_limit(secret: Option<&str>, limit: usize) -> Self {
         Self {
             chunks: Vec::new(),
-            stdout: Vec::new(),
-            stderr: Vec::new(),
+            pending: Vec::new(),
+            pending_bytes: 0,
+            secret: secret
+                .filter(|secret| !secret.is_empty())
+                .map(str::to_owned),
+            store: None,
+            retained: None,
+            storage_failed: false,
             bytes: 0,
             overflowed: false,
             limit,
         }
     }
 
-    /// Append received bytes for one stream. Return true when the capture bound is reached.
-    pub(crate) fn push(&mut self, stream: CommandStream, bytes: &[u8]) -> bool {
-        if self.overflowed {
-            return true;
+    /// Append received bytes for one stream. The safe text is redacted.
+    pub(crate) fn push(&mut self, stream: CommandStream, bytes: &[u8]) -> CapturePush {
+        if self.overflowed || bytes.is_empty() {
+            return CapturePush {
+                overflow: self.overflowed,
+                safe: Vec::new(),
+            };
         }
-        let text = match stream {
-            CommandStream::Stdout => {
-                self.stdout.extend_from_slice(bytes);
-                drain_decoded(&mut self.stdout)
-            }
-            CommandStream::Stderr => {
-                self.stderr.extend_from_slice(bytes);
-                drain_decoded(&mut self.stderr)
-            }
-        };
-        self.record(stream, &text)
+        let remaining = self.limit.saturating_sub(self.bytes + self.pending_bytes);
+        let count = bytes.len().min(remaining);
+        let mut overflow = count < bytes.len();
+        if let Some((_, last)) = self.pending.last_mut().filter(|(kind, _)| *kind == stream) {
+            last.extend_from_slice(&bytes[..count]);
+            self.pending_bytes += count;
+        } else if self.chunks.len() + self.pending.len() < MAXIMUM_COMMAND_CHUNKS {
+            self.pending.push((stream, bytes[..count].to_vec()));
+            self.pending_bytes += count;
+        } else {
+            overflow = true;
+        }
+        let safe = self.flush_pending(overflow);
+        self.overflowed |= overflow;
+        if !safe.is_empty() || overflow {
+            self.checkpoint();
+        }
+        CapturePush {
+            overflow: self.overflowed || self.storage_failed,
+            safe,
+        }
     }
 
     /// Flush any complete or replacement-decoded tail.
     pub(crate) fn finish(&mut self) -> Vec<CommandChunk> {
-        let stdout = std::mem::take(&mut self.stdout);
-        if !stdout.is_empty() {
-            let text = String::from_utf8_lossy(&stdout).into_owned();
-            self.record(CommandStream::Stdout, &text);
-        }
-        let stderr = std::mem::take(&mut self.stderr);
-        if !stderr.is_empty() {
-            let text = String::from_utf8_lossy(&stderr).into_owned();
-            self.record(CommandStream::Stderr, &text);
-        }
+        self.flush_pending(true);
+        self.checkpoint();
         std::mem::take(&mut self.chunks)
     }
 
     pub(crate) fn into_result(mut self, termination: CommandTermination) -> CommandResult {
+        self.finish_result(termination)
+    }
+
+    pub(crate) fn finish_result(&mut self, termination: CommandTermination) -> CommandResult {
         let chunks = self.finish();
-        let termination = if self.overflowed {
+        let termination = if self.storage_failed {
+            CommandTermination::StorageFailure
+        } else if self.overflowed {
             CommandTermination::ResourceLimit
         } else {
             termination
         };
-        CommandResult::new(chunks, termination)
+        CommandResult {
+            chunks,
+            termination,
+            retained: self.retained.clone(),
+        }
+    }
+
+    fn checkpoint(&mut self) {
+        if self.storage_failed {
+            return;
+        }
+        if let (Some(store), Some(retained)) = (self.store, &self.retained) {
+            let termination = if self.overflowed {
+                CommandTermination::ResourceLimit
+            } else {
+                CommandTermination::Unknown
+            };
+            match store.checkpoint(
+                &retained.reference,
+                &CommandResult::new(self.chunks.clone(), termination),
+            ) {
+                Ok(retained) => self.retained = Some(retained),
+                Err(_) => self.storage_failed = true,
+            }
+        }
+    }
+
+    fn flush_pending(&mut self, final_chunk: bool) -> Vec<CommandChunk> {
+        let Some(chunks) = decode_ordered(&self.pending, final_chunk) else {
+            return Vec::new();
+        };
+        if !final_chunk
+            && self.secret.as_deref().is_some_and(|secret| {
+                [
+                    None,
+                    Some(CommandStream::Stdout),
+                    Some(CommandStream::Stderr),
+                ]
+                .into_iter()
+                .any(|stream| {
+                    let text: String = chunks
+                        .iter()
+                        .filter(|chunk| stream.is_none_or(|stream| chunk.stream == stream))
+                        .map(|chunk| chunk.text.as_str())
+                        .collect();
+                    let text = crate::tools::redact(&text, Some(secret));
+                    (1..secret.len().min(text.len() + 1)).any(|length| {
+                        secret.is_char_boundary(length) && text.ends_with(&secret[..length])
+                    })
+                })
+            })
+        {
+            return Vec::new();
+        }
+        self.pending.clear();
+        self.pending_bytes = 0;
+        let safe = CommandResult::new(chunks, CommandTermination::Unknown)
+            .redacted(self.secret.as_deref());
+        let start = self.chunks.len();
+        for chunk in safe.chunks {
+            self.record(chunk.stream, &chunk.text);
+        }
+        self.chunks[start..].to_vec()
     }
 
     fn record(&mut self, stream: CommandStream, text: &str) -> bool {
@@ -396,34 +598,57 @@ fn append_line(output: &mut String, line: &str) {
     output.push_str(line);
 }
 
-/// Decode every complete UTF-8 sequence. Incomplete trailing bytes stay pending.
-fn drain_decoded(pending: &mut Vec<u8>) -> String {
-    let mut output = String::new();
-    loop {
-        match std::str::from_utf8(pending) {
-            Ok(text) => {
-                output.push_str(text);
-                pending.clear();
-                break;
+// Each character belongs to the chunk that supplied its first byte, even if
+// another stream arrived before the remaining UTF-8 bytes.
+fn decode_ordered(
+    pending: &[(CommandStream, Vec<u8>)],
+    final_chunk: bool,
+) -> Option<Vec<CommandChunk>> {
+    let mut chunks: Vec<_> = pending
+        .iter()
+        .map(|(stream, _)| CommandChunk {
+            stream: *stream,
+            text: String::new(),
+        })
+        .collect();
+    for stream in [CommandStream::Stdout, CommandStream::Stderr] {
+        let mut bytes = Vec::new();
+        let mut owners = Vec::new();
+        for (index, (kind, data)) in pending.iter().enumerate() {
+            if *kind == stream {
+                bytes.extend_from_slice(data);
+                owners.extend(std::iter::repeat_n(index, data.len()));
             }
-            Err(error) => {
-                let valid = error.valid_up_to();
-                output.push_str(std::str::from_utf8(&pending[..valid]).expect("valid prefix"));
-                match error.error_len() {
-                    Some(invalid) => {
-                        output.push('\u{fffd}');
-                        pending.drain(..valid + invalid);
-                        if pending.is_empty() {
-                            break;
-                        }
+        }
+        let mut offset = 0;
+        while offset < bytes.len() {
+            let (valid, invalid) = match std::str::from_utf8(&bytes[offset..]) {
+                Ok(text) => (text.len(), 0),
+                Err(error) => {
+                    if error.error_len().is_none() && !final_chunk {
+                        return None;
                     }
-                    None => {
-                        pending.drain(..valid);
-                        break;
-                    }
+                    (
+                        error.valid_up_to(),
+                        error
+                            .error_len()
+                            .unwrap_or(bytes.len() - offset - error.valid_up_to()),
+                    )
                 }
+            };
+            let text = std::str::from_utf8(&bytes[offset..offset + valid]).expect("valid prefix");
+            for (index, character) in text.char_indices() {
+                chunks[owners[offset + index]].text.push(character);
+            }
+            offset += valid;
+            if invalid > 0 {
+                chunks[owners[offset]].text.push('\u{fffd}');
+                offset += invalid;
             }
         }
     }
-    output
+    Some(chunks)
 }
+
+#[cfg(test)]
+mod tests;

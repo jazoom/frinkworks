@@ -254,7 +254,6 @@ pub(crate) enum Role {
 pub(crate) struct ToolOutput {
     pub(crate) label: String,
     pub(crate) output: String,
-    /// Structured host-command outcome for command tools. Plain tools leave it unset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) command: Option<crate::execution::CommandResult>,
 }
@@ -279,6 +278,13 @@ pub(crate) struct ModelUsage {
     pub(crate) input_tokens: u64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ToolProgress {
+    pub(crate) id: String,
+    pub(crate) stream: crate::execution::CommandStream,
+    pub(crate) text: String,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct AssistantReply {
     pub(crate) text: String,
@@ -286,6 +292,8 @@ pub(crate) struct AssistantReply {
     pub(crate) tools: Vec<ToolOutput>,
     pub(crate) activity: Vec<AssistantActivity>,
     pub(crate) usage: Option<ModelUsage>,
+    /// Transient live output for an active command. It is not durable history.
+    pub(crate) progress: Vec<ToolProgress>,
 }
 
 impl AssistantReply {
@@ -328,6 +336,7 @@ impl AssistantReply {
     }
 
     pub(crate) fn finish_tool(&mut self, id: &str, tool: ToolOutput) {
+        self.progress.retain(|progress| progress.id != id);
         if let Some(AssistantActivity::ToolCall { result, .. }) = self.activity.iter_mut().rev().find(|activity| {
             matches!(activity, AssistantActivity::ToolCall { id: call_id, result: None, .. } if call_id == id)
         }) {
@@ -341,6 +350,30 @@ impl AssistantReply {
     pub(crate) fn push_tool(&mut self, tool: ToolOutput) {
         self.tools.push(tool.clone());
         self.activity.push(AssistantActivity::Tool(tool));
+    }
+
+    pub(crate) fn push_tool_progress(
+        &mut self,
+        id: &str,
+        stream: crate::execution::CommandStream,
+        delta: &str,
+    ) {
+        if delta.is_empty() {
+            return;
+        }
+        if let Some(progress) = self
+            .progress
+            .last_mut()
+            .filter(|progress| progress.id == id && progress.stream == stream)
+        {
+            progress.text.push_str(delta);
+        } else {
+            self.progress.push(ToolProgress {
+                id: id.to_owned(),
+                stream,
+                text: delta.to_owned(),
+            });
+        }
     }
 }
 

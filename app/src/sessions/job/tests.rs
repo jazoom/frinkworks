@@ -1,6 +1,6 @@
 const JOB_ID_LENGTH: usize = 32;
 
-use super::{ConversationId, Job, JobEvent, JobId, JobStatus};
+use super::{ConversationId, Job, JobEvent, JobEventKind, JobId, JobStatus};
 use crate::providers::{AssistantActivity, ToolOutput};
 use crate::workflows::RunId;
 use std::sync::Arc;
@@ -97,4 +97,56 @@ impl super::Job {
             .cloned()
             .collect()
     }
+}
+
+#[test]
+fn tool_progress_is_bounded_and_the_terminal_result_survives() {
+    let job = job();
+    job.start_tool("call-1".to_owned(), "run".to_owned());
+    let piece = "x".repeat(1024);
+    let mut accepted = 0;
+    for _ in 0..128 {
+        if job
+            .push_tool_progress(
+                "call-1".to_owned(),
+                crate::execution::CommandStream::Stdout,
+                piece.clone(),
+            )
+            .is_some()
+        {
+            accepted += 1;
+        }
+    }
+    assert!(accepted < 128);
+    job.finish_tool(
+        "call-1".to_owned(),
+        ToolOutput {
+            label: "run".to_owned(),
+            output: "done".to_owned(),
+            command: None,
+        },
+    );
+    let events = job.events_after(0);
+    assert!(
+        events
+            .last()
+            .is_some_and(|event| matches!(event.kind, JobEventKind::ToolFinished { .. }))
+    );
+}
+
+#[test]
+fn progress_survives_a_late_observer_without_duplication() {
+    let job = job();
+    job.start_tool("call-1".to_owned(), "run".to_owned());
+    job.push_tool_progress(
+        "call-1".to_owned(),
+        crate::execution::CommandStream::Stderr,
+        "partial".to_owned(),
+    );
+    let snapshot = job.output_up_to(job.latest_seq());
+    assert_eq!(snapshot.progress.len(), 1);
+    assert_eq!(snapshot.progress[0].text, "partial");
+    let again = job.output_up_to(job.latest_seq());
+    assert_eq!(again.progress.len(), 1);
+    assert_eq!(again.progress[0].text, "partial");
 }

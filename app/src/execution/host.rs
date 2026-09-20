@@ -21,6 +21,14 @@ pub(crate) const COMMAND_TIMEOUT: Duration = if cfg!(test) {
     Duration::from_secs(120)
 };
 
+/// Live progress routing for one host command.
+pub(crate) struct CommandReporter<'a> {
+    pub(crate) tool_call: &'a str,
+    pub(crate) secret: Option<&'a str>,
+    pub(crate) outputs: &'a super::output::OutputStore,
+    pub(crate) output_key: super::output::OutputKey,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct HostIdentity {
     pub(crate) username: String,
@@ -60,22 +68,43 @@ pub(crate) fn command_directory(directories: &[super::DirectoryGrant]) -> PathBu
 }
 
 // Ask each time and Run without approval share these bounds. Policy only changes the approval gate.
+#[cfg(test)]
 pub(crate) async fn run_shell(
     command: &str,
     directory: &Path,
     job: &Job,
     timeout: Duration,
 ) -> Result<CommandResult, CommandFailure> {
-    run_shell_inner(command, directory, job, timeout, false).await
+    run_shell_inner(command, directory, job, timeout, false, None).await
 }
 
+pub(crate) async fn run_shell_reported(
+    command: &str,
+    directory: &Path,
+    job: &Job,
+    timeout: Duration,
+    require_success: bool,
+    reporter: &CommandReporter<'_>,
+) -> Result<CommandResult, CommandFailure> {
+    run_shell_inner(
+        command,
+        directory,
+        job,
+        timeout,
+        require_success,
+        Some(reporter),
+    )
+    .await
+}
+
+#[cfg(test)]
 pub(crate) async fn run_workflow_shell(
     command: &str,
     directory: &Path,
     job: &Job,
     timeout: Duration,
 ) -> Result<CommandResult, CommandFailure> {
-    run_shell_inner(command, directory, job, timeout, true).await
+    run_shell_inner(command, directory, job, timeout, true, None).await
 }
 
 async fn run_shell_inner(
@@ -84,6 +113,7 @@ async fn run_shell_inner(
     job: &Job,
     timeout: Duration,
     require_success: bool,
+    reporter: Option<&CommandReporter<'_>>,
 ) -> Result<CommandResult, CommandFailure> {
     if job.cancel_requested() {
         return Err(not_dispatched("Stopped."));
@@ -101,6 +131,13 @@ async fn run_shell_inner(
     if !metadata.is_dir() {
         return Err(not_dispatched("The command directory is not available."));
     }
+    let mut capture = match reporter {
+        Some(reporter) => {
+            CommandCapture::with_output(reporter.secret, reporter.outputs, &reporter.output_key)
+                .map_err(|error| not_dispatched(error.message()))?
+        }
+        None => CommandCapture::with_secret(None),
+    };
     let mut child = Command::new("/bin/sh");
     child
         .arg("-c")
@@ -130,9 +167,11 @@ async fn run_shell_inner(
     let mut stderr = child.stderr.take();
     let mut stdout_buffer = [0_u8; 4096];
     let mut stderr_buffer = [0_u8; 4096];
-    let mut capture = CommandCapture::new();
     let deadline = tokio::time::Instant::now() + timeout;
     let mut status = None;
+    let mut progress = super::command::CommandProgress::new();
+    let mut progress_tick = tokio::time::interval(Duration::from_millis(100));
+    progress_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         if status.is_some() && stdout.is_none() && stderr.is_none() {
             break;
@@ -157,6 +196,9 @@ async fn run_shell_inner(
                     "The command exceeded the time limit.",
                 ));
             }
+            _ = progress_tick.tick(), if reporter.is_some() => {
+                progress.publish(job, reporter.expect("reporter exists").tool_call);
+            }
             result = read_pipe(stdout.as_mut(), &mut stdout_buffer) => {
                 let count = match result {
                     Ok(count) => count,
@@ -173,7 +215,11 @@ async fn run_shell_inner(
                 match count {
                     None => stdout = None,
                     Some(count) => {
-                        if capture.push(CommandStream::Stdout, &stdout_buffer[..count]) {
+                        let push = capture.push(CommandStream::Stdout, &stdout_buffer[..count]);
+                        for chunk in push.safe {
+                            progress.push(chunk.stream, chunk.text);
+                        }
+                        if push.overflow {
                             terminate(&mut child);
                             let _ = child.wait().await;
                             return output_limit(&mut capture, require_success);
@@ -197,7 +243,11 @@ async fn run_shell_inner(
                 match count {
                     None => stderr = None,
                     Some(count) => {
-                        if capture.push(CommandStream::Stderr, &stderr_buffer[..count]) {
+                        let push = capture.push(CommandStream::Stderr, &stderr_buffer[..count]);
+                        for chunk in push.safe {
+                            progress.push(chunk.stream, chunk.text);
+                        }
+                        if push.overflow {
                             terminate(&mut child);
                             let _ = child.wait().await;
                             return output_limit(&mut capture, require_success);
@@ -245,16 +295,14 @@ fn command_failure(
     termination: CommandTermination,
     message: &'static str,
 ) -> CommandFailure {
-    let chunks = capture.finish();
-    CommandFailure::new(CommandResult::new(chunks, termination), message)
+    CommandFailure::new(capture.finish_result(termination), message)
 }
 
 fn output_limit(
     capture: &mut CommandCapture,
     require_success: bool,
 ) -> Result<CommandResult, CommandFailure> {
-    let chunks = capture.finish();
-    let result = CommandResult::new(chunks, CommandTermination::ResourceLimit);
+    let result = capture.finish_result(CommandTermination::ResourceLimit);
     if require_success {
         Err(CommandFailure::new(
             result,

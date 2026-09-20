@@ -37,6 +37,7 @@ pub(crate) fn test_state(config: RuntimeConfig) -> AppState {
         host_approvals: Arc::new(crate::execution::HostApprovalStore::new()),
         local_data: crate::local_data::LocalDataReset::detached(),
         sandboxes: Arc::new(SandboxFleet::scripted()),
+        outputs: Arc::new(crate::execution::OutputStore::ephemeral()),
         agent_leases: Arc::new(AgentLeaseCoordinator::new()),
         workflows: Arc::new(WorkflowCatalogue::in_memory()),
         workflow_runs: Arc::new(WorkflowRunStore::in_memory()),

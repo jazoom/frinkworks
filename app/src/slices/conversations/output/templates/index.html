@@ -1,0 +1,47 @@
+<div class="mx-auto flex w-full max-w-4xl flex-col gap-4 p-5">
+  <header class="flex flex-wrap items-center justify-between gap-2">
+    <h1 class="text-lg font-semibold break-words">{{ heading }}</h1>
+    <p class="text-quiet font-mono text-xs break-all">
+      Reference {{ reference }}
+    </p>
+    <a class="btn btn-ghost btn-sm" href="{{ back_href }}" data-graft
+      >Back to conversation</a
+    >
+  </header>
+
+  {% if !error.is_empty() %}
+    <div class="alert alert-warning" role="alert">{{ error }}</div>
+  {% else if chunks.is_empty() %}
+    <p class="text-quiet text-sm">No output is retained for this reference.</p>
+  {% else %}
+    {% for chunk in chunks %}
+      <section class="flex flex-col gap-1">
+        <h2 class="text-quiet font-mono text-xs tracking-wide uppercase">
+          {{ chunk.stream }}
+        </h2>
+        <pre
+          class="{% if chunk.stderr %}text-error{% endif %} max-h-96 overflow-auto text-xs break-words whitespace-pre-wrap"
+          tabindex="0"
+          aria-label="{{ chunk.stream }} output"
+        ><code>{{ chunk.text }}</code></pre>
+      </section>
+    {% endfor %}
+  {% endif %}
+
+  {% if truncated %}
+    <p class="text-warning text-sm" role="status">
+      The retained output reached its storage limit. Later output is not
+      available.
+    </p>
+  {% endif %}
+
+  {% if let Some(cursor) = next_cursor %}
+    <a
+      class="btn btn-outline btn-sm self-start"
+      href="{{ next_href }}"
+      data-graft
+    >
+      Next page from cursor {{ cursor }}
+    </a>
+  {% endif %}
+</div>
