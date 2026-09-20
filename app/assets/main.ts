@@ -736,24 +736,11 @@ function syncNetworkDomains() {
     domains.hidden = select.value !== "restricted";
 }
 
-function settingsTabForPanel(sectionId: string | undefined): string {
-    if (
-        sectionId === "settings-execution" ||
-        sectionId === "settings-directories"
-    )
-        return "settings-files";
-    return sectionId ?? "settings-files";
-}
-
 function selectConversationSettingsSection(panel: HTMLElement, id: string) {
-    const files = id === "settings-files";
     panel
         .querySelectorAll<HTMLElement>("[data-settings-panel]")
         .forEach((section) => {
-            section.hidden = files
-                ? section.id !== "settings-execution" &&
-                  section.id !== "settings-directories"
-                : section.id !== id;
+            section.hidden = section.id !== id;
         });
     panel
         .querySelectorAll<HTMLElement>("[data-settings-tab]")
@@ -765,7 +752,13 @@ function selectConversationSettingsSection(panel: HTMLElement, id: string) {
     const actions = panel.querySelector<HTMLElement>(
         "[data-execution-actions]",
     );
-    if (actions) actions.hidden = !files;
+    if (actions)
+        actions.hidden =
+            id !== "settings-execution" &&
+            !(
+                id === "settings-directories" &&
+                panel.querySelector("[data-execution-directory]")
+            );
 }
 
 function revealConversationSetting(target: HTMLElement, focus = true) {
@@ -774,11 +767,11 @@ function revealConversationSetting(target: HTMLElement, focus = true) {
     if (!panel || !scroll) return;
     const section = target.closest<HTMLElement>("[data-settings-panel]");
     if (target.closest("[data-execution-actions]"))
-        selectConversationSettingsSection(panel, "settings-files");
+        selectConversationSettingsSection(panel, "settings-execution");
     else if (section || target.id === "conversation-settings-heading")
         selectConversationSettingsSection(
             panel,
-            settingsTabForPanel(section?.id),
+            section?.id ?? "settings-directories",
         );
     let parent = target.parentElement;
     while (parent && parent !== panel) {
@@ -824,9 +817,14 @@ document.addEventListener("click", (event) => {
     if (!target) return;
     const panel = target.closest<HTMLElement>("#conversation-settings");
     if (!panel) return;
+    if (
+        shortcut.getAttribute("popovertargetaction") === "toggle" &&
+        panel.matches(":popover-open")
+    )
+        return;
     selectConversationSettingsSection(
         panel,
-        settingsTabForPanel(target.closest("[data-settings-panel]")?.id),
+        target.closest("[data-settings-panel]")?.id ?? "settings-directories",
     );
     // Native activation retains the trigger for Escape focus restoration.
     requestAnimationFrame(() => revealConversationSetting(target));

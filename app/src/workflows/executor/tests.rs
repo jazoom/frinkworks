@@ -31,22 +31,21 @@ fn git_text(path: &std::path::Path, args: &[&str]) -> String {
 }
 
 #[test]
-fn directory_commit_recovery_restores_or_finalises_the_selected_root() {
+fn multi_repository_recovery_preserves_successful_commits_and_restores_only_uncommitted_roots() {
     use crate::workflows::{artefacts::*, commit::*, definition::*, run::*};
-    for reference_updated in [false, true] {
+    for updated in [[false, false], [true, false], [true, true]] {
         let state = crate::tests::test_state(crate::config::RuntimeConfig::development());
         let root = tempfile::tempdir().unwrap();
         let context = root.path().join("context");
         let project = root.path().join("repository");
         std::fs::create_dir(&context).unwrap();
         std::fs::create_dir(&project).unwrap();
-        git_text(&project, &["init", "-q"]);
-        std::fs::write(project.join("file.txt"), "initial\n").unwrap();
-        git_text(&project, &["add", "."]);
-        git_text(&project, &["commit", "-qm", "initial"]);
-        let old = git_text(&project, &["rev-parse", "HEAD"]);
-        let reference = git_text(&project, &["symbolic-ref", "HEAD"]);
-        let original_index = std::fs::read(project.join(".git/index")).unwrap();
+        for path in [&context, &project] {
+            git_text(path, &["init", "-q"]);
+            std::fs::write(path.join("file.txt"), "initial\n").unwrap();
+            git_text(path, &["add", "."]);
+            git_text(path, &["commit", "-qm", "initial"]);
+        }
         let mut context_grant =
             crate::execution::DirectoryGrant::from_selected(&context, &[]).unwrap();
         context_grant.access = crate::execution::DirectoryAccess::ReviewBeforeApply;
@@ -69,8 +68,6 @@ fn directory_commit_recovery_restores_or_finalises_the_selected_root() {
         )
         .unwrap()
         .with_directories(vec![context_grant, destination.clone()])
-        .unwrap()
-        .with_git_destination(Some(destination.id))
         .unwrap();
         let definition =
             crate::workflows::seeds::correctness_security_definition(settings.environment)
@@ -108,22 +105,11 @@ fn directory_commit_recovery_restores_or_finalises_the_selected_root() {
             )
         };
         let initial = capture();
-        std::fs::write(project.join("file.txt"), "target\n").unwrap();
+        for grant in &settings.directories {
+            std::fs::write(grant.host_path.join("file.txt"), "target\n").unwrap();
+        }
         let target = capture();
-        assert!(destination_pair(&run, &initial, &target).is_ok());
-        for selected in [None, Some(settings.directories[0].id)] {
-            let mut wrong_destination = run.clone();
-            for phase in &mut wrong_destination.phase_models {
-                phase.settings.as_mut().unwrap().git_destination = selected;
-            }
-            assert!(destination_pair(&wrong_destination, &initial, &target).is_err());
-        }
-        let mut read_only = run.clone();
-        for phase in &mut read_only.phase_models {
-            phase.settings.as_mut().unwrap().directories[1].access =
-                crate::execution::DirectoryAccess::ReadOnly;
-        }
-        assert!(destination_pair(&read_only, &initial, &target).is_err());
+        assert_eq!(commit_targets(&run, &initial, &target).unwrap().len(), 2);
         let publish = |payload: &CandidatePayload, producer: ArtefactProducer| {
             let bytes = payload.manifest_bytes().unwrap();
             ArtefactRecord {
@@ -247,28 +233,42 @@ fn directory_commit_recovery_restores_or_finalises_the_selected_root() {
             2,
         )
         .unwrap();
-        let journal = state.commit_journals.create(run.id, attempt).unwrap();
-        git_text(&project, &["add", "."]);
-        let tree = git_text(&project, &["write-tree"]);
-        let commit = git_text(
-            &project,
-            &["commit-tree", &tree, "-p", &old, "-m", "candidate"],
-        );
-        let target_index = std::fs::read(project.join(".git/index")).unwrap();
-        std::fs::write(project.join(".git/index"), &original_index).unwrap();
-        journal
-            .write_index_backup("original.index", &original_index)
-            .unwrap();
-        journal
-            .write_index_backup("target.index", &target_index)
-            .unwrap();
-        journal.flush().unwrap();
-        if reference_updated {
-            git_text(&project, &["update-ref", &reference, &commit, &old]);
-        }
-        run.record_commit_transaction(
-            attempt,
-            CommitTransaction {
+        let mut roots = Vec::new();
+        let mut indices = Vec::new();
+        for (grant, reference_updated) in settings.directories.iter().zip(updated) {
+            let project = &grant.host_path;
+            let old = git_text(project, &["rev-parse", "HEAD"]);
+            let reference = git_text(project, &["symbolic-ref", "HEAD"]);
+            let original_index = std::fs::read(project.join(".git/index")).unwrap();
+            let journal = state
+                .commit_journals
+                .create_for_directory(run.id, attempt, grant.id)
+                .unwrap();
+            git_text(project, &["add", "."]);
+            let tree = git_text(project, &["write-tree"]);
+            let commit = git_text(
+                project,
+                &["commit-tree", &tree, "-p", &old, "-m", "candidate"],
+            );
+            let target_index = std::fs::read(project.join(".git/index")).unwrap();
+            std::fs::write(project.join(".git/index"), &original_index).unwrap();
+            journal
+                .write_index_backup("original.index", &original_index)
+                .unwrap();
+            journal
+                .write_index_backup("target.index", &target_index)
+                .unwrap();
+            journal.flush().unwrap();
+            if reference_updated {
+                git_text(project, &["update-ref", &reference, &commit, &old]);
+            }
+            indices.push(if reference_updated {
+                target_index
+            } else {
+                original_index
+            });
+            roots.push(CommitRoot {
+                grant: grant.clone(),
                 state: if reference_updated {
                     CommitTransactionState::ReferenceUpdated {
                         commit: commit.clone(),
@@ -276,44 +276,59 @@ fn directory_commit_recovery_restores_or_finalises_the_selected_root() {
                 } else {
                     CommitTransactionState::WorktreeApplied
                 },
-                candidate,
-                reviews,
-                approval: None,
                 expected_reference: reference,
-                old_object: Some(old.clone()),
+                old_object: Some(old),
                 target_tree: Some(tree),
-                expected_commit: Some(commit.clone()),
+                expected_commit: Some(commit),
                 timestamp: "1700000000 +0000".to_owned(),
-            },
-        )
-        .unwrap();
+            });
+        }
+        let transaction = CommitTransaction {
+            candidate,
+            reviews,
+            approval: None,
+            roots,
+        };
+        run.record_commit_transaction(attempt, transaction.clone())
+            .unwrap();
         let id = run.id;
         state.workflow_runs.create(run).unwrap();
         super::recover_commit_transactions(&state).unwrap();
-        if reference_updated {
-            let recovered = state.workflow_runs.get(&id).unwrap();
-            assert_eq!(recovered.state, RunState::Completed);
+        let recovered = state.workflow_runs.get(&id).unwrap();
+        assert_eq!(
+            recovered.state == RunState::Completed,
+            updated.iter().all(|updated| *updated)
+        );
+        let recovered_transaction = recovered.attempts[0].commit_transaction.as_ref().unwrap();
+        for (index, (root, reference_updated)) in transaction.roots.iter().zip(updated).enumerate()
+        {
+            let project = &root.grant.host_path;
+            let expected_head = if reference_updated {
+                &root.expected_commit
+            } else {
+                &root.old_object
+            };
             assert_eq!(
-                recovered.attempts[0].commit_result.as_ref().unwrap().commit,
-                commit
+                &git_text(project, &["rev-parse", "HEAD"]),
+                expected_head.as_ref().unwrap()
             );
             assert_eq!(
                 std::fs::read(project.join("file.txt")).unwrap(),
-                b"target\n"
+                if reference_updated {
+                    b"target\n".to_vec()
+                } else {
+                    b"initial\n".to_vec()
+                }
             );
             assert_eq!(
                 std::fs::read(project.join(".git/index")).unwrap(),
-                target_index
-            );
-        } else {
-            assert_eq!(git_text(&project, &["rev-parse", "HEAD"]), old);
-            assert_eq!(
-                std::fs::read(project.join("file.txt")).unwrap(),
-                b"initial\n"
+                indices[index]
             );
             assert_eq!(
-                std::fs::read(project.join(".git/index")).unwrap(),
-                original_index
+                recovered_transaction.roots[index]
+                    .verified_commit()
+                    .is_some(),
+                reference_updated
             );
         }
         assert!(state.commit_journals.load(id, attempt).is_err());
@@ -345,10 +360,7 @@ fn project_free_mounts_require_direct_write_authority_for_live_host_writes() {
     let mut direct = grant.clone();
     direct.access = crate::execution::DirectoryAccess::DirectWrite;
     for grants in [Vec::new(), vec![grant.clone()], vec![direct]] {
-        let mut settings = settings.clone().with_directories(grants.clone()).unwrap();
-        if let Some(first) = grants.first() {
-            settings = settings.with_git_destination(Some(first.id)).unwrap();
-        }
+        let settings = settings.clone().with_directories(grants.clone()).unwrap();
         let authority =
             crate::execution::ProjectFreeAuthority::from_settings(1, &settings).unwrap();
         let pinned = crate::workflows::pin_project_free_quick_task_with_directories(
@@ -495,8 +507,6 @@ fn read_only_review_mounts_the_pinned_copy_instead_of_live_host_files() {
     )
     .unwrap()
     .with_directories(vec![reference.clone(), reviewed.clone()])
-    .unwrap()
-    .with_git_destination(Some(reference.id))
     .unwrap();
     let authority = crate::execution::ProjectFreeAuthority::from_settings(1, &settings).unwrap();
     let definition = crate::workflows::seeds::implement_and_review_definition(settings.environment)
@@ -1579,7 +1589,6 @@ fn completed_output_attempt(
         initial_context: None,
         apply_transaction: None,
         commit_transaction: None,
-        commit_result: None,
         direct_changes: None,
     }
 }

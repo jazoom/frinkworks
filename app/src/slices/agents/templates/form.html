@@ -241,10 +241,10 @@
         <fieldset class="file-section space-y-3">
           <legend class="text-sm">Project access</legend>
           <p class="text-quiet text-xs">
-            Local folders are optional. Without one, this agent cannot run
+            Local directories are optional. Without one, this agent cannot run
             saved-agent work. Conversations need their own explicit access
-            grant. Aliases are labels only. The typed folder path decides host
-            access.
+            grant. Aliases are labels only. The typed directory path decides
+            host access.
           </p>
           {% if grants.len() == 1 %}
             <p class="alert alert-warning text-sm">
@@ -255,7 +255,7 @@
             </p>
           {% endif %}
           <label class="flex flex-col gap-1">
-            <span class="text-sm">Primary folder alias</span>
+            <span class="text-sm">Primary directory alias</span>
             <input
               class="input input-bordered input-sm font-mono"
               name="primary"
@@ -278,14 +278,14 @@
                 </label>
                 {% if grant.path_locked %}
                   <div class="flex flex-col gap-1">
-                    <span class="text-quiet text-xs">Local folder</span>
+                    <span class="text-quiet text-xs">Local directory</span>
                     <p class="text-quiet font-mono text-xs break-all">
                       {{ grant.path }}
                     </p>
                   </div>
                 {% else %}
                   <label class="flex flex-col gap-1">
-                    <span class="text-quiet text-xs">Local folder path</span>
+                    <span class="text-quiet text-xs">Local directory path</span>
                     <input
                       class="input input-bordered input-sm font-mono"
                       name="path_{{ grant.index }}"
@@ -295,7 +295,7 @@
                   </label>
                 {% endif %}
                 <label class="flex flex-col gap-1">
-                  <span class="text-quiet text-xs">Folder access</span>
+                  <span class="text-quiet text-xs">Directory access</span>
                   <select
                     class="select select-bordered select-sm"
                     name="access_{{ grant.index }}"

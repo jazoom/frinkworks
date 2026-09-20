@@ -358,7 +358,7 @@ impl DefinitionError {
             Self::Format => "That workflow definition uses an unsupported format.",
             Self::Environment => "Enter a valid environment identifier.",
             Self::Authority => {
-                "The workflow needs tools, directories or an explicit Git destination outside these settings."
+                "The workflow needs tools or directory access outside these settings."
             }
             Self::WriteStrategy => {
                 "A root cannot bypass candidate approval through Direct write or unrestricted host execution. Read-only review phases cannot request direct writes."
@@ -730,15 +730,6 @@ impl WorkflowDefinition {
             }
         }
         for step in &mut steps {
-            if matches!(&step.action, StepAction::SystemCommand(action)
-                if action.command == SystemCommandId::CommitCandidate)
-            {
-                let settings = combined.as_ref().unwrap_or(defaults);
-                if settings.git_destination_grant().is_none() {
-                    return Err(DefinitionError::Authority);
-                }
-                continue;
-            }
             let resolved = match &step.action {
                 StepAction::Agent(_) => phases
                     .iter()

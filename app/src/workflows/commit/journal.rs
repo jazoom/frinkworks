@@ -55,6 +55,32 @@ impl CommitJournals {
         Ok(CommitJournal { root })
     }
 
+    pub(crate) fn create_for_directory(
+        &self,
+        run: RunId,
+        attempt: AttemptId,
+        directory: crate::execution::DirectoryGrantId,
+    ) -> Result<CommitJournal, PersistError> {
+        let parent = self.create(run, attempt)?;
+        let root = storage::confined_child(&parent.root, &directory.as_hex())?;
+        storage::ensure_private_dir(&root)?;
+        Ok(CommitJournal { root })
+    }
+
+    pub(crate) fn load_for_directory(
+        &self,
+        run: RunId,
+        attempt: AttemptId,
+        directory: crate::execution::DirectoryGrantId,
+    ) -> Result<CommitJournal, PersistError> {
+        let parent = self.load(run, attempt)?;
+        let root = storage::confined_child(&parent.root, &directory.as_hex())?;
+        if !root.is_dir() {
+            return Err(PersistError);
+        }
+        Ok(CommitJournal { root })
+    }
+
     pub(crate) fn remove(&self, run: RunId, attempt: AttemptId) -> Result<(), PersistError> {
         let path = self.path(run, attempt)?;
         if !path.exists() {

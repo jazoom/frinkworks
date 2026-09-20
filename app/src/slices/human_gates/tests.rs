@@ -668,8 +668,6 @@ fn conversation_awaiting_gate() -> GateFixture {
     )
     .unwrap()
     .with_directories(vec![grant.clone()])
-    .unwrap()
-    .with_git_destination(Some(grant.id))
     .unwrap();
     let initial_capture = crate::workflows::artefacts::CandidateCapture::capture_set(
         &settings.directories,

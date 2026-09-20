@@ -208,8 +208,22 @@
                   {% if step.environment != "" %}
                     <p class="font-mono text-xs">{{ step.environment }}</p>
                   {% endif %}
-                  {% if step.commit != "" %}
-                    <p class="font-mono text-xs">Commit {{ step.commit }}</p>
+                  {% if !step.commits.is_empty() %}
+                    <ul class="mt-3 space-y-2" aria-label="Repository commits">
+                      {% for repository in step.commits %}
+                        <li>
+                          <p class="font-mono text-xs break-all">
+                            {{ repository.path }}
+                          </p>
+                          <p class="text-sm">{{ repository.status }}</p>
+                          {% if repository.commit != "" %}
+                            <p class="font-mono text-xs break-all">
+                              {{ repository.commit }}
+                            </p>
+                          {% endif %}
+                        </li>
+                      {% endfor %}
+                    </ul>
                   {% endif %}
                 </div>
 

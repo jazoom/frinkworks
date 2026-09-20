@@ -76,7 +76,7 @@
             class="btn btn-ghost btn-sm min-h-11"
             aria-label="Setup"
             popovertarget="conversation-settings"
-            popovertargetaction="show"
+            popovertargetaction="toggle"
             data-settings-section="conversation-settings-heading"
           >
             <svg class="workspace-icon" aria-hidden="true">
@@ -977,15 +977,26 @@
           <button
             type="button"
             class="btn btn-ghost btn-sm"
-            data-settings-tab="settings-files"
+            data-settings-tab="settings-directories"
+            aria-controls="settings-directories"
             aria-pressed="true"
           >
-            Files and execution
+            {% if location_host %}Work locations{% else %}Directories{% endif %}
+          </button>
+          <button
+            type="button"
+            class="btn btn-ghost btn-sm"
+            data-settings-tab="settings-execution"
+            aria-controls="settings-execution"
+            aria-pressed="false"
+          >
+            Execution
           </button>
           <button
             type="button"
             class="btn btn-ghost btn-sm"
             data-settings-tab="settings-instructions"
+            aria-controls="settings-instructions"
             aria-pressed="false"
           >
             Instructions
@@ -994,6 +1005,7 @@
             type="button"
             class="btn btn-ghost btn-sm"
             data-settings-tab="settings-presets"
+            aria-controls="settings-presets"
             aria-pressed="false"
           >
             Presets
@@ -1055,25 +1067,6 @@
                 </button>
               </form>
               <form
-                data-graft
-                method="post"
-                action="/conversations/{{ saved.id }}/settings/defaults"
-                class="my-4 space-y-2"
-              >
-                <input
-                  type="hidden"
-                  name="revision"
-                  value="{{ saved.revision }}"
-                />
-                <p class="text-quiet text-sm">
-                  This stores this conversation's current settings for later
-                  conversations. Access approval remains separate.
-                </p>
-                <button type="submit" class="btn btn-outline btn-sm">
-                  Use saved settings as future defaults
-                </button>
-              </form>
-              <form
                 id="conversation-preset-form"
                 data-graft
                 method="post"
@@ -1129,7 +1122,7 @@
                 class="text-base font-semibold"
                 tabindex="-1"
               >
-                Reuse a setup
+                Presets
               </h3>
               <div class="mt-2 space-y-5 pb-4">
                 <p class="text-quiet text-sm">
@@ -1385,6 +1378,7 @@
               id="settings-execution"
               data-settings-panel
               aria-labelledby="conversation-execution-heading"
+              hidden
               class="mt-5 [&>section:first-of-type]:mt-4 [&>section:first-of-type]:border-t-0 [&>section:first-of-type]:pt-0"
             >
               <h3
@@ -1394,21 +1388,6 @@
               >
                 Where the work happens
               </h3>
-              {% for directory in directories %}
-                {% if directory.sensitive %}
-                  <div class="alert alert-warning mt-4 items-start">
-                    <p class="text-sm break-words">
-                      Access to sensitive directories can expose private
-                      records. Power Plant stores its data at
-                      <code class="break-all">{{ data_root }}</code>. Tool
-                      output can disclose credentials and private conversations
-                      to the model even with Network off.
-                      {% if directory.pending_approval %}Approval is pending.{% endif %}
-                    </p>
-                  </div>
-                {% endif %}
-              {% endfor %}
-
               {% if self.is_new() %}
                 <button
                   form="conversation-composer"
@@ -1774,18 +1753,56 @@
                 class="mt-5 space-y-3"
                 aria-labelledby="conversation-directory-heading"
               >
-                <div class="flex items-center justify-between gap-3">
-                  <h3
-                    id="conversation-directory-heading"
-                    class="text-base font-semibold"
-                    tabindex="-1"
-                  >
-                    {% if location_host %}
-                      Work locations
-                    {% else %}
-                      Directory access
-                    {% endif %}
-                  </h3>
+                <h3
+                  id="conversation-directory-heading"
+                  class="text-base font-semibold"
+                  tabindex="-1"
+                >
+                  {% if location_host %}
+                    Work locations
+                  {% else %}
+                    Directories
+                  {% endif %}
+                </h3>
+                <div
+                  class="flex flex-wrap items-start justify-between gap-x-4 gap-y-2"
+                >
+                  <div class="flex min-w-0 items-start gap-2.5">
+                    <svg class="workspace-icon mt-0.5" aria-hidden="true">
+                      {% if directories.is_empty() %}
+                        <use href="/static/images/workspace-icons.svg#folder" />
+                      {% else %}
+                        <use href="/static/images/workspace-icons.svg#shield" />
+                      {% endif %}
+                    </svg>
+                    <div class="min-w-0">
+                      <p class="text-sm font-semibold">
+                        {% if directories.is_empty() %}
+                          {% if location_host %}
+                            No work locations
+                          {% else %}
+                            No directory access
+                          {% endif %}
+                        {% else if directories.len() == 1 %}
+                          {% if location_host %}
+                            1 work location
+                          {% else %}
+                            1 directory
+                          {% endif %}
+                        {% else %}
+                          {{ directories.len() }}
+                          {% if location_host %}work locations{% else %}directories{% endif %}
+                        {% endif %}
+                      </p>
+                      <p class="text-quiet mt-0.5 text-xs">
+                        {% if location_host %}
+                          {{ host_summary }}
+                        {% else %}
+                          Sandbox · {{ environment_summary }}
+                        {% endif %}
+                      </p>
+                    </div>
+                  </div>
                   {% if directories.len() >= 8 %}
                     <span class="text-quiet text-xs">Maximum reached</span>
                   {% else %}
@@ -1809,103 +1826,124 @@
                       {% if self.is_new() %}formaction="/conversations/new/directories/pick"{% endif %}
                       formmethod="post"
                       id="conversation-add-directory"
-                      class="btn btn-ghost btn-sm"
+                      class="btn btn-outline btn-sm"
                       type="submit"
                       {% if job_active %}disabled{% endif %}
                     >
                       <svg class="workspace-icon" aria-hidden="true">
                         <use href="/static/images/workspace-icons.svg#plus" />
                       </svg>
-                      Add
+                      Add directory
                     </button>
                   {% endif %}
                 </div>
-                {% if directories.len() >= 8 %}
-                  <p class="text-quiet text-sm">
-                    This conversation has the maximum of eight directories.
-                  </p>
-                {% endif %}
+                {% for directory in directories %}
+                  {% if directory.sensitive %}
+                    <div class="alert alert-warning items-start">
+                      <p class="text-sm break-words">
+                        Access to sensitive directories can expose private
+                        records. Power Plant stores its data at
+                        <code class="break-all">{{ data_root }}</code>. Tool
+                        output can disclose credentials and private
+                        conversations to the model even with Network off.
+                        {% if directory.pending_approval %}Approval is pending.{% endif %}
+                      </p>
+                    </div>
+                  {% endif %}
+                {% endfor %}
                 <p class="text-quiet text-sm">
                   {% if directories.is_empty() %}
                     {% if location_host %}
-                      No work locations are selected. Commands start in Power
-                      Plant's current directory.
+                      Commands start in Power Plant's current directory.
                     {% else %}
-                      No directory access. Tools can use private scratch
-                      storage.
+                      Tools can use private scratch storage.
                     {% endif %}
                   {% else %}
                     Each choice names an exact directory.
                   {% endif %}
                 </p>
                 {% if !directories.is_empty() %}
-                  <ul class="flex flex-col" aria-label="Authorised directories">
+                  <ul
+                    class="directory-list"
+                    aria-label="Authorised directories"
+                  >
                     {% for directory in directories %}
-                      <li class="folder-setting">
-                        <div class="min-w-0 flex-1">
-                          <div class="flex items-center gap-2">
-                            <svg class="workspace-icon" aria-hidden="true">
-                              <use
-                                href="/static/images/workspace-icons.svg#folder"
-                              />
-                            </svg>
-                            <p class="font-medium break-words">
-                              {{ directory.name }}
-                            </p>
-                            {% if !directory.available %}
-                              <span class="badge badge-error badge-sm"
-                                >Unavailable</span
-                              >
-                            {% else if directory.pending_approval && !location_host %}
-                              <span class="badge badge-warning badge-sm"
-                                >Pending approval</span
-                              >
-                            {% else if directory.sensitive %}
-                              <span class="badge badge-warning badge-sm"
-                                >Sensitive access</span
-                              >
-                            {% endif %}
-                            {% if !self.is_new() && !location_host %}
-                              <span class="text-quiet text-xs"
-                                >Current access:
-                                {{ directory.access_label }}</span
-                              >
-                            {% endif %}
-                          </div>
-                          <p
-                            class="text-quiet mt-1 font-mono text-xs break-all"
+                      <li class="directory-card">
+                        <div class="directory-card-head">
+                          <svg
+                            class="workspace-icon directory-card-icon"
+                            aria-hidden="true"
                           >
-                            {{ directory.host_path }}
-                          </p>
-                          {% if !location_host %}
-                            <p class="text-quiet mt-1 text-xs">
-                              Sandbox path:
-                              <code class="break-all"
-                                >{{ directory.guest_path }}</code
-                              >
-                            </p>
-                          {% endif %}
-                          {% if !location_host && directory.direct_write %}
-                            <p class="warning-text mt-1 text-xs">
-                              Writes reach this directory immediately. Discard
-                              cannot undo them.
-                            </p>
-                          {% endif %}
-                          {% if !location_host && directory.review_before_apply && !directory.exclusions.is_empty() %}
-                            <div class="mt-3 text-xs">
-                              <p class="font-medium">Excluded engine paths</p>
-                              <ul class="text-quiet mt-1 space-y-1">
-                                {% for exclusion in directory.exclusions %}
-                                  <li class="font-mono break-all">
-                                    {{ exclusion }}
-                                  </li>
-                                {% endfor %}
-                              </ul>
+                            <use
+                              href="/static/images/workspace-icons.svg#folder"
+                            />
+                          </svg>
+                          <div class="min-w-0 flex-1">
+                            <div
+                              class="flex flex-wrap items-center gap-x-2 gap-y-1"
+                            >
+                              <p class="text-sm font-semibold break-words">
+                                {{ directory.name }}
+                              </p>
+                              {% if !directory.available %}
+                                <span class="badge badge-error badge-sm"
+                                  >Unavailable</span
+                                >
+                              {% else if directory.pending_approval && !location_host %}
+                                <span class="badge badge-warning badge-sm"
+                                  >Pending approval</span
+                                >
+                              {% else if directory.sensitive %}
+                                <span class="badge badge-warning badge-sm"
+                                  >Sensitive access</span
+                                >
+                              {% endif %}
                             </div>
-                          {% endif %}
+                            <p
+                              class="text-quiet mt-0.5 font-mono text-xs break-all"
+                            >
+                              {{ directory.host_path }}
+                            </p>
+                          </div>
                         </div>
+                        {% if !location_host %}
+                          <dl class="directory-card-facts">
+                            {% if !self.is_new() %}
+                              <div class="directory-card-fact">
+                                <dt>Access</dt>
+                                <dd>{{ directory.access_label }}</dd>
+                              </div>
+                            {% endif %}
+                            <div class="directory-card-fact">
+                              <dt>Sandbox path</dt>
+                              <dd>
+                                <code class="break-all"
+                                  >{{ directory.guest_path }}</code
+                                >
+                              </dd>
+                            </div>
+                          </dl>
+                        {% endif %}
+                        {% if !location_host && directory.direct_write %}
+                          <p class="directory-card-warning">
+                            Writes reach this directory immediately. Discard
+                            cannot undo them.
+                          </p>
+                        {% endif %}
+                        {% if !location_host && directory.review_before_apply && !directory.exclusions.is_empty() %}
+                          <div class="directory-card-exclusions">
+                            <p class="font-medium">Excluded engine paths</p>
+                            <ul class="text-quiet mt-1 space-y-1">
+                              {% for exclusion in directory.exclusions %}
+                                <li class="font-mono break-all">
+                                  {{ exclusion }}
+                                </li>
+                              {% endfor %}
+                            </ul>
+                          </div>
+                        {% endif %}
                         {% if self.is_new() %}
-                          <div class="flex flex-wrap items-end gap-3">
+                          <div class="directory-card-actions">
                             {% if !location_host %}
                               <label class="flex min-w-0 flex-1 flex-col gap-1">
                                 <span class="sr-only">Access</span>
@@ -1987,7 +2025,7 @@
                               data-graft
                               method="post"
                               action="/conversations/{{ saved.id }}/directories/{{ directory.id }}/remove"
-                              class="flex flex-wrap items-end gap-3"
+                              class="directory-card-actions"
                             >
                               <input
                                 type="hidden"
@@ -2189,43 +2227,18 @@
                     </div>
                   </div>
                 {% endif %}
-                {% if !location_host %}
+                {% if !location_host && !directories.is_empty() %}
                   <p class="text-quiet text-xs">
-                    Commands start in the first directory. New directories have
-                    read-only access until you approve write access.
+                    Commands start in the first directory. New directories start
+                    read-only.
                   </p>
                 {% endif %}
-                <label class="mt-4 flex max-w-xl flex-col gap-1">
-                  <span class="text-sm font-semibold">Git destination</span>
-                  <select
-                    form="{% if self.is_new() %}conversation-composer{% else %}conversation-settings-form{% endif %}"
-                    name="git_destination"
-                    class="select select-bordered"
-                    {% if job_active %}disabled{% endif %}
-                  >
-                    <option
-                      value=""
-                      {% if git_destination.is_empty() %}selected{% endif %}
-                    >
-                      None
-                    </option>
-                    {% for option in git_destination_options %}
-                      <option
-                        value="{{ option.id }}"
-                        {% if option.selected %}selected{% endif %}
-                      >
-                        {{ option.name }}
-                      </option>
-                    {% endfor %}
-                  </select>
-                </label>
-                <p class="text-quiet text-xs">
-                  File work does not need a Git destination. A commit step does.
-                  Directory order never selects it.
-                </p>
               </section>
             </section>
-            <div data-execution-actions>
+            <div
+              data-execution-actions
+              {% if directories.is_empty() %}hidden{% endif %}
+            >
               {% if let Some(saved) = self.saved() %}
                 {% if !directories.is_empty() %}
                   <input
@@ -2244,7 +2257,7 @@
                   type="submit"
                   formnovalidate
                 >
-                  Review execution change
+                  Review changes
                 </button>
                 {% if let Some(change) = execution_switch %}
                   <div
@@ -2483,6 +2496,35 @@
             </div>
           </div>
         </div>
+        {% if let Some(saved) = self.saved() %}
+          <div
+            class="conversation-settings-footer border-base-300 flex shrink-0 flex-col gap-1 border-t px-5 py-3 sm:px-6"
+          >
+            <form
+              data-graft
+              method="post"
+              action="/conversations/{{ saved.id }}/settings/defaults"
+              class="w-full"
+            >
+              <input
+                type="hidden"
+                name="revision"
+                value="{{ saved.revision }}"
+              />
+              <button
+                type="submit"
+                class="btn btn-ghost btn-sm w-full"
+                aria-describedby="conversation-defaults-help"
+              >
+                Save as future defaults
+              </button>
+            </form>
+            <p id="conversation-defaults-help" class="text-quiet text-xs">
+              This stores this conversation's current settings for later
+              conversations. Access approval remains separate.
+            </p>
+          </div>
+        {% endif %}
       </section>
     {% endblock conversation_detail %}
   </section>

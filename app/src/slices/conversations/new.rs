@@ -27,7 +27,6 @@ pub(super) struct NewForm {
     pub(super) directory_5: String,
     pub(super) directory_6: String,
     pub(super) directory_7: String,
-    pub(super) git_destination: String,
     pub(super) draft_nonce: String,
     pub(super) prepared_run: String,
     pub(super) handoff_approval: String,
@@ -290,7 +289,6 @@ pub(super) fn settings_snapshot(
             .with_host_approval(host_approval)
     })
     .ok_or("Enter valid conversation settings.")?;
-    let settings = super::settings::apply_git_destination(settings, &form.git_destination)?;
     let preset = state
         .presets
         .applied_draft(session, &form.preset_preview)
@@ -392,11 +390,7 @@ pub(super) async fn save(
         .iter()
         .filter(|grant| {
             model.settings.location == crate::execution::ToolLocation::Sandbox
-                && (grant.access != crate::execution::DirectoryAccess::ReadOnly
-                    || crate::execution::authority::sensitive_directory(
-                        &grant.host_path,
-                        state.local_data.root(),
-                    ))
+                && grant.requires_access_consent(state.local_data.root())
         })
         .cloned()
         .collect::<Vec<_>>();

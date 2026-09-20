@@ -1,7 +1,7 @@
 mod approval;
 pub(crate) mod authority;
 mod consent;
-mod folder_picker;
+mod directory_picker;
 mod host;
 mod overrides;
 mod settings;
@@ -12,7 +12,7 @@ pub(crate) use approval::{
 };
 pub(crate) use authority::ProjectFreeAuthority;
 pub(crate) use consent::{AccessConsentStore, draft_nonce, settings_digest};
-pub(crate) use folder_picker::{FolderPick, FolderPicker};
+pub(crate) use directory_picker::{DirectoryPick, DirectoryPicker};
 pub(crate) use host::{
     COMMAND_TIMEOUT, HostIdentity, command_directory, run_shell, run_workflow_shell,
 };

@@ -584,8 +584,6 @@ async fn first_message_persists_an_independent_directory_grant() {
     .expect("directory-backed reply");
     let run_id = state.workflow_runs.summaries().pop().unwrap().id;
     let run = state.workflow_runs.get(&run_id).unwrap();
-    // A read-only non-Git folder stays valid for file work without a Git
-    // destination. It is mounted as secondary context, never auto-selected.
     let directory = run.attempts[0]
         .capabilities
         .directories
@@ -596,9 +594,12 @@ async fn first_message_persists_an_independent_directory_grant() {
     assert_eq!(directory.access, crate::agents::AccessMode::ReadOnly);
     assert_eq!(
         directory.role,
-        crate::workflows::capabilities::DirectoryRole::SecondaryContext
+        crate::workflows::capabilities::DirectoryRole::PrimarySource
     );
-    assert!(run.attempts[0].capabilities.primary().is_none());
+    assert_eq!(
+        run.attempts[0].capabilities.git_admin,
+        crate::agents::AccessMode::ReadOnly
+    );
 }
 
 #[tokio::test]

@@ -28,7 +28,7 @@ async fn picker_commands_are_patch_only_and_revision_bound() {
     let record = conversation(&state);
     let directory = tempfile::tempdir().unwrap();
     state
-        .folder_picker
+        .directory_picker
         .queue(Some(directory.path().to_path_buf()));
     let path = format!("/conversations/{}/directories/pick", record.id);
 
@@ -89,13 +89,8 @@ async fn picker_commands_are_patch_only_and_revision_bound() {
 }
 
 #[tokio::test]
-async fn each_write_strategy_needs_destination_consent() {
-    for access in [
-        crate::execution::DirectoryAccess::ReviewBeforeApply,
-        crate::execution::DirectoryAccess::DirectWrite,
-    ] {
-        directory_consent_case(access).await;
-    }
+async fn direct_write_needs_destination_consent() {
+    directory_consent_case(crate::execution::DirectoryAccess::DirectWrite).await;
 }
 
 async fn directory_consent_case(access: crate::execution::DirectoryAccess) {
@@ -202,7 +197,7 @@ async fn directory_consent_case(access: crate::execution::DirectoryAccess) {
 }
 
 #[tokio::test]
-async fn a_draft_can_approve_and_renew_non_sensitive_review_access() {
+async fn non_sensitive_review_access_needs_no_consent() {
     let state = test_state();
     let token = connected(&state);
     let directory = tempfile::tempdir().unwrap();
@@ -223,41 +218,15 @@ async fn a_draft_can_approve_and_renew_non_sensitive_review_access() {
         .await
         .unwrap();
     assert_eq!(preview.status(), StatusCode::OK);
-    let preview = text(preview).await;
-    let fields = format!(
-        "draft_nonce={}&directory_0={}&consent_existing=true",
-        form_value(&hidden_value(&preview, "draft_nonce")),
-        form_value(&hidden_value(&preview, "pending_directory"))
+    let body = text(preview).await;
+    assert!(hidden_value(&body, "consent_request").is_empty());
+    assert!(hidden_value(&body, "pending_directory").is_empty());
+    let updated =
+        crate::execution::DirectoryGrant::parse_form(&hidden_value(&body, "directory_0")).unwrap();
+    assert_eq!(
+        updated.access,
+        crate::execution::DirectoryAccess::ReviewBeforeApply
     );
-    let approval_fields = format!(
-        "{fields}&consent_request={}&pending_directory={}",
-        form_value(&hidden_value(&preview, "consent_request")),
-        form_value(&hidden_value(&preview, "pending_directory"))
-    );
-    let approved = app(&state)
-        .oneshot(command(
-            "/conversations/new/directories/consent",
-            &token,
-            &approval_fields,
-        ))
-        .await
-        .unwrap();
-    let status = approved.status();
-    let body = text(approved).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(!hidden_value(&body, "consent_reference").is_empty());
-    let renewed = app(&state)
-        .oneshot(command(
-            &format!(
-                "/conversations/new/directories/{}/consent",
-                grant.id.as_hex()
-            ),
-            &token,
-            &fields,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(renewed.status(), StatusCode::OK);
 }
 
 #[tokio::test]
@@ -297,7 +266,10 @@ async fn draft_read_only_replaces_stale_write_consent_without_bypassing_sensitiv
             assert_eq!(preview.status(), StatusCode::OK);
             let preview = text(preview).await;
             let previous_request = hidden_value(&preview, "consent_request");
-            assert!(!previous_request.is_empty());
+            assert_eq!(
+                !previous_request.is_empty(),
+                sensitive || access == DirectoryAccess::DirectWrite
+            );
             let fields = [
                 "draft_nonce",
                 "directory_0",
@@ -349,7 +321,9 @@ async fn sensitive_saved_grant_needs_exact_single_use_consent() {
     state.local_data = crate::local_data::LocalDataReset::for_test(data.clone());
     let token = connected(&state);
     let record = conversation(&state);
-    state.folder_picker.queue(Some(home.path().to_path_buf()));
+    state
+        .directory_picker
+        .queue(Some(home.path().to_path_buf()));
     let path = format!("/conversations/{}/directories/pick", record.id);
 
     let preview = app(&state)
@@ -482,7 +456,7 @@ async fn picker_cancellation_creates_no_grant() {
     let state = test_state();
     let token = connected(&state);
     let record = conversation(&state);
-    state.folder_picker.queue(None);
+    state.directory_picker.queue(None);
 
     let response = app(&state)
         .oneshot(command(

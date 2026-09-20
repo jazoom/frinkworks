@@ -461,6 +461,24 @@ async fn discard_and_switch(
     )))
 }
 
+pub(in crate::slices) fn approval_commits(
+    run: &crate::workflows::WorkflowRun,
+    gate: &crate::workflows::gates::HumanGateRecord,
+) -> bool {
+    if run.kind == crate::workflows::RunKind::QuickTask {
+        return false;
+    }
+    run.pinned
+        .definition
+        .next_step(&gate.step)
+        .and_then(|key| run.pinned.definition.step(key))
+        .is_some_and(|step| {
+            matches!(&step.action,
+            crate::workflows::definition::StepAction::SystemCommand(action)
+                if action.command == crate::workflows::commands::SystemCommandId::CommitCandidate)
+        })
+}
+
 pub(in crate::slices) fn application_destination(
     state: &AppState,
     run: &crate::workflows::WorkflowRun,
@@ -1248,11 +1266,10 @@ fn continuation_authority(
             return ContinuationAuthority::Stale;
         }
         for grant in settings.directories.iter().filter(|grant| {
-            grant.access == crate::execution::DirectoryAccess::ReviewBeforeApply
-                || crate::execution::authority::sensitive_directory(
-                    &grant.host_path,
-                    state.local_data.root(),
-                )
+            crate::execution::authority::sensitive_directory(
+                &grant.host_path,
+                state.local_data.root(),
+            )
         }) {
             if !state.access_consent.authorised_conversation(
                 continuation.session_id,

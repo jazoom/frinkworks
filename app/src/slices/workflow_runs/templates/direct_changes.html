@@ -4,12 +4,11 @@
 >
   <header class="flex flex-wrap items-start justify-between gap-4">
     <h1 class="text-xl font-semibold">Already-written changes</h1>
-    {% if !conversation_href.is_empty() %}<a
-      href="{{ conversation_href }}"
-      data-graft
-      class="btn btn-outline"
-      >Back to conversation</a
-    >{% endif %}
+    {% if !conversation_href.is_empty() %}
+      <a href="{{ conversation_href }}" data-graft class="btn btn-outline"
+        >Back to conversation</a
+      >
+    {% endif %}
   </header>
   <p class="text-quiet mt-3 max-w-prose">
     These snapshots compare the named directories before and after this attempt.
@@ -21,18 +20,16 @@
   </p>
   {% include "workflow_runs/templates/direct_files.html" %}
   <nav aria-label="Changed files" class="mt-6 flex flex-wrap gap-3">
-    {% if let Some(start) = previous %}<a
-      href="{{ href }}?start={{ start }}"
-      data-graft
-      class="btn btn-outline"
-      >Previous files</a
-    >{% endif %}
-    {% if let Some(start) = next %}<a
-      href="{{ href }}?start={{ start }}"
-      data-graft
-      class="btn btn-outline"
-      >Next files</a
-    >{% endif %}
+    {% if let Some(start) = previous %}
+      <a href="{{ href }}?start={{ start }}" data-graft class="btn btn-outline"
+        >Previous files</a
+      >
+    {% endif %}
+    {% if let Some(start) = next %}
+      <a href="{{ href }}?start={{ start }}" data-graft class="btn btn-outline"
+        >Next files</a
+      >
+    {% endif %}
     <a href="{{ run_href }}" data-graft class="btn btn-ghost"
       >View execution record</a
     >

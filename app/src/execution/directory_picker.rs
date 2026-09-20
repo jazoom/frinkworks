@@ -9,7 +9,7 @@ use std::collections::VecDeque;
 use std::sync::Mutex;
 
 #[derive(Clone)]
-pub(crate) struct FolderPicker {
+pub(crate) struct DirectoryPicker {
     inner: Arc<Inner>,
 }
 
@@ -25,13 +25,13 @@ enum Source {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum FolderPick {
+pub(crate) enum DirectoryPick {
     Selected(PathBuf),
     Cancelled,
     Busy,
 }
 
-impl FolderPicker {
+impl DirectoryPicker {
     pub(crate) fn native() -> Self {
         Self {
             inner: Arc::new(Inner {
@@ -41,10 +41,10 @@ impl FolderPicker {
         }
     }
 
-    pub(crate) async fn pick(&self) -> FolderPick {
+    pub(crate) async fn pick(&self) -> DirectoryPick {
         // One host dialog at a time. The permit stays held until the dialog future settles.
         let Ok(_permit) = self.inner.permit.clone().try_acquire_owned() else {
-            return FolderPick::Busy;
+            return DirectoryPick::Busy;
         };
         match &self.inner.source {
             Source::Native => match rfd::AsyncFileDialog::new()
@@ -52,13 +52,13 @@ impl FolderPicker {
                 .pick_folder()
                 .await
             {
-                Some(handle) => FolderPick::Selected(handle.path().to_path_buf()),
-                None => FolderPick::Cancelled,
+                Some(handle) => DirectoryPick::Selected(handle.path().to_path_buf()),
+                None => DirectoryPick::Cancelled,
             },
             #[cfg(test)]
             Source::Scripted(script) => match lock(script).pop_front().flatten() {
-                Some(path) => FolderPick::Selected(path),
-                None => FolderPick::Cancelled,
+                Some(path) => DirectoryPick::Selected(path),
+                None => DirectoryPick::Cancelled,
             },
         }
     }

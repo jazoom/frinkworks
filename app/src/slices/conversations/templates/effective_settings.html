@@ -38,11 +38,12 @@
   </button>
   {% if directories.is_empty() %}
     <button
-      type="button"
+      type="submit"
       class="btn btn-ghost btn-sm"
-      popovertarget="conversation-settings"
-      popovertargetaction="show"
-      data-settings-section="conversation-directory-heading"
+      form="{% if self.is_new() %}conversation-composer{% else %}conversation-directory-picker{% endif %}"
+      {% if self.is_new() %}formaction="/conversations/new/directories/pick"{% endif %}
+      formmethod="post"
+      {% if job_active %}disabled{% endif %}
     >
       Add a directory
     </button>

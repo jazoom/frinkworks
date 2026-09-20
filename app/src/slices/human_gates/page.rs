@@ -65,6 +65,7 @@ pub(super) struct GatePage {
     pub(super) revision_attempt_limit: u8,
     pub(super) host_unchanged: &'static str,
     pub(super) ordinary: bool,
+    pub(super) commit_on_approval: bool,
     pub(super) exclusions: Vec<String>,
     pub(super) application_destination: String,
 }
@@ -280,6 +281,7 @@ impl GatePage {
             ordinary,
             exclusions,
             application_destination,
+            commit_on_approval: super::approval_commits(run, gate),
         })
     }
 }

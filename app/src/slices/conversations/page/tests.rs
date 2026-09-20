@@ -117,9 +117,10 @@ fn candidate_review_escapes_untrusted_file_contents() {
         diff_href: "/runs/run/gates/gate".to_owned(),
         review_href: "/conversations/candidate-review?run=run".to_owned(),
         ordinary: true,
+        commit_on_approval: true,
         application_destination: "/tmp/test".to_owned(),
         can_request_revision: false,
-        quick_task: true,
+        quick_task: false,
         exclusions: Vec::new(),
         total_changes: 1,
         changes_truncated: false,
@@ -157,6 +158,8 @@ fn candidate_review_escapes_untrusted_file_contents() {
     assert!(!html.contains("<img src=x"));
     assert!(html.contains("&#60;script&#62;"));
     assert!(html.contains("&#60;img"));
+    assert!(html.contains("Apply and commit"));
+    assert!(!html.contains("no Git commit"));
 }
 
 #[derive(askama::Template)]

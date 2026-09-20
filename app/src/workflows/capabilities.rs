@@ -71,21 +71,22 @@ impl AttemptCapabilities {
                 SystemCommandId::ApplyChanges if !authority.reviewed_aliases.is_empty() => Ok(
                     apply_capabilities(authority.revision, &authority.reviewed_aliases),
                 ),
-                SystemCommandId::CommitCandidate | SystemCommandId::RepositoryStatus => {
-                    let primary = authority.policy.primary_alias();
-                    if primary.is_empty()
-                        || (action.command == SystemCommandId::CommitCandidate
-                            && !authority
-                                .reviewed_aliases
-                                .iter()
-                                .any(|alias| alias == primary))
-                    {
-                        return Err(CapabilityError::Authority);
-                    }
+                SystemCommandId::CommitCandidate if !authority.reviewed_aliases.is_empty() => {
+                    let mut capabilities =
+                        apply_capabilities(authority.revision, &authority.reviewed_aliases);
+                    capabilities.git_admin = AccessMode::ReadWrite;
+                    Ok(capabilities)
+                }
+                SystemCommandId::RepositoryStatus => {
+                    let primary = authority
+                        .policy
+                        .grants()
+                        .first()
+                        .ok_or(CapabilityError::Authority)?;
                     Ok(commit_or_read_only(
                         action.command,
                         authority.revision,
-                        primary,
+                        &primary.alias,
                     ))
                 }
                 _ => Err(CapabilityError::Authority),

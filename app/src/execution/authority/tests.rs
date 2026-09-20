@@ -104,7 +104,7 @@ fn replacement_at_the_same_path_invalidates_authority() {
 }
 
 #[test]
-fn directory_order_does_not_select_a_git_destination() {
+fn directory_order_selects_the_command_location() {
     let parent = tempfile::tempdir().unwrap();
     let first_path = parent.path().join("first");
     let second_path = parent.path().join("second");
@@ -118,8 +118,10 @@ fn directory_order_does_not_select_a_git_destination() {
         .with_directories(vec![first.clone(), second.clone()])
         .unwrap();
     let authority = ProjectFreeAuthority::from_settings(1, &settings).unwrap();
-    assert_eq!(authority.policy.primary_alias(), "");
-    let selected = settings.with_git_destination(Some(second.id)).unwrap();
-    let authority = ProjectFreeAuthority::from_settings(1, &selected).unwrap();
+    assert_eq!(authority.policy.primary_alias(), first.alias);
+    let reordered = settings
+        .with_directories(vec![second.clone(), first])
+        .unwrap();
+    let authority = ProjectFreeAuthority::from_settings(1, &reordered).unwrap();
     assert_eq!(authority.policy.primary_alias(), second.alias);
 }

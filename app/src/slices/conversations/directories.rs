@@ -8,7 +8,7 @@ use hypergraft::{GraftRequest, PatchGraft, PatchStatus};
 use crate::{
     conversations::ConversationError,
     error::{AppError, AppResult},
-    execution::{DirectoryGrant, DirectoryGrantError, DirectoryGrantId, FolderPick},
+    execution::{DirectoryGrant, DirectoryGrantError, DirectoryGrantId, DirectoryPick},
     local_data::HOST_PATH_RESET_PENDING,
     responses,
     sessions::RequiredSession,
@@ -42,14 +42,14 @@ pub(super) async fn pick_new(
     _graft: PatchGraft,
     Form(mut form): Form<super::new::NewForm>,
 ) -> AppResult<Response> {
-    let result = state.folder_picker.pick().await;
+    let result = state.directory_picker.pick().await;
     let (status, error) = match result {
-        FolderPick::Busy => (
+        DirectoryPick::Busy => (
             PatchStatus::Conflict,
             "Wait until the directory chooser closes.",
         ),
-        FolderPick::Cancelled => (PatchStatus::Ok, ""),
-        FolderPick::Selected(path) => {
+        DirectoryPick::Cancelled => (PatchStatus::Ok, ""),
+        DirectoryPick::Selected(path) => {
             let Ok(_permit) = state.local_data.begin_host_path_mutation().await else {
                 return render_new(
                     &state,
@@ -398,8 +398,8 @@ pub(super) async fn pick_saved(
             REVISION_MESSAGE,
         );
     };
-    match state.folder_picker.pick().await {
-        FolderPick::Busy => render_saved(
+    match state.directory_picker.pick().await {
+        DirectoryPick::Busy => render_saved(
             &state,
             session.0,
             graft,
@@ -407,10 +407,10 @@ pub(super) async fn pick_saved(
             PatchStatus::Conflict,
             "Wait until the directory chooser closes.",
         ),
-        FolderPick::Cancelled => {
+        DirectoryPick::Cancelled => {
             render_saved(&state, session.0, graft, &record, PatchStatus::Ok, "")
         }
-        FolderPick::Selected(path) => {
+        DirectoryPick::Selected(path) => {
             let existing = record
                 .model
                 .as_ref()
@@ -964,7 +964,7 @@ pub(super) async fn remove_saved(
 }
 
 fn needs_consent(state: &AppState, grant: &DirectoryGrant) -> bool {
-    grant.access != crate::execution::DirectoryAccess::ReadOnly || sensitive(state, grant)
+    grant.requires_access_consent(state.local_data.root())
 }
 
 fn sensitive(state: &AppState, grant: &DirectoryGrant) -> bool {

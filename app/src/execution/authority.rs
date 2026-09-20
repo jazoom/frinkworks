@@ -35,10 +35,6 @@ impl ProjectFreeAuthority {
             .filter(|grant| grant.access == super::DirectoryAccess::ReviewBeforeApply)
             .map(|grant| grant.alias.clone())
             .collect::<Vec<_>>();
-        let primary_alias = settings
-            .git_destination_grant()
-            .map(|grant| grant.alias.clone())
-            .unwrap_or_default();
         let grants = settings
             .directories
             .iter()
@@ -57,7 +53,14 @@ impl ProjectFreeAuthority {
             revision,
             tools: settings.tools.clone(),
             network: settings.network.clone(),
-            policy: DirectoryPolicy::from_grants_with_workspace(grants, primary_alias),
+            policy: DirectoryPolicy::from_grants_with_workspace(
+                grants,
+                settings
+                    .directories
+                    .first()
+                    .map(|grant| grant.alias.clone())
+                    .unwrap_or_default(),
+            ),
             reviewed_aliases,
         })
     }

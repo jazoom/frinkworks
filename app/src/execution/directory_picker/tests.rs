@@ -6,7 +6,7 @@ use tokio::sync::Semaphore;
 
 use super::{Inner, Source};
 
-impl super::FolderPicker {
+impl super::DirectoryPicker {
     pub(crate) fn scripted() -> Self {
         Self {
             inner: Arc::new(Inner {
@@ -18,7 +18,7 @@ impl super::FolderPicker {
 
     pub(crate) fn queue(&self, selected: Option<PathBuf>) {
         let Source::Scripted(script) = &self.inner.source else {
-            panic!("scripted folder picker");
+            panic!("scripted directory picker");
         };
         super::lock(script).push_back(selected);
     }

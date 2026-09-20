@@ -26,6 +26,8 @@ const COMMAND_DEADLINE: Duration = if cfg!(test) {
 } else {
     Duration::from_secs(10)
 };
+mod commits;
+
 const COMMAND_OUTPUT_LIMIT: usize = 64 * 1024;
 
 pub(crate) struct WorkflowContinuationRegistry {
@@ -904,10 +906,8 @@ pub(crate) async fn execute_run(
                         .find(|attempt| attempt.id == attempt_id)
                         .and_then(|attempt| attempt.commit_transaction.as_ref())
                         .map(|transaction| {
-                            matches!(
-                                transaction.state,
-                                crate::workflows::commit::CommitTransactionState::ReferenceUpdated { .. }
-                            ) && !matches!(outcome, StepOutcome::Completed)
+                            transaction.needs_recovery()
+                                && !matches!(outcome, StepOutcome::Completed)
                         })
                 })
                 .unwrap_or(false);
@@ -1119,6 +1119,19 @@ async fn isolate_and_run(
             captured: None,
         };
     }
+    if matches!(&step.action, StepAction::SystemCommand(action) if action.command == SystemCommandId::CommitCandidate)
+    {
+        return commits::isolate(
+            state,
+            job,
+            step,
+            attempt_id,
+            inputs,
+            capabilities,
+            candidate_input.as_ref().expect("commit candidate"),
+        )
+        .await;
+    }
     let workspace = match state
         .workflow_workspaces
         .create_attempt(job.run_id, attempt_id)
@@ -1173,39 +1186,33 @@ async fn isolate_and_run(
             captured: None,
         };
     }
-    let commit_attempt = matches!(
-        &step.action,
-        StepAction::SystemCommand(action) if action.command == SystemCommandId::CommitCandidate
-    );
-    // Directory candidates own their roots. Only Git commits need a host primary.
-    let user_project =
-        if private_workspace || (job.project_free_authority.is_some() && !commit_attempt) {
-            workspace.project.clone()
-        } else {
-            match job
-                .host_policy
-                .grants()
-                .iter()
-                .find(|grant| grant.alias == job.host_policy.primary_alias())
-            {
-                Some(grant) => grant.host_path.clone(),
-                None => {
-                    let (outcome, cleanup) = finish_workspace_only(
-                        workspace,
-                        StepOutcome::Failed {
-                            category: FailureCategory::Operational,
-                            error: Some(OPERATIONAL_STORE_ERROR.to_owned()),
-                        },
-                    );
-                    return IsolatedRun::Finished {
-                        outcome,
-                        cleanup,
-                        drafts,
-                        captured: None,
-                    };
-                }
+    let user_project = if private_workspace || job.project_free_authority.is_some() {
+        workspace.project.clone()
+    } else {
+        match job
+            .host_policy
+            .grants()
+            .iter()
+            .find(|grant| grant.alias == job.host_policy.primary_alias())
+        {
+            Some(grant) => grant.host_path.clone(),
+            None => {
+                let (outcome, cleanup) = finish_workspace_only(
+                    workspace,
+                    StepOutcome::Failed {
+                        category: FailureCategory::Operational,
+                        error: Some(OPERATIONAL_STORE_ERROR.to_owned()),
+                    },
+                );
+                return IsolatedRun::Finished {
+                    outcome,
+                    cleanup,
+                    drafts,
+                    captured: None,
+                };
             }
-        };
+        }
+    };
     if matches!(
         &step.action,
         StepAction::SystemCommand(action) if action.command == SystemCommandId::ApplyChanges
@@ -1286,27 +1293,9 @@ async fn isolate_and_run(
             captured: None,
         };
     }
-    let outcome = if commit_attempt {
-        run_commit_transaction(
-            state,
-            job,
-            step,
-            attempt_id,
-            inputs,
-            &user_project,
-            candidate_input.as_ref().expect("commit candidate"),
-            &sandbox,
-        )
-        .await
-    } else {
-        dispatch_step(state, job, step, &sandbox, drafts.clone()).await
-    };
+    let outcome = dispatch_step(state, job, step, &sandbox, drafts.clone()).await;
     let stopped = sandbox.stop().await.is_ok();
-    let captured = if stopped && commit_attempt {
-        state.workflow_runs.get(&job.run_id).and_then(|run| {
-            capture_commit_candidate(state, &run, &candidate_input.as_ref()?.artefact).ok()
-        })
-    } else if stopped && !private_workspace {
+    let captured = if stopped && !private_workspace {
         capture_isolated_candidate(
             state,
             job,
@@ -1320,92 +1309,6 @@ async fn isolate_and_run(
     } else {
         None
     };
-    if commit_attempt && matches!(outcome, StepOutcome::Completed) {
-        let commit = state.workflow_runs.get(&job.run_id).and_then(|run| {
-            run.attempts
-                .iter()
-                .find(|attempt| attempt.id == attempt_id)
-                .and_then(|attempt| attempt.commit_transaction.as_ref())
-                .and_then(|transaction| transaction.expected_commit.clone())
-        });
-        let verified = captured
-            .as_ref()
-            .zip(commit.as_ref())
-            .is_some_and(|(captured, commit)| {
-                captured.candidate_hash()
-                    == candidate_input
-                        .as_ref()
-                        .expect("commit candidate")
-                        .artefact
-                        .candidate_hash()
-                    && state
-                        .workflow_runs
-                        .get(&job.run_id)
-                        .as_ref()
-                        .and_then(|run| {
-                            crate::workflows::commit::destination_revision(run, captured).ok()
-                        })
-                        .and_then(|candidate| candidate.repository.as_ref())
-                        .and_then(|repository| repository.head.as_ref())
-                        .map(|head| head.0.as_str())
-                        == Some(commit.as_str())
-            });
-        let recorded = verified
-            && commit.as_ref().is_some_and(|commit| {
-                let transaction_result = state.workflow_runs.mutate(&job.run_id, |run| {
-                    let mut transaction = run
-                        .attempts
-                        .iter()
-                        .find(|attempt| attempt.id == attempt_id)
-                        .and_then(|attempt| attempt.commit_transaction.clone())
-                        .ok_or(crate::workflows::run::TransitionError::Invalid)?;
-                    transaction.state =
-                        crate::workflows::commit::CommitTransactionState::Verified {
-                            commit: commit.clone(),
-                        };
-                    run.record_commit_transaction(attempt_id, transaction)
-                });
-                transaction_result.is_ok()
-                    && state
-                        .workflow_runs
-                        .mutate(&job.run_id, |run| {
-                            run.record_commit_result(
-                                attempt_id,
-                                crate::workflows::commit::CommitResult {
-                                    commit: commit.clone(),
-                                },
-                            )
-                        })
-                        .is_ok()
-            });
-        if !recorded {
-            let sandbox_gone = stopped && sandbox.remove().await.is_ok();
-            if sandbox_gone {
-                state.sandboxes.drop_attempt(attempt_id);
-            } else {
-                state.sandboxes.expose_orphan(sandbox.name().to_owned());
-            }
-            let workspace_gone = sandbox_gone && workspace.destroy().is_ok();
-            let cleanup = if sandbox_gone && workspace_gone {
-                crate::workflows::run::AttemptCleanupRecord::Complete
-            } else {
-                crate::workflows::run::AttemptCleanupRecord::Orphaned {
-                    sandbox: !sandbox_gone,
-                    workspace: !workspace_gone,
-                    journal: true,
-                }
-            };
-            return IsolatedRun::Finished {
-                outcome: StepOutcome::Failed {
-                    category: FailureCategory::Commit,
-                    error: Some("Power Plant could not verify the Git commit.".to_owned()),
-                },
-                cleanup,
-                drafts,
-                captured,
-            };
-        }
-    }
     let sandbox_gone = if stopped {
         sandbox.remove().await.is_ok()
     } else {
@@ -1779,60 +1682,25 @@ fn persist_apply_transaction(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn run_commit_transaction(
-    state: &AppState,
-    job: &WorkflowJob,
-    _step: &StepDefinition,
-    attempt_id: AttemptId,
-    inputs: &[super::run::AttemptArtefactInput],
-    user_project: &std::path::Path,
-    target: &LoadedCandidate,
-    sandbox: &GuestSandbox,
-) -> StepOutcome {
-    let result = execute_commit_transaction(
-        state,
-        job,
-        attempt_id,
-        inputs,
-        user_project,
-        target,
-        sandbox,
-    )
-    .await;
-    let temporary_index = user_project
-        .join(".git")
-        .join(format!("powerplant-commit-index-{}", attempt_id.as_hex()));
-    match std::fs::remove_file(temporary_index) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(_) if result.is_ok() => {
-            return StepOutcome::Failed {
-                category: FailureCategory::Cleanup,
-                error: Some("Power Plant could not clean up the temporary Git index.".to_owned()),
-            };
-        }
-        Err(_) => {}
-    }
-    match result {
-        Ok(()) => StepOutcome::Completed,
-        Err(_) if job.job.cancel_requested() => StepOutcome::Cancelled,
-        Err(error) => StepOutcome::Failed {
-            category: error.category(),
-            error: Some(error.message().to_owned()),
-        },
-    }
-}
-
-async fn execute_commit_transaction(
+async fn execute_commit_root(
     state: &AppState,
     job: &WorkflowJob,
     attempt_id: AttemptId,
-    inputs: &[super::run::AttemptArtefactInput],
-    user_project: &std::path::Path,
+    root: &crate::workflows::commit::CommitRoot,
     target: &LoadedCandidate,
     sandbox: &GuestSandbox,
 ) -> Result<(), crate::workflows::commit::CommitError> {
-    use crate::workflows::commit::{CommitError, CommitTransaction, CommitTransactionState};
+    use crate::workflows::commit::{CommitError, CommitTransactionState};
+    let user_project = &root.grant.host_path;
+    let at_repository = |mut exec: GuestExec| {
+        exec.cwd = root.grant.guest_path();
+        for (key, value) in &mut exec.env {
+            if key == "GIT_INDEX_FILE" {
+                *value = value.replacen(GUEST_PROJECT, &root.grant.guest_path(), 1);
+            }
+        }
+        exec
+    };
 
     let run = state
         .workflow_runs
@@ -1852,67 +1720,31 @@ async fn execute_commit_transaction(
     let initial_payload =
         crate::workflows::artefacts::CandidatePayload::from_manifest_bytes(&initial_bytes)
             .ok_or(CommitError::Operational)?;
-    let (initial, target_revision) =
-        crate::workflows::commit::destination_pair(&run, &initial_payload, &target.artefact)?;
-    if capture_commit_candidate(state, &run, &initial_payload)
-        .map_err(|_| CommitError::Preflight)?
-        != initial_payload
-    {
-        return Err(CommitError::Preflight);
+    let grant = crate::workflows::commit::target_grant(&run, root.grant.id)?;
+    if grant != root.grant {
+        return Err(CommitError::Authority);
     }
+    let (initial, target_revision) =
+        crate::workflows::commit::destination_pair(&grant, &initial_payload, &target.artefact)?;
+    commits::require_clean_repository(user_project)?;
     crate::workflows::commit::require_unchanged_project(
         user_project,
         initial,
         target_revision,
         &state.workflow_artefacts,
     )?;
-    let initial_repository = initial.repository.as_ref().ok_or(CommitError::Preflight)?;
     let target_repository = target_revision
         .repository
         .as_ref()
         .ok_or(CommitError::Preflight)?;
-    let expected_reference = current_reference(user_project)?;
-    let candidate = inputs
-        .iter()
-        .find(|input| {
-            input.artefact.kind == crate::workflows::definition::ArtefactKind::CandidateRevision
-        })
-        .map(|input| input.artefact.clone())
-        .ok_or(CommitError::Assurance)?;
-    let reviews: Vec<_> = inputs
-        .iter()
-        .filter(|input| {
-            input.artefact.kind == crate::workflows::definition::ArtefactKind::ReviewReport
-        })
-        .map(|input| input.artefact.clone())
-        .collect();
-    let approval = inputs
-        .iter()
-        .find(|input| {
-            input.artefact.kind == crate::workflows::definition::ArtefactKind::HumanDecision
-        })
-        .map(|input| input.artefact.clone());
-    if reviews.is_empty() && approval.is_none() {
-        return Err(CommitError::Assurance);
+    if current_reference(user_project)? != root.expected_reference {
+        return Err(CommitError::Preflight);
     }
-    let timestamp = crate::workflows::commit::utc_timestamp(now_ms());
-    let mut transaction = CommitTransaction {
-        state: CommitTransactionState::Prepared,
-        candidate,
-        reviews,
-        approval,
-        expected_reference,
-        old_object: initial_repository
-            .head
-            .as_ref()
-            .map(|object| object.0.clone()),
-        target_tree: None,
-        expected_commit: None,
-        timestamp: timestamp.clone(),
-    };
+    let timestamp = root.timestamp.clone();
+    let mut transaction = root.clone();
     let journal = state
         .commit_journals
-        .create(job.run_id, attempt_id)
+        .create_for_directory(job.run_id, attempt_id, root.grant.id)
         .map_err(|_| CommitError::Operational)?;
     let live_index = user_project.join(".git/index");
     let original_index = match std::fs::read(&live_index) {
@@ -1924,7 +1756,7 @@ async fn execute_commit_transaction(
         .write_index_backup("original.index", &original_index)
         .map_err(|_| CommitError::Operational)?;
     journal.flush().map_err(|_| CommitError::Operational)?;
-    persist_transaction(state, job.run_id, attempt_id, transaction.clone())?;
+    persist_commit_root(state, job.run_id, attempt_id, transaction.clone())?;
 
     let index_guest = crate::workflows::commit::temporary_index_guest(attempt_id);
     let index_host = user_project
@@ -1936,12 +1768,25 @@ async fn execute_commit_transaction(
     run_git_capture(
         sandbox,
         &job.job,
-        crate::workflows::commit::read_tree_empty_command(&index_guest, &timestamp),
+        at_repository(crate::workflows::commit::read_tree_command(
+            &index_guest,
+            transaction.old_object.as_deref(),
+            &timestamp,
+        )),
         true,
     )
     .await?;
-    let mut index_info = Vec::new();
-    for entry in &target_revision.entries {
+    let mut index_info = crate::workflows::commit::index_removal_records(
+        initial,
+        target_revision,
+        target_repository.object_format,
+    );
+    // The commit contains task changes, not unchanged ignored files from the directory capture.
+    for entry in target_revision
+        .entries
+        .iter()
+        .filter(|entry| !initial.entries.contains(entry))
+    {
         let object = match &entry.kind {
             crate::workflows::artefacts::candidate::CandidateEntryKind::Regular {
                 blob, ..
@@ -1956,7 +1801,9 @@ async fn execute_commit_transaction(
                 let output = run_git_capture(
                     sandbox,
                     &job.job,
-                    crate::workflows::commit::hash_object_command(bytes, &timestamp),
+                    at_repository(crate::workflows::commit::hash_object_command(
+                        bytes, &timestamp,
+                    )),
                     true,
                 )
                 .await?;
@@ -1979,14 +1826,21 @@ async fn execute_commit_transaction(
     run_git_capture(
         sandbox,
         &job.job,
-        crate::workflows::commit::index_info_command(index_info, &index_guest, &timestamp),
+        at_repository(crate::workflows::commit::index_info_command(
+            index_info,
+            &index_guest,
+            &timestamp,
+        )),
         true,
     )
     .await?;
     let tree = run_git_capture(
         sandbox,
         &job.job,
-        crate::workflows::commit::write_tree_command(&index_guest, &timestamp),
+        at_repository(crate::workflows::commit::write_tree_command(
+            &index_guest,
+            &timestamp,
+        )),
         true,
     )
     .await?;
@@ -1998,15 +1852,15 @@ async fn execute_commit_transaction(
         }
     }
     transaction.target_tree = Some(tree.clone());
-    persist_transaction(state, job.run_id, attempt_id, transaction.clone())?;
+    persist_commit_root(state, job.run_id, attempt_id, transaction.clone())?;
     let commit = run_git_capture(
         sandbox,
         &job.job,
-        crate::workflows::commit::commit_tree_command(
+        at_repository(crate::workflows::commit::commit_tree_command(
             &tree,
             transaction.old_object.as_deref(),
             &timestamp,
-        ),
+        )),
         true,
     )
     .await?;
@@ -2019,7 +1873,7 @@ async fn execute_commit_transaction(
     journal.flush().map_err(|_| CommitError::Operational)?;
     std::fs::remove_file(&index_host).map_err(|_| CommitError::Operational)?;
     transaction.expected_commit = Some(commit.clone());
-    persist_transaction(state, job.run_id, attempt_id, transaction.clone())?;
+    persist_commit_root(state, job.run_id, attempt_id, transaction.clone())?;
     if job.job.cancel_requested() {
         return Err(CommitError::Operational);
     }
@@ -2042,7 +1896,7 @@ async fn execute_commit_transaction(
     )
     .map_err(map_apply_error)?;
     transaction.state = CommitTransactionState::WorktreeApplied;
-    persist_transaction(state, job.run_id, attempt_id, transaction.clone())?;
+    persist_commit_root(state, job.run_id, attempt_id, transaction.clone())?;
 
     let old_guard = transaction.old_object.as_deref().unwrap_or({
         match target_repository.object_format {
@@ -2057,12 +1911,12 @@ async fn execute_commit_transaction(
     if run_git_capture(
         sandbox,
         &job.job,
-        crate::workflows::commit::update_ref_command(
+        at_repository(crate::workflows::commit::update_ref_command(
             &transaction.expected_reference,
             &commit,
             Some(old_guard),
             &timestamp,
-        ),
+        )),
         false,
     )
     .await
@@ -2074,10 +1928,54 @@ async fn execute_commit_transaction(
     transaction.state = CommitTransactionState::ReferenceUpdated {
         commit: commit.clone(),
     };
-    persist_transaction(state, job.run_id, attempt_id, transaction.clone())?;
+    persist_commit_root(state, job.run_id, attempt_id, transaction.clone())?;
     crate::storage::write_private(&live_index, &target_index)
         .map_err(|_| CommitError::Operational)?;
+    let captured = crate::workflows::commit::capture_revision(
+        user_project,
+        target_revision,
+        &state.workflow_artefacts,
+    )?;
+    if captured.candidate_hash != target_revision.candidate_hash
+        || captured
+            .repository
+            .as_ref()
+            .and_then(|repo| repo.head.as_ref())
+            .map(|head| &head.0)
+            != Some(&commit)
+    {
+        return Err(CommitError::Preflight);
+    }
+    transaction.state = CommitTransactionState::Verified { commit };
+    persist_commit_root(state, job.run_id, attempt_id, transaction)?;
     Ok(())
+}
+
+fn persist_commit_root(
+    state: &AppState,
+    run_id: RunId,
+    attempt_id: AttemptId,
+    root: crate::workflows::commit::CommitRoot,
+) -> Result<(), crate::workflows::commit::CommitError> {
+    state
+        .workflow_runs
+        .mutate(&run_id, |run| {
+            let mut transaction = run
+                .attempts
+                .iter()
+                .find(|attempt| attempt.id == attempt_id)
+                .and_then(|attempt| attempt.commit_transaction.clone())
+                .ok_or(crate::workflows::run::TransitionError::Invalid)?;
+            let stored = transaction
+                .roots
+                .iter_mut()
+                .find(|stored| stored.grant.id == root.grant.id)
+                .ok_or(crate::workflows::run::TransitionError::Invalid)?;
+            *stored = root;
+            run.record_commit_transaction(attempt_id, transaction)
+        })
+        .map(|_| ())
+        .map_err(|_| crate::workflows::commit::CommitError::Operational)
 }
 
 fn persist_transaction(
@@ -2172,7 +2070,13 @@ fn git_host_text(
 ) -> Result<String, crate::workflows::commit::CommitError> {
     let output = std::process::Command::new("git")
         .current_dir(project)
-        .args(["--no-optional-locks", "-c", "core.hooksPath=/dev/null"])
+        .args([
+            "--no-optional-locks",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "core.fsmonitor=",
+        ])
         .args(args)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -2960,33 +2864,20 @@ async fn start_attempt_sandbox(
         .grants()
         .iter()
         .find(|grant| grant.alias == job.host_policy.primary_alias());
-    let spec = if let Some(authority) = job.project_free_authority.as_ref() {
-        if capabilities.source_location
-            == crate::workflows::capabilities::PrimarySourceLocation::UserProject
-            && capabilities.git_admin.is_writable()
-        {
-            let grant = authority
-                .policy
-                .grants()
-                .iter()
-                .find(|grant| grant.alias == authority.policy.primary_alias())
-                .ok_or("Choose a Git destination.")?;
-            crate::workflows::artefacts::inspect_supported_worktree(&grant.host_path)
-                .map_err(|_| "The Git destination is not a supported Git worktree.")?;
-            commit_attempt_spec(capabilities, &grant.host_path)?
-        } else {
-            let spec = project_free_attempt_spec(capabilities, workspace, authority)?;
-            for grant in authority.policy.grants() {
-                crate::sandbox::confirm_host_write_access(&spec, &grant.host_path, grant.access)
-                    .map_err(|error| error.message())?;
-            }
-            spec
+    let spec = if capabilities.git_admin.is_writable() {
+        let transaction = run
+            .active_attempt()
+            .and_then(|id| run.attempts.iter().find(|attempt| attempt.id == id))
+            .and_then(|attempt| attempt.commit_transaction.as_ref())
+            .ok_or("The commit targets are unavailable.")?;
+        commit_attempt_spec(transaction)?
+    } else if let Some(authority) = job.project_free_authority.as_ref() {
+        let spec = project_free_attempt_spec(capabilities, workspace, authority)?;
+        for grant in authority.policy.grants() {
+            crate::sandbox::confirm_host_write_access(&spec, &grant.host_path, grant.access)
+                .map_err(|error| error.message())?;
         }
-    } else if capabilities.source_location
-        == crate::workflows::capabilities::PrimarySourceLocation::UserProject
-    {
-        let user_project = user_project.ok_or("Choose a project directory.")?;
-        commit_attempt_spec(capabilities, &user_project.host_path)?
+        spec
     } else {
         let user_project = user_project.ok_or("Choose a project directory.")?;
         let spec = attempt_spec(
@@ -3061,7 +2952,8 @@ fn project_free_attempt_spec(
     Ok(crate::sandbox::SandboxSpec {
         mounts,
         workdir: capabilities
-            .primary()
+            .directories
+            .first()
             .map(|directory| directory.guest_path.clone())
             .unwrap_or_else(|| crate::execution::GUEST_WORKSPACE.to_owned()),
         network: capabilities.sandbox_network(),
@@ -3069,31 +2961,35 @@ fn project_free_attempt_spec(
 }
 
 fn commit_attempt_spec(
-    capabilities: &crate::workflows::capabilities::AttemptCapabilities,
-    user_project: &std::path::Path,
+    transaction: &crate::workflows::commit::CommitTransaction,
 ) -> Result<crate::sandbox::SandboxSpec, &'static str> {
-    let Some(primary) = capabilities.primary() else {
-        return Err("A sandbox-backed step needs a primary source.");
-    };
-    let git = user_project.join(".git");
-    if !git.is_dir() {
-        return Err("The project is not a supported Git worktree.");
+    let mut mounts = Vec::new();
+    for root in &transaction.roots {
+        root.grant
+            .revalidate()
+            .map_err(|_| "A commit directory changed identity.")?;
+        crate::workflows::artefacts::inspect_supported_worktree(&root.grant.host_path)
+            .map_err(|_| "A commit directory is not a supported Git repository.")?;
+        mounts.push(crate::sandbox::MountSpec {
+            guest: root.grant.guest_path(),
+            host: root.grant.host_path.clone(),
+            read_only: false,
+        });
+        mounts.push(crate::sandbox::MountSpec {
+            guest: format!("{}/.git", root.grant.guest_path()),
+            host: root.grant.host_path.join(".git"),
+            read_only: false,
+        });
     }
     Ok(crate::sandbox::SandboxSpec {
-        mounts: vec![
-            crate::sandbox::MountSpec {
-                guest: primary.guest_path.clone(),
-                host: user_project.to_path_buf(),
-                read_only: false,
-            },
-            crate::sandbox::MountSpec {
-                guest: format!("{}/.git", primary.guest_path),
-                host: git,
-                read_only: false,
-            },
-        ],
-        workdir: primary.guest_path.clone(),
-        network: capabilities.sandbox_network(),
+        mounts,
+        workdir: transaction
+            .roots
+            .first()
+            .ok_or("The commit targets are unavailable.")?
+            .grant
+            .guest_path(),
+        network: crate::agents::NetworkAccess::None,
     })
 }
 
@@ -3207,11 +3103,7 @@ fn confirm_run_authority(
                         );
                 }
                 settings.directories.iter().any(|grant| {
-                    (grant.access != crate::execution::DirectoryAccess::ReadOnly
-                        || crate::execution::authority::sensitive_directory(
-                            &grant.host_path,
-                            state.local_data.root(),
-                        ))
+                    grant.requires_access_consent(state.local_data.root())
                         && !state.access_consent.authorised_conversation(
                             job.session_id,
                             conversation_id,
@@ -4109,10 +4001,8 @@ fn recovery_project_path(
     run: &crate::workflows::WorkflowRun,
 ) -> Result<std::path::PathBuf, &'static str> {
     let error = "Power Plant could not recover a commit transaction.";
-    let Some(settings) = run.directory_settings() else {
-        return Err(error);
-    };
-    let Some(grant) = settings.git_destination_grant() else {
+    let grants = run.reviewed_directories();
+    let [grant] = grants.as_slice() else {
         return Err(error);
     };
     if grant.revalidate().is_err()
@@ -4288,124 +4178,7 @@ fn capture_commit_candidate(
 }
 
 pub(crate) fn recover_commit_transactions(state: &AppState) -> Result<(), &'static str> {
-    for run in state.workflow_runs.active_runs() {
-        let Some(attempt_id) = run.active_attempt() else {
-            continue;
-        };
-        let Some(attempt) = run.attempts.iter().find(|attempt| attempt.id == attempt_id) else {
-            return Err("Power Plant could not recover a commit transaction.");
-        };
-        let Some(transaction) = attempt.commit_transaction.clone() else {
-            continue;
-        };
-        let project = recovery_project_path(state, &run)?;
-        if current_reference(&project).ok().as_deref() != Some(&transaction.expected_reference) {
-            return Err("Power Plant could not recover a commit transaction.");
-        }
-        let initial_ref = match &run.source {
-            crate::workflows::RunSource::Captured { source } => &source.initial,
-            crate::workflows::RunSource::None | crate::workflows::RunSource::Pending => {
-                return Err("Power Plant could not recover a commit transaction.");
-            }
-        };
-        let initial_payload = load_candidate_payload_reference(state, &run, initial_ref)?;
-        let target_payload = load_candidate_payload_reference(state, &run, &transaction.candidate)?;
-        let (initial, target) =
-            crate::workflows::commit::destination_pair(&run, &initial_payload, &target_payload)
-                .map_err(|_| "Power Plant could not recover a commit transaction.")?;
-        if target.repository != initial.repository || target.git_admin != initial.git_admin {
-            return Err("Power Plant could not recover a commit transaction.");
-        }
-        let head = current_head(&project)?;
-        let old = transaction.old_object.as_deref();
-        let expected = transaction.expected_commit.as_deref();
-        if head.as_deref() == old {
-            let live = crate::workflows::commit::capture_revision(
-                &project,
-                initial,
-                &state.workflow_artefacts,
-            )
-            .map_err(|_| "Power Plant could not recover a commit transaction.")?;
-            if live.candidate_hash == target.candidate_hash
-                && live.repository == initial.repository
-                && live.git_admin == initial.git_admin
-            {
-                let journal = state
-                    .commit_journals
-                    .load(run.id, attempt_id)
-                    .map_err(|_| "Power Plant could not recover a commit transaction.")?;
-                restore_before_reference(state, &project, initial, target, &journal)
-                    .map_err(|_| "Power Plant could not recover a commit transaction.")?;
-            } else if live != *initial {
-                return Err("Power Plant could not recover a commit transaction.");
-            }
-            remove_commit_journal(state, run.id, attempt_id)?;
-            continue;
-        }
-        if head.as_deref() != expected || expected.is_none() {
-            return Err("Power Plant could not recover a commit transaction.");
-        }
-        let journal = state
-            .commit_journals
-            .load(run.id, attempt_id)
-            .map_err(|_| "Power Plant could not recover a commit transaction.")?;
-        let target_index = journal
-            .read_index_backup("target.index")
-            .map_err(|_| "Power Plant could not recover a commit transaction.")?;
-        crate::storage::write_private(&project.join(".git/index"), &target_index)
-            .map_err(|_| "Power Plant could not recover a commit transaction.")?;
-        let captured = capture_commit_candidate(state, &run, &target_payload)?;
-        let revision = crate::workflows::commit::destination_revision(&run, &captured)
-            .map_err(|_| "Power Plant could not recover a commit transaction.")?;
-        let commit = expected.expect("checked").to_owned();
-        if captured.candidate_hash() != target_payload.candidate_hash()
-            || revision
-                .repository
-                .as_ref()
-                .and_then(|repository| repository.head.as_ref())
-                .map(|head| head.0.as_str())
-                != Some(commit.as_str())
-        {
-            return Err("Power Plant could not recover a commit transaction.");
-        }
-        let mut verified = transaction;
-        verified.state = crate::workflows::commit::CommitTransactionState::Verified {
-            commit: commit.clone(),
-        };
-        state
-            .workflow_runs
-            .mutate(&run.id, |run| {
-                run.record_commit_transaction(attempt_id, verified)
-            })
-            .map_err(|_| "Power Plant could not recover a commit transaction.")?;
-        state
-            .workflow_runs
-            .mutate(&run.id, |run| {
-                run.record_commit_result(
-                    attempt_id,
-                    crate::workflows::commit::CommitResult {
-                        commit: commit.clone(),
-                    },
-                )
-            })
-            .map_err(|_| "Power Plant could not recover a commit transaction.")?;
-        publish_recovered_commit(state, &run, attempt_id, &captured)?;
-        remove_commit_journal(state, run.id, attempt_id)?;
-        state
-            .workflow_runs
-            .mutate(&run.id, |run| {
-                run.record_cleanup(
-                    attempt_id,
-                    crate::workflows::run::AttemptCleanupRecord::Complete,
-                )
-            })
-            .map_err(|_| "Power Plant could not recover a commit transaction.")?;
-        state
-            .workflow_runs
-            .mutate(&run.id, |run| run.complete_attempt(attempt_id, now_ms()))
-            .map_err(|_| "Power Plant could not recover a commit transaction.")?;
-    }
-    Ok(())
+    commits::recover(state)
 }
 
 fn load_candidate_payload_reference(

@@ -380,20 +380,6 @@ pub(super) async fn launch(
         )
         .await;
     };
-    if pinned.definition.steps().iter().any(|step| {
-        matches!(
-            &step.action,
-            workflows::definition::StepAction::SystemCommand(action)
-                if action.command == workflows::commands::SystemCommandId::CommitCandidate
-        )
-    }) && settings.git_destination_grant().is_none()
-    {
-        return error_view(
-            PatchStatus::UnprocessableEntity,
-            "Choose a Git destination before you start this workflow.",
-        )
-        .await;
-    }
     let mut phase_models = match resolve_phase_models(&state, &pinned.definition, &form.phase) {
         Ok(models) => models,
         Err(error) => return error_view(PatchStatus::UnprocessableEntity, error).await,

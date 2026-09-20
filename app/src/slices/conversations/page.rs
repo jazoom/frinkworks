@@ -47,12 +47,6 @@ pub(super) struct DirectoryView {
     pub(super) exclusions: Vec<String>,
 }
 
-pub(super) struct GitDestinationOption {
-    pub(super) id: String,
-    pub(super) name: String,
-    pub(super) selected: bool,
-}
-
 #[derive(Clone)]
 pub(super) struct CandidateChangeView {
     pub(super) path: String,
@@ -75,6 +69,7 @@ pub(super) struct PendingCodeGateView {
     pub(super) diff_href: String,
     pub(super) review_href: String,
     pub(super) ordinary: bool,
+    pub(super) commit_on_approval: bool,
     pub(super) application_destination: String,
     pub(super) can_request_revision: bool,
     pub(super) quick_task: bool,
@@ -419,8 +414,6 @@ pub(super) struct ConversationDetailView {
     pub(super) preset_source: String,
     pub(super) preset_preview: Option<PresetPreviewView>,
     pub(super) directories: Vec<DirectoryView>,
-    pub(super) git_destination: String,
-    pub(super) git_destination_options: Vec<GitDestinationOption>,
     pub(super) data_root: String,
     pub(super) consent_path: String,
     pub(super) consent_request: String,
@@ -519,8 +512,7 @@ impl ConversationDetailView {
                 &grant.host_path,
                 state.local_data.root(),
             );
-            view.pending_approval = (view.sensitive
-                || grant.access != crate::execution::DirectoryAccess::ReadOnly)
+            view.pending_approval = grant.requires_access_consent(state.local_data.root())
                 && !state.access_consent.authorised_draft(
                     &form.consent_reference,
                     session,
@@ -601,11 +593,6 @@ impl ConversationDetailView {
 
             omitted_messages: 0,
             directories,
-            git_destination: form.git_destination.clone(),
-            git_destination_options: git_destination_options(
-                &draft_directories,
-                crate::execution::DirectoryGrantId::parse(form.git_destination.trim()),
-            ),
             data_root: state.local_data.root().to_string_lossy().into_owned(),
             consent_path,
             consent_request: form.consent_request,
@@ -920,18 +907,6 @@ impl ConversationDetailView {
             directories: configuration
                 .map(|configuration| directory_views(&configuration.settings.directories))
                 .unwrap_or_default(),
-            git_destination: configuration
-                .and_then(|configuration| configuration.settings.git_destination)
-                .map(crate::execution::DirectoryGrantId::as_hex)
-                .unwrap_or_default(),
-            git_destination_options: configuration
-                .map(|configuration| {
-                    git_destination_options(
-                        &configuration.settings.directories,
-                        configuration.settings.git_destination,
-                    )
-                })
-                .unwrap_or_default(),
             data_root: String::new(),
             consent_path: String::new(),
             consent_request: String::new(),
@@ -1028,8 +1003,7 @@ impl ConversationDetailView {
                     &grant.host_path,
                     state.local_data.root(),
                 );
-                view.pending_approval = (view.sensitive
-                    || grant.access != crate::execution::DirectoryAccess::ReadOnly)
+                view.pending_approval = grant.requires_access_consent(state.local_data.root())
                     && !state.access_consent.authorised_conversation(
                         session,
                         record.id,
@@ -1365,13 +1339,10 @@ fn execution_switch_needs_consent(
     if location == crate::execution::ToolLocation::Host {
         return true;
     }
-    current.directories.iter().any(|grant| {
-        grant.access != crate::execution::DirectoryAccess::ReadOnly
-            || crate::execution::authority::sensitive_directory(
-                &grant.host_path,
-                state.local_data.root(),
-            )
-    })
+    current
+        .directories
+        .iter()
+        .any(|grant| grant.requires_access_consent(state.local_data.root()))
 }
 
 fn host_access_summary(location_host: bool, automatic: bool) -> String {
@@ -1441,28 +1412,6 @@ fn directory_view(grant: &crate::execution::DirectoryGrant) -> DirectoryView {
         access_label: crate::slices::execution_settings::page::directory_access_label(grant.access),
         exclusions: Vec::new(),
     }
-}
-
-fn git_destination_options(
-    grants: &[crate::execution::DirectoryGrant],
-    selected: Option<crate::execution::DirectoryGrantId>,
-) -> Vec<GitDestinationOption> {
-    grants
-        .iter()
-        .filter(|grant| {
-            Some(grant.id) == selected
-                || crate::workflows::artefacts::inspect_supported_worktree(&grant.host_path).is_ok()
-        })
-        .map(|grant| GitDestinationOption {
-            id: grant.id.as_hex(),
-            name: grant
-                .host_path
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_else(|| grant.host_path.to_string_lossy().into_owned()),
-            selected: Some(grant.id) == selected,
-        })
-        .collect()
 }
 
 fn environment_summary(
@@ -1681,6 +1630,7 @@ pub(super) fn pending_code_gate(
             gate.diff_base.id.as_hex()
         ),
         ordinary: diff.ordinary(),
+        commit_on_approval: crate::slices::human_gates::approval_commits(run, gate),
         can_request_revision: run.human_revision_policy(&gate.step).is_some(),
         quick_task: run.kind == crate::workflows::RunKind::QuickTask,
         application_destination,

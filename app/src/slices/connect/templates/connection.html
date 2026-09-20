@@ -3,8 +3,11 @@
     <h2 class="text-lg font-semibold">{{ title }}</h2>
   {% else %}
     <h1
-      class="{% if selected %}text-[26px] sm:text-[28px]{% else %}text-[28px]
-      sm:text-[30px]{% endif %}"
+      class="{% if selected %}
+        text-[26px] sm:text-[28px]
+      {% else %}
+        text-[28px] sm:text-[30px]
+      {% endif %}"
     >
       {{ title }}
     </h1>

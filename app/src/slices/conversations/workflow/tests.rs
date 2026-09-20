@@ -916,7 +916,7 @@ async fn launch_preview_mismatch_starts_no_work() {
 }
 
 #[test]
-fn commit_capable_settings_refuse_without_an_explicit_git_destination() {
+fn commit_workflow_settings_do_not_select_a_global_repository() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("work");
     std::fs::create_dir(&path).unwrap();
@@ -930,19 +930,7 @@ fn commit_capable_settings_refuse_without_an_explicit_git_destination() {
         .into_iter()
         .map(|step| (step.key.clone(), settings.clone()))
         .collect();
-    assert_eq!(
-        definition
-            .clone()
-            .with_phase_settings(&settings, &phases)
-            .err(),
-        Some(workflows::definition::DefinitionError::Authority)
-    );
-    let selected = settings.with_git_destination(Some(grant.id)).unwrap();
-    let phases: Vec<_> = phase_steps(&definition)
-        .into_iter()
-        .map(|step| (step.key.clone(), selected.clone()))
-        .collect();
-    let pinned = definition.with_phase_settings(&selected, &phases).unwrap();
+    let pinned = definition.with_phase_settings(&settings, &phases).unwrap();
     assert!(pinned.steps().iter().any(|step| {
         matches!(
             &step.action,
@@ -973,7 +961,7 @@ fn commit_capable_definition() -> workflows::definition::WorkflowDefinition {
 }
 
 #[tokio::test]
-async fn launch_refuses_a_commit_workflow_without_a_git_destination() {
+async fn launch_refuses_a_commit_workflow_with_only_read_access() {
     let state = connected_state();
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("work");
@@ -1037,7 +1025,7 @@ async fn launch_refuses_a_commit_workflow_without_a_git_destination() {
             .to_vec(),
     )
     .expect("text");
-    assert!(body.contains("Choose a Git destination before you start this workflow."));
+    assert!(body.contains("The workflow needs tools or directory access outside these settings."));
     assert!(
         state
             .workflow_runs

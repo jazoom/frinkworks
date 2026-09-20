@@ -10,6 +10,9 @@ use crate::workflows::definition::{ArtefactKind, CommitPolicy};
 use crate::workflows::run::{AttemptArtefactInput, FailureCategory, WorkflowRun};
 
 mod journal;
+mod targets;
+
+pub(crate) use targets::{commit_targets, destination_pair, target_grant};
 
 pub(crate) use journal::{CommitJournal, CommitJournals};
 
@@ -25,14 +28,21 @@ pub(crate) enum CommitTransactionState {
     WorktreeApplied,
     ReferenceUpdated { commit: String },
     Verified { commit: String },
+    Restored,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CommitTransaction {
-    pub(crate) state: CommitTransactionState,
     pub(crate) candidate: ArtefactReference,
     pub(crate) reviews: Vec<ArtefactReference>,
     pub(crate) approval: Option<ArtefactReference>,
+    pub(crate) roots: Vec<CommitRoot>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CommitRoot {
+    pub(crate) grant: crate::execution::DirectoryGrant,
+    pub(crate) state: CommitTransactionState,
     pub(crate) expected_reference: String,
     pub(crate) old_object: Option<String>,
     pub(crate) target_tree: Option<String>,
@@ -40,13 +50,10 @@ pub(crate) struct CommitTransaction {
     pub(crate) timestamp: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct CommitResult {
-    pub(crate) commit: String,
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CommitError {
+    Dirty,
+    Repository,
     Assurance,
     Authority,
     Preflight,
@@ -60,13 +67,21 @@ impl CommitError {
         match self {
             Self::Assurance => FailureCategory::Assurance,
             Self::Authority => FailureCategory::Authority,
-            Self::Preflight | Self::Operational => FailureCategory::Operational,
+            Self::Dirty | Self::Repository | Self::Preflight | Self::Operational => {
+                FailureCategory::Operational
+            }
             Self::Command | Self::Apply => FailureCategory::Commit,
         }
     }
 
     pub(crate) fn message(self) -> &'static str {
         match self {
+            Self::Dirty => {
+                "The repository has existing changes. Commit or set them aside before this workflow commit."
+            }
+            Self::Repository => {
+                "A changed directory is not a supported Git repository. Apply its files without a commit instead."
+            }
             Self::Assurance => NON_APPROVED_MESSAGE,
             Self::Authority => "Project access changed before that commit.",
             Self::Preflight => "The project changed before that commit.",
@@ -301,72 +316,6 @@ pub(crate) fn require_commit_approval(
     Ok((candidate_record, review_records, candidate))
 }
 
-pub(crate) fn destination_revision<'a>(
-    run: &WorkflowRun,
-    payload: &'a CandidatePayload,
-) -> Result<&'a CandidateRevisionArtefact, CommitError> {
-    match payload {
-        CandidatePayload::Revision(revision) => Ok(revision),
-        CandidatePayload::Set(set) => {
-            let settings = run.directory_settings().ok_or(CommitError::Authority)?;
-            let grant = settings
-                .git_destination_grant()
-                .ok_or(CommitError::Authority)?;
-            if grant.access != crate::execution::DirectoryAccess::ReviewBeforeApply {
-                return Err(CommitError::Authority);
-            }
-            set.roots
-                .iter()
-                .find(|root| {
-                    root.grant_id == grant.id
-                        && root.alias == grant.alias
-                        && root.identity == grant.identity
-                })
-                .map(|root| &root.candidate)
-                .ok_or(CommitError::Authority)
-        }
-    }
-}
-
-pub(crate) fn destination_pair<'a>(
-    run: &WorkflowRun,
-    initial: &'a CandidatePayload,
-    target: &'a CandidatePayload,
-) -> Result<(&'a CandidateRevisionArtefact, &'a CandidateRevisionArtefact), CommitError> {
-    let before = destination_revision(run, initial)?;
-    let after = destination_revision(run, target)?;
-    // A single-repository transaction cannot apply changes in other roots or
-    // remove excluded tracked paths through its replacement index.
-    if !before.exclusions.is_empty() || !after.exclusions.is_empty() {
-        return Err(CommitError::Preflight);
-    }
-    match (initial, target) {
-        (CandidatePayload::Set(initial), CandidatePayload::Set(target)) => {
-            let destination = run
-                .directory_settings()
-                .and_then(|settings| settings.git_destination)
-                .ok_or(CommitError::Authority)?;
-            if initial.roots.len() != target.roots.len()
-                || initial
-                    .roots
-                    .iter()
-                    .zip(&target.roots)
-                    .any(|(left, right)| {
-                        left.grant_id != right.grant_id
-                            || left.alias != right.alias
-                            || left.identity != right.identity
-                            || (left.grant_id != destination && left != right)
-                    })
-            {
-                return Err(CommitError::Preflight);
-            }
-        }
-        (CandidatePayload::Revision(_), CandidatePayload::Revision(_)) => {}
-        _ => return Err(CommitError::Preflight),
-    }
-    Ok((before, after))
-}
-
 pub(crate) fn capture_revision(
     project: &std::path::Path,
     template: &CandidateRevisionArtefact,
@@ -403,6 +352,7 @@ pub(crate) fn require_unchanged_project(
 impl CommitTransactionState {
     pub(crate) fn encode(&self) -> String {
         match self {
+            Self::Restored => "restored".to_owned(),
             Self::Prepared => "prepared".to_owned(),
             Self::WorktreeApplied => "worktree-applied".to_owned(),
             Self::ReferenceUpdated { commit } => format!("reference-updated:{commit}"),
@@ -412,6 +362,7 @@ impl CommitTransactionState {
 
     pub(crate) fn parse(value: &str) -> Option<Self> {
         match value {
+            "restored" => Some(Self::Restored),
             "prepared" => Some(Self::Prepared),
             "worktree-applied" => Some(Self::WorktreeApplied),
             value if value.starts_with("reference-updated:") => Some(Self::ReferenceUpdated {
@@ -427,9 +378,39 @@ impl CommitTransactionState {
 
 impl CommitTransaction {
     pub(crate) fn can_advance_to(&self, next: &Self) -> bool {
-        if self.candidate != next.candidate
-            || self.reviews != next.reviews
-            || self.approval != next.approval
+        self.candidate == next.candidate
+            && self.reviews == next.reviews
+            && self.approval == next.approval
+            && self.roots.len() == next.roots.len()
+            && self
+                .roots
+                .iter()
+                .zip(&next.roots)
+                .all(|(before, after)| before.can_advance_to(after))
+    }
+
+    pub(crate) fn is_verified(&self) -> bool {
+        self.roots
+            .iter()
+            .all(|root| root.verified_commit().is_some())
+    }
+
+    pub(crate) fn needs_recovery(&self) -> bool {
+        self.roots.iter().any(|root| {
+            !matches!(
+                root.state,
+                CommitTransactionState::Verified { .. } | CommitTransactionState::Restored
+            )
+        })
+    }
+}
+
+impl CommitRoot {
+    pub(crate) fn can_advance_to(&self, next: &Self) -> bool {
+        if self == next {
+            return true;
+        }
+        if self.grant != next.grant
             || self.expected_reference != next.expected_reference
             || self.old_object != next.old_object
             || self.timestamp != next.timestamp
@@ -455,6 +436,16 @@ impl CommitTransaction {
                     commit: next_commit,
                 },
             ) => current == next_commit,
+            (
+                CommitTransactionState::Prepared | CommitTransactionState::WorktreeApplied,
+                CommitTransactionState::Restored,
+            ) => true,
+            (CommitTransactionState::Restored, CommitTransactionState::Restored) => true,
+            // A crash can precede persistence of the reference update.
+            (
+                CommitTransactionState::Prepared | CommitTransactionState::WorktreeApplied,
+                CommitTransactionState::Verified { commit },
+            ) => next.expected_commit.as_deref() == Some(commit),
             _ => false,
         };
         valid_state
@@ -533,6 +524,15 @@ fn with_index(mut exec: GuestExec, index: &str) -> GuestExec {
     exec
 }
 
+pub(crate) fn read_tree_command(index: &str, parent: Option<&str>, timestamp: &str) -> GuestExec {
+    let Some(parent) = parent else {
+        return read_tree_empty_command(index, timestamp);
+    };
+    let mut args = plumbing_prefix();
+    args.extend(["read-tree".to_owned(), parent.to_owned()]);
+    with_index(git_command(args, None, timestamp), index)
+}
+
 pub(crate) fn read_tree_empty_command(index: &str, timestamp: &str) -> GuestExec {
     let mut args = plumbing_prefix();
     args.extend(["read-tree".to_owned(), "--empty".to_owned()]);
@@ -582,6 +582,30 @@ pub(crate) fn index_info_command(info: Vec<u8>, index: &str, timestamp: &str) ->
         "--index-info".to_owned(),
     ]);
     with_index(git_command(args, Some(info), timestamp), index)
+}
+
+pub(crate) fn index_removal_records(
+    initial: &CandidateRevisionArtefact,
+    target: &CandidateRevisionArtefact,
+    format: GitObjectFormat,
+) -> Vec<u8> {
+    let zero = "0".repeat(match format {
+        GitObjectFormat::Sha1 => 40,
+        GitObjectFormat::Sha256 => 64,
+    });
+    let mut records = Vec::new();
+    for entry in &initial.entries {
+        // A replacement directory must remove the old file from the index, even without new child files.
+        if !matches!(entry.kind, CandidateEntryKind::Directory { .. })
+            && !target.entries.iter().any(|after| {
+                after.path == entry.path
+                    && !matches!(after.kind, CandidateEntryKind::Directory { .. })
+            })
+        {
+            records.extend(format!("0 {zero}\t{}\0", entry.path).into_bytes());
+        }
+    }
+    records
 }
 
 pub(crate) fn index_info_record(

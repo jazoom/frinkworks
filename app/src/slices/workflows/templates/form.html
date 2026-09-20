@@ -931,17 +931,17 @@
                 </label>
                 <details class="workflow-advanced">
                   <summary>
-                    Advanced settings: folders and output mappings
+                    Advanced settings: directories and output mappings
                   </summary>
                   <div class="workflow-advanced-body">
                     <fieldset class="space-y-3">
-                      <legend class="text-sm">Extra folder access</legend>
+                      <legend class="text-sm">Extra directory access</legend>
                       <p class="text-quiet text-xs">
-                        Add an agent folder alias when this step needs extra
+                        Add an agent directory alias when this step needs extra
                         read-only context.
                       </p>
                       {% if step.directories.is_empty() %}
-                        <p class="text-quiet text-sm">No extra folders.</p>
+                        <p class="text-quiet text-sm">No extra directories.</p>
                       {% endif %}
                       {% for directory in step.directories %}
                         <div
@@ -949,7 +949,7 @@
                         >
                           <label class="flex flex-col gap-1">
                             <span class="text-quiet text-xs"
-                              >Agent folder alias</span
+                              >Agent directory alias</span
                             >
                             <input
                               class="input input-bordered input-sm font-mono"
@@ -975,7 +975,7 @@
                             name="intent"
                             value="remove-directory:{{ step.index }}:{{ directory.index }}"
                           >
-                            Remove folder
+                            Remove directory
                           </button>
                         </div>
                       {% endfor %}
@@ -987,7 +987,7 @@
                           name="intent"
                           value="add-directory:{{ step.index }}"
                         >
-                          Add folder
+                          Add directory
                         </button>
                       {% endif %}
                     </fieldset>

@@ -393,7 +393,7 @@ async fn preset_application_uses_the_preview_snapshot_and_requires_fresh_access_
     let record = state.conversations.create("Saved".to_owned()).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let mut grant = crate::execution::DirectoryGrant::from_selected(directory.path(), &[]).unwrap();
-    grant.access = crate::execution::DirectoryAccess::ReviewBeforeApply;
+    grant.access = crate::execution::DirectoryAccess::DirectWrite;
     let settings = crate::execution::ExecutionSettings::new(
         ModelSelection::new(
             ProviderKind::Xai,

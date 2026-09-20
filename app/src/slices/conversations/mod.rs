@@ -1000,11 +1000,7 @@ pub(super) async fn preflight_execution(
     if model.settings.location == crate::execution::ToolLocation::Sandbox
         && let Some(conversation) = conversation
         && model.settings.directories.iter().any(|grant| {
-            (grant.access != crate::execution::DirectoryAccess::ReadOnly
-                || crate::execution::authority::sensitive_directory(
-                    &grant.host_path,
-                    state.local_data.root(),
-                ))
+            grant.requires_access_consent(state.local_data.root())
                 && (!state.sessions.contains_live(&session)
                     || (!state.access_consent.authorised_conversation(
                         session,

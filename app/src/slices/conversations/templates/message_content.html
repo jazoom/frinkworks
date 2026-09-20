@@ -17,15 +17,19 @@
           <strong
             >{% if block.active %}Thinking{% else %}Thought{% endif %}</strong
           >
-          {% if block.active %}<span
-            class="loading loading-dots loading-xs motion-reduce:hidden"
-            aria-hidden="true"
-          ></span>{% endif %}
+          {% if block.active %}
+            <span
+              class="loading loading-dots loading-xs motion-reduce:hidden"
+              aria-hidden="true"
+            ></span>
+          {% endif %}
         </div>
         <div class="chat-prose">
-          {% if block.html.is_empty() %}<p>
-            The provider did not supply thought text.
-          </p>{% else %}{{ block.html|safe }}{% endif %}
+          {% if block.html.is_empty() %}
+            <p>The provider did not supply thought text.</p>
+          {% else %}
+            {{ block.html|safe }}
+          {% endif %}
         </div>
       </section>
     {% else if block.kind == "tool" %}
@@ -46,13 +50,18 @@
       </details>
     {% else %}
       <div class="text-quiet flex flex-wrap items-center gap-2 text-sm">
-        {% if block.active %}<span
-          class="loading loading-dots loading-xs motion-reduce:hidden"
-          aria-hidden="true"
-        ></span>{% endif %}
+        {% if block.active %}
+          <span
+            class="loading loading-dots loading-xs motion-reduce:hidden"
+            aria-hidden="true"
+          ></span>
+        {% endif %}
         <span
-          >{% if block.active %}Tool call in progress{% else %}Tool call · No
-          result{% endif %}</span
+          >{% if block.active %}
+            Tool call in progress
+          {% else %}
+            Tool call · No result
+          {% endif %}</span
         >
         <span class="font-mono break-all">{{ block.label }}</span>
       </div>

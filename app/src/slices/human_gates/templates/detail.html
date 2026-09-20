@@ -142,20 +142,30 @@
                 value="{{ revision }}"
               />
               <p class="text-sm">
-                {% if ordinary %}
+                {% if commit_on_approval %}
+                  Apply the reviewed changes and create one commit per changed
+                  repository. Earlier commits remain if another repository
+                  fails.
+                {% else if ordinary %}
                   Apply the exact reviewed files to
                   <span class="font-mono break-all"
                     >{{ application_destination }}</span
                   >. Power Plant checks every directory before the first write.
                 {% else if quick_task %}
-                  Commit these changes to the project.
+                  Apply these reviewed files to the authorised directories.
                 {% else %}
                   Accept this candidate and continue to the next step.
                 {% endif %}
               </p>
               <input type="hidden" name="candidate" value="{{ target }}" />
               <button type="submit" class="btn btn-primary w-full">
-                {% if quick_task %}Apply changes{% else %}Approve candidate{% endif %}
+                {% if commit_on_approval %}
+                  Apply and commit
+                {% else if quick_task %}
+                  Apply changes
+                {% else %}
+                  Approve candidate
+                {% endif %}
               </button>
             </form>
             {% if can_request_revision %}

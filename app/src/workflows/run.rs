@@ -14,7 +14,7 @@ use super::capabilities::{
     AttemptCapabilities, CapabilityDirectory, DirectoryRole, NetworkCapability,
     PrimarySourceLocation,
 };
-use super::commit::{CommitResult, CommitTransaction, CommitTransactionState};
+use super::commit::{CommitRoot, CommitTransaction, CommitTransactionState};
 use super::definition::{
     DefinitionFile, DefinitionVersion, InputKey, OutputKey, PinnedWorkflowDefinition, StepAction,
     StepDefinition, StepKey, WorkflowDefinition,
@@ -202,7 +202,6 @@ pub(crate) struct AttemptRecord {
     pub(crate) cleanup: AttemptCleanupRecord,
     pub(crate) apply_transaction: Option<ApplyTransaction>,
     pub(crate) commit_transaction: Option<CommitTransaction>,
-    pub(crate) commit_result: Option<CommitResult>,
     pub(crate) direct_changes: Option<super::direct::DirectChanges>,
 }
 
@@ -403,7 +402,6 @@ struct AttemptFile {
     #[serde(deserialize_with = "crate::storage::required_option")]
     apply_transaction: Option<ApplyTransactionFile>,
     commit_transaction: Option<CommitTransactionFile>,
-    commit_result: Option<CommitResultFile>,
     direct_changes: Option<super::direct::DirectChanges>,
 }
 
@@ -436,21 +434,25 @@ struct ApplyRootFile {
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 struct CommitTransactionFile {
-    state: String,
     candidate: ArtefactRefFile,
     reviews: Vec<ArtefactRefFile>,
     approval: Option<ArtefactRefFile>,
+    roots: Vec<CommitRootFile>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+struct CommitRootFile {
+    grant_id: String,
+    alias: String,
+    host_path: std::path::PathBuf,
+    identity: crate::execution::CanonicalDirectoryIdentity,
+    state: String,
     expected_reference: String,
     old_object: Option<String>,
     target_tree: Option<String>,
     expected_commit: Option<String>,
     timestamp: String,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(rename_all = "kebab-case")]
-struct CommitResultFile {
-    commit: String,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -1383,7 +1385,6 @@ impl WorkflowRun {
             cleanup: AttemptCleanupRecord::Pending,
             apply_transaction: None,
             commit_transaction: None,
-            commit_result: None,
             direct_changes: None,
         });
         self.state = RunState::Active {
@@ -1461,35 +1462,6 @@ impl WorkflowRun {
             return Err(TransitionError::Invalid);
         }
         attempt.commit_transaction = Some(transaction);
-        Ok(())
-    }
-
-    pub(crate) fn record_commit_result(
-        &mut self,
-        attempt_id: AttemptId,
-        result: CommitResult,
-    ) -> Result<(), TransitionError> {
-        let Some(attempt) = self
-            .attempts
-            .iter_mut()
-            .find(|attempt| attempt.id == attempt_id && attempt.state == AttemptState::Active)
-        else {
-            return Err(TransitionError::Invalid);
-        };
-        if let Some(current) = &attempt.commit_result {
-            return if current == &result {
-                Ok(())
-            } else {
-                Err(TransitionError::Invalid)
-            };
-        }
-        let Some(transaction) = &attempt.commit_transaction else {
-            return Err(TransitionError::Invalid);
-        };
-        if transaction.verified_commit() != Some(result.commit.as_str()) {
-            return Err(TransitionError::Invalid);
-        }
-        attempt.commit_result = Some(result);
         Ok(())
     }
 
@@ -2273,9 +2245,6 @@ impl AttemptRecord {
                 .commit_transaction
                 .as_ref()
                 .map(commit_transaction_to_file),
-            commit_result: self.commit_result.as_ref().map(|result| CommitResultFile {
-                commit: result.commit.clone(),
-            }),
             direct_changes: self.direct_changes.clone(),
         }
     }
@@ -2329,9 +2298,6 @@ impl AttemptRecord {
                 .commit_transaction
                 .map(commit_transaction_from_file)
                 .transpose()?,
-            commit_result: file.commit_result.map(|result| CommitResult {
-                commit: result.commit,
-            }),
             direct_changes: file.direct_changes,
         })
     }
@@ -3559,15 +3525,25 @@ fn apply_transaction_from_file(
 
 fn commit_transaction_to_file(transaction: &CommitTransaction) -> CommitTransactionFile {
     CommitTransactionFile {
-        state: transaction.state.encode(),
         candidate: ref_to_file(&transaction.candidate),
         reviews: transaction.reviews.iter().map(ref_to_file).collect(),
         approval: transaction.approval.as_ref().map(ref_to_file),
-        expected_reference: transaction.expected_reference.clone(),
-        old_object: transaction.old_object.clone(),
-        target_tree: transaction.target_tree.clone(),
-        expected_commit: transaction.expected_commit.clone(),
-        timestamp: transaction.timestamp.clone(),
+        roots: transaction
+            .roots
+            .iter()
+            .map(|root| CommitRootFile {
+                grant_id: root.grant.id.as_hex(),
+                alias: root.grant.alias.clone(),
+                host_path: root.grant.host_path.clone(),
+                identity: root.grant.identity,
+                state: root.state.encode(),
+                expected_reference: root.expected_reference.clone(),
+                old_object: root.old_object.clone(),
+                target_tree: root.target_tree.clone(),
+                expected_commit: root.expected_commit.clone(),
+                timestamp: root.timestamp.clone(),
+            })
+            .collect(),
     }
 }
 
@@ -3575,7 +3551,6 @@ fn commit_transaction_from_file(
     file: CommitTransactionFile,
 ) -> Result<CommitTransaction, RunRecordError> {
     Ok(CommitTransaction {
-        state: CommitTransactionState::parse(&file.state).ok_or(RunRecordError::Corrupt)?,
         candidate: ref_from_file(file.candidate)?,
         reviews: file
             .reviews
@@ -3583,11 +3558,29 @@ fn commit_transaction_from_file(
             .map(ref_from_file)
             .collect::<Result<_, _>>()?,
         approval: file.approval.map(ref_from_file).transpose()?,
-        expected_reference: file.expected_reference,
-        old_object: file.old_object,
-        target_tree: file.target_tree,
-        expected_commit: file.expected_commit,
-        timestamp: file.timestamp,
+        roots: file
+            .roots
+            .into_iter()
+            .map(|root| {
+                Ok(CommitRoot {
+                    grant: crate::execution::DirectoryGrant {
+                        id: crate::execution::DirectoryGrantId::parse(&root.grant_id)
+                            .ok_or(RunRecordError::Corrupt)?,
+                        alias: root.alias,
+                        host_path: root.host_path,
+                        identity: root.identity,
+                        access: crate::execution::DirectoryAccess::ReviewBeforeApply,
+                    },
+                    state: CommitTransactionState::parse(&root.state)
+                        .ok_or(RunRecordError::Corrupt)?,
+                    expected_reference: root.expected_reference,
+                    old_object: root.old_object,
+                    target_tree: root.target_tree,
+                    expected_commit: root.expected_commit,
+                    timestamp: root.timestamp,
+                })
+            })
+            .collect::<Result<_, RunRecordError>>()?,
     })
 }
 
@@ -3833,7 +3826,6 @@ fn validate_attempt_isolation(
         if attempt.capabilities.git_admin != AccessMode::ReadOnly
             || attempt.capabilities.source_location != PrimarySourceLocation::UserProject
             || attempt.commit_transaction.is_some()
-            || attempt.commit_result.is_some()
             || attempt
                 .apply_transaction
                 .as_ref()
@@ -3857,24 +3849,43 @@ fn validate_attempt_isolation(
         {
             return Err(RunRecordError::Corrupt);
         }
-        if let Some(result) = &attempt.commit_result {
-            let Some(transaction) = &attempt.commit_transaction else {
-                return Err(RunRecordError::Corrupt);
-            };
-            if transaction.verified_commit() != Some(result.commit.as_str())
-                || !valid_git_object_id(&result.commit)
-            {
+        if let Some(transaction) = &attempt.commit_transaction {
+            if transaction.roots.is_empty() {
+                let RunSource::Captured { source } = &run.source else {
+                    return Err(RunRecordError::Corrupt);
+                };
+                let unchanged = matches!(
+                    (run.artefact(&source.initial.id).map(|record| &record.summary),
+                     run.artefact(&transaction.candidate.id).map(|record| &record.summary)),
+                    (Some(crate::workflows::artefacts::ArtefactSummary::Candidate { candidate: before, .. }),
+                     Some(crate::workflows::artefacts::ArtefactSummary::Candidate { candidate: after, .. })) if before == after
+                );
+                if !unchanged {
+                    return Err(RunRecordError::Corrupt);
+                }
+            }
+            let grants = run.reviewed_directories();
+            if transaction.roots.iter().any(|root| {
+                !grants.contains(&root.grant)
+                    || !attempt
+                        .capabilities
+                        .directories
+                        .iter()
+                        .any(|directory| directory.alias == root.grant.alias)
+            }) {
                 return Err(RunRecordError::Corrupt);
             }
         }
         if attempt.state == AttemptState::Completed
-            && (attempt.commit_result.is_none() || attempt.commit_transaction.is_none())
+            && !attempt
+                .commit_transaction
+                .as_ref()
+                .is_some_and(CommitTransaction::is_verified)
         {
             return Err(RunRecordError::Corrupt);
         }
     } else if attempt.apply_transaction.is_some()
         || attempt.commit_transaction.is_some()
-        || attempt.commit_result.is_some()
         || attempt.capabilities.git_admin != AccessMode::ReadOnly
         || !matches!(
             attempt.capabilities.source_location,
@@ -4032,32 +4043,43 @@ fn valid_commit_transaction(attempt: &AttemptRecord, transaction: &CommitTransac
             .iter()
             .zip(expected_reviews)
             .any(|(stored, expected)| stored != expected)
-        || transaction.expected_reference.is_empty()
-        || transaction.timestamp.split_once(' ').is_none()
-        || transaction
-            .old_object
-            .as_deref()
-            .is_some_and(|object| !valid_git_object_id(object))
-        || transaction
-            .target_tree
-            .as_deref()
-            .is_some_and(|object| !valid_git_object_id(object))
-        || transaction
-            .expected_commit
-            .as_deref()
-            .is_some_and(|object| !valid_git_object_id(object))
+        || transaction.roots.len() > crate::execution::MAXIMUM_DIRECTORY_GRANTS
+        || transaction.roots.iter().enumerate().any(|(index, root)| {
+            transaction.roots[..index].iter().any(|previous| {
+                previous.grant.id == root.grant.id || previous.grant.identity == root.grant.identity
+            }) || !valid_commit_root(root)
+        })
     {
         return false;
     }
-    match &transaction.state {
-        CommitTransactionState::Prepared => true,
+    true
+}
+
+fn valid_commit_root(root: &CommitRoot) -> bool {
+    if root.grant.access != crate::execution::DirectoryAccess::ReviewBeforeApply
+        || !root.grant.host_path.is_absolute()
+        || root.grant.alias.is_empty()
+        || root.expected_reference.is_empty()
+        || root.timestamp.split_once(' ').is_none()
+        || [&root.old_object, &root.target_tree, &root.expected_commit]
+            .into_iter()
+            .any(|object| {
+                object
+                    .as_deref()
+                    .is_some_and(|object| !valid_git_object_id(object))
+            })
+    {
+        return false;
+    }
+    match &root.state {
+        CommitTransactionState::Prepared | CommitTransactionState::Restored => true,
         CommitTransactionState::WorktreeApplied => {
-            transaction.target_tree.is_some() && transaction.expected_commit.is_some()
+            root.target_tree.is_some() && root.expected_commit.is_some()
         }
         CommitTransactionState::ReferenceUpdated { commit }
         | CommitTransactionState::Verified { commit } => {
-            transaction.target_tree.is_some()
-                && transaction.expected_commit.as_deref() == Some(commit)
+            root.target_tree.is_some()
+                && root.expected_commit.as_deref() == Some(commit)
                 && valid_git_object_id(commit)
         }
     }

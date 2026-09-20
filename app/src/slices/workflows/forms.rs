@@ -2885,7 +2885,6 @@ fn parse_override_settings(step: &StepDraft, errors: &mut StepErrors) -> Option<
         instructions: (!inherits("instructions")).then(|| step.settings_instructions.clone()),
         tools: (!inherits("tools")).then(|| step.tools.clone()),
         directories: (!inherits("directories")).then_some(directories),
-        git_destination: None,
         location,
         host_approval,
     };

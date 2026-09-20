@@ -7,6 +7,7 @@ pub(crate) mod capabilities;
 mod catalogue;
 pub(crate) mod commands;
 mod commit;
+pub(crate) use commit::CommitTransactionState;
 pub(crate) mod definition;
 pub(crate) mod direct;
 pub(crate) mod evidence;

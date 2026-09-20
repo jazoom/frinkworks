@@ -76,7 +76,11 @@ Ask each time is the default host command policy. Run without approval requires 
 
 Command approval covers the submitted command. Power Plant does not inspect script internals. The hosted model receives command output.
 
-The catalogue supplies no file authority. Conversations point at folders only through directory grants. Git destination is an explicit pointer on those grants. Directory order never selects it.
+The catalogue supplies no file authority. Conversations point at directories only through directory grants.
+
+Explicit commit steps detect changed Git repositories within the approved candidate. Each repository retains its own result and recovery state.
+
+Directory order selects the command location, not a commit target. Detection grants no permission to commit.
 
 ## Handoff
 

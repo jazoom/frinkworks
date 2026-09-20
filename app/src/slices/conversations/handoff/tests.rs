@@ -186,7 +186,7 @@ async fn prepared_handoff_needs_run_only_consent_and_rejects_stale_source_decisi
         applied
             .attempts
             .iter()
-            .all(|attempt| attempt.commit_result.is_none())
+            .all(|attempt| attempt.commit_transaction.is_none())
     );
 }
 

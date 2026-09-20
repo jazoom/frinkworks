@@ -217,7 +217,7 @@ pub(super) struct StepView {
     pub(super) status: &'static str,
     pub(super) result: String,
     pub(super) artefacts: Vec<StepArtefactView>,
-    pub(super) commit: String,
+    pub(super) commits: Vec<RepositoryCommitView>,
     pub(super) gate_href: String,
     pub(super) review_phase: String,
     pub(super) attempt_limit: String,
@@ -226,6 +226,12 @@ pub(super) struct StepView {
     pub(super) role: String,
     pub(super) model: String,
     pub(super) host_approval: String,
+}
+
+pub(super) struct RepositoryCommitView {
+    pub(super) path: String,
+    pub(super) status: &'static str,
+    pub(super) commit: String,
 }
 
 pub(super) struct PendingHostCommandView {
@@ -597,10 +603,18 @@ impl RunDetailView {
                                 }
                             })
                             .collect(),
-                        commit: attempt
-                            .and_then(|attempt| attempt.commit_result.as_ref())
-                            .map(|result| result.commit.chars().take(8).collect())
-                            .unwrap_or_default(),
+                        commits: attempt.and_then(|attempt| attempt.commit_transaction.as_ref())
+                            .map(|transaction| transaction.roots.iter().map(|root| RepositoryCommitView {
+                                path: root.grant.host_path.display().to_string(),
+                                status: match root.state {
+                                    crate::workflows::CommitTransactionState::Prepared => "Not committed",
+                                    crate::workflows::CommitTransactionState::WorktreeApplied => "Files applied · commit incomplete",
+                                    crate::workflows::CommitTransactionState::ReferenceUpdated { .. } => "Commit requires recovery",
+                                    crate::workflows::CommitTransactionState::Verified { .. } => "Committed",
+                                    crate::workflows::CommitTransactionState::Restored => "Not committed · no task changes remain",
+                                },
+                                commit: root.verified_commit().unwrap_or_default().to_owned(),
+                            }).collect()).unwrap_or_default(),
                         gate_href: gate.map(|gate| format!("/runs/{}/gates/{}", run.id.as_hex(), gate.id.as_hex())).unwrap_or_default(),
                         review_phase: run.pinned.definition.review_phase(&step.key).map(|phase| phase.to_string()).unwrap_or_default(),
                         attempt_limit: step

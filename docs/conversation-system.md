@@ -29,7 +29,19 @@ Ordinary messages with tools use directory-backed internal agent execution. The 
 
 Tool-free messages use the normal chat job. Host tools require explicit host consent and the selected command policy.
 
-Configured workflows retain their explicit sequences. Directory grants pin folder identities for handoff and recovery. Git destination is explicit on those grants. Directory order never selects it.
+Configured workflows retain their explicit sequences. Directory grants pin directory identities for handoff and recovery.
+
+Commit steps detect changed repositories from the approved candidate and pinned review-before-apply grants. They do not search parent directories or select a global destination.
+
+Each repository has a separate commit result and journal. Recovery retains successful commits and restores only incomplete file application before a reference update.
+
+Commits require a clean Git index and worktree. They include task changes, not unchanged ignored files from the captured directory.
+
+A changed non-Git directory prevents the commit step before the first write. File application remains available without commits.
+
+Linked Git worktrees remain unsupported. Managed Git commits refuse colocated jj repositories.
+
+Other version-control commands follow ordinary tool permissions, not the managed Git transaction.
 
 An ordinary execution cannot dispatch a registered commit step. A configured workflow can include an explicit commit operation.
 

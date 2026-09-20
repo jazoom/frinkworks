@@ -149,9 +149,9 @@ User messages use a tinted, ruled surface. Assistant messages identify Power Pla
 
 The model control opens a searchable popover above the composer. It lists connected providers with an optional provider filter. Favourites appear first, with a separate star control on each row. The active Favourites filter uses a soft tint and a check mark. Local application data stores favourites across browser sessions.
 
-Thinking effort stays visible beside the model as a borderless value and caret. Both controls use identical buttons with the same hover size. The effort popover uses padded options and a tick for the current value. Models without adjustable effort show a disabled Not available control. Saved conversations apply model and effort changes immediately without changes to other settings. Unsent messages and unsaved setup fields survive those commands.
+Thinking effort stays visible beside the model as a borderless Thinking label, value and caret. Both controls use identical buttons with the same hover size. The effort popover uses padded options and a tick for the current value. Models without adjustable effort show a disabled Not available control. Saved conversations apply model and effort changes immediately without changes to other settings. Unsent messages and unsaved setup fields survive those commands.
 
-The composer uses two rows with an 8000 character editor limit. The persisted message bound stays in the conversation store. The send control reads Send message. Effective directory access appears below it with a folder or shield icon and a visible Sandbox label. Host mode names unrestricted access. Job-bound cancellation reads Stop in the composer in place of Send. It posts without a confirmation step. Current work keeps the same Stop control when the composer is inert. The composer stays locked while a candidate or host command awaits a decision.
+The composer uses two rows with an 8000 character editor limit. The persisted message bound stays in the conversation store. The send control reads Send message. Effective directory access appears below it with a directory or shield icon and a visible Sandbox label. Host mode names unrestricted access. Job-bound cancellation reads Stop in the composer in place of Send. It posts without a confirmation step. Current work keeps the same Stop control when the composer is inert. The composer stays locked while a candidate or host command awaits a decision.
 
 Jump to latest appears when the reader leaves the transcript end. New output does not move the reader away from earlier messages.
 
@@ -189,15 +189,26 @@ Setup occupies the companion position. Its section controls retain unsaved value
 
 The visible sections are:
 
-- Files and execution.
+- Directories, or Work locations in host mode.
+- Execution.
 - Instructions.
 - Presets.
 
+The Presets section opens the preset list and the save action. Preset replacement retains its preview and explicit confirmation.
+
+Directories opens with a state summary. The summary shows the empty state or the directory count, the environment context and the Add directory action.
+
+Add a directory below the composer opens the native directory picker directly. The response opens Directories with the applicable access controls and approval steps.
+
+Directories shows the applied execution context and directory access controls. It contains no repository selector. Setup toggles the companion open and closed.
+
+Explicit workflow commit steps detect each changed repository. Approval names the commit consequence. The run details show each repository's result separately.
+
 New forms select the available tools by default. An explicit empty tool choice stays empty after validation and on copied records.
 
-Ordinary setup controls apply when they change. There is no Save, Done, Keep draft or Cancel footer. Close hides Setup. The application requires JavaScript.
+Ordinary setup controls apply when they change. There is no Save, Done, Keep draft or Cancel action. Close hides Setup. The application requires JavaScript.
 
-Use saved settings as future defaults is a separate explicit action. Its explanation distinguishes stored conversation settings from access approval.
+Save as future defaults is a separate explicit action in the companion footer. Its explanation distinguishes stored conversation settings from access approval.
 
 The execution-switch preview retains its existing settlement paths. Requested execution values stay uncommitted until the review command succeeds. Consent and preset replacement keep their own confirmations.
 

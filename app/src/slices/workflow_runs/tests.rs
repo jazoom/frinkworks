@@ -219,66 +219,6 @@ fn review_verdict_skips_candidate_outputs_from_fixing_reviews() {
     );
 }
 
-#[test]
-fn run_timeline_renders_status_handoffs_and_the_commit_identifier() {
-    let view = super::page::RunDetailView {
-        run_id: "run".to_owned(),
-        conversation_href: String::new(),
-        project_href: String::new(),
-        project_name: String::new(),
-        name: "Sequential team".to_owned(),
-        name_href: String::new(),
-        catalogue_note: String::new(),
-        version: "version".to_owned(),
-        state: "Completed",
-        state_note: "All steps completed.",
-        review_href: String::new(),
-        created: "now".to_owned(),
-        current_step: "Commit".to_owned(),
-        steps: vec![super::page::StepView {
-            name: "Commit".to_owned(),
-            action: "System command",
-            candidate_access: "",
-            environment: "Alpine Git".to_owned(),
-            status: "Completed",
-            result: "Completed".to_owned(),
-            artefacts: vec![super::page::StepArtefactView {
-                href: "/runs/run/artefacts/candidate".to_owned(),
-                key: "committed-candidate".to_owned(),
-                kind: "candidate-revision",
-                candidate_hash: String::new(),
-                status: "",
-                note: "",
-                review_href: String::new(),
-            }],
-            commit: "01234567".to_owned(),
-            gate_href: String::new(),
-            review_phase: String::new(),
-            attempt_limit: String::new(),
-            latest_verdict: String::new(),
-            selected_route: String::new(),
-            role: String::new(),
-            model: String::new(),
-            host_approval: String::new(),
-        }],
-        environments: Vec::new(),
-
-        attempts: Vec::new(),
-        artefacts: Vec::new(),
-
-        context_boundaries: String::new(),
-        process_phases: Vec::new(),
-        host_approval: String::new(),
-        pending_host_command: None,
-    };
-
-    let rendered = view.render().expect("render timeline");
-
-    assert!(rendered.contains("Completed"));
-    assert!(rendered.contains("Commit 01234567"));
-    assert!(rendered.contains("href=\"/runs/run/artefacts/candidate\" data-graft"));
-}
-
 fn context_packet(prompt: String) -> crate::workflows::input_context::AttemptContextPacket {
     let mut packet = crate::workflows::input_context::AttemptContextPacket {
         prompt,

@@ -12,4 +12,3 @@ node_modules
 /.impeccable/surfaces/*
 !/.impeccable/surfaces/*.md
 /.impeccable/surfaces/mock-*.md
-/mock

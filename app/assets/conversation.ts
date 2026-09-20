@@ -33,7 +33,6 @@ export function initConversation(
         "network",
         "network_domains",
         "preset",
-        "git_destination",
     ];
     const executionNames = [
         "environment",
@@ -49,7 +48,6 @@ export function initConversation(
         "tool_run",
         "network",
         "network_domains",
-        "git_destination",
     ];
     let unsavedSettings:
         | Map<string, { value: string; checked: boolean; disabled: boolean }>

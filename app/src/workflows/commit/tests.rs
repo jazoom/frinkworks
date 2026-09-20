@@ -956,23 +956,40 @@ fn fixed_plumbing_creates_the_exact_tree_without_touching_the_live_index() {
             .expect("init")
             .success()
     );
-    std::fs::write(dir.path().join("old.txt"), b"old").expect("old");
+    for name in ["old.txt", "keep.txt", "removed.txt"] {
+        std::fs::write(dir.path().join(name), b"old").expect("old");
+    }
     assert!(
         std::process::Command::new("git")
-            .args(["add", "old.txt"])
+            .args(["add", "."])
             .current_dir(dir.path())
             .status()
             .expect("add")
             .success()
     );
-    let live_index = std::fs::read(dir.path().join(".git/index")).expect("live index");
     let timestamp = utc_timestamp(1_700_000_000_000);
     let temporary_index = dir.path().join(".git/test-commit.index");
     let temporary_index_text = temporary_index.to_string_lossy();
 
+    let tree = run_git(
+        dir.path(),
+        super::git_command(vec!["write-tree".to_owned()], None, &timestamp),
+    );
+    let parent = run_git(dir.path(), commit_tree_command(&tree, None, &timestamp));
+    let store = store();
+    let initial =
+        crate::workflows::artefacts::CandidateCapture::capture_directory(dir.path(), &[], &store)
+            .expect("initial");
+    std::fs::remove_file(dir.path().join("old.txt")).expect("remove old file");
+    std::fs::create_dir(dir.path().join("old.txt")).expect("replacement directory");
+    std::fs::remove_file(dir.path().join("removed.txt")).expect("remove file");
+    let target =
+        crate::workflows::artefacts::CandidateCapture::capture_directory(dir.path(), &[], &store)
+            .expect("target");
+    let live_index = std::fs::read(dir.path().join(".git/index")).expect("live index");
     run_git(
         dir.path(),
-        super::read_tree_empty_command(&temporary_index_text, &timestamp),
+        super::read_tree_command(&temporary_index_text, Some(&parent), &timestamp),
     );
     let regular = run_git(
         dir.path(),
@@ -982,7 +999,7 @@ fn fixed_plumbing_creates_the_exact_tree_without_touching_the_live_index() {
         dir.path(),
         hash_object_command(b"#!/bin/sh\n".to_vec(), &timestamp),
     );
-    let mut index = Vec::new();
+    let mut index = super::index_removal_records(&initial, &target, GitObjectFormat::Sha1);
     for (path, mode, object) in [
         ("file.txt", "100644", regular.as_str()),
         ("script", "100755", executable.as_str()),
@@ -997,7 +1014,10 @@ fn fixed_plumbing_creates_the_exact_tree_without_touching_the_live_index() {
         dir.path(),
         write_tree_command(&temporary_index_text, &timestamp),
     );
-    let commit = run_git(dir.path(), commit_tree_command(&tree, None, &timestamp));
+    let commit = run_git(
+        dir.path(),
+        commit_tree_command(&tree, Some(&parent), &timestamp),
+    );
 
     assert!(parse_object_id(&tree, GitObjectFormat::Sha1).is_ok());
     assert!(parse_object_id(&commit, GitObjectFormat::Sha1).is_ok());
@@ -1023,6 +1043,6 @@ fn fixed_plumbing_creates_the_exact_tree_without_touching_the_live_index() {
         .expect("tree names");
     assert_eq!(
         String::from_utf8(names.stdout).expect("names"),
-        "file.txt\nscript\n"
+        "file.txt\nkeep.txt\nscript\n"
     );
 }

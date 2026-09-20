@@ -27,7 +27,6 @@ describe.each(["new", "saved"])("%s conversation settings", (state) => {
                 <input name="location" type="radio" value="sandbox" checked>
                 <input name="location" type="radio" value="host">
                 <input name="directory_access" value="">
-                <select name="git_destination"><option value="">None</option><option value="repository">Repository</option></select>
             </form>
         </section>`;
         root = document.querySelector<HTMLElement>("#conversation-detail")!;
@@ -171,23 +170,6 @@ describe.each(["new", "saved"])("%s conversation settings", (state) => {
             reconcile("conversation-settings-form");
             expect(submitted).toEqual(["read", null]);
             expect(value("tool_read")).toBeNull();
-        });
-
-        test("Git destination changes save and survive unrelated patches", () => {
-            const original = root.innerHTML;
-            const form = root.querySelector<HTMLFormElement>("form")!;
-            const submitted: Array<FormDataEntryValue | null> = [];
-            form.requestSubmit = () =>
-                submitted.push(new FormData(form).get("git_destination"));
-            const destination = form.elements.namedItem(
-                "git_destination",
-            ) as HTMLSelectElement;
-            destination.value = "repository";
-            destination.dispatchEvent(new Event("change", { bubbles: true }));
-            expect(submitted).toEqual(["repository"]);
-            root.innerHTML = original;
-            reconcile("conversation-rename");
-            expect(value("git_destination")).toBe("repository");
         });
 
         test("settings patches keep uncommitted execution fields", () => {

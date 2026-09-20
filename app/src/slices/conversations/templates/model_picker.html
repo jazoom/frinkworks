@@ -73,9 +73,12 @@
     title="Thinking effort"
     {% if job_active || self.needs_review() || model_picker.efforts.is_empty() %}disabled{% endif %}
   >
-    <span id="conversation-thinking-value">
-      {% if model_picker.efforts.is_empty() %}Not available{% endif %}
-      {% for effort in model_picker.efforts %}{% if effort.value == model_picker.thinking %}{{ effort.label }}{% endif %}{% endfor %}
+    <span class="flex min-w-0 items-baseline gap-1">
+      <span class="text-quiet">Thinking</span>
+      <span id="conversation-thinking-value">
+        {% if model_picker.efforts.is_empty() %}Not available{% endif %}
+        {% for effort in model_picker.efforts %}{% if effort.value == model_picker.thinking %}{{ effort.label }}{% endif %}{% endfor %}
+      </span>
     </span>
     <svg class="workspace-icon shrink-0" aria-hidden="true">
       <use href="/static/images/workspace-icons.svg#down" />

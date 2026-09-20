@@ -73,7 +73,6 @@ pub(crate) struct ExecutionSettings {
     pub(crate) environment: EnvironmentId,
     pub(crate) network: NetworkAccess,
     pub(crate) directories: Vec<DirectoryGrant>,
-    pub(crate) git_destination: Option<DirectoryGrantId>,
     pub(crate) location: ToolLocation,
     pub(crate) host_approval: HostApprovalPolicy,
 }
@@ -145,8 +144,6 @@ pub(crate) struct ExecutionSettingsFile {
     network: String,
     network_domains: Vec<String>,
     directories: Vec<DirectoryGrantFile>,
-    #[serde(default)]
-    git_destination: Option<String>,
     location: String,
     host_approval: String,
 }
@@ -199,9 +196,7 @@ impl ExecutionSettings {
                     combined.directories.push(grant.clone());
                 }
             }
-            if combined.location != phase.location
-                || combined.host_approval != phase.host_approval
-                || combined.git_destination != phase.git_destination
+            if combined.location != phase.location || combined.host_approval != phase.host_approval
             {
                 return None;
             }
@@ -223,7 +218,6 @@ impl ExecutionSettings {
             environment,
             network: NetworkAccess::None,
             directories: Vec::new(),
-            git_destination: None,
             location: ToolLocation::Sandbox,
             host_approval: HostApprovalPolicy::AskEachTime,
         })
@@ -236,27 +230,8 @@ impl ExecutionSettings {
 
     pub(crate) fn with_directories(mut self, directories: Vec<DirectoryGrant>) -> Option<Self> {
         validate_directories(&directories).ok()?;
-        if self
-            .git_destination
-            .is_some_and(|id| directories.iter().all(|grant| grant.id != id))
-        {
-            self.git_destination = None;
-        }
         self.directories = directories;
         Some(self)
-    }
-
-    pub(crate) fn with_git_destination(mut self, id: Option<DirectoryGrantId>) -> Option<Self> {
-        if id.is_some_and(|id| self.directories.iter().all(|grant| grant.id != id)) {
-            return None;
-        }
-        self.git_destination = id;
-        Some(self)
-    }
-
-    pub(crate) fn git_destination_grant(&self) -> Option<&DirectoryGrant> {
-        let id = self.git_destination?;
-        self.directories.iter().find(|grant| grant.id == id)
     }
 
     pub(crate) fn with_location(mut self, location: ToolLocation) -> Self {
@@ -294,7 +269,6 @@ impl ExecutionSettings {
                 .iter()
                 .map(DirectoryGrantFile::from)
                 .collect(),
-            git_destination: self.git_destination.map(DirectoryGrantId::as_hex),
             location: self.location.as_str().to_owned(),
             host_approval: self.host_approval.as_str().to_owned(),
         }
@@ -314,15 +288,10 @@ impl ExecutionSettings {
             .into_iter()
             .map(DirectoryGrantFile::into_grant)
             .collect::<Option<Vec<_>>>()?;
-        let git_destination = match file.git_destination.as_deref() {
-            None | Some("") => None,
-            Some(raw) => Some(DirectoryGrantId::parse(raw)?),
-        };
         Some(
             Self::new(file.model, file.instructions, tools, environment)?
                 .with_network(network)?
                 .with_directories(directories)?
-                .with_git_destination(git_destination)?
                 .with_location(ToolLocation::parse(&file.location)?)
                 .with_host_approval(HostApprovalPolicy::parse(&file.host_approval)?),
         )
@@ -408,6 +377,12 @@ impl DirectoryGrant {
 
     pub(crate) fn is_available(&self) -> bool {
         self.revalidate().is_ok()
+    }
+
+    // Review before apply needs no consent: the candidate decision gates the host write.
+    pub(crate) fn requires_access_consent(&self, data_root: &Path) -> bool {
+        self.access == DirectoryAccess::DirectWrite
+            || crate::execution::authority::sensitive_directory(&self.host_path, data_root)
     }
 
     pub(crate) fn guest_path(&self) -> String {

@@ -32,7 +32,7 @@ pub(crate) fn test_state(config: RuntimeConfig) -> AppState {
         presets: Arc::new(crate::presets::PresetStore::in_memory()),
         agents: Arc::new(AgentStore::in_memory()),
         conversations: Arc::new(crate::conversations::ConversationStore::in_memory()),
-        folder_picker: crate::execution::FolderPicker::scripted(),
+        directory_picker: crate::execution::DirectoryPicker::scripted(),
         access_consent: Arc::new(crate::execution::AccessConsentStore::new()),
         host_approvals: Arc::new(crate::execution::HostApprovalStore::new()),
         local_data: crate::local_data::LocalDataReset::detached(),

@@ -607,7 +607,6 @@ fn attempt_ordinals_count_repeated_step_attempts() {
         initial_context: None,
         apply_transaction: None,
         commit_transaction: None,
-        commit_result: None,
         direct_changes: None,
     };
     let second = AttemptRecord {
@@ -635,7 +634,6 @@ fn attempt_ordinals_count_repeated_step_attempts() {
         initial_context: None,
         apply_transaction: None,
         commit_transaction: None,
-        commit_result: None,
         direct_changes: None,
     };
     assert_eq!(next_ordinal_for(&[], &step), 1);
@@ -1061,19 +1059,13 @@ fn durable_commit_transactions_preserve_every_review_reference() {
         initial_context: None,
         apply_transaction: None,
         commit_transaction: None,
-        commit_result: None,
         direct_changes: None,
     };
     let transaction = crate::workflows::commit::CommitTransaction {
-        state: crate::workflows::commit::CommitTransactionState::Prepared,
         candidate,
         reviews: vec![first_review.clone(), second_review.clone()],
         approval: None,
-        expected_reference: "refs/heads/main".to_owned(),
-        old_object: None,
-        target_tree: None,
-        expected_commit: None,
-        timestamp: "1700000000 +0000".to_owned(),
+        roots: Vec::new(),
     };
     assert!(super::valid_commit_transaction(&attempt, &transaction));
 
@@ -1124,19 +1116,13 @@ fn durable_commit_transactions_record_an_approved_human_decision() {
         initial_context: None,
         apply_transaction: None,
         commit_transaction: None,
-        commit_result: None,
         direct_changes: None,
     };
     let transaction = crate::workflows::commit::CommitTransaction {
-        state: crate::workflows::commit::CommitTransactionState::Prepared,
         candidate,
         reviews: Vec::new(),
         approval: Some(approval.clone()),
-        expected_reference: "refs/heads/main".to_owned(),
-        old_object: None,
-        target_tree: None,
-        expected_commit: None,
-        timestamp: "1700000000 +0000".to_owned(),
+        roots: Vec::new(),
     };
     assert!(super::valid_commit_transaction(&attempt, &transaction));
 
@@ -1182,8 +1168,6 @@ fn run_records_round_trip() {
     )
     .unwrap()
     .with_directories(vec![grant.clone()])
-    .unwrap()
-    .with_git_destination(Some(grant.id))
     .unwrap();
     run.pinned = PinnedWorkflowDefinition::pin(
         None,
