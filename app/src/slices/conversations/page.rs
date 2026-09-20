@@ -10,7 +10,7 @@ use crate::{
     agents::AgentRecord,
     conversations::{
         ConversationId, ConversationMessage, ConversationModelConfiguration, ConversationRecord,
-        MessageRole, MessageStatus,
+        MessageId, MessageRole, MessageStatus,
     },
     environments::{EnvironmentCatalogue, EnvironmentId, EnvironmentSnapshotRepository},
     models::models_dev::ModelsDevCatalogue,
@@ -841,13 +841,17 @@ impl ConversationDetailView {
         let mut messages = visible_messages(record, message_budget);
         if let Some(job) = job
             && !job.output.is_empty()
-            && let Some(message) = messages
+            && let Some(message) = record
+                .messages
+                .iter()
+                .find(|message| message.request == Some(job.id))
+            && let Some(view) = messages
                 .iter_mut()
-                .find(|message| message.id == message_id(&record.id, job.assistant_index))
+                .find(|view| view.id == message_id(&record.id, message))
         {
-            *message = reply_view(
+            *view = reply_view(
                 &record.id,
-                job.assistant_index,
+                message.id,
                 &job.output,
                 job.status == JobStatus::Running,
             );
@@ -1706,12 +1710,12 @@ fn candidate_file_name(path: &str) -> String {
         .to_owned()
 }
 
-// The transcript leaves envelope space for controls and retains stable message indices.
+// The transcript uses the durable message identity so projection never depends on position.
 fn visible_messages(record: &ConversationRecord, byte_budget: usize) -> Vec<MessageView> {
     let mut messages = Vec::new();
     let mut bytes = 0;
-    for (index, message) in record.messages.iter().enumerate().rev() {
-        let view = message_view(&record.id, index, message);
+    for message in record.messages.iter().rev() {
+        let view = message_view(&record.id, message);
         bytes += view.html.len() + 2048;
         if bytes > byte_budget || messages.len() >= 64 {
             break;
@@ -1722,19 +1726,26 @@ fn visible_messages(record: &ConversationRecord, byte_budget: usize) -> Vec<Mess
     messages
 }
 
-pub(super) fn message_id(conversation: &ConversationId, index: usize) -> String {
-    format!("conversation-{}-message-{index}", conversation.as_hex())
+pub(super) fn message_id(conversation: &ConversationId, message: &ConversationMessage) -> String {
+    reply_id(conversation, message.id)
+}
+
+pub(super) fn reply_id(conversation: &ConversationId, id: MessageId) -> String {
+    format!(
+        "conversation-{}-message-{}",
+        conversation.as_hex(),
+        id.as_hex()
+    )
 }
 
 pub(super) fn message_view(
     conversation: &ConversationId,
-    index: usize,
     message: &ConversationMessage,
 ) -> MessageView {
     let user = message.role == MessageRole::User;
     let streaming = message.status == MessageStatus::Pending;
     MessageView {
-        id: message_id(conversation, index),
+        id: message_id(conversation, message),
         user,
         html: if user {
             format!(
@@ -1744,7 +1755,7 @@ pub(super) fn message_view(
         } else {
             activity_html(
                 conversation,
-                &message_id(conversation, index),
+                &message_id(conversation, message),
                 &message.text,
                 &message.activity,
                 &[],
@@ -1764,11 +1775,11 @@ pub(super) fn message_view(
 
 pub(super) fn reply_view(
     conversation: &ConversationId,
-    index: usize,
+    message: MessageId,
     reply: &crate::providers::AssistantReply,
     streaming: bool,
 ) -> MessageView {
-    let id = message_id(conversation, index);
+    let id = reply_id(conversation, message);
     MessageView {
         html: activity_html(
             conversation,

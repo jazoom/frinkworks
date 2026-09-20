@@ -151,7 +151,7 @@ pub(in crate::slices::conversations) fn finish(
     }
     let job = match state
         .sessions
-        .begin_conversation_job(&session, destination.id, 1)
+        .begin_conversation_job(&session, destination.id)
     {
         Ok(job) => job,
         Err(_) => {

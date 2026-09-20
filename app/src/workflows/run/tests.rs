@@ -173,9 +173,9 @@ fn an_attempt_persists_the_exact_initial_context_packet() {
         + super::super::input_context::RESERVED_TOOL_WORK_BYTES as u64;
     let packet = super::super::input_context::AttemptContextPacket {
         prompt: "Task".to_owned(),
-        messages: vec![super::super::input_context::ContextMessage::User(
-            "Task".to_owned(),
-        )],
+        messages: vec![super::super::input_context::ContextMessage::User {
+            text: "Task".to_owned(),
+        }],
         tools: Vec::new(),
         source_available: "Files through tools.".to_owned(),
         excluded_context: "Conversation excluded.".to_owned(),

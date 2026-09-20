@@ -94,7 +94,7 @@ async fn host_approval_shows_actual_command_and_location_before_decision() {
         .unwrap();
     let job = state
         .sessions
-        .begin_conversation_job(&session, record.id, 1)
+        .begin_conversation_job(&session, record.id)
         .unwrap();
     let record = state
         .conversations

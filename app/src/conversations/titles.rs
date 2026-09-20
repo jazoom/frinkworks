@@ -89,6 +89,7 @@ async fn request_title(
                 title.push_str(&text);
             }
             ModelEvent::Thinking(text) => bytes = bytes.saturating_add(text.len()),
+            ModelEvent::Continuation(_) => {}
             ModelEvent::Usage { .. } => {}
             ModelEvent::ToolCall { .. } => return None,
         }

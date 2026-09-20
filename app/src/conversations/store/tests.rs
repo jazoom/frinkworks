@@ -6,10 +6,7 @@ use crate::{
     sessions::JobId,
 };
 
-use super::{
-    ConversationError, ConversationStore, MAXIMUM_CATALOGUE_BYTES, MAXIMUM_TITLE_BYTES,
-    MessageStatus,
-};
+use super::{ConversationError, ConversationStore, MAXIMUM_TITLE_BYTES, MessageStatus};
 
 impl ConversationStore {
     fn create_record(
@@ -67,6 +64,8 @@ impl ConversationStore {
         Self {
             path: None,
             inner: std::sync::Mutex::new(std::collections::BTreeMap::new()),
+            pending: std::sync::Mutex::new(std::collections::BTreeMap::new()),
+            uncertain: std::sync::Mutex::new(std::collections::BTreeSet::new()),
             title_updates: tokio::sync::broadcast::channel(16).0,
         }
     }
@@ -78,11 +77,8 @@ fn restart_preserves_explicit_saves_with_or_without_a_manual_title() {
     let store = ConversationStore::in_memory();
     let draft = store.create_untitled().unwrap();
     let saved = store.create("New conversation".to_owned()).unwrap();
-    let file = super::CatalogueFile {
-        version: super::CATALOGUE_VERSION,
-        conversations: vec![super::record_to_file(&draft), super::record_to_file(&saved)],
-    };
-    write_catalogue(dir.path(), &serde_json::to_string(&file).unwrap());
+    write_record(dir.path(), &draft);
+    write_record(dir.path(), &saved);
 
     let reopened = ConversationStore::open(dir.path().to_path_buf()).unwrap();
     assert_eq!(reopened.get(&draft.id), Some(draft));
@@ -321,8 +317,21 @@ fn model_changes_preserve_execution_authority_and_reject_stale_revisions() {
     );
 }
 
-fn write_catalogue(dir: &Path, contents: &str) {
-    std::fs::write(dir.join("catalogue.json"), contents).expect("catalogue");
+fn write_record(dir: &Path, record: &super::ConversationRecord) {
+    let bytes = serde_json::to_vec_pretty(&super::record_to_file(record)).expect("record");
+    std::fs::write(dir.join(format!("{}.json", record.id.as_hex())), bytes).expect("record");
+}
+
+fn record_path(dir: &Path) -> std::path::PathBuf {
+    std::fs::read_dir(dir)
+        .expect("directory")
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        })
+        .expect("record file")
 }
 
 #[test]
@@ -365,10 +374,10 @@ fn private_catalogue_path_rejects_a_symlink_without_replacement() {
 }
 
 #[test]
-fn corrupt_catalogues_remain_unchanged() {
+fn corrupt_records_remain_unchanged() {
     let dir = tempfile::tempdir().expect("directory");
-    write_catalogue(dir.path(), "{");
-    let path = dir.path().join("catalogue.json");
+    let path = dir.path().join(format!("{}.json", "0".repeat(32)));
+    std::fs::write(&path, "{").expect("record");
     let original = std::fs::read(&path).expect("original");
 
     assert_eq!(
@@ -385,20 +394,17 @@ fn missing_network_fields_reject_the_catalogue_without_replacement() {
         let store = ConversationStore::open(dir.path().to_path_buf()).expect("store");
         store.create("Discussion".to_owned()).expect("record");
         drop(store);
-        let path = dir.path().join("catalogue.json");
+        let path = record_path(dir.path());
         let mut file: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&path).expect("catalogue")).expect("JSON");
-        file["conversations"][0]
-            .as_object_mut()
-            .expect("record")
-            .remove(field);
+            serde_json::from_slice(&std::fs::read(&path).expect("record")).expect("JSON");
+        file.as_object_mut().expect("record").remove(field);
         let bytes = serde_json::to_vec(&file).expect("JSON");
-        std::fs::write(&path, &bytes).expect("catalogue");
+        std::fs::write(&path, &bytes).expect("record");
         assert_eq!(
             ConversationStore::open(dir.path().to_path_buf()).err(),
             Some(ConversationError::Corrupt)
         );
-        assert_eq!(std::fs::read(path).expect("unchanged catalogue"), bytes);
+        assert_eq!(std::fs::read(path).expect("unchanged record"), bytes);
     }
 }
 
@@ -422,7 +428,7 @@ fn stale_revisions_do_not_replace_current_records() {
 }
 
 #[test]
-fn titles_and_catalogue_reads_are_bounded() {
+fn titles_and_record_reads_are_bounded() {
     let store = ConversationStore::in_memory();
     for title in [
         String::new(),
@@ -434,7 +440,8 @@ fn titles_and_catalogue_reads_are_bounded() {
     }
 
     let dir = tempfile::tempdir().expect("directory");
-    write_catalogue(dir.path(), &"x".repeat(MAXIMUM_CATALOGUE_BYTES + 1));
+    let path = dir.path().join(format!("{}.json", "1".repeat(32)));
+    std::fs::write(&path, "x".repeat(super::MAXIMUM_RECORD_BYTES + 1)).expect("record");
     assert_eq!(
         ConversationStore::open(dir.path().to_path_buf()).err(),
         Some(ConversationError::Corrupt)
@@ -558,6 +565,65 @@ fn active_request_rejects_stale_settlement() {
 }
 
 #[test]
+fn checkpoints_leave_other_records_and_control_revisions_unchanged() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = ConversationStore::open(dir.path().to_path_buf()).unwrap();
+    let other = store.create("Other".to_owned()).unwrap();
+    let other_path = super::record_file(dir.path(), other.id);
+    let other_bytes = std::fs::read(&other_path).unwrap();
+    let other_modified = std::fs::metadata(&other_path).unwrap().modified().unwrap();
+    let record = store.create("Active".to_owned()).unwrap();
+    let job = JobId::generate().unwrap();
+    let record = store
+        .begin_message_with_model(
+            &record.id,
+            record.revision,
+            None,
+            job,
+            "Question".to_owned(),
+        )
+        .unwrap();
+    let path = super::record_file(dir.path(), record.id);
+    let started = std::fs::read(&path).unwrap();
+    store.append_output(&record.id, job, "Partial").unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), started);
+    store.checkpoint_output(&record.id, job, "Partial").unwrap();
+    assert_ne!(std::fs::read(&path).unwrap(), started);
+    assert_eq!(store.get(&record.id).unwrap().revision, record.revision);
+    assert_eq!(std::fs::read(&other_path).unwrap(), other_bytes);
+    assert_eq!(
+        std::fs::metadata(&other_path).unwrap().modified().unwrap(),
+        other_modified
+    );
+}
+
+#[test]
+fn uncertain_replacement_blocks_settlement_and_new_work() {
+    let store = ConversationStore::in_memory();
+    let record = store.create("Uncertain".to_owned()).unwrap();
+    let job = JobId::generate().unwrap();
+    let record = store
+        .begin_message_with_model(
+            &record.id,
+            record.revision,
+            None,
+            job,
+            "Question".to_owned(),
+        )
+        .unwrap();
+    store.uncertain.lock().unwrap().insert(record.id);
+    assert_eq!(
+        store.settle_message(&record.id, job, "Reply", MessageStatus::Complete, None),
+        Err(ConversationError::Unsettled)
+    );
+    assert_eq!(
+        store.rename(&record.id, record.revision, "Changed".to_owned()),
+        Err(ConversationError::Unsettled)
+    );
+    assert_eq!(store.get(&record.id).unwrap(), record);
+}
+
+#[test]
 fn completed_and_interrupted_messages_survive_restart() {
     let dir = tempfile::tempdir().expect("directory");
     let store = ConversationStore::open(dir.path().to_path_buf()).expect("store");
@@ -582,7 +648,11 @@ fn completed_and_interrupted_messages_survive_restart() {
         let mut reply = crate::providers::AssistantReply::default();
         reply.push_response("Partial");
         reply.push_thinking("");
-        reply.start_tool("call-1".to_owned(), "list".to_owned());
+        reply.start_tool(
+            "call-1".to_owned(),
+            "list".to_owned(),
+            serde_json::json!({}),
+        );
         reply.finish_tool(
             "call-1",
             crate::providers::ToolOutput {
@@ -738,28 +808,39 @@ fn message_bounds_reserve_space_for_terminal_output() {
         ModelSelection::new(ProviderKind::Xai, "grok-4.6".to_owned(), None).expect("model");
     // Existing history leaves less space than the escaped response needs without its reservation.
     let mut history = store.create("History".to_owned()).unwrap();
-    for _ in 0..4 {
+    let mut filled = false;
+    for _ in 0..super::MAXIMUM_MESSAGES {
         let request = JobId::generate().unwrap();
-        store
-            .begin_message(
-                &history.id,
-                history.revision,
-                selection.clone(),
-                request,
-                "Question".to_owned(),
-            )
-            .unwrap();
-        store
-            .settle_message(
-                &history.id,
-                request,
-                "x".repeat(super::MAXIMUM_REPLY_BYTES),
-                MessageStatus::Complete,
-                None,
-            )
-            .unwrap();
-        history = store.get(&history.id).unwrap();
+        match store.begin_message(
+            &history.id,
+            history.revision,
+            selection.clone(),
+            request,
+            "Question".to_owned(),
+        ) {
+            Ok(_) => {
+                store
+                    .settle_message(
+                        &history.id,
+                        request,
+                        "x".repeat(super::MAXIMUM_REPLY_BYTES),
+                        MessageStatus::Complete,
+                        None,
+                    )
+                    .unwrap();
+                history = store.get(&history.id).unwrap();
+            }
+            Err(ConversationError::Full) => {
+                filled = true;
+                break;
+            }
+            Err(error) => panic!("unexpected {error:?}"),
+        }
     }
+    assert!(
+        filled,
+        "the per-record bound reserves terminal output space"
+    );
     let request = JobId::generate().expect("request");
     for text in [
         "x".repeat(super::MAXIMUM_MESSAGE_BYTES + 1),
@@ -776,15 +857,6 @@ fn message_bounds_reserve_space_for_terminal_output() {
             Err(ConversationError::Message)
         );
     }
-    store
-        .begin_message(
-            &record.id,
-            record.revision,
-            selection.clone(),
-            request,
-            "Question".to_owned(),
-        )
-        .expect("begin");
     let other = store.create("Other".to_owned()).expect("other");
     let other_request = JobId::generate().expect("request");
     store
@@ -796,27 +868,15 @@ fn message_bounds_reserve_space_for_terminal_output() {
             "Review".to_owned(),
         )
         .expect("capacity for a linked review at a gate");
-    let third = store.create("Third".to_owned()).expect("third");
     store
         .begin_message(
-            &third.id,
-            third.revision,
+            &record.id,
+            record.revision,
             selection.clone(),
-            JobId::generate().unwrap(),
+            request,
             "Question".to_owned(),
         )
-        .expect("third reservation");
-    let fourth = store.create("Fourth".to_owned()).expect("fourth");
-    assert_eq!(
-        store.begin_message(
-            &fourth.id,
-            fourth.revision,
-            selection,
-            JobId::generate().expect("request"),
-            "Question".to_owned(),
-        ),
-        Err(ConversationError::Full)
-    );
+        .expect("begin");
     assert_eq!(
         store.append_output(
             &record.id,
@@ -905,12 +965,12 @@ fn invalid_message_errors_do_not_settle_the_request() {
 }
 
 #[test]
-fn invalid_record_fields_do_not_replace_the_catalogue() {
+fn invalid_record_fields_do_not_replace_the_record() {
     let dir = tempfile::tempdir().expect("directory");
     let store = ConversationStore::open(dir.path().to_path_buf()).expect("store");
     store.create("Original".to_owned()).expect("create");
     drop(store);
-    let path = dir.path().join("catalogue.json");
+    let path = record_path(dir.path());
     let original: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&path).expect("read")).expect("json");
     for (field, value) in [
@@ -920,7 +980,7 @@ fn invalid_record_fields_do_not_replace_the_catalogue() {
         ("updated-at-ms", serde_json::json!(0)),
     ] {
         let mut invalid = original.clone();
-        invalid["conversations"][0][field] = value;
+        invalid[field] = value;
         let bytes = serde_json::to_vec(&invalid).expect("encode");
         std::fs::write(&path, &bytes).expect("write");
         assert_eq!(
@@ -1013,4 +1073,87 @@ fn restart_preserves_directory_approvals_until_settings_change() {
     drop(reopened);
     let reopened = ConversationStore::open(dir.path().to_path_buf()).unwrap();
     assert!(!reopened.directory_approved(&record.id, &settings, &grant));
+}
+
+#[test]
+fn message_identity_survives_restart_across_independent_conversations() {
+    let dir = tempfile::tempdir().expect("directory");
+    let store = ConversationStore::open(dir.path().to_path_buf()).expect("store");
+    let selection =
+        ModelSelection::new(ProviderKind::Xai, "grok-4.6".to_owned(), None).expect("model");
+    let mut records = Vec::new();
+    let mut requests = Vec::new();
+    for index in 0..2 {
+        let record = store
+            .create(format!("Conversation {index}"))
+            .expect("record");
+        let request = JobId::generate().expect("request");
+        store
+            .begin_message(
+                &record.id,
+                record.revision,
+                selection.clone(),
+                request,
+                format!("Question {index}"),
+            )
+            .expect("begin");
+        store
+            .append_output(&record.id, request, format!("Partial {index}"))
+            .expect("partial");
+        records.push(store.get(&record.id).expect("started"));
+        requests.push(request);
+    }
+    drop(store);
+    let store = ConversationStore::open(dir.path().to_path_buf()).expect("reopen");
+    for (record, request) in records.iter().zip(&requests) {
+        let recovered = store.get(&record.id).expect("recovered");
+        assert_eq!(recovered.active_job, None);
+        assert_eq!(recovered.messages[0].id, record.messages[0].id);
+        assert_eq!(recovered.messages[1].id, record.messages[1].id);
+        let assistant = recovered.messages.last().expect("assistant");
+        assert_eq!(assistant.request, Some(*request));
+        assert_eq!(assistant.status, MessageStatus::Interrupted);
+    }
+    assert_ne!(
+        store.get(&records[0].id).unwrap().messages[0].id,
+        store.get(&records[1].id).unwrap().messages[0].id
+    );
+}
+
+#[test]
+fn duplicate_message_identities_reject_the_record() {
+    let dir = tempfile::tempdir().expect("directory");
+    let store = ConversationStore::open(dir.path().to_path_buf()).expect("store");
+    let record = store.create("Duplicate".to_owned()).expect("record");
+    drop(store);
+    let path = record_path(dir.path());
+    let mut file: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("read")).expect("json");
+    let identifier = crate::conversations::MessageId::generate()
+        .expect("message id")
+        .as_hex();
+    file["messages"] = serde_json::json!([
+        {
+            "id": identifier,
+            "role": "user",
+            "text": "Question",
+            "status": "complete",
+            "request": null,
+        },
+        {
+            "id": identifier,
+            "role": "assistant",
+            "text": "Reply",
+            "status": "complete",
+            "request": null,
+        },
+    ]);
+    let bytes = serde_json::to_vec(&file).expect("encode");
+    std::fs::write(&path, &bytes).expect("write");
+    assert_eq!(
+        ConversationStore::open(dir.path().to_path_buf()).err(),
+        Some(ConversationError::Corrupt)
+    );
+    assert_eq!(std::fs::read(path).expect("unchanged"), bytes);
+    let _ = record;
 }

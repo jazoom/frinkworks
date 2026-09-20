@@ -114,11 +114,7 @@ pub(in crate::slices::conversations) async fn restore(
         .get(&record.id)
         .expect("recovered owner");
     let run = state.workflow_runs.get(&run.id).expect("recovered run");
-    let Ok(job) = state.sessions.begin_conversation_job(
-        &session,
-        record.id,
-        current.messages.len().saturating_sub(1),
-    ) else {
+    let Ok(job) = state.sessions.begin_conversation_job(&session, record.id) else {
         return reject(crate::conversations::ConversationError::Active.message());
     };
     let restored =

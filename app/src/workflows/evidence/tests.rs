@@ -332,3 +332,48 @@ fn escaped_activity_cannot_displace_the_terminal_result() {
     assert_eq!(terminal.text, reply.text);
     assert!(terminal.truncated);
 }
+
+#[test]
+fn configured_step_history_stays_within_its_attempt() {
+    use crate::providers::{ChatToolCall, ChatTurn, Role};
+
+    let store = WorkflowEvidenceStore::in_memory();
+    let run = RunId::generate().expect("run");
+    let attempt = AttemptId::generate().expect("attempt");
+    let other = AttemptId::generate().expect("attempt");
+    let turn = ChatTurn {
+        role: Role::Assistant,
+        text: "Reading".to_owned(),
+        thinking: String::new(),
+        tools: Vec::new(),
+        activity: Vec::new(),
+        usage: None,
+        calls: vec![ChatToolCall {
+            id: "call-1".to_owned(),
+            name: "read".to_owned(),
+            arguments: serde_json::json!({"path": "src/main.rs"}),
+            result: Some(ToolOutput {
+                label: "read src/main.rs".to_owned(),
+                output: "fn main() {}".to_owned(),
+                command: None,
+            }),
+        }],
+        continuation: Vec::new(),
+    };
+    store
+        .append_history(run, attempt, &turn, "review")
+        .expect("history");
+    store
+        .append_history(run, other, &turn, "review")
+        .expect("independent attempt");
+    let evidence = store.get(&run, &attempt).expect("evidence");
+    assert_eq!(evidence.history, vec![turn.clone()]);
+    assert_eq!(
+        store.get(&run, &other).expect("other").history,
+        vec![turn.clone()]
+    );
+    assert_eq!(
+        store.get(&run, &attempt).expect("stable").history,
+        vec![turn]
+    );
+}

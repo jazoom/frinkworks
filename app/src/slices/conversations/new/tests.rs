@@ -722,7 +722,8 @@ async fn network_tool_reply_uses_private_workspace_without_catalogue_identity() 
     ] if thought.is_empty())
     );
     assert!(
-        super::super::job::history(&settled)
+        crate::conversations::history::project(&settled.messages, None)
+            .unwrap()
             .last()
             .unwrap()
             .text

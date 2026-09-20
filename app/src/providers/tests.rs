@@ -630,3 +630,48 @@ mod scripted_fixture {
 }
 
 pub(crate) use scripted_fixture::ScriptedBackend;
+
+#[test]
+fn assistant_turn_carries_call_arguments_and_matching_results() {
+    use crate::providers::{AssistantReply, ChatTurn, ToolOutput};
+
+    let mut reply = AssistantReply::default();
+    reply.start_tool(
+        "call-1".to_owned(),
+        "read".to_owned(),
+        serde_json::json!({"path": "src/main.rs"}),
+    );
+    reply.finish_tool(
+        "call-1",
+        ToolOutput {
+            label: "read src/main.rs".to_owned(),
+            output: "fn main() {}".to_owned(),
+            command: None,
+        },
+    );
+    let turn = ChatTurn::assistant(reply);
+    assert_eq!(turn.calls.len(), 1);
+    assert_eq!(
+        turn.calls[0].arguments,
+        serde_json::json!({"path": "src/main.rs"})
+    );
+    assert!(turn.calls[0].result.is_some());
+    assert!(turn.continuation.is_empty());
+}
+
+#[test]
+fn continuation_metadata_is_rejected_when_unbounded() {
+    use crate::conversations::{ContinuationBlock, ContinuationMetadata};
+
+    let metadata = ContinuationMetadata {
+        provider: ProviderKind::Deepseek,
+        model: "deepseek-v4-flash".to_owned(),
+        reasoning_id: None,
+        blocks: vec![ContinuationBlock::Encrypted {
+            data: "x".repeat(crate::conversations::history::MAXIMUM_CONTINUATION_BYTES + 1),
+        }],
+    };
+    assert!(!crate::conversations::history::valid_continuation(&[
+        metadata
+    ]));
+}

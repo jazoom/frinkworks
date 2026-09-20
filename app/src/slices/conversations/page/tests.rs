@@ -21,6 +21,8 @@ fn escaped_history_keeps_the_latest_message_within_the_patch_bound() {
         .expect("record");
     record.messages = (0..8)
         .map(|_| ConversationMessage {
+            id: crate::conversations::MessageId::generate().expect("message id"),
+            continuation: Vec::new(),
             role: MessageRole::User,
             text: "\"".repeat(32 * 1024),
             activity: Vec::new(),
@@ -47,7 +49,11 @@ fn escaped_history_keeps_the_latest_message_within_the_patch_bound() {
     assert!(view.omitted_messages > 0);
     assert_eq!(
         view.messages.last().expect("latest").id,
-        format!("conversation-{}-message-7", record.id.as_hex())
+        format!(
+            "conversation-{}-message-{}",
+            record.id.as_hex(),
+            record.messages.last().expect("latest").id.as_hex()
+        )
     );
     let mut patches = hypergraft::PatchSet::new();
     patches

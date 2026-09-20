@@ -225,16 +225,14 @@ fn conversation_jobs_run_independently_of_each_other() {
     let first = crate::conversations::ConversationId::generate().expect("first conversation");
     let second = crate::conversations::ConversationId::generate().expect("second conversation");
     store.insert(id);
-    let first_job = store
-        .begin_conversation_job(&id, first, 1)
-        .expect("first job");
+    let first_job = store.begin_conversation_job(&id, first).expect("first job");
     let second_job = store
-        .begin_conversation_job(&id, second, 1)
+        .begin_conversation_job(&id, second)
         .expect("second job");
     assert!(!store.busy(&id));
     assert!(store.conversation_reserved(first));
     assert!(store.conversation_reserved(second));
-    assert!(store.begin_conversation_job(&id, first, 1).is_err());
+    assert!(store.begin_conversation_job(&id, first).is_err());
     assert!(store.owns_conversation_job(&id, first, first_job.id()));
     assert!(!store.owns_conversation_job(&id, first, second_job.id()));
     assert!(!store.owns_conversation_job(&id, second, first_job.id()));
@@ -243,11 +241,7 @@ fn conversation_jobs_run_independently_of_each_other() {
         .id();
     store.insert(other_session);
     assert!(!store.owns_conversation_job(&other_session, first, first_job.id()));
-    assert!(
-        store
-            .begin_conversation_job(&other_session, first, 1)
-            .is_err()
-    );
+    assert!(store.begin_conversation_job(&other_session, first).is_err());
     assert!(store.finish_conversation_job(&id, first, first_job.id()));
     assert!(store.conversation_reserved(second));
     assert!(!store.conversation_reserved(first));
@@ -270,22 +264,18 @@ fn command_reservations_are_local_to_the_conversation() {
         .expect("second command");
     assert!(store.reserve_command(session, first).is_err());
     assert!(store.conversation_reserved(first));
-    assert!(store.begin_conversation_job(&session, first, 1).is_err());
+    assert!(store.begin_conversation_job(&session, first).is_err());
     let other_session = sessions::generate_session_token()
         .expect("other session")
         .id();
     store.insert(other_session);
     assert!(store.reserve_command(other_session, first).is_err());
-    assert!(
-        store
-            .begin_conversation_job(&other_session, first, 1)
-            .is_err()
-    );
+    assert!(store.begin_conversation_job(&other_session, first).is_err());
     drop(first_command);
     assert!(!store.command_reserved(&session, &first));
     assert!(!store.conversation_reserved(first));
     let job = store
-        .begin_conversation_job(&session, first, 1)
+        .begin_conversation_job(&session, first)
         .expect("job after handoff");
     assert!(store.reserve_command(session, first).is_err());
     assert!(store.reserve_command(other_session, first).is_err());

@@ -12,7 +12,6 @@ fn job() -> Arc<Job> {
     Job::for_conversation(
         JobId::generate().expect("job"),
         crate::conversations::ConversationId::generate().expect("conversation"),
-        1,
     )
 }
 
@@ -110,7 +109,7 @@ async fn slow_commands_publish_replayable_progress_and_retain_cancelled_output()
         OutputScope::conversation(crate::conversations::ConversationId::generate().unwrap());
     let store = OutputStore::open(directory.path().join("output")).unwrap();
     let job = job();
-    job.start_tool("slow".to_owned(), "run".to_owned());
+    job.start_tool("slow".to_owned(), "run".to_owned(), serde_json::Value::Null);
     let reporter = super::CommandReporter {
         tool_call: "slow",
         secret: Some("secret"),

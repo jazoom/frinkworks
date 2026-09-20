@@ -37,7 +37,6 @@ fn job() -> (JobId, Arc<Job>) {
     let job = Job::for_conversation(
         id,
         crate::conversations::ConversationId::generate().unwrap(),
-        1,
     );
     (id, job)
 }

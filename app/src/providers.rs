@@ -243,7 +243,8 @@ impl ProviderConnection {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub(crate) enum Role {
     User,
     Assistant,
@@ -267,11 +268,14 @@ pub(crate) enum AssistantActivity {
     ToolCall {
         id: String,
         name: String,
+        #[serde(default)]
+        arguments: serde_json::Value,
         result: Option<ToolOutput>,
     },
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub(crate) struct ModelUsage {
     pub(crate) provider: ProviderKind,
     pub(crate) model: String,
@@ -292,6 +296,8 @@ pub(crate) struct AssistantReply {
     pub(crate) tools: Vec<ToolOutput>,
     pub(crate) activity: Vec<AssistantActivity>,
     pub(crate) usage: Option<ModelUsage>,
+    /// Bounded provider-tagged continuation data that is not visible thought text.
+    pub(crate) continuation: Vec<crate::conversations::ContinuationMetadata>,
     /// Transient live output for an active command. It is not durable history.
     pub(crate) progress: Vec<ToolProgress>,
 }
@@ -327,10 +333,11 @@ impl AssistantReply {
         }
     }
 
-    pub(crate) fn start_tool(&mut self, id: String, name: String) {
+    pub(crate) fn start_tool(&mut self, id: String, name: String, arguments: serde_json::Value) {
         self.activity.push(AssistantActivity::ToolCall {
             id,
             name,
+            arguments,
             result: None,
         });
     }
@@ -392,14 +399,35 @@ impl From<&str> for AssistantReply {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub(crate) struct ChatToolCall {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) arguments: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) result: Option<ToolOutput>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub(crate) struct ChatTurn {
     pub(crate) role: Role,
     pub(crate) text: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub(crate) thinking: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) tools: Vec<ToolOutput>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) activity: Vec<AssistantActivity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) usage: Option<ModelUsage>,
+    /// Durable assistant tool calls with their matching structured results.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) calls: Vec<ChatToolCall>,
+    /// Bounded provider-tagged continuation data. Opaque fields stay out of `text`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) continuation: Vec<crate::conversations::ContinuationMetadata>,
 }
 
 impl ChatTurn {
@@ -411,10 +439,30 @@ impl ChatTurn {
             tools: Vec::new(),
             activity: Vec::new(),
             usage: None,
+            calls: Vec::new(),
+            continuation: Vec::new(),
         }
     }
 
     pub(crate) fn assistant(reply: AssistantReply) -> Self {
+        let calls = reply
+            .activity
+            .iter()
+            .filter_map(|activity| match activity {
+                AssistantActivity::ToolCall {
+                    id,
+                    name,
+                    arguments,
+                    result,
+                } => Some(ChatToolCall {
+                    id: id.clone(),
+                    name: name.clone(),
+                    arguments: arguments.clone(),
+                    result: result.clone(),
+                }),
+                _ => None,
+            })
+            .collect();
         Self {
             role: Role::Assistant,
             text: reply.text,
@@ -422,6 +470,8 @@ impl ChatTurn {
             tools: reply.tools,
             activity: reply.activity,
             usage: reply.usage,
+            calls,
+            continuation: reply.continuation,
         }
     }
 }
@@ -581,6 +631,8 @@ pub(crate) fn sanitise_detail(text: &str) -> Option<String> {
 pub(crate) enum ModelEvent {
     Text(String),
     Thinking(String),
+    /// Bounded provider-tagged opaque continuation data for the selected provider.
+    Continuation(crate::conversations::ContinuationMetadata),
     ToolCall {
         id: String,
         name: String,

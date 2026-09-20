@@ -15,6 +15,7 @@ pub(crate) const MAXIMUM_ACTIVITY_EVENTS: usize = 256;
 // Escaped evidence must also fit one Hypergraft navigation envelope.
 pub(crate) const MAXIMUM_ACTIVITY_BYTES: usize = 64 * 1024;
 pub(crate) const MAXIMUM_ACTIVITY_TEXT_BYTES: usize = 16 * 1024;
+pub(crate) const MAXIMUM_HISTORY_TURNS: usize = 128;
 pub(crate) const MAXIMUM_TERMINAL_TEXT_BYTES: usize = 16 * 1024;
 pub(crate) const MAXIMUM_TERMINAL_TOOLS: usize = 128;
 pub(crate) const MAXIMUM_TERMINAL_TOOL_BYTES: usize = 64 * 1024;
@@ -109,6 +110,12 @@ impl AttemptEvidenceContext {
                 secret: None,
             },
         );
+    }
+
+    /// The caller must exclude credentials before durable publication.
+    pub(crate) fn turn(&self, turn: &crate::providers::ChatTurn) -> Result<(), EvidenceError> {
+        self.store
+            .append_history(self.run_id, self.attempt_id, turn, &self.phase)
     }
 
     pub(crate) fn terminal(
@@ -236,6 +243,8 @@ pub(crate) struct AttemptEvidence {
     pub(crate) activity_bytes: usize,
     pub(crate) activity_truncated: bool,
     pub(crate) terminal: Option<TerminalResponse>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) history: Vec<crate::providers::ChatTurn>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -522,6 +531,34 @@ impl WorkflowEvidenceStore {
         Ok(())
     }
 
+    pub(crate) fn append_history(
+        &self,
+        run_id: RunId,
+        attempt_id: AttemptId,
+        turn: &crate::providers::ChatTurn,
+        phase: &str,
+    ) -> Result<(), EvidenceError> {
+        let mut records = self.lock();
+        let key = (run_id, attempt_id);
+        if !records.contains_key(&key) && records.len() >= MAXIMUM_EVIDENCE_RECORDS {
+            return Err(EvidenceError::Full);
+        }
+        let mut next = records
+            .get(&key)
+            .cloned()
+            .unwrap_or_else(|| empty_record(run_id, attempt_id, phase));
+        if next.phase != phase {
+            return Err(EvidenceError::Conflict);
+        }
+        next.history.push(turn.clone());
+        if next.history.len() > MAXIMUM_HISTORY_TURNS {
+            return Err(EvidenceError::Full);
+        }
+        persist_record(self.dir.as_deref(), &mut next)?;
+        records.insert(key, next);
+        Ok(())
+    }
+
     fn lock(&self) -> MutexGuard<'_, BTreeMap<(RunId, AttemptId), AttemptEvidence>> {
         self.inner
             .lock()
@@ -539,6 +576,7 @@ fn empty_record(run_id: RunId, attempt_id: AttemptId, phase: &str) -> AttemptEvi
         activity_bytes: 0,
         activity_truncated: false,
         terminal: None,
+        history: Vec::new(),
     }
 }
 

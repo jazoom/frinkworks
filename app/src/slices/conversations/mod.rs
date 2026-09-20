@@ -1154,7 +1154,7 @@ async fn start_message_mode(
     };
     let job = state
         .sessions
-        .begin_conversation_job(&session, record.id, record.messages.len() + 1)
+        .begin_conversation_job(&session, record.id)
         .map_err(|_| {
             StartMessageError::User(PatchStatus::Conflict, ConversationError::Active.message())
         })?;

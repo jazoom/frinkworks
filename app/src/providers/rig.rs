@@ -4,7 +4,8 @@ use futures_util::StreamExt;
 use rig_core::{
     client::CompletionClient,
     completion::{
-        CompletionError, CompletionModel, Message, ToolDefinition, message::ReasoningContent,
+        AssistantContent, CompletionError, CompletionModel, Message, ToolDefinition,
+        message::ReasoningContent,
     },
     providers::{chatgpt, deepseek, openai, openrouter, xai},
     streaming::StreamedAssistantContent,
@@ -291,11 +292,72 @@ async fn stream_messages<M>(
 where
     M: CompletionModel + Clone,
 {
+    for turn in history {
+        if !crate::conversations::history::valid_continuation(&turn.continuation)
+            || turn.continuation.iter().any(|metadata| {
+                metadata.provider == connection.kind && metadata.model != connection.model
+            })
+        {
+            return Err(ProviderError::Detail(
+                crate::conversations::history::HistoryError::Continuation
+                    .message()
+                    .to_owned(),
+            ));
+        }
+        if turn.calls.iter().any(|call| call.result.is_none()) {
+            return Err(ProviderError::Detail(
+                crate::conversations::history::HistoryError::Unsettled
+                    .message()
+                    .to_owned(),
+            ));
+        }
+    }
     let mut messages = history
         .iter()
-        .map(|turn| match turn.role {
-            Role::User => Message::user(turn.text.clone()),
-            Role::Assistant => Message::assistant(turn.text.clone()),
+        .flat_map(|turn| match turn.role {
+            Role::User => vec![Message::user(turn.text.clone())],
+            Role::Assistant => {
+                let mut content = Vec::new();
+                if !turn.text.is_empty() {
+                    content.push(AssistantContent::text(turn.text.clone()));
+                }
+                for metadata in &turn.continuation {
+                    if metadata.provider != connection.kind {
+                        continue;
+                    }
+                    let blocks = metadata
+                        .blocks
+                        .iter()
+                        .map(continuation_block)
+                        .collect::<Vec<_>>();
+                    if !blocks.is_empty() || metadata.reasoning_id.is_some() {
+                        content.push(AssistantContent::Reasoning(
+                            rig_core::completion::message::Reasoning {
+                                id: metadata.reasoning_id.clone(),
+                                content: blocks,
+                            },
+                        ));
+                    }
+                }
+                for call in &turn.calls {
+                    content.push(AssistantContent::tool_call(
+                        call.id.clone(),
+                        call.name.clone(),
+                        call.arguments.clone(),
+                    ));
+                }
+                let mut messages = vec![Message::Assistant { id: None, content }];
+                for call in &turn.calls {
+                    if let Some(result) = &call.result {
+                        messages.push(Message::tool_result(
+                            call.id.clone(),
+                            call.name.clone(),
+                            result.output.clone(),
+                        ));
+                    }
+                }
+                messages
+            }
         })
         .collect::<Vec<_>>();
     messages.extend(extra.iter().cloned());
@@ -329,48 +391,96 @@ where
         .await
         .map_err(|error| classify_completion_for(error, connection.auth))?;
     let auth = connection.auth;
+    let provider = connection.kind;
+    let model = connection.model.clone();
     let mut reasoning_deltas = HashSet::new();
-    Ok(Box::pin(response.filter_map(move |item| {
-        let event = match item {
-            Ok(StreamedAssistantContent::Text(text)) => Some(Ok(ModelEvent::Text(text.text))),
-            Ok(StreamedAssistantContent::ToolCall { tool_call, .. }) => {
-                Some(Ok(ModelEvent::ToolCall {
-                    id: tool_call.id.into_string(),
-                    name: tool_call.function.name,
-                    arguments: tool_call.function.arguments,
-                }))
-            }
-            Ok(StreamedAssistantContent::ReasoningDelta { id, reasoning, .. }) => {
-                reasoning_deltas.insert(id);
-                Some(Ok(ModelEvent::Thinking(reasoning)))
-            }
-            Ok(StreamedAssistantContent::Reasoning { reasoning, id }) => {
-                if reasoning_deltas.contains(&id) {
-                    None
-                } else {
-                    let text = reasoning
-                        .content
-                        .into_iter()
-                        .filter_map(|content| match content {
-                            ReasoningContent::Text { text, .. }
-                            | ReasoningContent::Summary(text) => Some(text),
-                            ReasoningContent::Encrypted(_) | ReasoningContent::Redacted { .. } => {
-                                None
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n\n");
-                    Some(Ok(ModelEvent::Thinking(text)))
+    Ok(Box::pin(response.flat_map(move |item| {
+        let events =
+            match item {
+                Ok(StreamedAssistantContent::Text(text)) => {
+                    vec![Ok(ModelEvent::Text(text.text))]
                 }
-            }
-            Ok(StreamedAssistantContent::Final(final_response)) => {
-                (final_response.usage.input_tokens > 0).then_some(Ok(ModelEvent::Usage {
-                    input_tokens: final_response.usage.input_tokens,
-                }))
-            }
-            Ok(_) => None,
-            Err(error) => Some(Err(classify_completion_for(error, auth))),
-        };
-        std::future::ready(event)
+                Ok(StreamedAssistantContent::ToolCall { tool_call, .. }) => {
+                    vec![Ok(ModelEvent::ToolCall {
+                        id: tool_call.id.into_string(),
+                        name: tool_call.function.name,
+                        arguments: tool_call.function.arguments,
+                    })]
+                }
+                Ok(StreamedAssistantContent::ReasoningDelta { id, reasoning, .. }) => {
+                    reasoning_deltas.insert(id);
+                    vec![Ok(ModelEvent::Thinking(reasoning))]
+                }
+                Ok(StreamedAssistantContent::Reasoning { reasoning, id }) => {
+                    let superseded = reasoning_deltas.contains(&id);
+                    let mut text = String::new();
+                    let mut blocks = Vec::new();
+                    for content in reasoning.content {
+                        match content {
+                            ReasoningContent::Text {
+                                text: value,
+                                signature,
+                            } => {
+                                if let Some(signature) = signature {
+                                    blocks.push(crate::conversations::ContinuationBlock::Text {
+                                        text: value.clone(),
+                                        signature: Some(signature),
+                                    });
+                                }
+                                text.push_str(&value);
+                            }
+                            ReasoningContent::Summary(value) => text.push_str(&value),
+                            ReasoningContent::Encrypted(data) => blocks
+                                .push(crate::conversations::ContinuationBlock::Encrypted { data }),
+                            ReasoningContent::Redacted { data } => blocks
+                                .push(crate::conversations::ContinuationBlock::Redacted { data }),
+                        }
+                    }
+                    let mut events = Vec::new();
+                    if !superseded && !text.is_empty() {
+                        events.push(Ok(ModelEvent::Thinking(text)));
+                    }
+                    if !blocks.is_empty() || reasoning.id.is_some() {
+                        events.push(Ok(ModelEvent::Continuation(
+                            crate::conversations::ContinuationMetadata {
+                                provider,
+                                model: model.clone(),
+                                reasoning_id: reasoning.id,
+                                blocks,
+                            },
+                        )));
+                    }
+                    events
+                }
+                Ok(StreamedAssistantContent::Final(final_response)) => {
+                    if final_response.usage.input_tokens > 0 {
+                        vec![Ok(ModelEvent::Usage {
+                            input_tokens: final_response.usage.input_tokens,
+                        })]
+                    } else {
+                        Vec::new()
+                    }
+                }
+                Ok(_) => Vec::new(),
+                Err(error) => vec![Err(classify_completion_for(error, auth))],
+            };
+        futures_util::stream::iter(events)
     })))
+}
+
+fn continuation_block(block: &crate::conversations::ContinuationBlock) -> ReasoningContent {
+    match block {
+        crate::conversations::ContinuationBlock::Text { text, signature } => {
+            ReasoningContent::Text {
+                text: text.clone(),
+                signature: signature.clone(),
+            }
+        }
+        crate::conversations::ContinuationBlock::Encrypted { data } => {
+            ReasoningContent::Encrypted(data.clone())
+        }
+        crate::conversations::ContinuationBlock::Redacted { data } => {
+            ReasoningContent::Redacted { data: data.clone() }
+        }
+    }
 }

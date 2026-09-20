@@ -851,7 +851,7 @@ fn conversation_awaiting_gate() -> GateFixture {
         .expect("vault");
     let job = state
         .sessions
-        .begin_conversation_job(&session, conversation.id, 1)
+        .begin_conversation_job(&session, conversation.id)
         .expect("job");
     state
         .conversations
@@ -1293,7 +1293,7 @@ async fn another_conversation_job_does_not_block_a_gate_decision() {
     let other_job = fixture
         .state
         .sessions
-        .begin_conversation_job(&fixture.session, other.id, 1)
+        .begin_conversation_job(&fixture.session, other.id)
         .expect("other job");
     assert!(fixture.state.sessions.conversation_reserved(other.id));
     let approved = post_decision(

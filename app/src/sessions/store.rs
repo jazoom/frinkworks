@@ -221,7 +221,6 @@ impl SessionStore {
         &self,
         id: &SessionId,
         conversation_id: ConversationId,
-        assistant_index: usize,
     ) -> Result<Arc<Job>, BeginTurnError> {
         let job_id = JobId::generate().map_err(|_| BeginTurnError::JobId)?;
         let mut sessions = self.lock();
@@ -232,7 +231,7 @@ impl SessionStore {
         {
             return Err(BeginTurnError::Conflict);
         }
-        let job = Job::for_conversation(job_id, conversation_id, assistant_index);
+        let job = Job::for_conversation(job_id, conversation_id);
         jobs.insert(
             conversation_id,
             ConversationJob {

@@ -6,10 +6,8 @@ use hypergraft::{PatchSet, PatchStatus};
 use tokio::sync::mpsc;
 
 use crate::{
-    conversations::{
-        ConversationId, ConversationRecord, MAXIMUM_REPLY_BYTES, MessageRole, MessageStatus,
-    },
-    providers::{AssistantReply, ChatTurn, ModelEvent, ProviderConnection, ProviderError, Role},
+    conversations::{ConversationId, ConversationRecord, MAXIMUM_REPLY_BYTES, MessageStatus},
+    providers::{AssistantReply, ChatTurn, ModelEvent, ProviderConnection, ProviderError},
     sessions::{Job, JobStatus, SessionId},
     state::AppState,
 };
@@ -82,6 +80,17 @@ pub(super) async fn run(
                             input_tokens,
                         });
                     }
+                    ModelEvent::Continuation(metadata) => {
+                        reply.continuation.push(metadata);
+                        if !crate::conversations::history::valid_continuation(&reply.continuation)
+                            || crate::conversations::history::contains_credential(&reply.continuation, secret)
+                        {
+                            reply.continuation.pop();
+                            return Err(Failure::Provider(ProviderError::Detail(
+                                crate::conversations::history::HistoryError::Continuation.message().to_owned(),
+                            )));
+                        }
+                    }
                     ModelEvent::ToolCall { id, name, .. } => {
                         append_piece(&mut reply, &job, redactor.finish_boundary(), thinking)?;
                         if id.len() <= 512 && name.len() <= 512 && !id.contains('\0') && !name.contains('\0') {
@@ -90,8 +99,8 @@ pub(super) async fn run(
                             if id.len() > 512 || name.len() > 512 {
                                 return Err(Failure::Provider(ProviderError::ReplyTooLong));
                             }
-                            reply.start_tool(id.clone(), name.clone());
-                            job.start_tool(id, name);
+                            reply.start_tool(id.clone(), name.clone(), serde_json::json!({}));
+                            job.start_tool(id, name, serde_json::json!({}));
                         }
                         return Err(Failure::Provider(ProviderError::Refused));
                     }
@@ -205,7 +214,9 @@ pub(super) fn history_with_review(
     record: &ConversationRecord,
     secret: Option<&str>,
 ) -> Result<Vec<ChatTurn>, &'static str> {
-    let mut history = history(record);
+    let selection = record.model.as_ref().map(|model| &model.settings.model);
+    let mut history = crate::conversations::history::project(&record.messages, selection)
+        .map_err(|error| error.message())?;
     if let Some(context) = &record.candidate_review_context {
         history.insert(
             0,
@@ -317,43 +328,6 @@ fn candidate_review_prompt(
     ))
 }
 
-pub(super) fn history(record: &ConversationRecord) -> Vec<ChatTurn> {
-    record
-        .messages
-        .iter()
-        .filter_map(|message| match message.role {
-            MessageRole::User => Some(ChatTurn::user(message.text.clone())),
-            MessageRole::Assistant
-                if message.status != MessageStatus::Pending && !message.text.is_empty() =>
-            {
-                Some(ChatTurn {
-                    role: Role::Assistant,
-                    text: if message.activity.is_empty() {
-                        message.text.clone()
-                    } else {
-                        message
-                            .activity
-                            .iter()
-                            .filter_map(|activity| match activity {
-                                crate::providers::AssistantActivity::Response(text) => {
-                                    Some(text.as_str())
-                                }
-                                _ => None,
-                            })
-                            .collect::<Vec<_>>()
-                            .join("\n\n")
-                    },
-                    thinking: String::new(),
-                    tools: Vec::new(),
-                    activity: Vec::new(),
-                    usage: None,
-                })
-            }
-            MessageRole::Assistant => None,
-        })
-        .collect()
-}
-
 pub(super) fn observe_response(
     state: AppState,
     conversation: ConversationId,
@@ -385,15 +359,19 @@ async fn observe_segment(
 ) {
     let mut cursor = cursor;
     let mut budget = hypergraft::StreamBudget::new();
+    let assistant = assistant_message(&state, &conversation, &job).map(|message| message.id);
+    let job_id = job.id().as_hex();
     job.wait_after(cursor, OBSERVE_WAIT).await;
     let started = std::time::Instant::now();
     while job.latest_seq() > cursor {
         let snapshot = job.snapshot();
         let output = job.output_up_to(snapshot.latest_seq);
         if !output.is_empty()
+            && let Some(message) = assistant
             && let Some(frame) = progress_frame(
                 &conversation,
-                &job,
+                &job_id,
+                message,
                 snapshot.latest_seq,
                 &output,
                 &mut budget,
@@ -413,15 +391,29 @@ async fn observe_segment(
         .await;
 }
 
-fn progress_frame(
+fn assistant_message(
+    state: &AppState,
     conversation: &ConversationId,
     job: &Job,
+) -> Option<crate::conversations::ConversationMessage> {
+    state.conversations.get(conversation).and_then(|record| {
+        record
+            .messages
+            .iter()
+            .find(|message| message.request == Some(job.id()))
+            .cloned()
+    })
+}
+
+fn progress_frame(
+    conversation: &ConversationId,
+    job_id: &str,
+    message: crate::conversations::MessageId,
     cursor: u64,
     reply: &AssistantReply,
     budget: &mut hypergraft::StreamBudget,
 ) -> Option<hypergraft::StreamFrame> {
-    let message =
-        super::page::reply_view(conversation, job.assistant_index(), reply, job.is_running());
+    let message = super::page::reply_view(conversation, message, reply, true);
     let mut patches = PatchSet::new();
     patches
         .children(&message.id, &MessageBody { message: &message })
@@ -431,7 +423,7 @@ fn progress_frame(
             "conversation-observe",
             &ConversationObserveContents {
                 id: &conversation.as_hex(),
-                job_id: &job.id().as_hex(),
+                job_id,
                 cursor,
                 active: true,
             },
@@ -466,13 +458,15 @@ fn final_frame(
         patches = PatchSet::new();
     }
     if let Some(record) = record
-        && let Some(message) = record.messages.get(job.assistant_index())
-        && message.request == Some(job.id())
+        && let Some(message) = record
+            .messages
+            .iter()
+            .find(|message| message.request == Some(job.id()))
     {
         let message = if snapshot.status == JobStatus::Running && !snapshot.output.is_empty() {
-            super::page::reply_view(conversation, job.assistant_index(), &snapshot.output, true)
+            super::page::reply_view(conversation, message.id, &snapshot.output, true)
         } else {
-            super::page::message_view(conversation, job.assistant_index(), message)
+            super::page::message_view(conversation, message)
         };
         let _ = patches.children(&message.id, &MessageBody { message: &message });
     }

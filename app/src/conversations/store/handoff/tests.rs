@@ -59,10 +59,10 @@ fn fixture() -> (
 fn committed_transfer_recovers_after_catalogue_failure_without_duplicate_ownership_or_file_writes()
 {
     let (state, root, source, destination, run, files) = fixture();
-    let path = state.conversations.path.as_ref().unwrap();
+    let path = state.conversations.path.as_ref().unwrap().clone();
     let backup = path.with_extension("backup");
-    std::fs::rename(path, &backup).unwrap();
-    std::fs::create_dir(path).unwrap();
+    std::fs::rename(&path, &backup).unwrap();
+    std::fs::write(&path, b"blocked").unwrap();
     let job = JobId::generate().unwrap();
     let moved = state
         .conversations
@@ -89,8 +89,8 @@ fn committed_transfer_recovers_after_catalogue_failure_without_duplicate_ownersh
             .is_err()
     );
     assert_eq!(moved.messages[0].text, "Exact continuation");
-    std::fs::remove_dir(path).unwrap();
-    std::fs::rename(&backup, path).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    std::fs::rename(&backup, &path).unwrap();
     let conversations = ConversationStore::open(root.path().join("conversations")).unwrap();
     let runs = WorkflowRunStore::open(root.path().join("runs")).unwrap();
     conversations.recover_handoffs(&runs).unwrap();

@@ -92,6 +92,8 @@ pub(crate) enum JobEventKind {
     ToolStarted {
         id: String,
         name: String,
+        #[allow(dead_code)]
+        arguments: serde_json::Value,
     },
     ToolProgress {
         id: String,
@@ -123,13 +125,11 @@ pub(crate) struct JobSnapshot {
     pub(crate) status: JobStatus,
     pub(crate) output: AssistantReply,
     pub(crate) latest_seq: u64,
-    pub(crate) assistant_index: usize,
 }
 
 pub(crate) struct Job {
     id: JobId,
     owner: JobOwner,
-    assistant_index: usize,
     inner: Mutex<JobInner>,
     notify: Notify,
     cancel: AtomicBool,
@@ -148,19 +148,14 @@ struct JobInner {
 }
 
 impl Job {
-    pub(crate) fn for_conversation(
-        id: JobId,
-        conversation: ConversationId,
-        assistant_index: usize,
-    ) -> Arc<Self> {
-        Self::with_owner(id, JobOwner::Conversation(conversation), assistant_index)
+    pub(crate) fn for_conversation(id: JobId, conversation: ConversationId) -> Arc<Self> {
+        Self::with_owner(id, JobOwner::Conversation(conversation))
     }
 
-    fn with_owner(id: JobId, owner: JobOwner, assistant_index: usize) -> Arc<Self> {
+    fn with_owner(id: JobId, owner: JobOwner) -> Arc<Self> {
         Arc::new(Self {
             id,
             owner,
-            assistant_index,
             inner: Mutex::new(JobInner {
                 status: JobStatus::Running,
                 events: Vec::new(),
@@ -179,10 +174,6 @@ impl Job {
 
     pub(crate) fn id(&self) -> JobId {
         self.id
-    }
-
-    pub(crate) fn assistant_index(&self) -> usize {
-        self.assistant_index
     }
 
     pub(crate) fn is_running(&self) -> bool {
@@ -252,7 +243,6 @@ impl Job {
             status: inner.status,
             output: inner.output.clone(),
             latest_seq: inner.latest_seq,
-            assistant_index: self.assistant_index,
         }
     }
 
@@ -280,8 +270,17 @@ impl Job {
         self.push_output_event(JobEventKind::Thinking { delta })
     }
 
-    pub(crate) fn start_tool(&self, id: String, name: String) -> Option<u64> {
-        self.push_output_event(JobEventKind::ToolStarted { id, name })
+    pub(crate) fn start_tool(
+        &self,
+        id: String,
+        name: String,
+        arguments: serde_json::Value,
+    ) -> Option<u64> {
+        self.push_output_event(JobEventKind::ToolStarted {
+            id,
+            name,
+            arguments,
+        })
     }
 
     /// Publish a bounded slice of live command output. The final tool result
@@ -445,7 +444,11 @@ fn apply_output_event(output: &mut AssistantReply, event: &JobEventKind) {
     match event {
         JobEventKind::Response { delta } => output.push_response(delta),
         JobEventKind::Thinking { delta } => output.push_thinking(delta),
-        JobEventKind::ToolStarted { id, name } => output.start_tool(id.clone(), name.clone()),
+        JobEventKind::ToolStarted {
+            id,
+            name,
+            arguments,
+        } => output.start_tool(id.clone(), name.clone(), arguments.clone()),
         JobEventKind::ToolProgress { id, stream, delta } => {
             output.push_tool_progress(id, *stream, delta)
         }

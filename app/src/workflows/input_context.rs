@@ -344,15 +344,18 @@ impl ContextBudget {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(
-    deny_unknown_fields,
-    tag = "role",
-    content = "text",
-    rename_all = "kebab-case"
-)]
+#[serde(deny_unknown_fields, tag = "role", rename_all = "kebab-case")]
 pub(crate) enum ContextMessage {
-    User(String),
-    Assistant(String),
+    User {
+        text: String,
+    },
+    Assistant {
+        text: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        calls: Vec<crate::providers::ChatToolCall>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        continuation: Vec<crate::conversations::ContinuationMetadata>,
+    },
 }
 
 impl ContextMessage {
@@ -362,14 +365,14 @@ impl ContextMessage {
 
     pub(crate) fn text(&self) -> &str {
         match self {
-            Self::User(text) | Self::Assistant(text) => text,
+            Self::User { text } | Self::Assistant { text, .. } => text,
         }
     }
 
     pub(crate) fn role(&self) -> &'static str {
         match self {
-            Self::User(_) => "User",
-            Self::Assistant(_) => "Assistant",
+            Self::User { .. } => "User",
+            Self::Assistant { .. } => "Assistant",
         }
     }
 }
@@ -391,10 +394,24 @@ impl AttemptContextPacket {
         self.messages
             .iter()
             .map(|message| match message {
-                ContextMessage::User(text) => crate::providers::ChatTurn::user(text.clone()),
-                ContextMessage::Assistant(text) => {
-                    crate::providers::ChatTurn::assistant(text.clone().into())
-                }
+                ContextMessage::User { text } => crate::providers::ChatTurn::user(text.clone()),
+                ContextMessage::Assistant {
+                    text,
+                    calls,
+                    continuation,
+                } => crate::providers::ChatTurn {
+                    role: crate::providers::Role::Assistant,
+                    text: text.clone(),
+                    thinking: String::new(),
+                    tools: calls
+                        .iter()
+                        .filter_map(|call| call.result.clone())
+                        .collect(),
+                    activity: Vec::new(),
+                    usage: None,
+                    calls: calls.clone(),
+                    continuation: continuation.clone(),
+                },
             })
             .collect()
     }
@@ -635,15 +652,21 @@ pub(crate) fn build_attempt_packet_for_request(
         conversation_turns
             .iter()
             .map(|turn| match turn.role {
-                crate::providers::Role::User => ContextMessage::User(turn.text.clone()),
-                crate::providers::Role::Assistant => ContextMessage::Assistant(turn.text.clone()),
+                crate::providers::Role::User => ContextMessage::User {
+                    text: turn.text.clone(),
+                },
+                crate::providers::Role::Assistant => ContextMessage::Assistant {
+                    text: turn.text.clone(),
+                    calls: turn.calls.clone(),
+                    continuation: turn.continuation.clone(),
+                },
             })
             .collect::<Vec<_>>()
     } else {
         // Rig requires a user message even when the complete task is in the preamble.
-        vec![ContextMessage::User(
-            "Execute the assigned task in the initial prompt.".to_owned(),
-        )]
+        vec![ContextMessage::User {
+            text: "Execute the assigned task in the initial prompt.".to_owned(),
+        }]
     };
     let tools: Vec<_> = tools.iter().map(ContextTool::from_definition).collect();
     if secret.is_some_and(|secret| {

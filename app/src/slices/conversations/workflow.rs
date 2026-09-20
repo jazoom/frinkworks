@@ -488,11 +488,10 @@ pub(super) async fn launch(
     );
     run.kind = workflows::run::RunKind::Configured;
     run.launch_brief = brief.clone();
-    let job = match state.sessions.begin_conversation_job(
-        &session.0,
-        current.id,
-        current.messages.len() + 1,
-    ) {
+    let job = match state
+        .sessions
+        .begin_conversation_job(&session.0, current.id)
+    {
         Ok(job) => job,
         Err(_) => {
             return error_view(

@@ -1334,7 +1334,7 @@ fn failed_conversation_workflow_retains_a_secret_safe_error() {
     workflow.session_id = session;
     workflow.job = state
         .sessions
-        .begin_conversation_job(&session, conversation.id, 1)
+        .begin_conversation_job(&session, conversation.id)
         .expect("job");
     let job_id = workflow.job.id();
     state

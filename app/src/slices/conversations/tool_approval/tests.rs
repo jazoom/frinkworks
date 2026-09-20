@@ -53,7 +53,7 @@ async fn host_command_approval_rejects_tampering_duplicates_and_stale_jobs() {
         .unwrap();
     let job = state
         .sessions
-        .begin_conversation_job(&session, record.id, 1)
+        .begin_conversation_job(&session, record.id)
         .unwrap();
     let token_request = state
         .host_approvals

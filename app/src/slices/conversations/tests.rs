@@ -1174,7 +1174,7 @@ async fn observation_uses_the_page_route_and_cancel_needs_only_the_job_identity(
         .expect("record");
     let job = state
         .sessions
-        .begin_conversation_job(&owner.id(), record.id, 1)
+        .begin_conversation_job(&owner.id(), record.id)
         .expect("job");
     let selection =
         ModelSelection::new(ProviderKind::Xai, "grok-4.6".to_owned(), None).expect("model");
@@ -1591,7 +1591,7 @@ async fn conversation_network_controls_are_bounded_revisioned_and_reserved() {
     state.sessions.insert(other.id());
     let _job = state
         .sessions
-        .begin_conversation_job(&other.id(), conversation.id, 1)
+        .begin_conversation_job(&other.id(), conversation.id)
         .expect("reserved conversation");
     let reserved = app(&state)
         .oneshot(command(

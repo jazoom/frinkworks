@@ -82,12 +82,8 @@ impl super::Job {
         self.finish_tool(String::new(), output)
     }
 
-    pub(crate) fn new(id: JobId, _run_id: RunId, assistant_index: usize) -> Arc<Self> {
-        Self::for_conversation(
-            id,
-            ConversationId::generate().expect("conversation id"),
-            assistant_index,
-        )
+    pub(crate) fn new(id: JobId, _run_id: RunId, _assistant_index: usize) -> Arc<Self> {
+        Self::for_conversation(id, ConversationId::generate().expect("conversation id"))
     }
     pub(crate) fn events_after(&self, cursor: u64) -> Vec<JobEvent> {
         self.lock()
@@ -102,7 +98,11 @@ impl super::Job {
 #[test]
 fn tool_progress_is_bounded_and_the_terminal_result_survives() {
     let job = job();
-    job.start_tool("call-1".to_owned(), "run".to_owned());
+    job.start_tool(
+        "call-1".to_owned(),
+        "run".to_owned(),
+        serde_json::Value::Null,
+    );
     let piece = "x".repeat(1024);
     let mut accepted = 0;
     for _ in 0..128 {
@@ -137,7 +137,11 @@ fn tool_progress_is_bounded_and_the_terminal_result_survives() {
 #[test]
 fn progress_survives_a_late_observer_without_duplication() {
     let job = job();
-    job.start_tool("call-1".to_owned(), "run".to_owned());
+    job.start_tool(
+        "call-1".to_owned(),
+        "run".to_owned(),
+        serde_json::Value::Null,
+    );
     job.push_tool_progress(
         "call-1".to_owned(),
         crate::execution::CommandStream::Stderr,

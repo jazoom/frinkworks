@@ -222,9 +222,9 @@ fn review_verdict_skips_candidate_outputs_from_fixing_reviews() {
 fn context_packet(prompt: String) -> crate::workflows::input_context::AttemptContextPacket {
     let mut packet = crate::workflows::input_context::AttemptContextPacket {
         prompt,
-        messages: vec![crate::workflows::input_context::ContextMessage::User(
-            "Execute the assigned task.".to_owned(),
-        )],
+        messages: vec![crate::workflows::input_context::ContextMessage::User {
+            text: "Execute the assigned task.".to_owned(),
+        }],
         tools: vec![crate::workflows::input_context::ContextTool {
             name: "read".to_owned(),
             description: "Read a granted file.".to_owned(),

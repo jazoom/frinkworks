@@ -363,6 +363,7 @@ async fn request_prompt(
                 prompt.push_str(&text);
             }
             ModelEvent::Thinking(text) => bytes = bytes.saturating_add(text.len()),
+            ModelEvent::Continuation(_) => {}
             ModelEvent::Usage { .. } => {}
             ModelEvent::ToolCall { .. } => {
                 return Err("The model requested a tool during handoff. No tool ran. Try again.");

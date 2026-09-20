@@ -13,13 +13,19 @@ use crate::workflows::{ArtefactId, RunId};
 use crate::providers::ModelSelection;
 use crate::sessions::JobId;
 
-use super::id::ConversationId;
+use super::history::{
+    ConversationMessage, MessageRole, MessageStatus, valid_activity, valid_continuation,
+    valid_message_error,
+};
+use super::id::{ConversationId, MessageId};
 
 mod handoff;
 
 const CATALOGUE_VERSION: u32 = 1;
-const CATALOGUE_FILE: &str = "catalogue.json";
-const MAXIMUM_CATALOGUE_BYTES: usize = 8 * 1024 * 1024;
+const FILE_SUFFIX: &str = ".json";
+const MAXIMUM_RECORD_BYTES: usize = 8 * 1024 * 1024;
+const MAXIMUM_STORE_BYTES: usize = 64 * 1024 * 1024;
+const OUTPUT_CHECKPOINT_BYTES: usize = 16 * 1024;
 pub(crate) const MAXIMUM_CONVERSATIONS: usize = 128;
 pub(crate) const MAXIMUM_TITLE_BYTES: usize = 120;
 pub(crate) const MAXIMUM_MESSAGES: usize = 512;
@@ -170,36 +176,11 @@ impl ConversationModelConfiguration {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub(crate) enum MessageRole {
-    User,
-    Assistant,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub(crate) enum MessageStatus {
-    Complete,
-    Pending,
-    Interrupted,
-    Failed,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ConversationMessage {
-    pub(crate) role: MessageRole,
-    pub(crate) text: String,
-    pub(crate) activity: Vec<crate::providers::AssistantActivity>,
-    pub(crate) status: MessageStatus,
-    pub(crate) error: Option<String>,
-    pub(crate) request: Option<JobId>,
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ConversationError {
     Random,
     Persist,
+    Unsettled,
     Corrupt,
     Full,
     Missing,
@@ -219,7 +200,10 @@ impl ConversationError {
         match self {
             Self::Random => "Power Plant could not create a conversation identifier. Try again.",
             Self::Persist => "Power Plant could not store the conversation. Try again.",
-            Self::Corrupt => "The conversation catalogue is unreadable.",
+            Self::Unsettled => {
+                "Power Plant could not confirm that local history was stored. Restart before you continue."
+            }
+            Self::Corrupt => "Stored conversation history is unreadable.",
             Self::Full => {
                 "Delete an inactive conversation to free local history space. If this discussion reached its message limit, start another conversation."
             }
@@ -246,21 +230,19 @@ impl std::fmt::Display for ConversationError {
 impl std::error::Error for ConversationError {}
 
 pub(crate) struct ConversationStore {
+    // The directory holds one private record file per conversation.
     path: Option<PathBuf>,
     inner: Mutex<BTreeMap<ConversationId, ConversationRecord>>,
+    // Unsynchronised transcript bytes since the last durable checkpoint.
+    pending: Mutex<BTreeMap<ConversationId, usize>>,
+    uncertain: Mutex<std::collections::BTreeSet<ConversationId>>,
     title_updates: tokio::sync::broadcast::Sender<()>,
 }
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
-struct CatalogueFile {
-    version: u32,
-    conversations: Vec<ConversationFile>,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "kebab-case")]
 struct ConversationFile {
+    version: u32,
     id: String,
     revision: u32,
     title: String,
@@ -354,10 +336,13 @@ struct ArtefactRefFile {
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 struct MessageFile {
+    id: String,
     role: MessageRole,
     text: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     activity: Vec<crate::providers::AssistantActivity>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    continuation: Vec<super::history::ContinuationMetadata>,
     status: MessageStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     error: Option<String>,
@@ -368,15 +353,15 @@ struct MessageFile {
 impl ConversationStore {
     pub(crate) fn open(dir: PathBuf) -> Result<Self, ConversationError> {
         crate::storage::ensure_private_dir(&dir).map_err(|_| ConversationError::Persist)?;
-        let path = crate::storage::confined_child(&dir, CATALOGUE_FILE)
-            .map_err(|_| ConversationError::Persist)?;
-        let mut conversations = load_path(&path)?;
+        let mut conversations = load_dir(&dir)?;
         if interrupt_recovered_requests(&mut conversations) {
-            persist(Some(&path), &conversations)?;
+            persist_map(Some(&dir), &conversations)?;
         }
         Ok(Self {
-            path: Some(path),
+            path: Some(dir),
             inner: Mutex::new(conversations),
+            pending: Mutex::new(BTreeMap::new()),
+            uncertain: Mutex::new(std::collections::BTreeSet::new()),
             title_updates: tokio::sync::broadcast::channel(16).0,
         })
     }
@@ -446,8 +431,10 @@ impl ConversationStore {
             updated_at_ms: now,
         };
         conversations.insert(id, record.clone());
-        if let Err(error) = persist(self.path.as_deref(), &conversations) {
-            conversations.remove(&id);
+        if let Err(error) = self.persist_one(&record) {
+            if error != ConversationError::Unsettled {
+                conversations.remove(&id);
+            }
             return Err(error);
         }
         Ok(record)
@@ -478,6 +465,7 @@ impl ConversationStore {
         let mut conversations = self.lock();
         let source = source_conversation
             .map(|(id, revision)| {
+                self.require_durable(&id)?;
                 let source = conversations
                     .get(&id)
                     .cloned()
@@ -529,7 +517,7 @@ impl ConversationStore {
             created_at_ms: now,
             updated_at_ms: now,
         };
-        let previous = conversations.clone();
+        let mut updated_source = None;
         if let Some(source) = source {
             let mut updated = source.clone();
             updated.revision = source
@@ -538,12 +526,19 @@ impl ConversationStore {
                 .ok_or(ConversationError::Revision)?;
             updated.updated_at_ms = now.max(source.updated_at_ms);
             updated.candidate_reviews.push(review_link);
-            conversations.insert(source.id, updated);
+            updated_source = Some(updated);
         }
-        conversations.insert(id, review.clone());
-        if let Err(error) = persist(self.path.as_deref(), &conversations) {
-            *conversations = previous;
-            return Err(error);
+        let review_result = self.persist_one(&review);
+        if review_result.is_ok() || review_result == Err(ConversationError::Unsettled) {
+            conversations.insert(id, review.clone());
+        }
+        review_result?;
+        if let Some(source) = updated_source {
+            let result = self.persist_one(&source);
+            if result.is_ok() || result == Err(ConversationError::Unsettled) {
+                conversations.insert(source.id, source);
+            }
+            result?;
         }
         Ok(review)
     }
@@ -588,15 +583,18 @@ impl ConversationStore {
     ) -> Result<(), ConversationError> {
         let title = normalise_title(&title)?;
         let mut records = self.lock();
+        self.require_durable(id)?;
         let current = records.get(id).cloned().ok_or(ConversationError::Missing)?;
         if current.revision != revision {
             return Err(ConversationError::Conflict);
         }
         let mut updated = current.clone();
         updated.title = title;
-        records.insert(*id, updated);
-        if let Err(error) = persist(self.path.as_deref(), &records) {
-            records.insert(*id, current);
+        records.insert(*id, updated.clone());
+        if let Err(error) = self.persist_one(&updated) {
+            if error != ConversationError::Unsettled {
+                records.insert(*id, current);
+            }
             return Err(error);
         }
         let _ = self.title_updates.send(());
@@ -794,6 +792,8 @@ impl ConversationStore {
         text: String,
     ) -> Result<ConversationRecord, ConversationError> {
         let text = normalise_message(&text)?;
+        let user_id = MessageId::generate().map_err(|_| ConversationError::Random)?;
+        let assistant_id = MessageId::generate().map_err(|_| ConversationError::Random)?;
         self.replace(id, expected_revision, |current| {
             if current.active_job.is_some() {
                 return Err(ConversationError::Active);
@@ -805,17 +805,21 @@ impl ConversationStore {
                 current.model = Some(model);
             }
             current.messages.push(ConversationMessage {
+                id: user_id,
                 role: MessageRole::User,
                 text,
                 activity: Vec::new(),
+                continuation: Vec::new(),
                 status: MessageStatus::Complete,
                 error: None,
                 request: None,
             });
             current.messages.push(ConversationMessage {
+                id: assistant_id,
                 role: MessageRole::Assistant,
                 text: String::new(),
                 activity: Vec::new(),
+                continuation: Vec::new(),
                 status: MessageStatus::Pending,
                 error: None,
                 request: Some(request),
@@ -825,6 +829,8 @@ impl ConversationStore {
         })
     }
 
+    // Transcript progress stays in memory. A checkpoint writes the record at an
+    // explicit boundary; a replaced-but-unsynced write blocks advancement.
     pub(crate) fn append_output(
         &self,
         id: &ConversationId,
@@ -832,20 +838,81 @@ impl ConversationStore {
         reply: impl Into<crate::providers::AssistantReply>,
     ) -> Result<(), ConversationError> {
         let reply = reply.into();
-        if reply.text.len() > MAXIMUM_REPLY_BYTES
-            || reply.text.contains('\0')
-            || !valid_activity(&reply.activity, &reply.text)
+        validate_reply(&reply)?;
+        self.update_output(id, request, reply, false)
+    }
+
+    pub(crate) fn checkpoint_output(
+        &self,
+        id: &ConversationId,
+        request: JobId,
+        reply: impl Into<crate::providers::AssistantReply>,
+    ) -> Result<(), ConversationError> {
+        let reply = reply.into();
+        validate_reply(&reply)?;
+        self.update_output(id, request, reply, true)
+    }
+
+    fn update_output(
+        &self,
+        id: &ConversationId,
+        request: JobId,
+        reply: crate::providers::AssistantReply,
+        checkpoint: bool,
+    ) -> Result<(), ConversationError> {
+        let bytes = reply_size(&reply);
+        let mut conversations = self.lock();
+        self.require_durable(id)?;
+        let Some(current) = conversations.get(id).cloned() else {
+            return Err(ConversationError::Missing);
+        };
+        let mut updated = current.clone();
         {
-            return Err(ConversationError::Message);
-        }
-        // Transcript progress must not invalidate revision-bound execution controls.
-        self.update(id, 0, false, |current| {
-            let message = active_assistant(current, request)?;
+            let message = active_assistant(&mut updated, request)?;
             message.text = reply.text;
             message.activity = reply.activity;
-            Ok(())
-        })
-        .map(|_| ())
+            message.continuation = reply.continuation;
+        }
+        super::history::validate_exchange(&updated.messages)
+            .map_err(|_| ConversationError::Message)?;
+        updated.updated_at_ms = now_ms().max(current.updated_at_ms);
+        conversations.insert(*id, updated.clone());
+        let due = {
+            let mut pending = self.pending.lock().unwrap_or_else(|p| p.into_inner());
+            let entry = pending.entry(*id).or_insert(0);
+            let previous = crate::providers::AssistantReply {
+                text: current
+                    .messages
+                    .last()
+                    .map_or_else(String::new, |message| message.text.clone()),
+                activity: current
+                    .messages
+                    .last()
+                    .map_or_else(Vec::new, |message| message.activity.clone()),
+                continuation: current
+                    .messages
+                    .last()
+                    .map_or_else(Vec::new, |message| message.continuation.clone()),
+                ..Default::default()
+            };
+            *entry = entry.saturating_add(bytes.abs_diff(reply_size(&previous)));
+            let due = checkpoint || *entry >= OUTPUT_CHECKPOINT_BYTES;
+            if due {
+                pending.remove(id);
+            }
+            due
+        };
+        if !due {
+            return Ok(());
+        }
+        match self.persist_one(&updated) {
+            Ok(()) => Ok(()),
+            Err(ConversationError::Unsettled) => Err(ConversationError::Unsettled),
+            Err(error) => {
+                conversations.insert(*id, current);
+                Err(error)
+            }
+        }
     }
 
     pub(crate) fn settle_message(
@@ -857,14 +924,12 @@ impl ConversationStore {
         error: Option<String>,
     ) -> Result<(), ConversationError> {
         let reply = reply.into();
-        if !valid_activity(&reply.activity, &reply.text)
-            || !valid_message_error(status, error.as_deref())
+        validate_reply(&reply)?;
+        if !valid_message_error(status, error.as_deref())
             || !matches!(
                 status,
                 MessageStatus::Complete | MessageStatus::Interrupted | MessageStatus::Failed
             )
-            || reply.text.len() > MAXIMUM_REPLY_BYTES
-            || reply.text.contains('\0')
         {
             return Err(ConversationError::Message);
         }
@@ -872,6 +937,7 @@ impl ConversationStore {
             let message = active_assistant(current, request)?;
             message.text = reply.text;
             message.activity = reply.activity;
+            message.continuation = reply.continuation;
             message.status = status;
             message.error = error;
             current.active_job = None;
@@ -886,6 +952,7 @@ impl ConversationStore {
         expected_revision: u32,
     ) -> Result<(), ConversationError> {
         let mut conversations = self.lock();
+        self.require_durable(id)?;
         let Some(current) = conversations.get(id).cloned() else {
             return Err(ConversationError::Missing);
         };
@@ -896,10 +963,17 @@ impl ConversationStore {
             return Err(ConversationError::Active);
         }
         conversations.remove(id);
-        if let Err(error) = persist(self.path.as_deref(), &conversations) {
-            conversations.insert(*id, current);
-            return Err(error);
+        if let Some(path) = self.path.as_deref() {
+            let file = record_file(path, *id);
+            if let Err(_error) = crate::storage::remove_private(&file) {
+                conversations.insert(*id, current);
+                return Err(ConversationError::Persist);
+            }
         }
+        self.pending
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(id);
         Ok(())
     }
 
@@ -926,6 +1000,7 @@ impl ConversationStore {
         if expected_revision != 0 && current.revision != expected_revision {
             return Err(ConversationError::Conflict);
         }
+        self.require_durable(id)?;
         let mut updated = current.clone();
         edit(&mut updated)?;
         // Reverting settings must not resurrect consent from an earlier configuration.
@@ -946,17 +1021,72 @@ impl ConversationStore {
         }
         updated.updated_at_ms = now_ms().max(current.updated_at_ms);
         conversations.insert(*id, updated.clone());
-        if let Err(error) = persist(self.path.as_deref(), &conversations) {
-            conversations.insert(*id, current);
-            return Err(error);
+        match self.persist_one(&updated) {
+            Ok(()) => Ok(updated),
+            Err(ConversationError::Unsettled) => Err(ConversationError::Unsettled),
+            Err(error) => {
+                conversations.insert(*id, current);
+                Err(error)
+            }
         }
-        Ok(updated)
+    }
+
+    fn persist_one(&self, record: &ConversationRecord) -> Result<(), ConversationError> {
+        let result = persist_record(self.path.as_deref(), record);
+        if result == Err(ConversationError::Unsettled) {
+            self.uncertain
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .insert(record.id);
+        }
+        result
+    }
+
+    fn require_durable(&self, id: &ConversationId) -> Result<(), ConversationError> {
+        if self
+            .uncertain
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .contains(id)
+        {
+            Err(ConversationError::Unsettled)
+        } else {
+            Ok(())
+        }
     }
 
     fn lock(&self) -> MutexGuard<'_, BTreeMap<ConversationId, ConversationRecord>> {
         self.inner
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+impl Drop for ConversationStore {
+    // A clean shutdown flushes unsynchronised transcript progress. A crash keeps
+    // the last explicit checkpoint only.
+    fn drop(&mut self) {
+        let Some(dir) = self.path.as_deref() else {
+            return;
+        };
+        let pending: Vec<ConversationId> = self
+            .pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .keys()
+            .copied()
+            .collect();
+        if pending.is_empty() {
+            return;
+        }
+        let conversations = self.lock();
+        for id in pending {
+            if self.require_durable(&id).is_ok()
+                && let Some(record) = conversations.get(&id)
+            {
+                let _ = persist_record(Some(dir), record);
+            }
+        }
     }
 }
 
@@ -1023,38 +1153,64 @@ fn unused_identifier(
     Err(ConversationError::Random)
 }
 
-fn load_path(
-    path: &Path,
-) -> Result<BTreeMap<ConversationId, ConversationRecord>, ConversationError> {
-    match fs::symlink_metadata(path) {
-        Ok(_) => {}
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
-        Err(_) => return Err(ConversationError::Corrupt),
-    }
-    let bytes = crate::storage::read_private_bounded(path, MAXIMUM_CATALOGUE_BYTES)
-        .map_err(|_| ConversationError::Corrupt)?;
-    let file: CatalogueFile =
-        serde_json::from_slice(&bytes).map_err(|_| ConversationError::Corrupt)?;
-    state_from_file(file)
-}
-
-fn state_from_file(
-    file: CatalogueFile,
-) -> Result<BTreeMap<ConversationId, ConversationRecord>, ConversationError> {
-    if file.version != CATALOGUE_VERSION || file.conversations.len() > MAXIMUM_CONVERSATIONS {
-        return Err(ConversationError::Corrupt);
-    }
+fn load_dir(dir: &Path) -> Result<BTreeMap<ConversationId, ConversationRecord>, ConversationError> {
     let mut conversations = BTreeMap::new();
-    for file in file.conversations {
-        let record = record_from_file(file)?;
-        if conversations.insert(record.id, record).is_some() {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(conversations),
+        Err(_) => return Err(ConversationError::Corrupt),
+    };
+    let mut files = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|_| ConversationError::Corrupt)?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let Some(stem) = name.strip_suffix(FILE_SUFFIX) else {
+            continue;
+        };
+        if stem.is_empty() || stem.starts_with('.') {
+            continue;
+        }
+        let Some(id) = ConversationId::parse(stem) else {
+            return Err(ConversationError::Corrupt);
+        };
+        let metadata = entry.metadata().map_err(|_| ConversationError::Corrupt)?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
             return Err(ConversationError::Corrupt);
         }
+        files.push((id, entry.path()));
+    }
+    if files.len() > MAXIMUM_CONVERSATIONS {
+        return Err(ConversationError::Corrupt);
+    }
+    let mut total = 0usize;
+    for (id, path) in files {
+        if conversations.contains_key(&id) {
+            return Err(ConversationError::Corrupt);
+        }
+        let bytes = crate::storage::read_private_bounded(&path, MAXIMUM_RECORD_BYTES)
+            .map_err(|_| ConversationError::Corrupt)?;
+        total = total.saturating_add(bytes.len());
+        if total > MAXIMUM_STORE_BYTES {
+            return Err(ConversationError::Corrupt);
+        }
+        let file: ConversationFile =
+            serde_json::from_slice(&bytes).map_err(|_| ConversationError::Corrupt)?;
+        let record = record_from_file(file)?;
+        if record.id != id {
+            return Err(ConversationError::Corrupt);
+        }
+        conversations.insert(id, record);
     }
     Ok(conversations)
 }
 
 fn record_from_file(file: ConversationFile) -> Result<ConversationRecord, ConversationError> {
+    if file.version != CATALOGUE_VERSION {
+        return Err(ConversationError::Corrupt);
+    }
     let id = ConversationId::parse(&file.id).ok_or(ConversationError::Corrupt)?;
     if file.revision == 0
         || file.updated_at_ms < file.created_at_ms
@@ -1119,6 +1275,13 @@ fn record_from_file(file: ConversationFile) -> Result<ConversationRecord, Conver
     }
     let messages: Result<Vec<_>, _> = file.messages.into_iter().map(message_from_file).collect();
     let messages = messages?;
+    if messages
+        .iter()
+        .enumerate()
+        .any(|(index, message)| messages[..index].iter().any(|other| other.id == message.id))
+    {
+        return Err(ConversationError::Corrupt);
+    }
     let active_job = file.active_job.as_deref().and_then(JobId::parse);
     if file.active_job.is_some() && active_job.is_none() {
         return Err(ConversationError::Corrupt);
@@ -1328,6 +1491,7 @@ fn candidate_review_context_to_file(
 }
 
 fn message_from_file(file: MessageFile) -> Result<ConversationMessage, ConversationError> {
+    let id = MessageId::parse(&file.id).ok_or(ConversationError::Corrupt)?;
     let limit = match file.role {
         MessageRole::User => MAXIMUM_MESSAGE_BYTES,
         MessageRole::Assistant => MAXIMUM_REPLY_BYTES,
@@ -1336,7 +1500,9 @@ fn message_from_file(file: MessageFile) -> Result<ConversationMessage, Conversat
         || file.text.contains('\0')
         || !valid_message_error(file.status, file.error.as_deref())
         || !valid_activity(&file.activity, &file.text)
-        || (file.role == MessageRole::User && !file.activity.is_empty())
+        || !valid_continuation(&file.continuation)
+        || (file.role == MessageRole::User
+            && (!file.activity.is_empty() || !file.continuation.is_empty()))
     {
         return Err(ConversationError::Corrupt);
     }
@@ -1350,131 +1516,134 @@ fn message_from_file(file: MessageFile) -> Result<ConversationMessage, Conversat
         return Err(ConversationError::Corrupt);
     }
     Ok(ConversationMessage {
+        id,
         role: file.role,
         text: file.text,
         activity: file.activity,
+        continuation: file.continuation,
         status: file.status,
         error: file.error,
         request,
     })
 }
 
-fn valid_activity(activity: &[crate::providers::AssistantActivity], text: &str) -> bool {
-    use crate::providers::AssistantActivity;
-    if activity.is_empty() {
-        return true;
+fn validate_reply(reply: &crate::providers::AssistantReply) -> Result<(), ConversationError> {
+    if reply.text.len() > MAXIMUM_REPLY_BYTES
+        || reply.text.contains('\0')
+        || !valid_activity(&reply.activity, &reply.text)
+        || !valid_continuation(&reply.continuation)
+    {
+        return Err(ConversationError::Message);
     }
-    if activity.len() > 256 {
-        return false;
-    }
-    let mut bytes = 0usize;
-    let mut response = String::new();
-    for item in activity {
-        let parts: Vec<&str> = match item {
-            AssistantActivity::Response(value) => {
-                response.push_str(value);
-                vec![value]
-            }
-            AssistantActivity::Thinking(value) => vec![value],
-            AssistantActivity::Tool(tool) => {
-                if !valid_command(tool.command.as_ref()) {
-                    return false;
-                }
-                let mut parts = vec![tool.label.as_str(), tool.output.as_str()];
-                if let Some(command) = &tool.command {
-                    parts.extend(command.chunks.iter().map(|chunk| chunk.text.as_str()));
-                }
-                parts
-            }
-            AssistantActivity::ToolCall { id, name, result } => {
-                if id.len() > 512 || name.len() > 512 {
-                    return false;
-                }
-                if let Some(command) = result.as_ref().and_then(|tool| tool.command.as_ref())
-                    && !valid_command(Some(command))
-                {
-                    return false;
-                }
-                let mut parts = vec![id.as_str(), name.as_str()];
-                if let Some(tool) = result {
-                    parts.extend([tool.label.as_str(), tool.output.as_str()]);
-                    if let Some(command) = &tool.command {
-                        parts.extend(command.chunks.iter().map(|chunk| chunk.text.as_str()));
-                    }
-                }
-                parts
-            }
-        };
-        for part in parts {
-            bytes = bytes.saturating_add(part.len());
-            if part.contains('\0') || bytes > 256 * 1024 {
-                return false;
-            }
-        }
-    }
-    response == text
+    Ok(())
 }
 
-fn valid_command(command: Option<&crate::execution::CommandResult>) -> bool {
-    command.is_none_or(crate::execution::CommandResult::is_bounded)
+fn reply_size(reply: &crate::providers::AssistantReply) -> usize {
+    reply.text.len().saturating_add(
+        reply
+            .activity
+            .iter()
+            .map(|activity| match activity {
+                crate::providers::AssistantActivity::Response(text)
+                | crate::providers::AssistantActivity::Thinking(text) => text.len(),
+                crate::providers::AssistantActivity::Tool(tool) => tool.output.len(),
+                crate::providers::AssistantActivity::ToolCall {
+                    id, name, result, ..
+                } => id
+                    .len()
+                    .saturating_add(name.len())
+                    .saturating_add(result.as_ref().map_or(0, |tool| tool.output.len())),
+            })
+            .sum::<usize>(),
+    )
 }
 
-fn valid_message_error(status: MessageStatus, error: Option<&str>) -> bool {
-    error.is_none_or(|text| {
-        status == MessageStatus::Failed
-            && !text.trim().is_empty()
-            && text.len() <= crate::providers::MAXIMUM_PROVIDER_DETAIL_BYTES
-            && !text.chars().any(char::is_control)
-    })
+fn record_file(dir: &Path, id: ConversationId) -> PathBuf {
+    dir.join(format!("{}{FILE_SUFFIX}", id.as_hex()))
 }
 
-fn persist(
-    path: Option<&Path>,
-    conversations: &BTreeMap<ConversationId, ConversationRecord>,
+fn persist_record(
+    dir: Option<&Path>,
+    record: &ConversationRecord,
 ) -> Result<(), ConversationError> {
-    let records = conversations.values().map(record_to_file).collect();
-    let mut catalogue = CatalogueFile {
-        version: CATALOGUE_VERSION,
-        conversations: records,
-    };
-    let bytes = serde_json::to_vec_pretty(&catalogue).map_err(|_| ConversationError::Persist)?;
-    // Reserve complete payloads against empty pending messages. Partial output must not
-    // change the reservation through JSON escaping or pretty-print indentation.
-    let mut reserved = 0usize;
-    for record in &mut catalogue.conversations {
-        if record.active_job.is_some() {
-            if let Some(message) = record.messages.last_mut() {
-                message.text.clear();
-                message.activity.clear();
-            }
-            reserved += 6
-                * (MAXIMUM_REPLY_BYTES
-                    + 256 * 1024
-                    + crate::providers::MAXIMUM_PROVIDER_DETAIL_BYTES)
-                + 256 * 512;
+    let file = record_to_file(record);
+    let bytes = serde_json::to_vec_pretty(&file).map_err(|_| ConversationError::Persist)?;
+    let reserved = if record.active_job.is_some() {
+        let mut reserved_file = record_to_file(record);
+        if let Some(message) = reserved_file.messages.last_mut() {
+            message.text.clear();
+            message.activity.clear();
+            message.continuation.clear();
         }
-    }
-    let reserved_bytes = if reserved == 0 {
-        bytes.len()
-    } else {
-        serde_json::to_vec_pretty(&catalogue)
+        serde_json::to_vec_pretty(&reserved_file)
             .map_err(|_| ConversationError::Persist)?
             .len()
-            .saturating_add(reserved)
+            .saturating_add(
+                6 * (MAXIMUM_REPLY_BYTES
+                    + crate::conversations::history::MAXIMUM_ACTIVITY_BYTES
+                    + crate::conversations::history::MAXIMUM_CONTINUATION_BYTES
+                    + crate::providers::MAXIMUM_PROVIDER_DETAIL_BYTES),
+            )
+    } else {
+        bytes.len()
     };
-    if bytes.len().max(reserved_bytes) > MAXIMUM_CATALOGUE_BYTES {
+    if bytes.len().max(reserved) > MAXIMUM_RECORD_BYTES {
         return Err(ConversationError::Full);
     }
-    let Some(path) = path else {
+    let Some(dir) = dir else {
         return Ok(());
     };
-    let dir = path.parent().ok_or(ConversationError::Persist)?;
     crate::storage::ensure_private_dir(dir).map_err(|_| ConversationError::Persist)?;
-    crate::storage::write_private(path, &bytes).map_err(|_| ConversationError::Persist)
+    let file = record_file(dir, record.id);
+    let mut total = bytes.len().max(reserved);
+    for entry in fs::read_dir(dir).map_err(|_| ConversationError::Persist)? {
+        let entry = entry.map_err(|_| ConversationError::Persist)?;
+        if entry.path() == file
+            || entry
+                .path()
+                .extension()
+                .is_none_or(|extension| extension != "json")
+        {
+            continue;
+        }
+        let size = entry
+            .metadata()
+            .map_err(|_| ConversationError::Persist)?
+            .len();
+        total = total.saturating_add(usize::try_from(size).unwrap_or(usize::MAX));
+        if total > MAXIMUM_STORE_BYTES {
+            return Err(ConversationError::Full);
+        }
+    }
+    match crate::storage::write_private_outcome(&file, &bytes) {
+        Ok(()) => Ok(()),
+        Err(crate::storage::PrivateWriteError::Unchanged) => Err(ConversationError::Persist),
+        Err(crate::storage::PrivateWriteError::Replaced) => Err(ConversationError::Unsettled),
+    }
+}
+
+fn persist_map(
+    dir: Option<&Path>,
+    conversations: &BTreeMap<ConversationId, ConversationRecord>,
+) -> Result<(), ConversationError> {
+    let mut total = 0usize;
+    for record in conversations.values() {
+        if dir.is_some() {
+            let bytes = serde_json::to_vec_pretty(&record_to_file(record))
+                .map_err(|_| ConversationError::Persist)?;
+            total = total.saturating_add(bytes.len());
+        }
+        persist_record(dir, record)?;
+    }
+    if total > MAXIMUM_STORE_BYTES {
+        return Err(ConversationError::Full);
+    }
+    Ok(())
 }
 
 fn record_to_file(record: &ConversationRecord) -> ConversationFile {
     ConversationFile {
+        version: CATALOGUE_VERSION,
         id: record.id.as_hex(),
         revision: record.revision,
         title: record.title.clone(),
@@ -1511,9 +1680,11 @@ fn record_to_file(record: &ConversationRecord) -> ConversationFile {
             .messages
             .iter()
             .map(|message| MessageFile {
+                id: message.id.as_hex(),
                 role: message.role,
                 text: message.text.clone(),
                 activity: message.activity.clone(),
+                continuation: message.continuation.clone(),
                 status: message.status,
                 error: message.error.clone(),
                 request: message.request.map(|request| request.as_hex()),

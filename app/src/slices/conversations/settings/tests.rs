@@ -204,7 +204,7 @@ async fn settings_update_validates_the_complete_form_and_revision() {
     let owner = super::super::tests::session_id(&token);
     let job = state
         .sessions
-        .begin_conversation_job(&owner, updated.id, 1)
+        .begin_conversation_job(&owner, updated.id)
         .unwrap();
     state
         .conversations
@@ -599,7 +599,7 @@ async fn host_approval_policy_needs_fresh_consent_and_does_not_settle_pending_co
         .unwrap();
     let job = state
         .sessions
-        .begin_conversation_job(&session, updated.id, 1)
+        .begin_conversation_job(&session, updated.id)
         .unwrap();
     let current = state.conversations.get(&updated.id).unwrap();
     state
@@ -727,7 +727,7 @@ async fn strategy_switch_binds_existing_roots_and_waits_for_cancelled_commands()
         .unwrap();
     let job = state
         .sessions
-        .begin_conversation_job(&session, record.id, 1)
+        .begin_conversation_job(&session, record.id)
         .unwrap();
     state
         .conversations

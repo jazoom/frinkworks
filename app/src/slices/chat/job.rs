@@ -100,7 +100,9 @@ pub(crate) async fn run_agent_action(
     let mut event_count = 0usize;
 
     for _ in 0..MAXIMUM_TOOL_ROUNDS {
-        persist_output(state, &job);
+        if let Err(error) = persist_output(state, &job, &reply, false) {
+            return store_failure(&reply, error);
+        }
         thinking_progress.begin_phase();
         if job.cancel_requested() {
             return cancel_action(&job, &reply);
@@ -146,7 +148,9 @@ pub(crate) async fn run_agent_action(
         let mut text = String::new();
         let mut calls = Vec::new();
         loop {
-            persist_output(state, &job);
+            if let Err(error) = persist_output(state, &job, &reply, false) {
+                return store_failure(&reply, error);
+            }
             let thinking_deadline = thinking_progress.deadline(&reply.thinking);
             let wait_for_thinking = async {
                 match thinking_deadline {
@@ -274,8 +278,20 @@ pub(crate) async fn run_agent_action(
                             reply,
                         };
                     }
-                    job.start_tool(visible_id.clone(), visible_name.clone());
-                    reply.start_tool(visible_id, visible_name);
+                    if !arguments.is_object()
+                        || crate::conversations::history::contains_credential(
+                            &(&id, &name, &arguments),
+                            secret,
+                        )
+                    {
+                        return AgentActionEnd {
+                            outcome: AgentOutcome::ProviderFailure,
+                            error: Some(ProviderError::Refused.message().to_owned()),
+                            reply,
+                        };
+                    }
+                    job.start_tool(visible_id.clone(), visible_name.clone(), arguments.clone());
+                    reply.start_tool(visible_id, visible_name, arguments.clone());
                     calls.push((id, name, arguments));
                 }
                 Ok(ModelEvent::Usage { input_tokens }) => {
@@ -289,6 +305,26 @@ pub(crate) async fn run_agent_action(
                         evidence.usage(&usage);
                     }
                     job.push_usage(usage);
+                }
+                Ok(ModelEvent::Continuation(metadata)) => {
+                    reply.continuation.push(metadata);
+                    if !crate::conversations::history::valid_continuation(&reply.continuation)
+                        || crate::conversations::history::contains_credential(
+                            &reply.continuation,
+                            secret,
+                        )
+                    {
+                        reply.continuation.pop();
+                        return AgentActionEnd {
+                            outcome: AgentOutcome::ProviderFailure,
+                            error: Some(
+                                crate::conversations::history::HistoryError::Continuation
+                                    .message()
+                                    .to_owned(),
+                            ),
+                            reply,
+                        };
+                    }
                 }
                 Err(error) => {
                     thinking_progress.flush(&job, &reply.thinking);
@@ -388,8 +424,11 @@ pub(crate) async fn run_agent_action(
             output_drafts: spec.output_drafts.as_deref(),
             required_outputs: &spec.required_outputs,
         };
+        if let Err(error) = persist_output(state, &job, &reply, true) {
+            return store_failure(&reply, error);
+        }
+        let mut resolved_calls: Vec<crate::providers::ChatToolCall> = Vec::new();
         for (id, name, arguments) in calls {
-            persist_output(state, &job);
             let trace = tools::invoke(&context, &id, &name, &arguments).await;
             let output = tools::redact(&trace.output, secret);
 
@@ -438,13 +477,32 @@ pub(crate) async fn run_agent_action(
                     secret,
                 );
             }
+            resolved_calls.push(crate::providers::ChatToolCall {
+                id: id.clone(),
+                name: name.clone(),
+                arguments: arguments.clone(),
+                result: Some(ToolOutput {
+                    label: label.clone(),
+                    output: output.clone(),
+                    command: command.clone(),
+                }),
+            });
+            let visible_id = tools::redact(&id, secret);
+            reply.finish_tool(
+                &visible_id,
+                ToolOutput {
+                    label: label.clone(),
+                    output: output.clone(),
+                    command: command.clone(),
+                },
+            );
+            if let Err(error) = persist_output(state, &job, &reply, true) {
+                return store_failure(&reply, error);
+            }
             if let Some(visible) =
                 visible_tool_output(label, &output, command, &mut visible_tool_bytes)
             {
-                let visible_id = tools::redact(&id, secret);
-                job.finish_tool(visible_id.clone(), visible.clone());
-                reply.finish_tool(&visible_id, visible);
-                persist_output(state, &job);
+                job.finish_tool(visible_id, visible);
                 output_visible = true;
             }
             if job.cancel_requested() {
@@ -458,6 +516,25 @@ pub(crate) async fn run_agent_action(
                 };
             }
             extra.push(Message::tool_result(id, name, output));
+        }
+        if let Some(evidence) = &spec.evidence
+            && !resolved_calls.is_empty()
+            && let Err(error) = evidence.turn(&crate::providers::ChatTurn {
+                role: crate::providers::Role::Assistant,
+                text: text.clone(),
+                thinking: String::new(),
+                tools: Vec::new(),
+                activity: Vec::new(),
+                usage: None,
+                calls: resolved_calls,
+                continuation: reply.continuation.clone(),
+            })
+        {
+            return AgentActionEnd {
+                outcome: AgentOutcome::ProviderFailure,
+                error: Some(error.message().to_owned()),
+                reply,
+            };
         }
     }
 
@@ -758,19 +835,22 @@ pub(crate) fn bound_reply(reply: &AssistantReply) -> AssistantReply {
                 bounded.text.push_str(&text);
                 activities.push(AssistantActivity::Response(text));
             }
-            AssistantActivity::ToolCall { id, name, result } => {
-                let result = result.and_then(|tool| {
-                    let ToolOutput {
-                        label,
-                        output,
-                        command,
-                    } = tool;
-                    visible_tool_output(label, &output, command, &mut tool_bytes)
-                });
+            AssistantActivity::ToolCall {
+                id,
+                name,
+                arguments,
+                result,
+            } => {
+                // Durable call results must not inherit the transcript preview limit.
                 if let Some(tool) = &result {
                     bounded.tools.push(tool.clone());
                 }
-                activities.push(AssistantActivity::ToolCall { id, name, result });
+                activities.push(AssistantActivity::ToolCall {
+                    id,
+                    name,
+                    arguments,
+                    result,
+                });
             }
             AssistantActivity::Thinking(mut thinking) => {
                 let remaining = MAXIMUM_THINKING_BYTES.saturating_sub(thinking_bytes);
@@ -796,13 +876,36 @@ pub(crate) fn bound_reply(reply: &AssistantReply) -> AssistantReply {
     bounded
 }
 
-fn persist_output(state: &AppState, job: &Job) {
+fn persist_output(
+    state: &AppState,
+    job: &Job,
+    reply: &AssistantReply,
+    checkpoint: bool,
+) -> Result<(), crate::conversations::ConversationError> {
     let snapshot = job.snapshot();
     let crate::sessions::JobOwner::Conversation(conversation) = snapshot.owner;
-    if !snapshot.output.is_empty() {
-        let _ = state
+    if reply.is_empty() || state.conversations.get(&conversation).is_none() {
+        return Ok(());
+    }
+    if checkpoint {
+        state
             .conversations
-            .append_output(&conversation, job.id(), snapshot.output);
+            .checkpoint_output(&conversation, job.id(), reply.clone())
+    } else {
+        state
+            .conversations
+            .append_output(&conversation, job.id(), reply.clone())
+    }
+}
+
+fn store_failure(
+    reply: &AssistantReply,
+    error: crate::conversations::ConversationError,
+) -> AgentActionEnd {
+    AgentActionEnd {
+        outcome: AgentOutcome::ProviderFailure,
+        error: Some(error.message().to_owned()),
+        reply: reply.clone(),
     }
 }
 

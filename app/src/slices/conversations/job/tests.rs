@@ -3,7 +3,9 @@ use crate::{
     sessions::JobId,
 };
 
-use super::history;
+fn history(record: &ConversationRecord) -> Vec<crate::providers::ChatTurn> {
+    crate::conversations::history::project(&record.messages, None).expect("valid history")
+}
 use crate::{
     config::RuntimeConfig,
     providers::{
@@ -38,7 +40,7 @@ async fn untrusted_activity_keeps_its_order_and_stays_secret_safe_in_each_repres
     let record = state.conversations.create("Activity".to_owned()).unwrap();
     let job = state
         .sessions
-        .begin_conversation_job(&token.id(), record.id, 1)
+        .begin_conversation_job(&token.id(), record.id)
         .unwrap();
     let record = state
         .conversations
@@ -73,15 +75,16 @@ async fn untrusted_activity_keeps_its_order_and_stays_secret_safe_in_each_repres
     ));
     assert_eq!(message.activity, job.snapshot().output.activity);
     assert_eq!(
-        history(&saved).last().unwrap().text,
-        "First response.\n\nNext response."
+        crate::conversations::history::project(&saved.messages, None),
+        Err(crate::conversations::history::HistoryError::Unsettled)
     );
     for body in [
-        super::super::page::message_view(&record.id, 1, message).html,
+        super::super::page::message_view(&record.id, message).html,
         String::from_utf8(
             super::progress_frame(
                 &record.id,
-                &job,
+                &job.id().as_hex(),
+                message.id,
                 job.latest_seq(),
                 &job.snapshot().output,
                 &mut hypergraft::StreamBudget::new(),
@@ -131,7 +134,7 @@ async fn conversation_instructions_apply_before_and_after_the_first_exchange() {
     for message in ["First question", "Second question"] {
         let job = state
             .sessions
-            .begin_conversation_job(&token.id(), record.id, record.messages.len() + 1)
+            .begin_conversation_job(&token.id(), record.id)
             .unwrap();
         record = state
             .conversations
@@ -188,7 +191,7 @@ async fn bounded_partial_reply_settles_and_observation_restores_commands() {
         .expect("conversation");
     let job = state
         .sessions
-        .begin_conversation_job(&token.id(), record.id, 1)
+        .begin_conversation_job(&token.id(), record.id)
         .expect("job");
     let selection =
         ModelSelection::new(connection.kind, connection.model.clone(), None).expect("selection");
@@ -252,11 +255,11 @@ async fn cancellation_and_stale_settlement_cannot_release_another_command() {
         .expect("conversation");
     let job = state
         .sessions
-        .begin_conversation_job(&token.id(), record.id, 1)
+        .begin_conversation_job(&token.id(), record.id)
         .expect("job");
     let concurrent = state
         .sessions
-        .begin_conversation_job(&token.id(), another.id, 1)
+        .begin_conversation_job(&token.id(), another.id)
         .expect("concurrent job");
     assert!(!state.sessions.busy(&token.id()));
     assert!(state.sessions.conversation_reserved(record.id));
@@ -264,7 +267,7 @@ async fn cancellation_and_stale_settlement_cannot_release_another_command() {
     assert!(
         state
             .sessions
-            .begin_conversation_job(&other.id(), record.id, 1)
+            .begin_conversation_job(&other.id(), record.id)
             .is_err()
     );
     assert!(
@@ -312,7 +315,7 @@ async fn cancellation_and_stale_settlement_cannot_release_another_command() {
     );
     let next = state
         .sessions
-        .begin_conversation_job(&token.id(), another.id, 1)
+        .begin_conversation_job(&token.id(), another.id)
         .expect("next job");
     assert!(
         !state
@@ -346,7 +349,7 @@ async fn provider_failure_retains_partial_output_and_safe_error_details() {
         .expect("conversation");
     let job = state
         .sessions
-        .begin_conversation_job(&token.id(), record.id, 1)
+        .begin_conversation_job(&token.id(), record.id)
         .expect("job");
     let connection = ProviderConnection::with_key(ProviderKind::Xai, "test-key", "grok-4.6");
     let selection =
@@ -379,7 +382,7 @@ async fn provider_failure_retains_partial_output_and_safe_error_details() {
     );
     assert!(record.active_job.is_none());
     assert!(!state.sessions.busy(&token.id()));
-    assert_eq!(history(&record).last().unwrap().text, "Partial");
+    assert_eq!(history(&record).last().unwrap().text, "Question");
     let frame = super::final_frame(&state, &record.id, token.id(), &job, job.latest_seq());
     let body = String::from_utf8(frame.into_bytes()).expect("frame");
     assert!(body.contains("[redacted]"));
@@ -389,8 +392,8 @@ async fn provider_failure_retains_partial_output_and_safe_error_details() {
     let reopened =
         crate::conversations::ConversationStore::open(dir.path().to_path_buf()).expect("reopened");
     assert_eq!(reopened.get(&record.id).unwrap().messages, record.messages);
-    let bytes =
-        std::fs::read_to_string(dir.path().join("catalogue.json")).expect("stored catalogue");
+    let bytes = std::fs::read_to_string(dir.path().join(format!("{}.json", record.id.as_hex())))
+        .expect("stored record");
     assert!(!bytes.contains("test-key"));
 }
 
@@ -411,6 +414,8 @@ fn pending_assistant_output_stays_out_of_the_next_request_history() {
         candidate_review_context: None,
         messages: vec![
             ConversationMessage {
+                id: crate::conversations::MessageId::generate().expect("message id"),
+                continuation: Vec::new(),
                 role: MessageRole::User,
                 text: "First question".to_owned(),
                 activity: Vec::new(),
@@ -419,6 +424,8 @@ fn pending_assistant_output_stays_out_of_the_next_request_history() {
                 request: None,
             },
             ConversationMessage {
+                id: crate::conversations::MessageId::generate().expect("message id"),
+                continuation: Vec::new(),
                 role: MessageRole::Assistant,
                 text: "First reply".to_owned(),
                 activity: Vec::new(),
@@ -427,6 +434,8 @@ fn pending_assistant_output_stays_out_of_the_next_request_history() {
                 request: Some(JobId::generate().expect("previous request")),
             },
             ConversationMessage {
+                id: crate::conversations::MessageId::generate().expect("message id"),
+                continuation: Vec::new(),
                 role: MessageRole::User,
                 text: "Second question".to_owned(),
                 activity: Vec::new(),
@@ -435,6 +444,8 @@ fn pending_assistant_output_stays_out_of_the_next_request_history() {
                 request: None,
             },
             ConversationMessage {
+                id: crate::conversations::MessageId::generate().expect("message id"),
+                continuation: Vec::new(),
                 role: MessageRole::Assistant,
                 text: String::new(),
                 activity: Vec::new(),

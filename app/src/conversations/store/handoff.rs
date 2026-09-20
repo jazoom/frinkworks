@@ -18,6 +18,8 @@ impl ConversationStore {
         let source_id = expected
             .conversation_id
             .ok_or(ConversationError::Conflict)?;
+        self.require_durable(&source_id)?;
+        self.require_durable(&destination.id)?;
         let source = conversations
             .get(&source_id)
             .ok_or(ConversationError::Missing)?;
@@ -91,7 +93,16 @@ impl ConversationStore {
         // A replacement can precede a directory-sync failure. Flush the ownership journal before its projections.
         runs.flush_handoff(run)
             .map_err(|_| ConversationError::Persist)?;
-        persist(self.path.as_deref(), conversations)?;
+        let pending = run
+            .pending_handoff
+            .as_ref()
+            .ok_or(ConversationError::Conflict)?;
+        let source = ConversationId::parse(&pending.source).ok_or(ConversationError::Corrupt)?;
+        let destination = run.conversation_id.ok_or(ConversationError::Corrupt)?;
+        for id in [source, destination] {
+            let record = conversations.get(&id).ok_or(ConversationError::Missing)?;
+            persist_record(self.path.as_deref(), record)?;
+        }
         runs.mutate(&run.id, |current| {
             if current.pending_handoff != run.pending_handoff {
                 return Err(crate::workflows::run::TransitionError::Invalid);
@@ -111,6 +122,7 @@ impl ConversationStore {
         job: JobId,
     ) -> Result<ConversationRecord, ConversationError> {
         let mut conversations = self.lock();
+        self.require_durable(&owner.id)?;
         if conversations.get(&owner.id) != Some(owner) || expected.conversation_id != Some(owner.id)
         {
             return Err(ConversationError::Conflict);
@@ -140,18 +152,28 @@ impl ConversationStore {
             Ok(())
         })
         .map_err(|_| ConversationError::Conflict)?;
-        let mut next = conversations.clone();
-        next.insert(owner.id, updated.clone());
-        persist(self.path.as_deref(), &next)?;
-        *conversations = next;
-        Ok(updated)
+        match persist_record(self.path.as_deref(), &updated) {
+            Ok(()) => {
+                conversations.insert(owner.id, updated.clone());
+                Ok(updated)
+            }
+            Err(ConversationError::Unsettled) => {
+                conversations.insert(owner.id, updated);
+                self.uncertain
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .insert(owner.id);
+                Err(ConversationError::Unsettled)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     pub(crate) fn interrupt_requests(&self) -> Result<(), ConversationError> {
         let mut conversations = self.lock();
         let mut next = conversations.clone();
         if interrupt_recovered_requests(&mut next) {
-            persist(self.path.as_deref(), &next)?;
+            persist_map(self.path.as_deref(), &next)?;
             *conversations = next;
         }
         Ok(())
@@ -180,17 +202,21 @@ fn apply_handoff(
             return Err(ConversationError::Conflict);
         }
         record.messages.push(ConversationMessage {
+            id: MessageId::generate().map_err(|_| ConversationError::Random)?,
             role: MessageRole::User,
             text: pending.prompt.clone(),
             activity: Vec::new(),
+            continuation: Vec::new(),
             status: MessageStatus::Complete,
             error: None,
             request: None,
         });
         record.messages.push(ConversationMessage {
+            id: MessageId::generate().map_err(|_| ConversationError::Random)?,
             role: MessageRole::Assistant,
             text: String::new(),
             activity: Vec::new(),
+            continuation: Vec::new(),
             status: MessageStatus::Pending,
             error: None,
             request: Some(job),
