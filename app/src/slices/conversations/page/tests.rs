@@ -111,6 +111,122 @@ fn dense_markup_uses_escaped_text_with_bounded_nodes() {
     assert!(html.contains("&lt;script&gt;"));
 }
 
+fn assistant_message(text: &str, status: MessageStatus) -> ConversationMessage {
+    ConversationMessage {
+        id: crate::conversations::MessageId::generate().expect("message id"),
+        role: MessageRole::Assistant,
+        text: text.to_owned(),
+        activity: Vec::new(),
+        continuation: Vec::new(),
+        status,
+        error: None,
+        request: None,
+        completion: None,
+        requests: Vec::new(),
+    }
+}
+
+#[test]
+fn copy_source_stays_inert_and_excludes_response_neighbours() {
+    use crate::providers::{AssistantActivity, ToolOutput};
+    let conversation = crate::conversations::ConversationId::generate().expect("conversation");
+    let text = "# Title\n\n```html\n</template><script>alert(1)</script>\n```\nLiteral <b>HTML</b> & \"quotes\" and 'apostrophes'";
+    let mut message = assistant_message(text, MessageStatus::Complete);
+    message.activity = vec![
+        AssistantActivity::Thinking("SECRET-THOUGHT".to_owned()),
+        AssistantActivity::Response(text.to_owned()),
+        AssistantActivity::Tool(ToolOutput {
+            resource: None,
+            label: "SECRET-TOOL-LABEL".to_owned(),
+            output: "SECRET-TOOL-OUTPUT".to_owned(),
+            command: None,
+        }),
+        AssistantActivity::Response("Second response".to_owned()),
+    ];
+    let view = message_view(&conversation, &message);
+    let copy = view.copy.as_ref().expect("settled response copy");
+    let expected = format!("{text}\n\nSecond response");
+    assert_eq!(copy.source, expected);
+    let html = MessageBody { message: &view }
+        .render()
+        .expect("message body");
+    let source = html
+        .split_once(&format!("data-copy-for=\"{}\"", view.id))
+        .expect("message-bound source")
+        .1
+        .split_once('>')
+        .expect("source start")
+        .1
+        .split_once("</template")
+        .expect("inert source boundary")
+        .0;
+    assert_eq!(copy.escaped_bytes, source.len());
+    assert!(source.contains("&#60;/template&#62;&#60;script&#62;alert(1)&#60;/script&#62;"));
+    assert!(!source.contains('<'));
+}
+
+#[test]
+fn copy_source_excludes_status_text_while_the_message_shows_it() {
+    let conversation = crate::conversations::ConversationId::generate().expect("conversation");
+    let message = assistant_message("Settled reply", MessageStatus::Interrupted);
+    let view = message_view(&conversation, &message);
+    let copy = view.copy.as_ref().expect("settled response copy");
+    assert!(!copy.source.contains("Interrupted"));
+    let html = MessageBody { message: &view }
+        .render()
+        .expect("message body");
+    assert!(html.contains("Interrupted"));
+    assert!(html.contains("Settled reply"));
+}
+
+#[test]
+fn copy_control_requires_a_settled_non_empty_assistant_response() {
+    let conversation = crate::conversations::ConversationId::generate().expect("conversation");
+    let mut user = assistant_message("Question", MessageStatus::Complete);
+    user.role = MessageRole::User;
+    assert!(message_view(&conversation, &user).copy.is_none());
+    assert!(
+        message_view(
+            &conversation,
+            &assistant_message("   ", MessageStatus::Complete)
+        )
+        .copy
+        .is_none()
+    );
+    assert!(
+        message_view(
+            &conversation,
+            &assistant_message("Partial", MessageStatus::Pending)
+        )
+        .copy
+        .is_none()
+    );
+    assert!(
+        message_view(
+            &conversation,
+            &assistant_message("Settled", MessageStatus::Complete)
+        )
+        .copy
+        .is_some()
+    );
+}
+
+#[test]
+fn copy_source_bytes_share_the_transcript_budget() {
+    let state = crate::tests::test_state(RuntimeConfig::development());
+    let mut record = state
+        .conversations
+        .create("Budget".to_owned())
+        .expect("record");
+    let text = "Response with a fence\n\n```rust\nfn main() {}\n```\n".repeat(64);
+    record.messages = vec![assistant_message(&text, MessageStatus::Complete)];
+    let view = message_view(&record.id, &record.messages[0]);
+    let copy_len = view.copy.as_ref().expect("copy").escaped_bytes;
+    let without_copy = view.html.len() + 2048;
+    assert!(visible_messages(&record, without_copy).is_empty());
+    assert_eq!(visible_messages(&record, without_copy + copy_len).len(), 1);
+}
+
 #[test]
 fn candidate_review_escapes_untrusted_file_contents() {
     let state = crate::tests::test_state(RuntimeConfig::development());

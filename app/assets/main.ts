@@ -462,6 +462,44 @@ document.addEventListener("click", (event) => {
     composerEfforts(thinking);
     saveComposerModel("conversation-model-toggle");
 });
+
+// The message body is replaced during live updates, so the copy control is
+// delegated at the document and carries no per-element listener.
+document.addEventListener("click", (event) => {
+    if (!(event.target instanceof Element)) return;
+    const button = event.target.closest<HTMLButtonElement>(
+        "[data-copy-response]",
+    );
+    if (!button) return;
+    const wrapper = button.closest("[data-response-copy]");
+    const source = wrapper?.querySelector<HTMLTemplateElement>(
+        "template[data-copy-source]",
+    );
+    const status =
+        wrapper?.querySelector<HTMLElement>("[data-copy-status]") ?? null;
+    void copyResponseText(status, source?.content.textContent ?? "");
+});
+
+async function copyResponseText(
+    status: HTMLElement | null,
+    text: string,
+): Promise<void> {
+    if (status) status.textContent = "";
+    if (text === "") {
+        if (status) status.textContent = "Nothing to copy";
+        return;
+    }
+    if (!navigator.clipboard?.writeText) {
+        if (status) status.textContent = "Clipboard unavailable";
+        return;
+    }
+    try {
+        await navigator.clipboard.writeText(text);
+        if (status) status.textContent = "Copied";
+    } catch {
+        if (status) status.textContent = "Copy failed";
+    }
+}
 document.addEventListener("keydown", (event) => {
     if (!(event.target instanceof HTMLElement)) return;
     const controls = composerControls();

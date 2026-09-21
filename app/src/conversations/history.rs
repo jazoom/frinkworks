@@ -618,22 +618,7 @@ pub(crate) fn project(
 fn assistant_projection(
     message: &ConversationMessage,
 ) -> Result<(String, Vec<ChatToolCall>, Vec<ToolOutput>), HistoryError> {
-    let mut text = if message.activity.is_empty() {
-        message.text.clone()
-    } else {
-        message
-            .activity
-            .iter()
-            .filter_map(|activity| match activity {
-                AssistantActivity::Response(text) => Some(text.as_str()),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-            .join("\n\n")
-    };
-    if text.is_empty() && !message.text.is_empty() && !message.activity.is_empty() {
-        text = message.text.clone();
-    }
+    let text = response_text(message);
     let mut calls = Vec::new();
     let mut tools = Vec::new();
     let mut identifiers: Vec<&str> = Vec::new();
@@ -667,6 +652,28 @@ fn assistant_projection(
         }
     }
     Ok((text, calls, tools))
+}
+
+/// Visible assistant response text for projection and display. Response blocks
+/// join with a blank line. Reasoning and tool output never enter it.
+pub(crate) fn response_text(message: &ConversationMessage) -> String {
+    if message.activity.is_empty() {
+        return message.text.clone();
+    }
+    let joined = message
+        .activity
+        .iter()
+        .filter_map(|activity| match activity {
+            AssistantActivity::Response(text) => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    if joined.is_empty() && !message.text.is_empty() {
+        message.text.clone()
+    } else {
+        joined
+    }
 }
 
 fn continuation_for(

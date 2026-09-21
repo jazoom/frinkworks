@@ -35,4 +35,25 @@
       <p>{{ message.error }}</p>
     </div>
   {% endif %}
+  {% if let Some(copy) = message.copy %}
+    <div class="mt-2 flex items-center gap-2" data-response-copy>
+      <button
+        type="button"
+        class="btn btn-ghost btn-xs min-h-11"
+        data-copy-response="{{ message.id }}"
+        aria-label="Copy response"
+      >
+        Copy
+      </button>
+      <span
+        class="text-quiet text-xs"
+        role="status"
+        aria-live="polite"
+        data-copy-status
+      ></span>
+      <template data-copy-source data-copy-for="{{ message.id }}"
+        >{{ copy.source }}</template
+      >
+    </div>
+  {% endif %}
 </div>

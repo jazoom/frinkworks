@@ -245,11 +245,20 @@ pub(super) struct MessageView {
     pub(super) id: String,
     pub(super) user: bool,
     pub(super) html: String,
+    pub(super) copy: Option<CopyResponseView>,
     pub(super) status: &'static str,
     pub(super) error: String,
     pub(super) streaming: bool,
     pub(super) forkable: bool,
     pub(super) fork_href: String,
+}
+
+pub(super) struct CopyResponseView {
+    /// Raw response Markdown. The template escapes it before it reaches HTML.
+    pub(super) source: String,
+    /// HTML-escaped source length. Askama escapes five characters as five-byte
+    /// numeric entities, so the transcript budget counts the real payload.
+    pub(super) escaped_bytes: usize,
 }
 
 pub(super) struct CandidateReviewLinkView {
@@ -1873,7 +1882,7 @@ fn visible_messages(record: &ConversationRecord, byte_budget: usize) -> Vec<Mess
                 message.id.as_hex()
             );
         }
-        bytes += view.html.len() + 2048;
+        bytes += view.html.len() + view.copy.as_ref().map_or(0, |copy| copy.escaped_bytes) + 2048;
         if bytes > byte_budget || messages.len() >= 64 {
             break;
         }
@@ -1904,6 +1913,11 @@ pub(super) fn message_view(
     MessageView {
         id: message_id(conversation, message),
         user,
+        copy: if user || streaming {
+            None
+        } else {
+            copy_response_view(&crate::conversations::history::response_text(message))
+        },
         html: if user {
             format!(
                 "<p class=\"whitespace-pre-wrap\">{}</p>",
@@ -1947,6 +1961,8 @@ pub(super) fn reply_view(
 ) -> MessageView {
     let id = reply_id(conversation, message);
     MessageView {
+        // A live reply is never a settled response, even while it waits for a decision.
+        copy: None,
         html: activity_html(
             conversation,
             &id,
@@ -2311,6 +2327,25 @@ fn format_count(value: u64) -> String {
     formatted.chars().rev().collect()
 }
 
+fn copy_response_view(text: &str) -> Option<CopyResponseView> {
+    if text.trim().is_empty() {
+        return None;
+    }
+    Some(CopyResponseView {
+        source: text.to_owned(),
+        escaped_bytes: html_escaped_len(text),
+    })
+}
+
+// Matches the Askama HTML escaping used by the message body template.
+fn html_escaped_len(text: &str) -> usize {
+    text.len()
+        + 4 * text
+            .bytes()
+            .filter(|byte| matches!(byte, b'"' | b'&' | b'\'' | b'<' | b'>'))
+            .count()
+}
+
 pub(super) fn message_error(message: &ConversationMessage) -> String {
     if message.status == MessageStatus::Failed {
         message.error.clone().unwrap_or_else(|| {
@@ -2354,7 +2389,9 @@ impl ConversationDetailView {
             .iter()
             .rev()
             .take_while(|message| {
-                bytes += message.html.len() + 2048;
+                bytes += message.html.len()
+                    + message.copy.as_ref().map_or(0, |copy| copy.escaped_bytes)
+                    + 2048;
                 bytes <= budget
             })
             .count();

@@ -305,3 +305,36 @@ test("Enter rejects arbitrary search text and ambiguous model identities across 
     expect(value("thinking")).toBe("low");
     expect(value("message")).toBe("Unsent text");
 });
+
+test("copy uses the source bound to the clicked response and reports success", async () => {
+    document.body.insertAdjacentHTML(
+        "beforeend",
+        `<article id="message-one"><div data-response-copy>` +
+            `<button type="button" data-copy-response="message-one">Copy</button>` +
+            `<span data-copy-status></span>` +
+            `<template data-copy-source data-copy-for="message-one"># Title\n\n\`\`\`rust\nfn main() {}\n\`\`\`\nLiteral &lt;b&gt;HTML&lt;/b&gt;</template>` +
+            `</div></article>` +
+            `<article id="message-two"><div data-response-copy>` +
+            `<button type="button" data-copy-response="message-two">Copy</button>` +
+            `<span data-copy-status></span>` +
+            `<template data-copy-source data-copy-for="message-two">Second response</template>` +
+            `</div></article>`,
+    );
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    document
+        .querySelector<HTMLButtonElement>('[data-copy-response="message-one"]')!
+        .click();
+    await Promise.resolve();
+    expect(writeText).toHaveBeenCalledWith(
+        "# Title\n\n```rust\nfn main() {}\n```\nLiteral <b>HTML</b>",
+    );
+    expect(
+        document.querySelector<HTMLElement>("#message-one [data-copy-status]")!
+            .textContent,
+    ).toBe("Copied");
+    expect(
+        document.querySelector<HTMLElement>("#message-two [data-copy-status]")!
+            .textContent,
+    ).toBe("");
+});
