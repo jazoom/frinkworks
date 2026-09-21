@@ -81,12 +81,19 @@ pub(crate) struct TreeEntry {
     pub(crate) sequence: i64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TreeTip {
+    pub(crate) id: MessageId,
+    pub(crate) text: String,
+}
+
 /// One bounded page of tree entries. `partial` reports that a bounded search
 /// stopped at its work budget instead of an exhaustive match set.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct TreeWindow {
     pub(crate) entries: Vec<TreeEntry>,
     pub(crate) active_leaf: Option<MessageId>,
+    pub(crate) tips: Vec<TreeTip>,
     pub(crate) has_more: bool,
     pub(crate) next_cursor: Option<i64>,
     pub(crate) total: usize,
@@ -620,6 +627,62 @@ impl ConversationStore {
             return Ok(None);
         }
         database.tree_window(id, after, search, parent).map(Some)
+    }
+
+    /// Select an earlier retained response as the active leaf. The next append
+    /// becomes a new child of that entry, so existing descendants stay
+    /// retained as alternative branches. Settings, approvals and execution
+    /// ownership never change. The whole operation holds the store lock, so a
+    /// stale form cannot select a branch after another mutation.
+    pub(crate) fn continue_from(
+        &self,
+        id: &ConversationId,
+        expected_revision: u32,
+        expected_active_leaf: Option<MessageId>,
+        destination: MessageId,
+    ) -> Result<ConversationRecord, ConversationError> {
+        let mut database = self.database();
+        self.require_durable(id)?;
+        let Some(shell) = database.load_shell(id)? else {
+            return Err(ConversationError::Missing);
+        };
+        if shell.active_job.is_some() || shell.continuation.is_some() {
+            return Err(ConversationError::Active);
+        }
+        if !shell.queue.items.is_empty() || self.questions.has_pending(*id) {
+            return Err(ConversationError::Active);
+        }
+        if shell.revision != expected_revision {
+            return Err(ConversationError::Conflict);
+        }
+        let current_leaf = database
+            .metadata(id)?
+            .and_then(|metadata| metadata.active_leaf);
+        if current_leaf != expected_active_leaf {
+            return Err(ConversationError::Conflict);
+        }
+        let files = database.load_messages(id, Some(&destination.as_hex()))?;
+        let messages: Vec<ConversationMessage> = files
+            .into_iter()
+            .map(message_from_file)
+            .collect::<Result<Vec<_>, _>>()?;
+        let Some(last) = messages.last() else {
+            return Err(ConversationError::Entry);
+        };
+        if last.id != destination || !branchable(&messages) {
+            return Err(ConversationError::Entry);
+        }
+        let compaction = database.path_compaction(id, &messages)?;
+        let result = database.select_active_leaf(
+            id,
+            expected_revision,
+            expected_active_leaf,
+            destination,
+            compaction.as_ref(),
+            last.status,
+        );
+        self.commit_result(*id, result)?;
+        database.load(id)?.ok_or(ConversationError::Missing)
     }
 
     pub(crate) fn create_saved(
@@ -1908,6 +1971,16 @@ fn valid_directory_approvals(
                             .any(|grant| approval.matches(&model.settings, grant))
                     })
             })
+}
+
+/// True when the selected path ends at a complete response with settled tool
+/// outcomes. Interrupted earlier entries are permitted because the provider
+/// projection handles them. An unresolved tool call or unknown command outcome
+/// is not a branch boundary.
+fn branchable(messages: &[ConversationMessage]) -> bool {
+    messages.last().is_some_and(|message| {
+        message.role == MessageRole::Assistant && message.status == MessageStatus::Complete
+    }) && super::history::project(messages, None).is_ok()
 }
 
 fn unused_identifier(database: &Database) -> Result<ConversationId, ConversationError> {

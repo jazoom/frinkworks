@@ -2,7 +2,8 @@ use axum::http::StatusCode;
 use tower::ServiceExt;
 
 use super::super::tests::{
-    app, connected, document, navigation, normalised, seeded_history, session_id, test_state, text,
+    app, command, connected, document, navigation, normalised, seeded_history, session_id,
+    test_state, text,
 };
 
 #[tokio::test]
@@ -166,4 +167,178 @@ async fn tree_inspection_leaf_is_read_only() {
     let after = state.conversations.get(&record.id).expect("record");
     assert_eq!(before.revision, after.revision);
     assert_eq!(before.messages, after.messages);
+}
+
+#[tokio::test]
+async fn continue_here_selects_an_earlier_response_and_keeps_alternatives() {
+    let mut state = test_state();
+    let backend = crate::providers::tests::ScriptedBackend::accept();
+    state.chat = std::sync::Arc::new(crate::providers::ChatBackend::Scripted(backend.clone()));
+    let token = connected(&state);
+    super::super::tests::ready_starter_environment(&state).await;
+    let record = seeded_history(&state, "Branches", 3);
+    let mut settings = record.model.as_ref().unwrap().settings.clone();
+    settings.environment = super::super::default_environment(&state).unwrap();
+    settings.tools.clear();
+    settings.model = crate::providers::ModelSelection::new(
+        crate::providers::ProviderKind::Xai,
+        "grok-4.6".to_owned(),
+        state
+            .models_dev
+            .effective_effort(crate::providers::ProviderKind::Xai, "grok-4.6", None),
+    )
+    .unwrap();
+    let record = state
+        .conversations
+        .update_execution_settings(&record.id, record.revision, settings)
+        .unwrap();
+    let destination = record.messages[1].id;
+    let leaf = record.messages.last().unwrap().id;
+    let action = format!("/conversations/{}/tree/continue", record.id.as_hex());
+    let body = format!(
+        "revision={}&active_leaf={}&destination={}",
+        record.revision,
+        leaf.as_hex(),
+        destination.as_hex()
+    );
+    let response = app(&state)
+        .oneshot(command(&action, &token, &body))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let updated = state.conversations.get(&record.id).unwrap();
+    assert_eq!(updated.messages.last().unwrap().id, destination);
+    assert_eq!(updated.revision, record.revision + 1);
+
+    // A repeated stale form changes no branch and returns a conflict.
+    let response = app(&state)
+        .oneshot(command(&action, &token, &body))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        state.conversations.get(&record.id).unwrap().revision,
+        updated.revision
+    );
+
+    // Existing descendants stay retained and visible as alternatives.
+    let body = text(
+        app(&state)
+            .oneshot(document(
+                &format!("/conversations/{}/tree", record.id.as_hex()),
+                &token,
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(normalised(&body).contains("Question 1"));
+    assert!(normalised(&body).contains("Reply 2"));
+    assert!(normalised(&body).contains("Continue here"));
+    assert_eq!(
+        state
+            .conversations
+            .metadata_for(&record.id)
+            .and_then(|metadata| metadata.active_leaf),
+        Some(destination)
+    );
+
+    assert!(backend.last_history().is_empty());
+    let response = app(&state)
+        .oneshot(command(
+            &format!("/conversations/{}/messages", record.id),
+            &token,
+            &format!("revision={}&message=Alternative", updated.revision),
+        ))
+        .await
+        .unwrap();
+    let status = response.status();
+    assert_eq!(status, StatusCode::OK, "{}", text(response).await);
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while state
+            .conversations
+            .get(&record.id)
+            .unwrap()
+            .active_job
+            .is_some()
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("settlement");
+    let loaded = state.conversations.get(&record.id).unwrap();
+    assert_eq!(loaded.messages[2].parent, Some(destination));
+    let history = backend.last_history();
+    let texts: Vec<_> = history.iter().map(|turn| turn.text.as_str()).collect();
+    assert_eq!(texts, vec!["Question 0", "Reply 0", "Alternative"]);
+}
+
+#[tokio::test]
+async fn continue_here_rejects_unsettled_destinations_without_changing_the_branch() {
+    let state = test_state();
+    let token = connected(&state);
+    let record = seeded_history(&state, "Unsettled branch", 1);
+    let selection = crate::providers::ModelSelection::new(
+        crate::providers::ProviderKind::Xai,
+        "grok-4.6".to_owned(),
+        None,
+    )
+    .unwrap();
+    let job = crate::sessions::JobId::generate().unwrap();
+    let pending = state
+        .conversations
+        .begin_message(
+            &record.id,
+            record.revision,
+            selection,
+            job,
+            "Unfinished".to_owned(),
+        )
+        .unwrap();
+    let pending_id = pending.messages.last().unwrap().id;
+    let action = format!("/conversations/{}/tree/continue", record.id.as_hex());
+    let body = format!(
+        "revision={}&active_leaf={}&destination={}",
+        pending.revision,
+        pending_id.as_hex(),
+        pending_id.as_hex()
+    );
+    let response = app(&state)
+        .oneshot(command(&action, &token, &body))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        state.conversations.get(&record.id).unwrap().messages,
+        pending.messages
+    );
+
+    state
+        .conversations
+        .settle_message(
+            &record.id,
+            job,
+            "",
+            crate::conversations::MessageStatus::Interrupted,
+            None,
+        )
+        .unwrap();
+    let settled = state.conversations.get(&record.id).unwrap();
+    let interrupted = settled.messages.last().unwrap().id;
+    let body = format!(
+        "revision={}&active_leaf={}&destination={}",
+        settled.revision,
+        interrupted.as_hex(),
+        interrupted.as_hex()
+    );
+    let response = app(&state)
+        .oneshot(command(&action, &token, &body))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        state.conversations.get(&record.id).unwrap().messages,
+        settled.messages
+    );
 }

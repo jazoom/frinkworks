@@ -20,6 +20,7 @@ pub(crate) const SUMMARY_PREAMBLE: &str = "You summarise a coding-agent conversa
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CompactionRecord {
     pub(crate) covered_through: MessageId,
+    // The original suffix entry is provenance, not coverage authority on another branch.
     pub(crate) retained_from: MessageId,
     pub(crate) text: String,
     pub(crate) request: RequestUsage,
@@ -76,11 +77,7 @@ pub(crate) fn select_boundary(
         .unwrap_or(messages.len());
     let ends = complete_ends(&messages[..settled])?;
     let start = current
-        .and_then(|record| {
-            messages
-                .iter()
-                .position(|message| message.id == record.retained_from)
-        })
+        .and_then(|record| split_index(messages, record))
         .unwrap_or(0);
     let suffix = ends
         .iter()
@@ -238,12 +235,9 @@ fn split_index(messages: &[ConversationMessage], compaction: &CompactionRecord) 
     let covered = messages
         .iter()
         .position(|message| message.id == compaction.covered_through)?;
-    let retained = messages
-        .iter()
-        .position(|message| message.id == compaction.retained_from)?;
-    if retained != covered.checked_add(1)? {
-        return None;
-    }
+    // Coverage follows immutable ancestors. The selected path can have a different
+    // child, or end at the covered entry before the next Send.
+    let retained = covered.checked_add(1)?;
     if messages[covered].role != MessageRole::Assistant
         || messages[covered].status != MessageStatus::Complete
     {

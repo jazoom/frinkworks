@@ -57,6 +57,18 @@ Inspection changes neither the active leaf nor execution ownership. It starts no
 
 Full conversation records contain only the active ancestor path. Provider requests, titles and independent forks consume that projection.
 
+### Branch selection
+
+Continue here selects an earlier complete assistant response as the active leaf. The request carries the conversation revision, the expected active leaf and the destination entry. The store updates only conversation metadata in one transaction. Existing descendants stay retained, so the tree shows both alternatives.
+
+The next Send appends a new child of the selected response. A provider request projects only the selected ancestor path. The abandoned branch stays available for inspection. It reaches no ordinary context, title, summary or handoff prompt.
+
+Branch selection rejects an active job, an unresolved question, a queued item, a continuation checkpoint and a prepared decision. It also rejects a stale revision or a stale expected leaf. A rejected form changes no branch.
+
+A branch changes model context only. It changes no file, no directory approval and no execution ownership. Conversation settings stay unchanged.
+
+The store retains compaction checkpoints across branch changes. It selects the checkpoint with the latest covered ancestor on the selected path. Summary coverage binds to that immutable ancestor, not to an abandoned child. The retained suffix follows that ancestor on the selected path.
+
 ## Live execution
 
 Ordinary messages share one model lifecycle. Tool-free messages use the chat job. Host tools without named directories and read-only sandbox tools use the ordinary conversation runtime. They do not create a workflow run.
@@ -183,9 +195,9 @@ Current file-operation recovery remains separate from historical compatibility. 
 
 The full suites pass:
 
-- 1,111 Rust library tests.
+- 1,150 Rust library tests.
 - One additional Rust binary test.
-- 81 browser-unit tests.
+- 78 browser-unit tests.
 
 `mise run clean` passes without warnings. Production and development asset builds pass.
 
@@ -209,6 +221,10 @@ A supplied prompt entered the real preparation endpoint for transfer tests. The 
 The fork browser check used a synthetic persisted conversation with one completed tool exchange. It followed the fork control to the confirmation page and opened the unsent draft. The draft created no second conversation and started no model call. The source revision and messages stayed unchanged. Console and page diagnostics were empty. The fork beside pending prepared changes is covered by the Rust router test, not the browser check.
 
 The review browser check used a separate local fixture. It opened the fork draft and exercised a rejected Send without a stored provider. No destination conversation appeared. Console and page diagnostics were empty. This check made no hosted-provider request.
+
+The branch route test selected an earlier response and kept both alternatives in the tree. Its controlled provider request contained only the selected path. A store test reopened two branches across restart with the abandoned branch excluded from model context. A real browser check used a synthetic conversation with two retained branches. It selected an earlier response through Continue here, appended a new child with a failed placeholder-provider request and reloaded the tree after a server restart. The abandoned branch stayed in the tree. Console and page diagnostics were empty. These checks use synthetic records, not hosted model requests.
+
+The branch review browser exercise switched between synthetic branches across a server restart. It retained an unsent draft during branch selection. Both alternative tips stayed available after selection of their shared ancestor. Console and page diagnostics were empty. This exercise made no provider request.
 
 Successful hosted-model generation and hosted agent execution remain unverified. The placeholder credential exercised the generation error path only.
 

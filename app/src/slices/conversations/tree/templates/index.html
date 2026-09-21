@@ -7,9 +7,11 @@
   </header>
 
   <p class="text-quiet text-sm">
-    This tree is read-only. It shows retained entries in append order.
-    Inspection changes neither the active branch nor the model context.
-    Execution ownership stays unchanged.
+    This tree is read-only for navigation. It shows retained entries in append
+    order. Inspection changes neither the active branch nor the model context.
+    Continue here selects an earlier response as the active branch, so the next
+    message becomes one of its alternatives. Execution ownership stays
+    unchanged.
   </p>
 
   {% if !error.is_empty() %}
@@ -102,6 +104,24 @@
               >
             {% endif %}
           </div>
+          {% if entry.continueable %}
+            <form
+              method="post"
+              action="{{ conversation_href }}/tree/continue"
+              data-graft
+            >
+              <input type="hidden" name="revision" value="{{ revision }}" />
+              <input
+                type="hidden"
+                name="active_leaf"
+                value="{{ active_leaf }}"
+              />
+              <input type="hidden" name="destination" value="{{ entry.id }}" />
+              <button type="submit" class="btn btn-ghost btn-xs">
+                Continue here
+              </button>
+            </form>
+          {% endif %}
         </li>
       {% endfor %}
     </ol>
@@ -114,11 +134,11 @@
   {% if !leaves.is_empty() %}
     <section aria-labelledby="conversation-tree-leaves" class="space-y-2">
       <h2 id="conversation-tree-leaves" class="text-sm font-semibold">
-        Inspect a branch tip
+        Branch tips
       </h2>
       <p class="text-quiet text-sm">
         Inspection follows a path in the transcript without changing the active
-        branch.
+        branch. The next message continues the active tip.
       </p>
       <ul class="record-list" aria-label="Branch tips">
         {% for leaf in leaves %}

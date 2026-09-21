@@ -157,8 +157,9 @@ impl ForkDrafts {
     }
 }
 
-/// Build a bounded snapshot from a durable boundary. Only a complete prefix
-/// with settled tool calls is accepted.
+/// Build a bounded snapshot from a durable boundary on the selected active
+/// path. A boundary on an abandoned branch is unavailable. Only a complete
+/// prefix with settled tool calls is accepted.
 pub(crate) fn snapshot(
     record: &ConversationRecord,
     boundary: MessageId,

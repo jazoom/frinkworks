@@ -226,6 +226,16 @@ impl QuestionWaiters {
             .map(|wait| wait.question.clone())
     }
 
+    // A claimed answer stays unresolved until execution consumes it.
+    pub(crate) fn has_pending(&self, conversation: ConversationId) -> bool {
+        lock(&self.pending)
+            .keys()
+            .any(|(id, _)| *id == conversation)
+            || lock(&self.inflight)
+                .keys()
+                .any(|(id, _)| *id == conversation)
+    }
+
     pub(crate) fn decide(
         &self,
         conversation: ConversationId,

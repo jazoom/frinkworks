@@ -1694,3 +1694,243 @@ fn tree_window_pages_by_append_order_and_filters_text() {
         record.messages.len()
     );
 }
+
+#[test]
+fn branch_selection_retains_abandoned_descendants_and_projects_only_the_selected_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let record;
+    let selection = ModelSelection::new(ProviderKind::Xai, "model".to_owned(), None).unwrap();
+    {
+        let store = ConversationStore::open(dir.path().to_path_buf()).unwrap();
+        let created = store.create("Branches".to_owned()).unwrap();
+        record = seed_exchanges(&store, &created.id, selection.clone(), 2);
+        let destination = record.messages[1].id;
+        let leaf = record.messages.last().unwrap().id;
+        let updated = store
+            .continue_from(&record.id, record.revision, Some(leaf), destination)
+            .unwrap();
+        assert_eq!(
+            updated
+                .messages
+                .iter()
+                .map(|message| message.id)
+                .collect::<Vec<_>>(),
+            vec![record.messages[0].id, destination]
+        );
+        assert_eq!(updated.revision, record.revision + 1);
+        // A stale revision after another mutation cannot select a branch.
+        assert_eq!(
+            store.continue_from(&record.id, record.revision, Some(leaf), destination),
+            Err(ConversationError::Conflict)
+        );
+        let job = JobId::generate().unwrap();
+        let next = store
+            .begin_message(
+                &record.id,
+                updated.revision,
+                selection.clone(),
+                job,
+                "Alternative".to_owned(),
+            )
+            .unwrap();
+        assert_eq!(next.messages[2].parent, Some(destination));
+        store
+            .settle_message(
+                &record.id,
+                job,
+                "Alternative reply",
+                MessageStatus::Complete,
+                None,
+            )
+            .unwrap();
+    }
+    let store = ConversationStore::open(dir.path().to_path_buf()).unwrap();
+    let loaded = store.get(&record.id).unwrap();
+    let texts: Vec<String> = crate::conversations::history::project(&loaded.messages, None)
+        .unwrap()
+        .into_iter()
+        .map(|turn| turn.text)
+        .collect();
+    assert!(texts.iter().any(|text| text == "Alternative"));
+    assert!(!texts.iter().any(|text| text == "Question 1"));
+    assert!(!texts.iter().any(|text| text == "Reply 1"));
+    assert_eq!(
+        crate::conversations::forks::snapshot(&loaded, record.messages[3].id).err(),
+        Some(crate::conversations::forks::ForkError::Missing),
+    );
+
+    let tree = store
+        .tree_window(&record.id, None, None, None)
+        .unwrap()
+        .expect("tree");
+    assert!(
+        tree.entries
+            .iter()
+            .any(|entry| entry.text == "Question 1" && !entry.on_active_path)
+    );
+    assert!(
+        tree.entries
+            .iter()
+            .any(|entry| entry.text == "Alternative" && entry.on_active_path)
+    );
+    assert!(tree.tips.len() >= 2);
+}
+
+#[test]
+fn branch_selection_rejects_stale_queued_and_unsettled_states() {
+    let store = ConversationStore::in_memory();
+    let selection = ModelSelection::new(ProviderKind::Xai, "model".to_owned(), None).unwrap();
+    let created = store.create("Reject branch".to_owned()).unwrap();
+    let record = seed_exchanges(&store, &created.id, selection.clone(), 2);
+    let destination = record.messages[1].id;
+    let leaf = record.messages.last().unwrap().id;
+    assert_eq!(
+        store.continue_from(&record.id, record.revision + 1, Some(leaf), destination),
+        Err(ConversationError::Conflict)
+    );
+    assert_eq!(
+        store.continue_from(
+            &record.id,
+            record.revision,
+            Some(record.messages[0].id),
+            destination
+        ),
+        Err(ConversationError::Conflict)
+    );
+    assert_eq!(
+        store.continue_from(
+            &record.id,
+            record.revision,
+            Some(leaf),
+            super::MessageId::generate().unwrap()
+        ),
+        Err(ConversationError::Entry)
+    );
+    store
+        .enqueue(
+            &record.id,
+            record.queue.revision,
+            "Queued".to_owned(),
+            crate::conversations::QueueDelivery::FollowUp,
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        store.continue_from(&record.id, record.revision, Some(leaf), destination),
+        Err(ConversationError::Active)
+    );
+    let queued = store.get(&record.id).unwrap();
+    let item = queued.queue.items[0].id;
+    store
+        .remove_queue_item(&record.id, queued.queue.revision, item)
+        .unwrap();
+
+    let job = JobId::generate().unwrap();
+    let pending = store
+        .begin_message(
+            &record.id,
+            record.revision,
+            selection.clone(),
+            job,
+            "Pending".to_owned(),
+        )
+        .unwrap();
+    let pending_id = pending.messages.last().unwrap().id;
+    assert_eq!(
+        store.continue_from(&record.id, pending.revision, Some(pending_id), destination),
+        Err(ConversationError::Active)
+    );
+    store
+        .settle_message(&record.id, job, "", MessageStatus::Interrupted, None)
+        .unwrap();
+    let settled = store.get(&record.id).unwrap();
+    let interrupted = settled.messages.last().unwrap().id;
+    assert_eq!(
+        store.continue_from(&record.id, settled.revision, Some(interrupted), interrupted),
+        Err(ConversationError::Entry)
+    );
+}
+
+#[test]
+fn branch_selection_restores_only_ancestor_compactions_across_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = ConversationStore::open(dir.path().to_path_buf()).unwrap();
+    let selection = ModelSelection::new(ProviderKind::Xai, "model".to_owned(), None).unwrap();
+    let created = store.create("Compact branch".to_owned()).unwrap();
+    let record = seed_exchanges(&store, &created.id, selection, 3);
+    let job = JobId::generate().unwrap();
+    store
+        .begin_compaction(&record.id, record.revision, job)
+        .unwrap();
+    let request = crate::conversations::RequestUsage {
+        id: crate::conversations::RequestId::generate().unwrap(),
+        usage: crate::providers::ModelUsage::new(ProviderKind::Xai, "model"),
+        auth: crate::providers::AuthMethod::ApiKey,
+        prices: None,
+        sources: Vec::new(),
+        advertised: Vec::new(),
+    };
+    store
+        .record_summary_request(&record.id, job, &request)
+        .unwrap();
+    store
+        .record_job_compaction(
+            &record.id,
+            job,
+            crate::conversations::CompactionRecord {
+                covered_through: record.messages[3].id,
+                retained_from: record.messages[4].id,
+                text: "Earlier context".to_owned(),
+                request: request.clone(),
+                created_at_ms: 1,
+            },
+        )
+        .unwrap();
+    let settled = store.finish_compaction(&record.id, job, None).unwrap();
+    assert!(settled.compaction.is_some());
+
+    let updated = store
+        .continue_from(
+            &record.id,
+            settled.revision,
+            settled.messages.last().map(|message| message.id),
+            settled.messages[1].id,
+        )
+        .unwrap();
+    assert!(updated.compaction.is_none());
+    assert_eq!(updated.summary_requests, vec![request]);
+    drop(store);
+    let store = ConversationStore::open(dir.path().to_path_buf()).unwrap();
+    let restored = store
+        .continue_from(
+            &record.id,
+            updated.revision,
+            updated.messages.last().map(|message| message.id),
+            record.messages[3].id,
+        )
+        .unwrap();
+    assert_eq!(restored.compaction, settled.compaction);
+    let history = crate::conversations::compaction::project(
+        &restored.messages,
+        None,
+        restored.compaction.as_ref(),
+    )
+    .unwrap();
+    assert_eq!(history.len(), 1);
+    assert!(history[0].text.contains("Earlier context"));
+    let job = JobId::generate().unwrap();
+    let next = store
+        .begin_message(
+            &record.id,
+            restored.revision,
+            record.model.as_ref().unwrap().settings.model.clone(),
+            job,
+            "New sibling".to_owned(),
+        )
+        .unwrap();
+    let history =
+        crate::conversations::compaction::project(&next.messages, None, next.compaction.as_ref())
+            .unwrap();
+    assert_eq!(history.len(), 2);
+    assert_eq!(history[1].text, "New sibling");
+}

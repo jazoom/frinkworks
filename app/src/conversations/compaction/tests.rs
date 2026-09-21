@@ -235,7 +235,7 @@ fn a_summary_keeps_its_boundary_when_a_later_request_is_pending() {
     assert_eq!(projected.last().unwrap().text, "Next");
     let mut skipped = record.clone();
     skipped.retained_from = messages[4].id;
-    assert!(!skipped.valid(&messages));
+    assert_eq!(project(&messages, None, Some(&skipped)).unwrap(), projected);
 }
 
 #[test]
@@ -272,4 +272,43 @@ fn interrupted_completed_tools_do_not_shift_the_retained_suffix() {
         covered[1].calls[0].result.as_ref().unwrap().output,
         "file contents"
     );
+}
+
+#[test]
+fn a_summary_checkpoint_is_isolated_to_its_sibling_path() {
+    let shared_user = user("Start");
+    let shared_assistant = assistant("Shared prefix");
+    let shared_id = shared_assistant.id;
+    let a_user = user("A question");
+    let a_assistant = assistant("A reply");
+    let b_user = user("B question");
+    let b_assistant = assistant("B reply");
+    let path_a = vec![
+        shared_user.clone(),
+        shared_assistant.clone(),
+        a_user.clone(),
+        a_assistant,
+    ];
+    let path_b = vec![shared_user, shared_assistant, b_user, b_assistant];
+    let record = CompactionRecord {
+        covered_through: shared_id,
+        retained_from: a_user.id,
+        text: "Shared prefix summary".to_owned(),
+        request: usage(),
+        created_at_ms: 1,
+    };
+    assert!(record.valid(&path_a));
+    let projected = project(&path_b, None, Some(&record)).unwrap();
+    assert_eq!(projected.len(), 3);
+    assert!(projected[0].text.contains("Shared prefix summary"));
+    assert_eq!(projected[1].text, "B question");
+    assert_eq!(projected[2].text, "B reply");
+    let sibling_only = CompactionRecord {
+        covered_through: path_a[3].id,
+        retained_from: identifier(),
+        text: "Private A context".to_owned(),
+        ..record
+    };
+    assert!(!sibling_only.valid(&path_b));
+    assert!(project(&path_b, None, Some(&sibling_only)).is_err());
 }

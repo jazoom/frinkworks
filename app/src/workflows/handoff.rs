@@ -4,6 +4,8 @@ use crate::{conversations::ConversationId, sessions::SessionId};
 
 use super::{RunId, WorkflowRun};
 
+/// A prepared handoff draft. `source_revision` binds it to one selected path,
+/// so a branch selection or other source change rejects a stale transfer.
 #[derive(Clone)]
 pub(crate) struct PreparedHandoff {
     pub(crate) source: ConversationId,

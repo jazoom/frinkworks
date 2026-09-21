@@ -114,6 +114,10 @@ pub(super) fn router() -> Router<AppState> {
         )
         .route("/conversations/{conversation_id}/tree", get(tree::show))
         .route(
+            "/conversations/{conversation_id}/tree/continue",
+            post(tree::continue_here),
+        )
+        .route(
             "/conversations/{conversation_id}/workflow",
             get(workflow::show).post(workflow::launch),
         )

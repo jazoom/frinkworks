@@ -9,8 +9,9 @@
     </h3>
     <p class="text-quiet text-sm">
       Earlier exchanges are summarised for the model. The full transcript stays
-      on this computer. Covered through {{ summary.covered }}. Retained from
-      {{ summary.retained }}.
+      on this computer. The summary covers entries through
+      {{ summary.covered }}. Later entries on the selected branch remain in
+      model context.
     </p>
   </section>
 {% endif %}
@@ -20,8 +21,8 @@
     {% for request in usage.requests %}
       <p>{{ request.model }} · {{ request.detail }} · {{ request.cost }}</p>
     {% endfor %}
-    {% if usage.requests.len() > 1 && !usage.subtotal.is_empty() %}<p>
-      {{ usage.subtotal }}
-    </p>{% endif %}
+    {% if usage.requests.len() > 1 && !usage.subtotal.is_empty() %}
+      <p>{{ usage.subtotal }}</p>
+    {% endif %}
   </section>
 {% endif %}

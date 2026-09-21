@@ -8,7 +8,7 @@ use crate::conversations::history::RequestUsage;
 use super::{
     CATALOGUE_VERSION, ConversationError, ConversationId, ConversationMessage,
     ConversationMetadata, ConversationRecord, MessageFile, MessageId, MessageRole, MessageStatus,
-    MetadataFile, TREE_PAGE, TranscriptCursor, TranscriptWindow, TreeEntry, TreeWindow,
+    MetadataFile, TREE_PAGE, TranscriptCursor, TranscriptWindow, TreeEntry, TreeTip, TreeWindow,
     message_to_file, metadata_to_file, model_from_file, parse_stored_network, record_from_parts,
 };
 
@@ -44,6 +44,13 @@ CREATE TABLE IF NOT EXISTS messages (
     FOREIGN KEY (conversation_id) REFERENCES conversations(id)
 );
 CREATE INDEX IF NOT EXISTS message_parent ON messages(conversation_id, parent, sequence);
+CREATE TABLE IF NOT EXISTS compactions (
+    conversation_id TEXT NOT NULL,
+    covered_through TEXT NOT NULL,
+    checkpoint TEXT NOT NULL,
+    PRIMARY KEY (conversation_id, covered_through),
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS summary_requests (
     conversation_id TEXT NOT NULL,
     sequence INTEGER NOT NULL,
@@ -476,11 +483,41 @@ impl Database {
         Ok(TreeWindow {
             entries,
             active_leaf,
+            tips: self.tree_tips(&hex)?,
             has_more,
             next_cursor,
             total: usize::try_from(total).unwrap_or(usize::MAX),
             partial,
         })
+    }
+
+    // Unlisted tips stay reachable through entry and child navigation.
+    fn tree_tips(&self, conversation: &str) -> Result<Vec<TreeTip>, ConversationError> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT m.id, COALESCE(json_extract(m.message, '$.text'), '') FROM messages m
+                 WHERE m.conversation_id = ?1 AND NOT EXISTS (
+                     SELECT 1 FROM messages c
+                     WHERE c.conversation_id = m.conversation_id AND c.parent = m.id
+                 )
+                 ORDER BY m.sequence ASC LIMIT ?2",
+            )
+            .map_err(map_error)?;
+        let rows = statement
+            .query_map(params![conversation, TREE_PAGE as i64], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(map_error)?;
+        let mut tips = Vec::new();
+        for row in rows {
+            let (id, text) = row.map_err(map_error)?;
+            tips.push(TreeTip {
+                id: MessageId::parse(&id).ok_or(ConversationError::Corrupt)?,
+                text,
+            });
+        }
+        Ok(tips)
     }
 
     fn has_rows_after(
@@ -564,7 +601,7 @@ impl Database {
         Ok(entries)
     }
 
-    fn load_messages(
+    pub(super) fn load_messages(
         &self,
         id: &ConversationId,
         leaf: Option<&str>,
@@ -833,6 +870,104 @@ impl Database {
         transaction.commit().map_err(map_error)
     }
 
+    pub(super) fn path_compaction(
+        &self,
+        id: &ConversationId,
+        messages: &[ConversationMessage],
+    ) -> Result<Option<super::super::compaction::CompactionRecord>, ConversationError> {
+        let Some(leaf) = messages.last() else {
+            return Ok(None);
+        };
+        let checkpoint: Option<String> = self
+            .connection
+            .query_row(
+                &format!(
+                    "{PATH_CTE} SELECT c.checkpoint FROM compactions c
+                JOIN path p ON p.id = c.covered_through
+                WHERE c.conversation_id = ?1 ORDER BY p.depth ASC LIMIT 1"
+                ),
+                params![id.as_hex(), leaf.id.as_hex()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(map_error)?;
+        checkpoint
+            .map(|json| {
+                let file = serde_json::from_str(&json).map_err(|_| ConversationError::Corrupt)?;
+                super::compaction_from_file(file, messages, true)
+            })
+            .transpose()
+    }
+
+    // Only metadata changes here. Off-path descendants retain their identities.
+    pub(crate) fn select_active_leaf(
+        &mut self,
+        id: &ConversationId,
+        expected_revision: u32,
+        expected_active_leaf: Option<MessageId>,
+        destination: MessageId,
+        compaction: Option<&super::super::compaction::CompactionRecord>,
+        last_status: MessageStatus,
+    ) -> Result<(), ConversationError> {
+        let transaction = self.connection.transaction().map_err(map_error)?;
+        let hex = id.as_hex();
+        let metadata_json: Option<String> = transaction
+            .query_row(
+                "SELECT metadata FROM conversations WHERE id = ?1",
+                [&hex],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(map_error)?;
+        let mut metadata: MetadataFile =
+            serde_json::from_str(&metadata_json.ok_or(ConversationError::Missing)?)
+                .map_err(|_| ConversationError::Corrupt)?;
+        if metadata.version != CATALOGUE_VERSION || metadata.id != hex {
+            return Err(ConversationError::Corrupt);
+        }
+        if metadata.revision != expected_revision {
+            return Err(ConversationError::Conflict);
+        }
+        let current_leaf = match metadata.active_leaf.as_deref() {
+            Some(value) => Some(MessageId::parse(value).ok_or(ConversationError::Corrupt)?),
+            None => None,
+        };
+        if current_leaf != expected_active_leaf {
+            return Err(ConversationError::Conflict);
+        }
+        let destination_hex = destination.as_hex();
+        let exists: bool = transaction
+            .query_row(
+                "SELECT EXISTS (SELECT 1 FROM messages WHERE conversation_id = ?1 AND id = ?2)",
+                params![hex, destination_hex],
+                |row| row.get(0),
+            )
+            .map_err(map_error)?;
+        if !exists {
+            return Err(ConversationError::Entry);
+        }
+        metadata.active_leaf = Some(destination_hex);
+        metadata.compaction = compaction.map(super::compaction_to_file);
+        metadata.revision = metadata
+            .revision
+            .checked_add(1)
+            .ok_or(ConversationError::Revision)?;
+        metadata.updated_at_ms = super::now_ms().max(metadata.updated_at_ms);
+        transaction
+            .execute(
+                "UPDATE conversations SET revision = ?2, metadata = ?3, last_message_status = ?4, updated_at_ms = ?5 WHERE id = ?1",
+                params![
+                    hex,
+                    i64::from(metadata.revision),
+                    serde_json::to_string(&metadata).map_err(|_| ConversationError::Persist)?,
+                    serde_json::to_string(&last_status).map_err(|_| ConversationError::Persist)?,
+                    i64::try_from(metadata.updated_at_ms).unwrap_or(i64::MAX),
+                ],
+            )
+            .map_err(map_error)?;
+        transaction.commit().map_err(map_error)
+    }
+
     pub(crate) fn save(
         &mut self,
         previous: Option<&ConversationRecord>,
@@ -982,6 +1117,23 @@ fn write_conversation(
 
     write_messages(transaction, &hex, previous, record)?;
     write_summary_requests(transaction, &hex, previous, record)?;
+    if previous.and_then(|record| record.compaction.as_ref()) != record.compaction.as_ref()
+        && let Some(checkpoint) = &record.compaction
+    {
+        transaction
+            .execute(
+                "INSERT INTO compactions (conversation_id, covered_through, checkpoint)
+             VALUES (?1, ?2, ?3) ON CONFLICT(conversation_id, covered_through)
+             DO UPDATE SET checkpoint = excluded.checkpoint",
+                params![
+                    hex,
+                    checkpoint.covered_through.as_hex(),
+                    serde_json::to_string(&super::compaction_to_file(checkpoint))
+                        .map_err(|_| ConversationError::Persist)?
+                ],
+            )
+            .map_err(map_error)?;
+    }
     Ok(())
 }
 
