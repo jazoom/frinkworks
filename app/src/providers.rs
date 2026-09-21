@@ -261,6 +261,8 @@ pub(crate) enum Role {
 #[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ToolOutput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) resource: Option<crate::execution::ResourceSource>,
     pub(crate) label: String,
     pub(crate) output: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

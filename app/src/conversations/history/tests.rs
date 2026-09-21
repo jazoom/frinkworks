@@ -24,6 +24,7 @@ fn tool_call(id: &str, result: Option<ToolOutput>) -> AssistantActivity {
 
 fn output() -> ToolOutput {
     ToolOutput {
+        resource: None,
         label: "read main.rs".to_owned(),
         output: "fn main() {}".to_owned(),
         command: None,
@@ -98,6 +99,7 @@ fn duplicate_identifier_is_rejected_across_messages() {
 #[test]
 fn orphan_result_is_rejected() {
     let standalone = AssistantActivity::Tool(ToolOutput {
+        resource: None,
         label: "read main.rs".to_owned(),
         output: "orphaned".to_owned(),
         command: None,
@@ -152,6 +154,7 @@ fn failed_command_results_stay_on_the_call() {
         CommandTermination::Exited(1),
     );
     let result = ToolOutput {
+        resource: None,
         label: "run".to_owned(),
         output: "exit 1".to_owned(),
         command: Some(command),
@@ -169,6 +172,7 @@ fn unknown_command_results_block_continuation() {
     use crate::execution::command::{CommandResult, CommandTermination};
     let command = CommandResult::new(Vec::new(), CommandTermination::Unknown);
     let result = ToolOutput {
+        resource: None,
         label: "run".to_owned(),
         output: "unknown".to_owned(),
         command: Some(command),
@@ -281,6 +285,8 @@ fn request(id: RequestId, usage: ModelUsage) -> RequestUsage {
             cache_read: Some(100_000),
             cache_write: Some(1_250_000),
         }),
+        sources: Vec::new(),
+        advertised: Vec::new(),
     }
 }
 

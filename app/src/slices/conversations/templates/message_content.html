@@ -141,8 +141,16 @@
     >
       {% for request in usage.requests %}
         <p>
-          <span class="text-base-content font-medium">{{ request.model }}</span>
-          · {{ request.detail }} · {{ request.cost }}
+          <a
+            class="link link-hover"
+            href="{{ request.context_href }}"
+            data-graft
+          >
+            <span class="text-base-content font-medium"
+              >{{ request.model }}</span
+            >
+            · {{ request.detail }} · {{ request.cost }}
+          </a>
         </p>
       {% endfor %}
       {% if usage.requests.len() > 1 && !usage.subtotal.is_empty() %}

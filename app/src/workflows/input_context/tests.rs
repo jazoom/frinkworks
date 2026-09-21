@@ -2,6 +2,7 @@ use super::{
     InputContextError, ProjectInstructions, format_agent_context, validate_launch_brief,
     verify_inputs,
 };
+use crate::execution::resources::InstructionSource;
 use crate::tests::test_environment_id;
 use crate::workflows::artefacts::{
     ArtefactProducer, ArtefactProvenance, ArtefactRecord, ArtefactReference, ArtefactSummary,
@@ -597,7 +598,11 @@ fn attempt_packets_reject_substituted_inputs_and_count_project_instructions() {
         step,
         std::slice::from_ref(&input),
         &store,
-        ProjectInstructions::Present("Use the project test command.".to_owned()),
+        ProjectInstructions::Present(vec![InstructionSource::new(
+            "project",
+            "/project/AGENTS.md",
+            "Use the project test command.".to_owned(),
+        )]),
     )
     .expect("packet");
     let text = &packet.prompt;
@@ -611,7 +616,11 @@ fn attempt_packets_reject_substituted_inputs_and_count_project_instructions() {
             step,
             std::slice::from_ref(&input),
             &store,
-            ProjectInstructions::Present("x".repeat(instruction_bytes + 100))
+            ProjectInstructions::Present(vec![InstructionSource::new(
+                "project",
+                "/project/AGENTS.md",
+                "x".repeat(instruction_bytes + 100),
+            )])
         )
         .err(),
         Some(InputContextError::Packet)
@@ -644,7 +653,11 @@ fn initial_context_snapshot_keeps_request_and_inspector_identity() {
         step,
         &[input_of("candidate", &candidate)],
         &store,
-        ProjectInstructions::Present("Use the test command.".to_owned()),
+        ProjectInstructions::Present(vec![InstructionSource::new(
+            "project",
+            "/project/AGENTS.md",
+            "Use the test command.".to_owned(),
+        )]),
         &[crate::providers::ChatTurn::user(
             "Excluded discussion".to_owned(),
         )],
@@ -671,14 +684,12 @@ fn initial_context_snapshot_keeps_request_and_inspector_identity() {
         super::ProjectInstructionState::Present { .. }
     ));
     assert_eq!(instructions.guest_path, "AGENTS.md");
-    assert_eq!(
-        instructions.text().map(str::len),
-        Some("Use the test command.".len())
-    );
+    let expected_text = instructions.text().expect("combined text");
+    assert!(expected_text.contains("Use the test command."));
     assert_eq!(
         instructions.content_hash(),
         Some(
-            crate::workflows::artefacts::ObjectHash::of(b"Use the test command.")
+            crate::workflows::artefacts::ObjectHash::of(expected_text.as_bytes())
                 .as_str()
                 .as_str()
         )

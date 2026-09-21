@@ -66,6 +66,8 @@ fn request_usage_updates_one_durable_identity_and_rejects_model_changes() {
         usage: crate::providers::ModelUsage::new(crate::providers::ProviderKind::Xai, "grok-4"),
         auth: crate::providers::AuthMethod::ApiKey,
         prices: None,
+        sources: Vec::new(),
+        advertised: Vec::new(),
     };
     let append = |request: &crate::conversations::RequestUsage| {
         store.append_activity(
@@ -151,6 +153,7 @@ fn terminal_records_redact_credentials_before_persistence() {
     let mut reply = AssistantReply::from(format!("Reply {secret}"));
     reply.thinking = format!("Thought {secret}");
     reply.tools.push(ToolOutput {
+        resource: None,
         label: "read".to_owned(),
         output: format!("Output {secret}"),
         command: None,
@@ -355,6 +358,7 @@ fn escaped_activity_cannot_displace_the_terminal_result() {
     reply.thinking = text.clone();
     reply.tools = vec![
         ToolOutput {
+            resource: None,
             label: text.clone(),
             output: text.clone(),
             command: None,
@@ -402,6 +406,7 @@ fn configured_step_history_stays_within_its_attempt() {
             name: "read".to_owned(),
             arguments: serde_json::json!({"path": "src/main.rs"}),
             result: Some(ToolOutput {
+                resource: None,
                 label: "read src/main.rs".to_owned(),
                 output: "fn main() {}".to_owned(),
                 command: None,

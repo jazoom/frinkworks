@@ -47,6 +47,8 @@ pub(crate) async fn generate(
                 .and_then(PriceProvenance::from_catalogue),
             AuthMethod::Plan => None,
         },
+        sources: crate::execution::resources::consumed_sources(&[], turns),
+        advertised: Vec::new(),
     };
     persist(&request)?;
     let generate = async {

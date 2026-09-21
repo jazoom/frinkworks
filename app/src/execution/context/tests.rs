@@ -23,6 +23,7 @@ fn user(text: impl Into<String>) -> ChatTurn {
 
 fn assistant_with_call(text: &str, id: &str, output: &str) -> ChatTurn {
     let result = ToolOutput {
+        resource: None,
         label: "read".to_owned(),
         output: output.to_owned(),
         command: None,
@@ -124,4 +125,38 @@ fn compaction_triggers_before_the_request_fills_the_limit() {
     let turns = [user("x".repeat(1_200))];
     let estimate = inspect(request("Help.", &[], &turns), Some(400)).expect("inspect");
     assert!(estimate.needs_compaction(true));
+}
+
+#[test]
+fn resource_text_stays_below_explicit_and_server_instructions() {
+    use crate::execution::resources::{
+        InstructionSource, ResourceKind, ResourceSource, SkillAdvertisement,
+    };
+    let instructions = [
+        InstructionSource::new("project", "/project/AGENTS.md", "project rule".to_owned()),
+        InstructionSource::new(
+            "second",
+            "/access/second/AGENTS.md",
+            "second rule".to_owned(),
+        ),
+    ];
+    let skills = [SkillAdvertisement {
+        source: ResourceSource::new(
+            ResourceKind::Skill,
+            "project",
+            "/project/.pi/skills/alpha/SKILL.md",
+            b"meta",
+        ),
+        name: "alpha".to_owned(),
+        description: "alpha work".to_owned(),
+        read_path: "/project/.pi/skills/alpha/SKILL.md".to_owned(),
+    }];
+    let composed = super::compose_resources("Server boundary.", &instructions, &skills);
+    let server = composed.text.find("Server boundary.").expect("server");
+    let project = composed.text.find("project rule").expect("project");
+    let second = composed.text.find("second rule").expect("second");
+    let skill = composed.text.find("alpha work").expect("skill");
+    assert!(server < project && project < second && second < skill);
+    assert_eq!(composed.sources.len(), 2);
+    assert_eq!(composed.advertised.len(), 1);
 }

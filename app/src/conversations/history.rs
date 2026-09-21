@@ -67,6 +67,12 @@ pub(crate) struct RequestUsage {
     pub(crate) auth: AuthMethod,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) prices: Option<PriceProvenance>,
+    /// Instruction sources consumed by this exact request.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) sources: Vec<crate::execution::ResourceSource>,
+    /// Skills advertised to the model for this exact request.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) advertised: Vec<crate::execution::ResourceSource>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -203,7 +209,18 @@ impl std::error::Error for HistoryError {}
 
 impl RequestUsage {
     pub(crate) fn valid(&self) -> bool {
-        self.usage.valid() && self.prices.as_ref().is_none_or(PriceProvenance::valid)
+        self.usage.valid()
+            && self.prices.as_ref().is_none_or(PriceProvenance::valid)
+            && self.sources.len() <= crate::execution::resources::MAXIMUM_RESOURCE_SOURCES
+            && self
+                .sources
+                .iter()
+                .all(crate::execution::ResourceSource::valid)
+            && self.advertised.len() <= crate::execution::resources::MAXIMUM_SKILLS
+            && self
+                .advertised
+                .iter()
+                .all(crate::execution::ResourceSource::valid)
     }
 }
 
@@ -414,7 +431,9 @@ pub(crate) fn valid_activity(activity: &[AssistantActivity], text: &str) -> bool
             }
             AssistantActivity::Thinking(value) => vec![value],
             AssistantActivity::Tool(tool) => {
-                if !valid_command(tool.command.as_ref()) {
+                if tool.resource.as_ref().is_some_and(|source| !source.valid())
+                    || !valid_command(tool.command.as_ref())
+                {
                     return false;
                 }
                 let mut parts = vec![tool.label.as_str(), tool.output.as_str()];
@@ -450,6 +469,9 @@ pub(crate) fn valid_activity(activity: &[AssistantActivity], text: &str) -> bool
                 bytes = bytes.saturating_add(serialised_argument_bytes(arguments));
                 let mut parts = vec![id.as_str(), name.as_str()];
                 if let Some(tool) = result {
+                    if tool.resource.as_ref().is_some_and(|source| !source.valid()) {
+                        return false;
+                    }
                     parts.extend([tool.label.as_str(), tool.output.as_str()]);
                     if let Some(command) = &tool.command {
                         parts.extend(command.chunks.iter().map(|chunk| chunk.text.as_str()));
@@ -718,6 +740,7 @@ pub(crate) fn settle_interrupted_questions(message: &mut ConversationMessage) {
             && result.is_none()
         {
             *result = Some(ToolOutput {
+                resource: None,
                 label: crate::conversations::questions::ASK_USER.to_owned(),
                 output: crate::conversations::questions::INTERRUPTED_RESULT.to_owned(),
                 command: None,

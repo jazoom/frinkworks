@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     agents::ToolId,
+    execution::resources::InstructionSource,
     sandbox::{CommandEvent, GUEST_PROJECT, GuestExec, GuestSandbox},
 };
 
@@ -37,7 +38,38 @@ const INSTRUCTION_READ_DEADLINE: Duration = if cfg!(test) {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ProjectInstructions {
     Absent,
-    Present(String),
+    Present(Vec<InstructionSource>),
+}
+
+impl ProjectInstructions {
+    pub(crate) fn sources(&self) -> &[InstructionSource] {
+        match self {
+            Self::Absent => &[],
+            Self::Present(sources) => sources,
+        }
+    }
+
+    /// The deterministic combined text that a workflow packet stores.
+    pub(crate) fn text(&self) -> Option<String> {
+        match self {
+            Self::Absent => None,
+            Self::Present(sources) => sources
+                .iter()
+                .map(|source| {
+                    format!(
+                        "\n## {}/AGENTS.md\n{}\n",
+                        source
+                            .source
+                            .path
+                            .strip_suffix("/AGENTS.md")
+                            .unwrap_or(&source.source.path),
+                        source.text
+                    )
+                })
+                .collect::<String>()
+                .into(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -103,7 +135,7 @@ pub(crate) async fn read_project_instructions(
     sandbox: &GuestSandbox,
     secret: Option<&str>,
 ) -> Result<ProjectInstructions, InstructionError> {
-    read_instructions_at(sandbox, GUEST_PROJECT, secret).await
+    read_instructions_at(sandbox, GUEST_PROJECT, "project", secret).await
 }
 
 pub(crate) async fn read_directory_instructions(
@@ -111,28 +143,55 @@ pub(crate) async fn read_directory_instructions(
     authority: &crate::execution::ProjectFreeAuthority,
     secret: Option<&str>,
 ) -> Result<ProjectInstructions, InstructionError> {
-    let mut combined = String::new();
+    let sources = read_directory_instruction_sources(sandbox, authority, secret).await?;
+    if sources.is_empty() {
+        Ok(ProjectInstructions::Absent)
+    } else {
+        Ok(ProjectInstructions::Present(sources))
+    }
+}
+
+/// Read each authorised root's AGENTS.md as an individual bounded source. The
+/// grant order is preserved and one root never replaces another root's scope.
+pub(crate) async fn read_directory_instruction_sources(
+    sandbox: &GuestSandbox,
+    authority: &crate::execution::ProjectFreeAuthority,
+    secret: Option<&str>,
+) -> Result<Vec<InstructionSource>, InstructionError> {
+    let mut sources = Vec::new();
+    let mut total = 0usize;
     for grant in authority.policy.grants() {
-        if let ProjectInstructions::Present(text) =
-            read_instructions_at(sandbox, &grant.guest_path, secret).await?
+        if let ProjectInstructions::Present(found) =
+            read_instructions_at(sandbox, &grant.guest_path, &grant.alias, secret).await?
         {
-            let section = format!("\n## {}/AGENTS.md\n{}\n", grant.guest_path, text);
-            if combined.len().saturating_add(section.len()) > MAXIMUM_PROJECT_INSTRUCTION_BYTES {
+            for source in found {
+                let section = format!(
+                    "\n## {}/AGENTS.md\n{}\n",
+                    source
+                        .source
+                        .path
+                        .strip_suffix("/AGENTS.md")
+                        .unwrap_or(&source.source.path),
+                    source.text
+                );
+                total = total.saturating_add(section.len());
+                if total > MAXIMUM_PROJECT_INSTRUCTION_BYTES {
+                    return Err(InstructionError::Bound);
+                }
+                sources.push(source);
+            }
+            if sources.len() > crate::execution::resources::MAXIMUM_RESOURCE_SOURCES {
                 return Err(InstructionError::Bound);
             }
-            combined.push_str(&section);
         }
     }
-    Ok(if combined.is_empty() {
-        ProjectInstructions::Absent
-    } else {
-        ProjectInstructions::Present(combined)
-    })
+    Ok(sources)
 }
 
 async fn read_instructions_at(
     sandbox: &GuestSandbox,
     guest_path: &str,
+    scope: &str,
     secret: Option<&str>,
 ) -> Result<ProjectInstructions, InstructionError> {
     let mut command = sandbox
@@ -186,7 +245,13 @@ async fn read_instructions_at(
         return Ok(instructions);
     }
     validate_instruction_text(&text, secret)?;
-    Ok(ProjectInstructions::Present(text))
+    validate_instruction_text(scope, secret)?;
+    validate_instruction_text(guest_path, secret)?;
+    let source = InstructionSource::new(scope, format!("{guest_path}/AGENTS.md"), text);
+    if !source.source.valid() {
+        return Err(InstructionError::Bound);
+    }
+    Ok(ProjectInstructions::Present(vec![source]))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -252,6 +317,8 @@ pub(crate) struct ProjectInstructionSnapshot {
     pub(crate) candidate: Option<ContextCandidateReference>,
     pub(crate) guest_path: String,
     pub(crate) state: ProjectInstructionState,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) sources: Vec<crate::execution::ResourceSource>,
 }
 
 impl ProjectInstructionSnapshot {
@@ -264,17 +331,22 @@ impl ProjectInstructionSnapshot {
                 kind: input.kind.as_str().to_owned(),
                 artefact_hash: input.artefact_hash.as_str(),
             });
-        let state = match instructions {
-            ProjectInstructions::Absent => ProjectInstructionState::Absent,
-            ProjectInstructions::Present(text) => ProjectInstructionState::Present {
-                text: text.clone(),
-                content_hash: ObjectHash::of(text.as_bytes()).as_str(),
-            },
+        let (state, sources) = match instructions {
+            ProjectInstructions::Absent => (ProjectInstructionState::Absent, Vec::new()),
+            ProjectInstructions::Present(found) => {
+                let text = instructions.text().unwrap_or_default();
+                let content_hash = ObjectHash::of(text.as_bytes()).as_str();
+                (
+                    ProjectInstructionState::Present { text, content_hash },
+                    found.iter().map(|source| source.source.clone()).collect(),
+                )
+            }
         };
         Self {
             candidate,
             guest_path: "AGENTS.md".to_owned(),
             state,
+            sources,
         }
     }
 
@@ -494,6 +566,13 @@ impl AttemptContextPacket {
                         .is_some_and(|hash| hash == ObjectHash::of(text.as_bytes()))
                 }
             }
+            && self.project_instructions.sources.len()
+                <= crate::execution::resources::MAXIMUM_RESOURCE_SOURCES
+            && self
+                .project_instructions
+                .sources
+                .iter()
+                .all(crate::execution::ResourceSource::valid)
     }
 }
 

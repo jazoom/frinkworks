@@ -28,6 +28,7 @@ fn output_events_are_monotonic_and_reconstructable() {
     assert_eq!(job.push_response("Hello".to_owned()), Some(2));
     assert_eq!(
         job.push_tool(ToolOutput {
+            resource: None,
             label: "read `/project/src/lib.rs`".to_owned(),
             output: "source".to_owned(),
             command: None,
@@ -67,6 +68,7 @@ fn thinking_after_a_tool_starts_a_new_activity_phase() {
     job.push_thinking("Inspect".to_owned());
     job.push_thinking(" the project".to_owned());
     job.push_tool(ToolOutput {
+        resource: None,
         label: "read `/project/src/lib.rs`".to_owned(),
         output: "source".to_owned(),
         command: None,
@@ -139,6 +141,7 @@ fn tool_progress_is_bounded_and_the_terminal_result_survives() {
     job.finish_tool(
         "call-1".to_owned(),
         ToolOutput {
+            resource: None,
             label: "run".to_owned(),
             output: "done".to_owned(),
             command: None,

@@ -114,6 +114,8 @@ fn compaction_survives_restart_with_a_later_pending_request() {
         usage: crate::providers::ModelUsage::new(ProviderKind::Xai, "model"),
         auth: crate::providers::AuthMethod::ApiKey,
         prices: None,
+        sources: Vec::new(),
+        advertised: Vec::new(),
     };
     store
         .record_summary_request(&record.id, job, &request)
@@ -743,6 +745,7 @@ fn completed_and_interrupted_messages_survive_restart() {
         reply.finish_tool(
             "call-1",
             crate::providers::ToolOutput {
+                resource: None,
                 label: "list".to_owned(),
                 output: "Empty workspace".to_owned(),
                 command: None,
@@ -809,6 +812,7 @@ fn command_outcomes_survive_restart_with_stream_identity() {
         .expect("start");
     let mut reply = crate::providers::AssistantReply::default();
     reply.push_tool(crate::providers::ToolOutput {
+        resource: None,
         label: "run `exit 3`".to_owned(),
         output: "The command exited with code 3.".to_owned(),
         command: Some(crate::execution::CommandResult::new(

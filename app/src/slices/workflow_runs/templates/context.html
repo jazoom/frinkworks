@@ -42,6 +42,26 @@
       automatic context. Access requires the listed tools and explicit
       authority.
     </p>
+    <h3 class="mt-4 font-semibold">Instruction sources used</h3>
+    {% if sources.is_empty() %}
+      <p class="text-quiet mt-1 text-sm">
+        No automatic project instruction source affected this request.
+      </p>
+    {% else %}
+      <ul class="mt-1 flex flex-col gap-2">
+        {% for source in sources %}
+          <li
+            class="border-base-300 bg-base-200 flex flex-col gap-1 rounded-sm border p-3 text-xs"
+          >
+            <span class="font-mono break-all">{{ source.path }}</span>
+            <span class="text-quiet break-all">Scope {{ source.scope }}</span>
+            <span class="text-quiet font-mono break-all"
+              >{{ source.content_hash }}</span
+            >
+          </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
   </section>
   <section>
     <h2 class="font-semibold">Context budget</h2>

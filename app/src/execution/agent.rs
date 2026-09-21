@@ -41,6 +41,8 @@ pub(crate) struct AgentRunSpec {
     pub(crate) conversation: Option<ConversationId>,
     pub(crate) steering_session: Option<crate::sessions::SessionId>,
     pub(crate) budget: BudgetPolicy,
+    pub(crate) sources: Vec<crate::execution::ResourceSource>,
+    pub(crate) advertised: Vec<crate::execution::ResourceSource>,
 }
 
 pub(super) const MIN_PROGRESS_INTERVAL: Duration = if cfg!(test) {
@@ -179,7 +181,7 @@ pub(crate) async fn run_agent_action(
             }
             budget.record_model_request();
             reply.completion = Some(CompletionReason::Unknown);
-            if let Err(error) = start_model_request(state, &spec, &mut reply, &job) {
+            if let Err(error) = start_model_request(state, &spec, &mut reply, &job, &turns) {
                 return store_failure(&reply, error);
             }
             thinking_progress.begin_phase();
@@ -861,6 +863,7 @@ pub(crate) async fn run_agent_action(
             spec.sandbox.as_deref()
         };
         let context = tools::AgentToolContext {
+            advertised_resources: &spec.advertised,
             sandbox,
             policy: &spec.policy,
             job: &job,
@@ -937,6 +940,7 @@ pub(crate) async fn run_agent_action(
             if let Some(evidence) = &spec.evidence {
                 evidence.tool(
                     &ToolOutput {
+                        resource: trace.resource.clone(),
                         label: label.clone(),
                         output: output.clone(),
                         command: command.clone(),
@@ -949,6 +953,7 @@ pub(crate) async fn run_agent_action(
                 name: name.clone(),
                 arguments: arguments.clone(),
                 result: Some(ToolOutput {
+                    resource: trace.resource.clone(),
                     label: label.clone(),
                     output: output.clone(),
                     command: command.clone(),
@@ -958,6 +963,7 @@ pub(crate) async fn run_agent_action(
             reply.finish_tool(
                 &visible_id,
                 ToolOutput {
+                    resource: trace.resource.clone(),
                     label: label.clone(),
                     output: output.clone(),
                     command: command.clone(),
@@ -1327,6 +1333,7 @@ fn visible_tool_output(
     let visible = bound_visible_text(&output, output_limit);
     *visible_tool_bytes += visible.len();
     Some(ToolOutput {
+        resource: None,
         label,
         output: visible,
         command,
@@ -1509,6 +1516,7 @@ pub(crate) fn bound_reply(reply: &AssistantReply) -> AssistantReply {
             }
             AssistantActivity::Tool(tool) => {
                 let ToolOutput {
+                    resource: _,
                     label,
                     output,
                     command,
@@ -1847,7 +1855,7 @@ async fn compact_history_inner(
     if job.cancel_requested() {
         return Err(cancel_action(job, &AssistantReply::default()));
     }
-    let projected = crate::conversations::compaction::project_turns(turns, cover, &text)
+    let projected = crate::conversations::compaction::project_turns(turns, cover, &text, &request)
         .map_err(|error| context_blocked(AssistantReply::default(), error.message()))?;
     let evidence = spec.evidence.as_ref().ok_or_else(|| {
         context_blocked(
@@ -1920,7 +1928,13 @@ fn start_model_request(
     spec: &AgentRunSpec,
     reply: &mut AssistantReply,
     job: &Job,
+    turns: &[ChatTurn],
 ) -> Result<(), crate::conversations::ConversationError> {
+    let sources = crate::execution::resources::consumed_sources(&spec.sources, turns);
+    let sources = crate::execution::resources::consumed_sources(
+        &sources,
+        &[ChatTurn::assistant(reply.clone())],
+    );
     let prices = match spec.connection.auth {
         crate::providers::AuthMethod::ApiKey => state
             .models_dev
@@ -1933,6 +1947,8 @@ fn start_model_request(
         usage: ModelUsage::new(spec.connection.kind, spec.connection.model.clone()),
         auth: spec.connection.auth,
         prices,
+        sources,
+        advertised: spec.advertised.clone(),
     };
     reply.usage.push(request.clone());
     if !crate::conversations::history::valid_requests(
@@ -2074,6 +2090,7 @@ fn record_not_dispatched(
         crate::execution::CommandTermination::NotDispatched,
     );
     let output = ToolOutput {
+        resource: None,
         label: "not dispatched".to_owned(),
         output: "This tool did not run.".to_owned(),
         command: Some(command),

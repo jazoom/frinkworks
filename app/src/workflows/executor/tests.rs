@@ -1140,6 +1140,7 @@ async fn a_resumed_phase_keeps_its_tool_results_and_excludes_conversation_histor
             name: "list".to_owned(),
             arguments: serde_json::json!({"path": "/workspace/project"}),
             result: Some(crate::providers::ToolOutput {
+                resource: None,
                 label: "list".to_owned(),
                 output: "file.txt".to_owned(),
                 command: None,

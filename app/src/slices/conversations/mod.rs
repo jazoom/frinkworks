@@ -1,5 +1,6 @@
 mod activity;
 mod compaction;
+mod context;
 mod continuation;
 mod directories;
 mod handoff;
@@ -99,6 +100,10 @@ pub(super) fn router() -> Router<AppState> {
         .route(
             "/conversations/{conversation_id}/output/{reference}",
             get(output::show),
+        )
+        .route(
+            "/conversations/{conversation_id}/context/{request_id}",
+            get(context::show),
         )
         .route(
             "/conversations/{conversation_id}/activity",

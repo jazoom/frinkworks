@@ -240,6 +240,7 @@ fn context_packet(prompt: String) -> crate::workflows::input_context::AttemptCon
                 content_hash: crate::workflows::artefacts::ObjectHash::of(b"Use the test command.")
                     .as_str(),
             },
+            sources: Vec::new(),
         },
         budget: crate::workflows::input_context::ContextBudget {
             packet_bytes: 42,
@@ -406,6 +407,7 @@ async fn evidence_routes_reject_cross_run_attempts_and_unsupported_patches() {
     reply.thinking = reply.text.clone();
     reply.tools = vec![
         crate::providers::ToolOutput {
+            resource: None,
             label: reply.text.clone(),
             output: reply.text.clone(),
             command: None,

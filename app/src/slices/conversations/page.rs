@@ -1051,7 +1051,10 @@ impl ConversationDetailView {
                     record.compaction.as_ref(),
                 )
                 .is_ok(),
-            summary_usage: usage_panel(&record.summary_requests),
+            summary_usage: usage_panel(
+                &record.summary_requests,
+                &format!("/conversations/{}/context/", record.id.as_hex()),
+            ),
             compaction: record
                 .compaction
                 .as_ref()
@@ -1974,6 +1977,7 @@ struct RequestUsageView {
     model: String,
     detail: String,
     cost: String,
+    context_href: String,
 }
 
 struct MessageBlock {
@@ -2035,6 +2039,7 @@ fn activity_html(
 ) -> String {
     use crate::providers::AssistantActivity;
     let output_base = format!("/conversations/{}/output/", conversation.as_hex());
+    let context_base = format!("/conversations/{}/context/", conversation.as_hex());
     let progress_blocks: Vec<MessageBlock> = progress
         .iter()
         .map(|progress| MessageBlock {
@@ -2124,7 +2129,7 @@ fn activity_html(
         id,
         output_base: &output_base,
         blocks,
-        usage: usage_panel(requests),
+        usage: usage_panel(requests, &context_base),
     }
     .render()
     .expect("message content template")
@@ -2169,18 +2174,27 @@ fn context_view(
     })
 }
 
-fn usage_panel(requests: &[crate::conversations::RequestUsage]) -> Option<UsagePanelView> {
+fn usage_panel(
+    requests: &[crate::conversations::RequestUsage],
+    context_base: &str,
+) -> Option<UsagePanelView> {
     if requests.is_empty() {
         return None;
     }
     let total = crate::conversations::history::total_cost(requests);
     Some(UsagePanelView {
-        requests: requests.iter().map(request_usage_view).collect(),
+        requests: requests
+            .iter()
+            .map(|request| request_usage_view(request, context_base))
+            .collect(),
         subtotal: cost_label(&total),
     })
 }
 
-fn request_usage_view(request: &crate::conversations::RequestUsage) -> RequestUsageView {
+fn request_usage_view(
+    request: &crate::conversations::RequestUsage,
+    context_base: &str,
+) -> RequestUsageView {
     RequestUsageView {
         model: format!(
             "{} · {}",
@@ -2189,6 +2203,7 @@ fn request_usage_view(request: &crate::conversations::RequestUsage) -> RequestUs
         ),
         detail: token_detail(&request.usage),
         cost: request_cost_label(request),
+        context_href: format!("{context_base}{}", request.id.as_hex()),
     }
 }
 

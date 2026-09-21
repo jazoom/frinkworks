@@ -323,6 +323,7 @@ pub(crate) struct HostToolContext<'a> {
 }
 
 pub(crate) struct AgentToolContext<'a> {
+    pub(crate) advertised_resources: &'a [crate::execution::ResourceSource],
     pub(crate) sandbox: Option<&'a GuestSandbox>,
     pub(crate) policy: &'a DirectoryPolicy,
     pub(crate) job: &'a Job,
@@ -345,6 +346,7 @@ pub(crate) struct QuestionToolContext<'a> {
 }
 
 pub(crate) struct ToolTrace {
+    pub(crate) resource: Option<crate::execution::ResourceSource>,
     pub(crate) label: String,
     pub(crate) output: String,
     pub(crate) failure: Option<ToolFailureKind>,
@@ -380,6 +382,7 @@ impl ToolFailureKind {
 }
 
 struct ToolRun {
+    resource: Option<crate::execution::ResourceSource>,
     label: String,
     output: String,
     command: Option<crate::execution::CommandResult>,
@@ -388,6 +391,7 @@ struct ToolRun {
 impl ToolRun {
     fn plain(label: String, output: String) -> Self {
         Self {
+            resource: None,
             label,
             output,
             command: None,
@@ -417,6 +421,7 @@ impl ToolTrace {
                 .then(|| ToolFailureKind::from_termination(command.termination))
         });
         Self {
+            resource: None,
             label,
             output,
             failure,
@@ -431,6 +436,7 @@ impl ToolTrace {
         command: Option<CommandResult>,
     ) -> Self {
         Self {
+            resource: None,
             label,
             output,
             failure: Some(failure),
@@ -471,7 +477,11 @@ pub(crate) async fn invoke(
         );
     };
     match dispatch(context, call_id, kind, arguments).await {
-        Ok(run) => ToolTrace::success(run.label, run.output, run.command),
+        Ok(run) => {
+            let mut trace = ToolTrace::success(run.label, run.output, run.command);
+            trace.resource = run.resource;
+            trace
+        }
         Err(ToolFailure::Ordinary(message)) => ToolTrace::fail(
             kind.as_str().to_owned(),
             message.to_owned(),
@@ -652,6 +662,7 @@ async fn ask_user(
                 .then_some(ToolFailureKind::Rejected);
             let output = answer.result_text();
             ToolTrace {
+                resource: None,
                 label: ASK_USER.to_owned(),
                 output,
                 failure,
@@ -841,6 +852,7 @@ async fn dispatch(
                 Ok(result) => {
                     let output = result.report();
                     Ok(ToolRun {
+                        resource: None,
                         label,
                         output,
                         command: Some(result),
@@ -1006,6 +1018,7 @@ async fn dispatch_host_command(
                 });
             }
             Ok(ToolRun {
+                resource: None,
                 label,
                 output,
                 command: Some(command),
@@ -1257,28 +1270,64 @@ async fn read_file(
     let request = read::parse_request(args.offset, args.limit)
         .map_err(|error| ToolFailure::Ordinary(error.message()))?;
     let path = existing_file_path(context, &args.path)?;
+    let skill = crate::execution::resources::skill_directory(&path).is_some();
+    let scan = if skill {
+        crate::execution::resources::MAXIMUM_SKILL_BODY_BYTES
+    } else {
+        read::MAXIMUM_SCAN_BYTES
+    };
     let bytes = capture_stdout_bytes(
         context,
         call_id,
-        confined_read_command(
-            &path,
-            &context.policy.guest_roots(),
-            read::MAXIMUM_SCAN_BYTES + 1,
-        ),
+        confined_read_command(&path, &context.policy.guest_roots(), scan + 1),
     )
     .await?;
-    if bytes.len() > read::MAXIMUM_SCAN_BYTES {
-        return Err(ToolFailure::Ordinary(
-            "That file exceeds the read scan limit.",
-        ));
+    if bytes.len() > scan {
+        return Err(ToolFailure::Ordinary(if skill {
+            "That skill file exceeds the read scan limit."
+        } else {
+            "That file exceeds the read scan limit."
+        }));
     }
     let text = read::decode_text(&bytes).map_err(|error| ToolFailure::Ordinary(error.message()))?;
+    if skill {
+        crate::execution::resources::validate_skill_read(&path, &bytes)
+            .map_err(|error| ToolFailure::Ordinary(error.message()))?;
+    }
     let page =
         read::page_text(text, request).map_err(|error| ToolFailure::Ordinary(error.message()))?;
-    Ok(ToolRun::plain(
-        format!("read `{path}`"),
-        read::render_file_page(&page),
-    ))
+    let resource = if skill || path.ends_with("/AGENTS.md") {
+        let grant = context
+            .policy
+            .grants()
+            .iter()
+            .find(|grant| path.starts_with(&format!("{}/", grant.guest_path)))
+            .ok_or(ToolFailure::Authority(
+                "That resource has no authorised root.",
+            ))?;
+        let source = crate::execution::ResourceSource::new(
+            if skill {
+                crate::execution::ResourceKind::Skill
+            } else {
+                crate::execution::ResourceKind::Instruction
+            },
+            &grant.alias,
+            &path,
+            &bytes,
+        );
+        source
+            .validate_read(&bytes, context.advertised_resources, context.secret)
+            .map_err(|error| ToolFailure::Ordinary(error.message()))?;
+        Some(source)
+    } else {
+        None
+    };
+    Ok(ToolRun {
+        label: format!("read `{path}`"),
+        output: read::render_file_page(&page),
+        command: None,
+        resource,
+    })
 }
 
 async fn edit_file(

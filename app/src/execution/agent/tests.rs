@@ -188,6 +188,7 @@ fn pending_thinking_is_published_before_a_tool() {
     assert!(progress.publish_due(&job, &reply.thinking, started + THINKING_INITIAL_DELAY));
     publish_reply_before_tools(&job, &reply, &mut published_response, &mut progress);
     job.push_tool(ToolOutput {
+        resource: None,
         label: "read `/project/file`".to_owned(),
         output: "contents".to_owned(),
         command: None,
@@ -279,6 +280,7 @@ async fn automatic_compaction_fits_a_smaller_model_without_deleting_local_tool_r
         reply.finish_tool(
             id,
             ToolOutput {
+                resource: None,
                 label: "read".to_owned(),
                 output,
                 command: None,
@@ -352,6 +354,7 @@ async fn workflow_compaction_preserves_scope_and_complete_tool_exchanges() {
         name: "read".to_owned(),
         arguments: serde_json::json!({"path": "phase.txt"}),
         result: Some(crate::providers::ToolOutput {
+            resource: None,
             label: "read".to_owned(),
             output: "Phase evidence".to_owned(),
             command: None,
@@ -419,6 +422,8 @@ fn read_spec(
         conversation: Some(conversation),
         steering_session: None,
         budget: crate::execution::BudgetPolicy::ordinary(),
+        sources: Vec::new(),
+        advertised: Vec::new(),
     }
 }
 

@@ -363,6 +363,8 @@ async fn prepare(
     if work.kind == OrdinaryKind::Host {
         append_block(&mut preamble, &host_policy_text(&settings));
     }
+    let mut instruction_sources = Vec::new();
+    let mut skills = Vec::new();
     let (policy, sandbox, guest, location) = match work.kind {
         OrdinaryKind::Host => (
             DirectoryPolicy::from_grants(Vec::new(), String::new()),
@@ -373,7 +375,8 @@ async fn prepare(
         OrdinaryKind::Sandbox => {
             let prepared =
                 prepare_sandbox(state, work.record.id, work.job.id(), &settings, secret).await?;
-            append_block(&mut preamble, &prepared.instructions);
+            instruction_sources = prepared.instructions;
+            skills = prepared.skills;
             (
                 prepared.policy,
                 Some(prepared.sandbox.clone()),
@@ -392,6 +395,9 @@ async fn prepare(
             ));
         }
     };
+    let composed =
+        crate::execution::context::compose_resources(&preamble, &instruction_sources, &skills);
+    let mut preamble = composed.text;
     if let Some(language) = state.sessions.language(&work.session) {
         language.append_instructions(&mut preamble);
     }
@@ -425,6 +431,8 @@ async fn prepare(
             conversation: Some(work.record.id),
             steering_session: Some(work.session),
             budget: crate::execution::BudgetPolicy::ordinary(),
+            sources: composed.sources,
+            advertised: composed.advertised,
         },
         turns: work.turns.clone(),
         guest,
@@ -436,7 +444,8 @@ struct SandboxPrepared {
     sandbox: Arc<GuestSandbox>,
     attempt: AttemptId,
     workspace: crate::workflows::workspace::AttemptWorkspace,
-    instructions: String,
+    instructions: Vec<crate::execution::InstructionSource>,
+    skills: Vec<crate::execution::SkillAdvertisement>,
 }
 
 async fn prepare_sandbox(
@@ -563,13 +572,32 @@ async fn prepare_sandbox(
             error.message(),
         ));
     }
-    let instructions = match crate::workflows::input_context::read_directory_instructions(
+    let instructions = match crate::workflows::input_context::read_directory_instruction_sources(
         &sandbox, &authority, secret,
     )
     .await
     {
-        Ok(crate::workflows::input_context::ProjectInstructions::Absent) => String::new(),
-        Ok(crate::workflows::input_context::ProjectInstructions::Present(text)) => text,
+        Ok(instructions) => instructions,
+        Err(error) => {
+            let sandbox_gone = dispose_guest(state, &sandbox, attempt).await;
+            let workspace_gone = sandbox_gone && workspace.destroy().is_ok();
+            let _ = state
+                .conversation_runtime
+                .finish(conversation, !sandbox_gone, !workspace_gone);
+            return Err(prepare_failure(
+                AgentOutcome::AuthorityFailure,
+                error.message(),
+            ));
+        }
+    };
+    let skills = match crate::execution::discover_skills(
+        &sandbox,
+        authority.policy.grants(),
+        secret,
+    )
+    .await
+    {
+        Ok(skills) => skills,
         Err(error) => {
             let sandbox_gone = dispose_guest(state, &sandbox, attempt).await;
             let workspace_gone = sandbox_gone && workspace.destroy().is_ok();
@@ -588,6 +616,7 @@ async fn prepare_sandbox(
         attempt,
         workspace,
         instructions,
+        skills,
     })
 }
 

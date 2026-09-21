@@ -16,6 +16,8 @@ fn usage() -> RequestUsage {
         usage: ModelUsage::new(ProviderKind::Xai, "grok-4.6"),
         auth: AuthMethod::ApiKey,
         prices: None,
+        sources: Vec::new(),
+        advertised: Vec::new(),
     }
 }
 
@@ -76,6 +78,50 @@ fn two_exchanges() -> Vec<ConversationMessage> {
         user("Second"),
         assistant("Second reply"),
     ]
+}
+
+#[test]
+fn compaction_preserves_consumed_resource_provenance() {
+    let source = crate::execution::ResourceSource::new(
+        crate::execution::ResourceKind::Skill,
+        "project",
+        "/project/.pi/skills/review/SKILL.md",
+        b"review instructions",
+    );
+    let messages = vec![
+        user("Read the skill"),
+        assistant_tool(
+            "skill-read",
+            Some(ToolOutput {
+                resource: Some(source.clone()),
+                label: "read".to_owned(),
+                output: "review instructions".to_owned(),
+                command: None,
+            }),
+        ),
+        assistant("Skill read"),
+        user("Continue"),
+        assistant("Continued"),
+    ];
+    let turns = crate::conversations::history::project(&messages, None).expect("history");
+    let sources = crate::execution::resources::consumed_sources(&[], &turns);
+    assert_eq!(sources, vec![source.clone()]);
+    let mut request = usage();
+    request.sources = sources;
+    let (covered_through, retained_from) = select_boundary(&messages, None).expect("boundary");
+    let record = CompactionRecord {
+        covered_through,
+        retained_from,
+        text: "The review skill supplied instructions.".to_owned(),
+        request: serde_json::from_slice(&serde_json::to_vec(&request).expect("persist request"))
+            .expect("reload request"),
+        created_at_ms: 1,
+    };
+    let compacted = project(&messages, None, Some(&record)).expect("compacted history");
+    assert_eq!(
+        crate::execution::resources::consumed_sources(&[], &compacted),
+        vec![source]
+    );
 }
 
 #[test]
@@ -192,6 +238,7 @@ fn a_summary_keeps_its_boundary_when_a_later_request_is_pending() {
 #[test]
 fn interrupted_completed_tools_do_not_shift_the_retained_suffix() {
     let result = ToolOutput {
+        resource: None,
         label: "read".to_owned(),
         output: "file contents".to_owned(),
         command: None,

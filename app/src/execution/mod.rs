@@ -10,6 +10,7 @@ mod directory_picker;
 mod host;
 mod output;
 mod overrides;
+pub(crate) mod resources;
 mod settings;
 pub(crate) use overrides::{SettingsOverrides, SettingsOverridesFile};
 
@@ -28,6 +29,9 @@ pub(crate) use host::{
     COMMAND_TIMEOUT, CommandReporter, HostIdentity, command_directory, run_shell_reported,
 };
 pub(crate) use output::{OUTPUT_PREVIEW_BYTES, OutputKey, OutputScope, OutputStore};
+pub(crate) use resources::{
+    InstructionSource, ResourceKind, ResourceSource, SkillAdvertisement, discover_skills,
+};
 pub(crate) use settings::{
     CanonicalDirectoryIdentity, DirectoryAccess, DirectoryGrant, DirectoryGrantError,
     DirectoryGrantId, ExecutionSettings, ExecutionSettingsFile, HostApprovalPolicy,

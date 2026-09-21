@@ -210,6 +210,7 @@ fn sandbox_context<'a>(
     tools: &'a [ToolId],
 ) -> AgentToolContext<'a> {
     AgentToolContext {
+        advertised_resources: &[],
         sandbox: None,
         policy,
         job,

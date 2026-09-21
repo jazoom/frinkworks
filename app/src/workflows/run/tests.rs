@@ -183,6 +183,7 @@ fn an_attempt_persists_the_exact_initial_context_packet() {
             candidate: None,
             guest_path: "AGENTS.md".to_owned(),
             state: super::super::input_context::ProjectInstructionState::Absent,
+            sources: Vec::new(),
         },
         budget: super::super::input_context::ContextBudget {
             packet_bytes,

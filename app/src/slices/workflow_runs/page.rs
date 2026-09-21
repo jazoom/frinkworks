@@ -27,6 +27,7 @@ pub(super) struct InitialContextView {
     pub(super) instruction_path: String,
     pub(super) instruction_hash: String,
     pub(super) instruction_text: String,
+    pub(super) sources: Vec<ResourceSourceView>,
     pub(super) packet_bytes: String,
     pub(super) reserved_output_bytes: String,
     pub(super) reserved_tool_bytes: String,
@@ -63,6 +64,12 @@ pub(super) struct ApplyRootView {
     pub(super) directory: String,
     pub(super) path: String,
     pub(super) outcome: &'static str,
+}
+
+pub(super) struct ResourceSourceView {
+    pub(super) scope: String,
+    pub(super) path: String,
+    pub(super) content_hash: String,
 }
 
 pub(super) struct AttemptActivityItem {
@@ -898,6 +905,16 @@ pub(super) fn initial_context_view(
             .unwrap_or("None")
             .to_owned(),
         instruction_text,
+        sources: packet
+            .project_instructions
+            .sources
+            .iter()
+            .map(|source| ResourceSourceView {
+                scope: source.scope.clone(),
+                path: source.path.clone(),
+                content_hash: source.content_hash.clone(),
+            })
+            .collect(),
         packet_bytes: packet.budget.packet_bytes.to_string(),
         reserved_output_bytes: packet.budget.reserved_output_bytes.to_string(),
         reserved_tool_bytes: packet.budget.reserved_tool_bytes.to_string(),

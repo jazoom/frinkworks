@@ -1,0 +1,82 @@
+<div class="mx-auto flex w-full max-w-4xl flex-col gap-4 p-5">
+  <header class="flex flex-wrap items-center justify-between gap-2">
+    <h1 class="text-lg font-semibold break-words">{{ heading }}</h1>
+    <a class="btn btn-ghost btn-sm" href="{{ back_href }}" data-graft
+      >Back to conversation</a
+    >
+  </header>
+
+  {% if !error.is_empty() %}
+    <div class="alert alert-warning" role="alert">{{ error }}</div>
+  {% else %}
+    <p class="text-quiet text-sm">
+      {{ model }} · request
+      <span class="font-mono break-all">{{ request_id }}</span>
+    </p>
+
+    <section class="flex flex-col gap-2" aria-label="Instruction precedence">
+      <h2 class="text-base font-semibold">Instruction precedence</h2>
+      <ol class="text-quiet list-decimal space-y-1 pl-5 text-sm">
+        <li>Explicit task, model and server boundary instructions.</li>
+        <li>Project instruction sources, in the order shown below.</li>
+        <li>Advertised project skills, which grant no extra authority.</li>
+      </ol>
+    </section>
+
+    <section
+      class="flex flex-col gap-2"
+      aria-label="Consumed instruction sources"
+    >
+      <h2 class="text-base font-semibold">Instruction sources used</h2>
+      {% if sources.is_empty() %}
+        <p class="text-quiet text-sm">
+          No automatic project instruction source affected this request.
+        </p>
+      {% else %}
+        <ol class="flex flex-col gap-3">
+          {% for source in sources %}
+            <li
+              class="border-base-300 bg-base-200 flex flex-col gap-1 rounded-sm border p-3"
+            >
+              <span class="text-quiet text-xs tracking-wide uppercase"
+                >{{ source.kind }}</span
+              >
+              <span class="font-mono text-sm break-all">{{ source.path }}</span>
+              <span class="text-quiet text-xs break-all"
+                >Scope {{ source.scope }}</span
+              >
+              <span class="text-quiet font-mono text-xs break-all"
+                >{{ source.content_hash }}</span
+              >
+            </li>
+          {% endfor %}
+        </ol>
+      {% endif %}
+    </section>
+
+    <section class="flex flex-col gap-2" aria-label="Advertised skills">
+      <h2 class="text-base font-semibold">Skills advertised</h2>
+      {% if advertised.is_empty() %}
+        <p class="text-quiet text-sm">
+          No project skill was advertised for this request.
+        </p>
+      {% else %}
+        <ul class="flex flex-col gap-3">
+          {% for skill in advertised %}
+            <li
+              class="border-base-300 bg-base-200 flex flex-col gap-1 rounded-sm border p-3"
+            >
+              <span class="font-mono text-sm break-all">{{ skill.path }}</span>
+              <span class="text-quiet text-xs break-all"
+                >Scope {{ skill.scope }}</span
+              >
+              <span class="text-quiet font-mono text-xs break-all"
+                >{{ skill.content_hash }}</span
+              >
+            </li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    </section>
+  {% endif %}
+</div>

@@ -897,6 +897,7 @@ fn assistant_turn_carries_call_arguments_and_matching_results() {
     reply.finish_tool(
         "call-1",
         ToolOutput {
+            resource: None,
             label: "read src/main.rs".to_owned(),
             output: "fn main() {}".to_owned(),
             command: None,

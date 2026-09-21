@@ -223,6 +223,7 @@ fn partial_progress_links_the_exact_attempt_and_settlement_identity() {
 fn command_output_escapes_untrusted_stream_text() {
     use crate::execution::command::{CommandChunk, CommandStream, CommandTermination};
     let tool = crate::providers::ToolOutput {
+        resource: None,
         label: "run `exit 3`".to_owned(),
         output: "oute\nrrer\nThe command exited with code 3.".to_owned(),
         command: Some(crate::execution::CommandResult::new(
@@ -274,12 +275,16 @@ fn usage_panel_labels_unknown_cost_instead_of_a_zero_total() {
             cache_read: None,
             cache_write: None,
         }),
+        sources: Vec::new(),
+        advertised: Vec::new(),
     };
     let unknown = RequestUsage {
         id: RequestId::generate().expect("request"),
         usage: ModelUsage::new(ProviderKind::OpenaiCodex, "gpt-5"),
         auth: AuthMethod::ApiKey,
         prices: None,
+        sources: Vec::new(),
+        advertised: Vec::new(),
     };
     let plan = RequestUsage {
         id: RequestId::generate().expect("request"),
@@ -290,6 +295,8 @@ fn usage_panel_labels_unknown_cost_instead_of_a_zero_total() {
         },
         auth: AuthMethod::Plan,
         prices: None,
+        sources: Vec::new(),
+        advertised: Vec::new(),
     };
     let html = activity_html(
         &conversation,

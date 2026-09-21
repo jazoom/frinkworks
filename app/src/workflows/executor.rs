@@ -2368,6 +2368,25 @@ async fn run_ordinary_file_agent(
     };
     let tools = crate::tools::advertised(&settings.tools, location);
     let definitions = crate::tools::definitions_for(&tools, location);
+    let skills = match sandbox {
+        Some(sandbox) => {
+            match crate::execution::discover_skills(sandbox, policy.grants(), secret).await {
+                Ok(skills) => skills,
+                Err(error) => {
+                    return StepOutcome::Failed {
+                        category: FailureCategory::Authority,
+                        error: Some(error.message().to_owned()),
+                    };
+                }
+            }
+        }
+        None => Vec::new(),
+    };
+    let instruction_sources = project_instructions
+        .sources()
+        .iter()
+        .map(|source| source.source.clone())
+        .collect::<Vec<_>>();
     let turns = if run.revision_feedback(&step_key).is_some() {
         // Revisions use verified candidate feedback, not the original conversation request.
         let inputs = run
@@ -2412,13 +2431,16 @@ async fn run_ordinary_file_agent(
         preamble = packet.prompt.clone();
         packet.request_messages()
     } else {
-        if let crate::workflows::input_context::ProjectInstructions::Present(text) =
-            project_instructions
-        {
-            append_preamble(&mut preamble, &text);
-        }
+        preamble = crate::execution::context::compose_resources(
+            &preamble,
+            project_instructions.sources(),
+            &[],
+        )
+        .text;
         job.turns.clone()
     };
+    let composed_resources = crate::execution::context::compose_resources(&preamble, &[], &skills);
+    preamble = composed_resources.text;
     let host =
         (location == crate::execution::ToolLocation::Host).then(|| crate::tools::HostRunSpec {
             session: job.session_id,
@@ -2448,6 +2470,8 @@ async fn run_ordinary_file_agent(
         conversation: Some(conversation),
         steering_session: Some(job.session_id),
         budget: crate::execution::BudgetPolicy::ordinary(),
+        sources: instruction_sources,
+        advertised: composed_resources.advertised,
     };
     let ended = crate::execution::run_agent_action(state, spec, turns, job.job.clone()).await;
     if ended.outcome == AgentOutcome::Completed {
@@ -2903,10 +2927,26 @@ async fn run_agent_step(
     } else {
         None
     };
+    let skills = match sandbox {
+        Some(sandbox) => {
+            match crate::execution::discover_skills(sandbox, policy.grants(), secret).await {
+                Ok(skills) => skills,
+                Err(error) => {
+                    return StepOutcome::Failed {
+                        category: FailureCategory::Authority,
+                        error: Some(error.message().to_owned()),
+                    };
+                }
+            }
+        }
+        None => Vec::new(),
+    };
+    let resource_context =
+        crate::execution::context::compose_resources(&packet.prompt, &[], &skills);
     let spec = AgentRunSpec {
         agent_id: job.agent_id,
         revision: 0,
-        preamble: packet.prompt.clone(),
+        preamble: resource_context.text,
         tools: packet.request_tools(),
         tool_ids: packet.tool_ids(),
         policy,
@@ -2930,6 +2970,8 @@ async fn run_agent_step(
         conversation: job.conversation_id,
         steering_session: None,
         budget: crate::execution::BudgetPolicy::ordinary(),
+        sources: packet.project_instructions.sources.clone(),
+        advertised: resource_context.advertised,
     };
     // Conversation workflow output belongs to attempt evidence, not the conversation reply.
     if job.conversation_id.is_some() && run.kind == super::run::RunKind::Configured {
@@ -2951,6 +2993,7 @@ async fn run_agent_step(
                 &turns,
                 compaction.covered_through as usize,
                 &compaction.text,
+                &compaction.request,
             ) {
                 Ok(projected) => turns = projected,
                 Err(error) => {

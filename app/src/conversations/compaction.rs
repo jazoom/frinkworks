@@ -109,7 +109,9 @@ pub(crate) fn project(
     }
     let split = split_index(messages, compaction).ok_or(HistoryError::Bound)?;
     let mut retained = super::history::project(&messages[split..], selection)?;
-    let mut projected = vec![summary_turn(&compaction.text)];
+    let mut summary = summary_turn(&compaction.text);
+    summary.usage.push(compaction.request.clone());
+    let mut projected = vec![summary];
     projected.append(&mut retained);
     Ok(projected)
 }
@@ -124,6 +126,7 @@ pub(crate) fn project_turns(
     turns: &[ChatTurn],
     covered_through: usize,
     text: &str,
+    request: &RequestUsage,
 ) -> Result<Vec<ChatTurn>, CompactionError> {
     if text.is_empty() || text.len() > MAXIMUM_SUMMARY_BYTES || text.contains('\0') {
         return Err(CompactionError::Malformed);
@@ -134,7 +137,9 @@ pub(crate) fn project_turns(
     if !exchange_end(turns, covered_through) {
         return Err(CompactionError::Unsettled);
     }
-    let mut projected = vec![summary_turn(text)];
+    let mut summary = summary_turn(text);
+    summary.usage.push(request.clone());
+    let mut projected = vec![summary];
     projected.extend(turns[covered_through + 1..].iter().cloned());
     Ok(projected)
 }
