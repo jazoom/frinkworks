@@ -448,6 +448,7 @@ fn pending_assistant_output_stays_out_of_the_next_request_history() {
         summary_requests: Vec::new(),
         messages: vec![
             ConversationMessage {
+                parent: None,
                 id: crate::conversations::MessageId::generate().expect("message id"),
                 continuation: Vec::new(),
                 role: MessageRole::User,
@@ -460,6 +461,7 @@ fn pending_assistant_output_stays_out_of_the_next_request_history() {
                 requests: Vec::new(),
             },
             ConversationMessage {
+                parent: None,
                 id: crate::conversations::MessageId::generate().expect("message id"),
                 continuation: Vec::new(),
                 role: MessageRole::Assistant,
@@ -472,6 +474,7 @@ fn pending_assistant_output_stays_out_of_the_next_request_history() {
                 requests: Vec::new(),
             },
             ConversationMessage {
+                parent: None,
                 id: crate::conversations::MessageId::generate().expect("message id"),
                 continuation: Vec::new(),
                 role: MessageRole::User,
@@ -484,6 +487,7 @@ fn pending_assistant_output_stays_out_of_the_next_request_history() {
                 requests: Vec::new(),
             },
             ConversationMessage {
+                parent: None,
                 id: crate::conversations::MessageId::generate().expect("message id"),
                 continuation: Vec::new(),
                 role: MessageRole::Assistant,

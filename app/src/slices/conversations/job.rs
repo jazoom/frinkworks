@@ -376,7 +376,7 @@ fn assistant_message(
 ) -> Option<crate::conversations::ConversationMessage> {
     state
         .conversations
-        .transcript_window(conversation, None)
+        .transcript_window(conversation, None, None)
         .ok()
         .flatten()
         .and_then(|(record, _)| {
@@ -476,7 +476,7 @@ fn final_frame(
     } else {
         state
             .conversations
-            .transcript_window(conversation, None)
+            .transcript_window(conversation, None, None)
             .ok()
             .flatten()
     };
@@ -494,6 +494,7 @@ fn final_frame(
             &record.title,
             "",
             Some(window),
+            None,
         );
         if patches
             .children("conversation-detail", &view.contents())

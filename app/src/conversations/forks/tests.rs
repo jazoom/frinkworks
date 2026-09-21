@@ -19,6 +19,7 @@ fn message(
     request: Option<JobId>,
 ) -> ConversationMessage {
     ConversationMessage {
+        parent: None,
         id: MessageId::generate().expect("message id"),
         role,
         text: text.to_owned(),

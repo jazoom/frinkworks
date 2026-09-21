@@ -731,7 +731,7 @@ async fn conversation_actions_bind_commands_and_draft_copy_to_the_record() {
     }
 }
 
-fn normalised(value: &str) -> String {
+pub(super) fn normalised(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
@@ -1787,7 +1787,7 @@ async fn catalogue_title_search_trims_case_and_combines_with_directory() {
     assert_eq!(state.conversations.list().len(), 3);
 }
 
-fn seeded_history(
+pub(super) fn seeded_history(
     state: &AppState,
     title: &str,
     count: usize,
@@ -1842,7 +1842,7 @@ async fn transcript_cursors_expose_bounded_history_across_representations() {
 
     let (_, window) = state
         .conversations
-        .transcript_window(&record.id, None)
+        .transcript_window(&record.id, None, None)
         .unwrap()
         .unwrap();
     let anchor = window.before_anchor.expect("earlier anchor");

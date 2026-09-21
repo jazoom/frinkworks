@@ -248,6 +248,7 @@ fn history_beyond_former_message_byte_and_catalogue_limits_survives_restart() {
         for _ in 0..600 {
             for role in [super::MessageRole::User, super::MessageRole::Assistant] {
                 record.messages.push(super::ConversationMessage {
+                    parent: None,
                     id: super::MessageId::generate().unwrap(),
                     role,
                     text: if role == super::MessageRole::User {
@@ -266,6 +267,9 @@ fn history_beyond_former_message_byte_and_catalogue_limits_survives_restart() {
                 });
             }
         }
+        let last_user = record.messages.len() - 2;
+        record.messages[last_user].text = "late-search-sentinel".to_owned();
+        super::project_active_path(&mut record);
         store
             .persist(&mut store.database(), Some(&previous), &record)
             .unwrap();
@@ -294,6 +298,24 @@ fn history_beyond_former_message_byte_and_catalogue_limits_survives_restart() {
     let record = reopened.get(&ids[0]).unwrap();
     assert_eq!(record.messages.len(), 1200);
     assert_eq!(record.summary_requests.len(), 300);
+    let first = reopened
+        .tree_window(&record.id, None, Some("late-search-sentinel"), None)
+        .unwrap()
+        .unwrap();
+    assert!(first.entries.is_empty());
+    assert!(first.partial);
+    let next = reopened
+        .tree_window(
+            &record.id,
+            first.next_cursor,
+            Some("late-search-sentinel"),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(next.entries.len(), 1);
+    assert_eq!(next.entries[0].id, record.messages[1198].id);
+    assert!(!next.has_more);
     assert!(
         record
             .messages
@@ -320,9 +342,9 @@ fn append_and_failed_attempts_preserve_existing_rows_and_append_identity() {
     let connection = rusqlite::Connection::open(dir.path().join("conversations.sqlite3")).unwrap();
     connection
         .execute_batch(
-            "CREATE TRIGGER protect_update BEFORE UPDATE ON messages WHEN OLD.position < 2
+            "CREATE TRIGGER protect_update BEFORE UPDATE ON messages WHEN OLD.sequence < 2
          BEGIN SELECT RAISE(ABORT, 'old message changed'); END;
-         CREATE TRIGGER protect_delete BEFORE DELETE ON messages WHEN OLD.position < 2
+         CREATE TRIGGER protect_delete BEFORE DELETE ON messages WHEN OLD.sequence < 2
          BEGIN SELECT RAISE(ABORT, 'old message deleted'); END;",
         )
         .unwrap();
@@ -1345,9 +1367,20 @@ fn transcript_windows_bind_to_one_conversation_and_follow_append_order() {
     let first = store.create("First".to_owned()).unwrap();
     let second = store.create("Second".to_owned()).unwrap();
     let first = seed_exchanges(&store, &first.id, selection.clone(), 70);
+    assert_eq!(
+        store.transcript_window(
+            &second.id,
+            Some(TranscriptCursor::Around(first.messages[0].id)),
+            None
+        ),
+        Err(ConversationError::Entry)
+    );
     let second = seed_exchanges(&store, &second.id, selection.clone(), 2);
 
-    let (_, latest) = store.transcript_window(&first.id, None).unwrap().unwrap();
+    let (_, latest) = store
+        .transcript_window(&first.id, None, None)
+        .unwrap()
+        .unwrap();
     assert_eq!(latest.messages.len(), TRANSCRIPT_WINDOW);
     assert_eq!(latest.total, first.messages.len());
     assert!(latest.has_before);
@@ -1359,7 +1392,7 @@ fn transcript_windows_bind_to_one_conversation_and_follow_append_order() {
 
     let anchor = latest.before_anchor.expect("earlier anchor");
     let (_, earlier) = store
-        .transcript_window(&first.id, Some(TranscriptCursor::Before(anchor)))
+        .transcript_window(&first.id, Some(TranscriptCursor::Before(anchor)), None)
         .unwrap()
         .unwrap();
     assert!(earlier.has_after);
@@ -1369,7 +1402,7 @@ fn transcript_windows_bind_to_one_conversation_and_follow_append_order() {
     // A later append never changes an existing window's progress or content.
     let first = seed_exchanges(&store, &first.id, selection, 1);
     let (_, repeated) = store
-        .transcript_window(&first.id, Some(TranscriptCursor::Before(anchor)))
+        .transcript_window(&first.id, Some(TranscriptCursor::Before(anchor)), None)
         .unwrap()
         .unwrap();
     assert_eq!(
@@ -1384,7 +1417,7 @@ fn transcript_windows_bind_to_one_conversation_and_follow_append_order() {
     // A cursor from another conversation is a foreign entry, not a position.
     let foreign = second.messages[0].id;
     assert_eq!(
-        store.transcript_window(&first.id, Some(TranscriptCursor::Around(foreign))),
+        store.transcript_window(&first.id, Some(TranscriptCursor::Around(foreign)), None),
         Err(ConversationError::Entry)
     );
 }
@@ -1398,7 +1431,7 @@ fn transcript_windows_support_before_after_and_around_modes() {
     let middle = record.messages[record.messages.len() / 2].id;
 
     let (_, around) = store
-        .transcript_window(&record.id, Some(TranscriptCursor::Around(middle)))
+        .transcript_window(&record.id, Some(TranscriptCursor::Around(middle)), None)
         .unwrap()
         .unwrap();
     assert_eq!(around.messages.len(), 1);
@@ -1406,16 +1439,258 @@ fn transcript_windows_support_before_after_and_around_modes() {
     assert!(around.has_before && around.has_after);
 
     let (_, after) = store
-        .transcript_window(&record.id, Some(TranscriptCursor::After(middle)))
+        .transcript_window(&record.id, Some(TranscriptCursor::After(middle)), None)
         .unwrap()
         .unwrap();
     assert!(!after.messages.iter().any(|message| message.id == middle));
     assert!(after.has_before);
+    let middle_index = record.messages.len() / 2;
+    assert_eq!(after.messages, record.messages[middle_index + 1..]);
 
     let (_, before) = store
-        .transcript_window(&record.id, Some(TranscriptCursor::Before(middle)))
+        .transcript_window(&record.id, Some(TranscriptCursor::Before(middle)), None)
         .unwrap()
         .unwrap();
     assert!(!before.messages.iter().any(|message| message.id == middle));
     assert!(before.has_after);
+}
+
+#[test]
+fn active_path_parent_chain_survives_restart() {
+    let dir = tempfile::tempdir().expect("directory");
+    let record;
+    {
+        let store = ConversationStore::open(dir.path().to_path_buf()).expect("store");
+        let selection = ModelSelection::new(ProviderKind::Xai, "model".to_owned(), None).unwrap();
+        let created = store.create("Chain".to_owned()).expect("create");
+        record = seed_exchanges(&store, &created.id, selection, 3);
+    }
+    assert_eq!(record.messages[0].parent, None);
+    for pair in record.messages.windows(2) {
+        assert_eq!(pair[1].parent, Some(pair[0].id));
+    }
+    let reopened = ConversationStore::open(dir.path().to_path_buf()).expect("reopen");
+    let loaded = reopened.get(&record.id).expect("loaded");
+    assert_eq!(loaded.messages, record.messages);
+    assert_eq!(
+        reopened.update(&record.id, 0, false, |record| {
+            record.messages.swap(0, 1);
+            Ok(())
+        }),
+        Err(ConversationError::Message)
+    );
+    assert_eq!(reopened.get(&record.id).unwrap().messages, loaded.messages);
+    assert_eq!(
+        reopened
+            .metadata_for(&record.id)
+            .and_then(|metadata| metadata.active_leaf),
+        record.messages.last().map(|message| message.id)
+    );
+}
+
+#[test]
+fn foreign_parent_fails_closed_on_load() {
+    let dir = tempfile::tempdir().expect("directory");
+    let (first, second);
+    {
+        let store = ConversationStore::open(dir.path().to_path_buf()).expect("store");
+        let selection = ModelSelection::new(ProviderKind::Xai, "model".to_owned(), None).unwrap();
+        let a = store.create("First".to_owned()).expect("create");
+        first = seed_exchanges(&store, &a.id, selection.clone(), 1);
+        let b = store.create("Second".to_owned()).expect("create");
+        second = seed_exchanges(&store, &b.id, selection, 1);
+    }
+    {
+        let connection =
+            rusqlite::Connection::open(dir.path().join("conversations.sqlite3")).expect("db");
+        // Cross-conversation references are not part of the same history.
+        connection
+            .execute(
+                "UPDATE messages SET message = json_set(message, '$.parent', ?3) \
+                 WHERE conversation_id = ?1 AND id = ?2",
+                rusqlite::params![
+                    first.id.as_hex(),
+                    first.messages[0].id.as_hex(),
+                    second.messages[0].id.as_hex()
+                ],
+            )
+            .expect("tamper");
+    }
+    let store = ConversationStore::open(dir.path().to_path_buf()).expect("reopen");
+    assert!(store.get(&first.id).is_none());
+    assert_eq!(
+        store.transcript_window(&first.id, None, None),
+        Err(ConversationError::Corrupt)
+    );
+    assert_eq!(
+        store.tree_window(&first.id, None, None, None),
+        Err(ConversationError::Corrupt)
+    );
+    assert!(store.get(&second.id).is_some());
+}
+
+#[test]
+fn cyclic_parent_chain_fails_closed_without_looping() {
+    let dir = tempfile::tempdir().expect("directory");
+    let record;
+    {
+        let store = ConversationStore::open(dir.path().to_path_buf()).expect("store");
+        let selection = ModelSelection::new(ProviderKind::Xai, "model".to_owned(), None).unwrap();
+        let created = store.create("Cycle".to_owned()).expect("create");
+        record = seed_exchanges(&store, &created.id, selection, 1);
+    }
+    {
+        let connection =
+            rusqlite::Connection::open(dir.path().join("conversations.sqlite3")).expect("db");
+        // The root points at its own child, so the parent walk revisits an entry.
+        connection
+            .execute(
+                "UPDATE messages SET message = json_set(message, '$.parent', ?3) \
+                 WHERE conversation_id = ?1 AND id = ?2",
+                rusqlite::params![
+                    record.id.as_hex(),
+                    record.messages[0].id.as_hex(),
+                    record.messages[1].id.as_hex()
+                ],
+            )
+            .expect("tamper");
+    }
+    let store = ConversationStore::open(dir.path().to_path_buf()).expect("reopen");
+    assert!(store.get(&record.id).is_none());
+    assert_eq!(
+        store.transcript_window(&record.id, None, None),
+        Err(ConversationError::Corrupt)
+    );
+}
+
+#[test]
+fn inspection_of_a_retained_sibling_never_changes_the_active_projection() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = ConversationStore::open(dir.path().to_path_buf()).unwrap();
+    let selection = ModelSelection::new(ProviderKind::Xai, "model".to_owned(), None).unwrap();
+    let created = store.create("Branches".to_owned()).unwrap();
+    let record = seed_exchanges(&store, &created.id, selection.clone(), 2);
+    let job = JobId::generate().unwrap();
+    let mut record = store
+        .begin_message(
+            &record.id,
+            record.revision,
+            selection,
+            job,
+            "Active input".to_owned(),
+        )
+        .unwrap();
+    let mut sibling = record.messages[1].clone();
+    sibling.id = super::MessageId::generate().unwrap();
+    sibling.text = "Retained alternative".to_owned();
+    sibling.request = Some(JobId::generate().unwrap());
+    let connection = rusqlite::Connection::open(dir.path().join("conversations.sqlite3")).unwrap();
+    connection
+        .execute(
+            "INSERT INTO messages (conversation_id, sequence, id, message) VALUES (?1, 6, ?2, ?3)",
+            rusqlite::params![
+                record.id.as_hex(),
+                sibling.id.as_hex(),
+                serde_json::to_string(&super::message_to_file(&sibling)).unwrap()
+            ],
+        )
+        .unwrap();
+
+    store
+        .checkpoint_output(&record.id, job, "Active reply")
+        .unwrap();
+    record.messages.last_mut().unwrap().text = "Active reply".to_owned();
+    assert_eq!(store.get(&record.id).unwrap().messages, record.messages);
+    assert_eq!(
+        store.transcript_window(
+            &record.id,
+            Some(super::TranscriptCursor::Around(sibling.id)),
+            None
+        ),
+        Err(ConversationError::Entry)
+    );
+    let (_, window) = store
+        .transcript_window(&record.id, None, Some(sibling.id))
+        .unwrap()
+        .unwrap();
+    assert!(!window.live);
+    assert_eq!(
+        window.messages,
+        vec![record.messages[0].clone(), sibling.clone()]
+    );
+    let children = store
+        .tree_window(&record.id, None, None, Some(record.messages[0].id))
+        .unwrap()
+        .unwrap();
+    assert_eq!(children.entries.len(), 2);
+    assert!(children.entries[0].on_active_path);
+    assert!(!children.entries[1].on_active_path);
+    assert_eq!(store.get(&record.id).unwrap().messages, record.messages);
+
+    connection.execute("UPDATE conversations SET metadata = json_set(metadata, '$.active-leaf', ?2) WHERE id = ?1", rusqlite::params![record.id.as_hex(), super::MessageId::generate().unwrap().as_hex()]).unwrap();
+    assert_eq!(
+        store.transcript_window(&record.id, None, None),
+        Err(ConversationError::Corrupt)
+    );
+}
+
+#[test]
+fn tree_window_pages_by_append_order_and_filters_text() {
+    let store = ConversationStore::in_memory();
+    let selection = ModelSelection::new(ProviderKind::Xai, "model".to_owned(), None).unwrap();
+    let created = store.create("Tree".to_owned()).expect("create");
+    let record = seed_exchanges(&store, &created.id, selection, 40);
+
+    let first = store
+        .tree_window(&record.id, None, None, None)
+        .unwrap()
+        .expect("window");
+    assert_eq!(first.entries.len(), super::TREE_PAGE);
+    assert_eq!(first.total, record.messages.len());
+    assert!(first.has_more);
+    let cursor = first.next_cursor.expect("cursor");
+    let second = store
+        .tree_window(&record.id, Some(cursor), None, None)
+        .unwrap()
+        .expect("window");
+    assert_eq!(
+        second.entries.len(),
+        record.messages.len() - super::TREE_PAGE
+    );
+    assert!(!second.has_more);
+
+    let search = store
+        .tree_window(&record.id, None, Some("Question 7"), None)
+        .unwrap()
+        .expect("window");
+    assert!(!search.entries.is_empty());
+    assert!(
+        search
+            .entries
+            .iter()
+            .all(|entry| entry.text.contains("Question 7"))
+    );
+    assert!(!search.partial);
+
+    let children = store
+        .tree_window(&record.id, None, None, Some(record.messages[0].id))
+        .unwrap()
+        .unwrap();
+    assert_eq!(children.entries.len(), 1);
+    assert_eq!(children.entries[0].id, record.messages[1].id);
+
+    let first = store
+        .tree_window(&record.id, None, Some("e"), None)
+        .unwrap()
+        .unwrap();
+    assert!(first.partial);
+    let next = store
+        .tree_window(&record.id, first.next_cursor, Some("e"), None)
+        .unwrap()
+        .unwrap();
+    assert!(!next.has_more);
+    assert_eq!(
+        first.entries.len() + next.entries.len(),
+        record.messages.len()
+    );
 }

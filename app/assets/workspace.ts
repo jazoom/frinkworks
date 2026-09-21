@@ -81,7 +81,7 @@ export function initWorkspace(
             expanded = false;
         }
         const companion = !!root.querySelector(
-            "#workflow-detail, #activity-detail",
+            "#workflow-detail, #activity-detail, #tree-detail",
         );
         if (previousCompanion && !companion) workOpen = false;
         previousCompanion = companion;
@@ -347,9 +347,11 @@ export function initWorkspace(
         const destination = returnFocus?.isConnected
             ? returnFocus
             : root.querySelector<HTMLElement>(
-                  root.querySelector("#workflow-detail")
-                      ? "[data-workflow-toggle]"
-                      : "[data-work-toggle]",
+                  root.querySelector("#tree-detail")
+                      ? "[data-tree-toggle]"
+                      : root.querySelector("#workflow-detail")
+                        ? "[data-workflow-toggle]"
+                        : "[data-work-toggle]",
               );
         destination?.focus();
     }
@@ -524,18 +526,20 @@ export function initWorkspace(
         { signal },
     );
     mobile.addEventListener("change", () => sync(), { signal });
-    sync();
+    sync(!!root.querySelector("#tree-detail"));
     return {
         reconcile(context) {
             let openWork = false;
             if (
                 context.cause === "location" &&
                 context.detail.cause !== "command-patch-replacement" &&
-                root.querySelector("#workflow-detail, #activity-detail")
+                root.querySelector(
+                    "#workflow-detail, #activity-detail, #tree-detail",
+                )
             ) {
                 const url = new URL(context.detail.url, location.href);
                 if (
-                    /^\/conversations\/[^/]+\/(?:workflow|activity)$/.test(
+                    /^\/conversations\/[^/]+\/(?:workflow|activity|tree)$/.test(
                         url.pathname,
                     )
                 ) {

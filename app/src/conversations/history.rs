@@ -45,6 +45,9 @@ pub(crate) enum MessageStatus {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ConversationMessage {
     pub(crate) id: MessageId,
+    /// The immutable parent identity inside one conversation. The first entry
+    /// of a path has no parent. A later branch selects a different child.
+    pub(crate) parent: Option<MessageId>,
     pub(crate) role: MessageRole,
     pub(crate) text: String,
     pub(crate) activity: Vec<AssistantActivity>,
@@ -553,8 +556,10 @@ pub(crate) fn valid_continuation(metadata: &[ContinuationMetadata]) -> bool {
     true
 }
 
-/// Build the provider request projection. Incompatible opaque continuation
-/// fields are excluded rather than replayed across a provider change.
+/// Build the provider request projection. The caller supplies the active
+/// path; an off-path or abandoned branch is never projected. Incompatible
+/// opaque continuation fields are excluded rather than replayed across a
+/// provider change.
 pub(crate) fn project(
     messages: &[ConversationMessage],
     selection: Option<&ModelSelection>,

@@ -209,6 +209,7 @@ fn apply_handoff(
             return Err(ConversationError::Conflict);
         }
         destination.messages.push(ConversationMessage {
+            parent: None,
             id: MessageId::generate().map_err(|_| ConversationError::Random)?,
             role: MessageRole::User,
             text: pending.prompt.clone(),
@@ -221,6 +222,7 @@ fn apply_handoff(
             requests: Vec::new(),
         });
         destination.messages.push(ConversationMessage {
+            parent: None,
             id: MessageId::generate().map_err(|_| ConversationError::Random)?,
             role: MessageRole::Assistant,
             text: String::new(),
@@ -264,5 +266,7 @@ fn apply_handoff(
             .ok_or(ConversationError::Revision)?;
         source.updated_at_ms = now_ms().max(source.updated_at_ms);
     }
+    super::project_active_path(source);
+    super::project_active_path(destination);
     Ok(())
 }

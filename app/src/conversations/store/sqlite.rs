@@ -7,12 +7,16 @@ use crate::conversations::history::RequestUsage;
 
 use super::{
     CATALOGUE_VERSION, ConversationError, ConversationId, ConversationMessage,
-    ConversationMetadata, ConversationRecord, MessageFile, MessageId, MessageStatus, MetadataFile,
-    TranscriptCursor, TranscriptWindow, message_to_file, metadata_to_file, model_from_file,
-    parse_stored_network, record_from_parts,
+    ConversationMetadata, ConversationRecord, MessageFile, MessageId, MessageRole, MessageStatus,
+    MetadataFile, TREE_PAGE, TranscriptCursor, TranscriptWindow, TreeEntry, TreeWindow,
+    message_to_file, metadata_to_file, model_from_file, parse_stored_network, record_from_parts,
 };
 
 const DATABASE_NAME: &str = "conversations.sqlite3";
+
+/// One bounded scan for a text search. The page reports a partial result when
+/// the scan reaches this budget before the conversation ends.
+const TREE_SCAN: usize = 1024;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS conversations (
@@ -34,12 +38,12 @@ CREATE TABLE IF NOT EXISTS messages (
     sequence INTEGER NOT NULL,
     id TEXT NOT NULL,
     message TEXT NOT NULL,
-    position INTEGER NOT NULL,
+    parent TEXT GENERATED ALWAYS AS (json_extract(message, '$.parent')) STORED,
     PRIMARY KEY (conversation_id, sequence),
     UNIQUE (conversation_id, id),
     FOREIGN KEY (conversation_id) REFERENCES conversations(id)
 );
-CREATE INDEX IF NOT EXISTS message_position ON messages(conversation_id, position);
+CREATE INDEX IF NOT EXISTS message_parent ON messages(conversation_id, parent, sequence);
 CREATE TABLE IF NOT EXISTS summary_requests (
     conversation_id TEXT NOT NULL,
     sequence INTEGER NOT NULL,
@@ -50,6 +54,17 @@ CREATE TABLE IF NOT EXISTS summary_requests (
     FOREIGN KEY (conversation_id) REFERENCES conversations(id)
 );
 ";
+
+// Strict append order bounds the walk without cumulative ancestor strings.
+// Keep message bodies outside the recursive work table.
+const PATH_CTE: &str = "WITH RECURSIVE path(id, parent, sequence, depth) AS (
+    SELECT id, parent, sequence, 0 FROM messages
+        WHERE conversation_id = ?1 AND id = ?2
+    UNION ALL
+    SELECT m.id, m.parent, m.sequence, p.depth + 1
+        FROM messages m JOIN path p ON m.id = p.parent
+        WHERE m.conversation_id = ?1 AND m.sequence < p.sequence
+)";
 
 pub(crate) struct Database {
     connection: Connection,
@@ -115,7 +130,9 @@ impl Database {
         let Some((metadata, summary_requests)) = self.load_header(id)? else {
             return Ok(None);
         };
-        let messages = self.load_messages(id)?;
+        // The active path is the only projection that a full load returns.
+        // `load_header` fails closed when a stored path has no active leaf.
+        let messages = self.load_messages(id, metadata.active_leaf.as_deref())?;
         record_from_parts(metadata, messages, summary_requests, true).map(Some)
     }
 
@@ -153,6 +170,41 @@ impl Database {
         if metadata.id != id.as_hex() {
             return Err(ConversationError::Corrupt);
         }
+        // An active leaf is the only entry point to a retained path. A format
+        // without one, but with retained rows, is incompatible and fails closed.
+        if metadata.active_leaf.is_none() {
+            let has_messages: bool = self
+                .connection
+                .query_row(
+                    "SELECT EXISTS (SELECT 1 FROM messages WHERE conversation_id = ?1)",
+                    [id.as_hex()],
+                    |row| row.get(0),
+                )
+                .map_err(map_error)?;
+            if has_messages {
+                return Err(ConversationError::Corrupt);
+            }
+        }
+        let invalid: bool = self
+            .connection
+            .query_row(
+                "SELECT EXISTS (
+                SELECT 1 FROM messages m WHERE m.conversation_id = ?1 AND (
+                    (m.parent IS NOT NULL AND NOT EXISTS (
+                        SELECT 1 FROM messages p WHERE p.conversation_id = m.conversation_id
+                        AND p.id = m.parent AND p.sequence < m.sequence
+                    ))
+                )
+            ) OR (?2 IS NOT NULL AND NOT EXISTS (
+                SELECT 1 FROM messages WHERE conversation_id = ?1 AND id = ?2
+            ))",
+                params![id.as_hex(), metadata.active_leaf],
+                |row| row.get(0),
+            )
+            .map_err(map_error)?;
+        if invalid {
+            return Err(ConversationError::Corrupt);
+        }
         let summary_requests = self.load_summary_requests(id)?;
         Ok(Some((metadata, summary_requests)))
     }
@@ -163,118 +215,130 @@ impl Database {
         &self,
         id: &ConversationId,
         cursor: Option<TranscriptCursor>,
+        leaf: Option<MessageId>,
         size: usize,
     ) -> Result<TranscriptWindow, ConversationError> {
         let hex = id.as_hex();
-        let total: i64 = self
+        let active_leaf = self
+            .load_header(id)?
+            .and_then(|(metadata, _)| metadata.active_leaf)
+            .map(|value| MessageId::parse(&value).ok_or(ConversationError::Corrupt))
+            .transpose()?;
+        let live = cursor.is_none() && leaf.is_none();
+        let leaf = leaf.or(active_leaf);
+        let size = size.max(1);
+        let limit = (size + 1) as i64;
+        let Some(leaf) = leaf else {
+            if cursor.is_some() {
+                return Err(ConversationError::Entry);
+            }
+            return Ok(TranscriptWindow {
+                messages: Vec::new(),
+                has_before: false,
+                has_after: false,
+                before_anchor: None,
+                after_anchor: None,
+                total: 0,
+                live,
+            });
+        };
+        let leaf_hex = leaf.as_hex();
+        let exists: bool = self
             .connection
             .query_row(
-                "SELECT COUNT(*) FROM messages WHERE conversation_id = ?1",
-                [&hex],
+                "SELECT EXISTS (SELECT 1 FROM messages WHERE conversation_id = ?1 AND id = ?2)",
+                params![hex, leaf_hex],
                 |row| row.get(0),
             )
             .map_err(map_error)?;
-        let size = size.max(1);
-        let limit = (size + 1) as i64;
-        let live = cursor.is_none();
-        let mut rows: Vec<(i64, i64, ConversationMessage)>;
+        if !exists {
+            return Err(ConversationError::Entry);
+        }
+        let total = self.path_count(&hex, &leaf_hex)?;
         let mut has_before = false;
         let mut has_after = false;
         let mut fallback: Option<MessageId> = None;
-        match cursor {
+        // `depth` is the distance from the selected leaf. The live tail and a
+        // leaf-ward window select the smallest depths; an earlier window
+        // selects the largest depths.
+        let rows: Vec<(i64, ConversationMessage)> = match cursor {
             None => {
-                rows = window_rows(
-                    &self.connection,
-                    "SELECT sequence, position, message FROM messages WHERE conversation_id = ?1 ORDER BY sequence DESC LIMIT ?2",
-                    params![hex, limit],
+                let mut rows = self.path_rows(
+                    &format!(
+                        "{PATH_CTE} SELECT (SELECT message FROM messages WHERE conversation_id = ?1 AND id = path.id), depth FROM path ORDER BY depth ASC LIMIT ?3"
+                    ),
+                    params![hex, leaf_hex, limit],
                 )?;
                 if rows.len() > size {
                     has_before = true;
                     rows.truncate(size);
                 }
+                rows.reverse();
+                rows
             }
             Some(cursor) => {
                 let message = cursor.message();
-                let sequence: Option<i64> = self
-                    .connection
-                    .query_row(
-                        "SELECT sequence FROM messages WHERE conversation_id = ?1 AND id = ?2",
-                        params![hex, message.as_hex()],
-                        |row| row.get(0),
-                    )
-                    .optional()
-                    .map_err(map_error)?;
-                let Some(sequence) = sequence else {
-                    return Err(ConversationError::Entry);
-                };
+                let depth = self
+                    .path_depth(&hex, &leaf_hex, &message.as_hex())?
+                    .ok_or(ConversationError::Entry)?;
                 fallback = Some(message);
                 match cursor {
                     TranscriptCursor::Before(_) => {
-                        rows = window_rows(
-                            &self.connection,
-                            "SELECT sequence, position, message FROM messages WHERE conversation_id = ?1 AND sequence < ?2 ORDER BY sequence DESC LIMIT ?3",
-                            params![hex, sequence, limit],
+                        let mut rows = self.path_rows(
+                            &format!(
+                                "{PATH_CTE} SELECT (SELECT message FROM messages WHERE conversation_id = ?1 AND id = path.id), depth FROM path WHERE depth > ?3 ORDER BY depth ASC LIMIT ?4"
+                            ),
+                            params![hex, leaf_hex, depth, limit],
                         )?;
                         if rows.len() > size {
                             has_before = true;
                             rows.truncate(size);
                         }
                         has_after = true;
+                        rows.reverse();
+                        rows
                     }
                     TranscriptCursor::After(_) => {
-                        rows = window_rows(
-                            &self.connection,
-                            "SELECT sequence, position, message FROM messages WHERE conversation_id = ?1 AND sequence > ?2 ORDER BY sequence ASC LIMIT ?3",
-                            params![hex, sequence, limit],
+                        let mut rows = self.path_rows(
+                            &format!(
+                                "{PATH_CTE} SELECT (SELECT message FROM messages WHERE conversation_id = ?1 AND id = path.id), depth FROM path WHERE depth < ?3 ORDER BY depth DESC LIMIT ?4"
+                            ),
+                            params![hex, leaf_hex, depth, limit],
                         )?;
                         if rows.len() > size {
                             has_after = true;
                             rows.truncate(size);
                         }
                         has_before = true;
+                        rows
                     }
                     TranscriptCursor::Around(_) => {
                         // A canonical entry view keeps byte-budget omissions reachable.
-                        let after_size = 0;
-                        let before_size = 1;
-                        let mut before = window_rows(
-                            &self.connection,
-                            "SELECT sequence, position, message FROM messages WHERE conversation_id = ?1 AND sequence <= ?2 ORDER BY sequence DESC LIMIT ?3",
-                            params![hex, sequence, (before_size + 1) as i64],
+                        let rows = self.path_rows(
+                            &format!(
+                                "{PATH_CTE} SELECT (SELECT message FROM messages WHERE conversation_id = ?1 AND id = path.id), depth FROM path WHERE depth = ?3 LIMIT 1"
+                            ),
+                            params![hex, leaf_hex, depth],
                         )?;
-                        if before.len() > before_size {
-                            has_before = true;
-                            before.truncate(before_size);
-                        }
-                        let mut after = window_rows(
-                            &self.connection,
-                            "SELECT sequence, position, message FROM messages WHERE conversation_id = ?1 AND sequence > ?2 ORDER BY sequence ASC LIMIT ?3",
-                            params![hex, sequence, (after_size + 1) as i64],
-                        )?;
-                        if after.len() > after_size {
-                            has_after = true;
-                            after.truncate(after_size);
-                        }
-                        before.extend(after);
-                        rows = before;
+                        has_before = depth + 1 < total;
+                        has_after = depth > 0;
+                        rows
                     }
                 }
             }
-        }
+        };
         let before_anchor = rows
             .iter()
-            .min_by_key(|(sequence, _, _)| *sequence)
-            .map(|(_, _, message)| message.id)
+            .max_by_key(|(depth, _)| *depth)
+            .map(|(_, message)| message.id)
             .or(fallback);
         let after_anchor = rows
             .iter()
-            .max_by_key(|(sequence, _, _)| *sequence)
-            .map(|(_, _, message)| message.id)
+            .min_by_key(|(depth, _)| *depth)
+            .map(|(_, message)| message.id)
             .or(fallback);
-        // Presentation order is the stored position, never append order.
-        rows.sort_by_key(|(_, position, _)| *position);
         Ok(TranscriptWindow {
-            messages: rows.into_iter().map(|(_, _, message)| message).collect(),
+            messages: rows.into_iter().map(|(_, message)| message).collect(),
             has_before,
             has_after,
             before_anchor,
@@ -284,15 +348,238 @@ impl Database {
         })
     }
 
-    fn load_messages(&self, id: &ConversationId) -> Result<Vec<MessageFile>, ConversationError> {
-        let mut statement = self
+    fn path_count(&self, conversation: &str, leaf: &str) -> Result<i64, ConversationError> {
+        self.connection
+            .query_row(
+                &format!("{PATH_CTE} SELECT COUNT(*) FROM path"),
+                params![conversation, leaf],
+                |row| row.get(0),
+            )
+            .map_err(map_error)
+    }
+
+    fn path_depth(
+        &self,
+        conversation: &str,
+        leaf: &str,
+        target: &str,
+    ) -> Result<Option<i64>, ConversationError> {
+        self.connection
+            .query_row(
+                &format!("{PATH_CTE} SELECT depth FROM path WHERE id = ?3 LIMIT 1"),
+                params![conversation, leaf, target],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(map_error)
+    }
+
+    fn path_rows(
+        &self,
+        sql: &str,
+        parameters: impl rusqlite::Params,
+    ) -> Result<Vec<(i64, ConversationMessage)>, ConversationError> {
+        let mut statement = self.connection.prepare(sql).map_err(map_error)?;
+        let rows = statement
+            .query_map(parameters, |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
+            .map_err(map_error)?;
+        let mut result = Vec::new();
+        for row in rows {
+            let (json, depth) = row.map_err(map_error)?;
+            let file: MessageFile =
+                serde_json::from_str(&json).map_err(|_| ConversationError::Corrupt)?;
+            result.push((depth, super::message_from_file(file)?));
+        }
+        Ok(result)
+    }
+
+    /// One bounded page of retained entries in immutable append order. A
+    /// search scans at most `TREE_SCAN` entries and reports a partial result
+    /// when that budget ends before the conversation does.
+    pub(crate) fn tree_window(
+        &self,
+        id: &ConversationId,
+        after: Option<i64>,
+        search: Option<&str>,
+        parent: Option<MessageId>,
+    ) -> Result<TreeWindow, ConversationError> {
+        let hex = id.as_hex();
+        let active_leaf = self.metadata(id)?.and_then(|metadata| metadata.active_leaf);
+        let parent = parent.map(|id| id.as_hex());
+        if let Some(parent) = &parent {
+            let exists: bool = self
+                .connection
+                .query_row(
+                    "SELECT EXISTS (SELECT 1 FROM messages WHERE conversation_id = ?1 AND id = ?2)",
+                    params![hex, parent],
+                    |row| row.get(0),
+                )
+                .map_err(map_error)?;
+            if !exists {
+                return Err(ConversationError::Entry);
+            }
+        }
+        let total: i64 = self
             .connection
-            .prepare(
-                "SELECT id, message FROM messages WHERE conversation_id = ?1 ORDER BY position ASC",
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE conversation_id = ?1 AND (?2 IS NULL OR parent = ?2)",
+                params![hex, parent],
+                |row| row.get(0),
             )
             .map_err(map_error)?;
+        let after = after.unwrap_or(-1);
+        let (entries, has_more, next_cursor, partial) =
+            match search.map(str::trim).filter(|query| !query.is_empty()) {
+                Some(query) => {
+                    let scanned =
+                        self.tree_rows(&hex, after, TREE_SCAN, parent.as_deref(), active_leaf)?;
+                    let needle = query.to_lowercase();
+                    let mut matched: Vec<TreeEntry> = scanned
+                        .iter()
+                        .filter(|entry| entry.text.to_lowercase().contains(&needle))
+                        .cloned()
+                        .collect();
+                    let full_scan = scanned.len() == TREE_SCAN;
+                    let more_rows = full_scan
+                        && self.has_rows_after(
+                            &hex,
+                            scanned.last().map(|e| e.sequence),
+                            parent.as_deref(),
+                        )?;
+                    let truncated = matched.len() > TREE_PAGE;
+                    let partial = truncated || more_rows;
+                    matched.truncate(TREE_PAGE);
+                    let next_cursor = if truncated {
+                        matched.last().map(|entry| entry.sequence)
+                    } else if more_rows {
+                        scanned.last().map(|entry| entry.sequence)
+                    } else {
+                        None
+                    };
+                    (matched, partial, next_cursor, partial)
+                }
+                None => {
+                    let mut rows =
+                        self.tree_rows(&hex, after, TREE_PAGE + 1, parent.as_deref(), active_leaf)?;
+                    let has_more = rows.len() > TREE_PAGE;
+                    if has_more {
+                        rows.truncate(TREE_PAGE);
+                    }
+                    let next_cursor = has_more
+                        .then(|| rows.last().map(|entry| entry.sequence))
+                        .flatten();
+                    (rows, has_more, next_cursor, false)
+                }
+            };
+        Ok(TreeWindow {
+            entries,
+            active_leaf,
+            has_more,
+            next_cursor,
+            total: usize::try_from(total).unwrap_or(usize::MAX),
+            partial,
+        })
+    }
+
+    fn has_rows_after(
+        &self,
+        conversation: &str,
+        sequence: Option<i64>,
+        parent: Option<&str>,
+    ) -> Result<bool, ConversationError> {
+        let Some(sequence) = sequence else {
+            return Ok(false);
+        };
+        self.connection
+            .query_row(
+                "SELECT EXISTS (SELECT 1 FROM messages WHERE conversation_id = ?1 AND sequence > ?2 AND (?3 IS NULL OR parent = ?3))",
+                params![conversation, sequence, parent],
+                |row| row.get(0),
+            )
+            .map_err(map_error)
+    }
+
+    fn tree_rows(
+        &self,
+        conversation: &str,
+        after: i64,
+        limit: usize,
+        parent: Option<&str>,
+        active_leaf: Option<MessageId>,
+    ) -> Result<Vec<TreeEntry>, ConversationError> {
+        let mut statement = self
+            .connection
+            .prepare(&format!(
+                "{PATH_CTE} SELECT m.id, m.parent, json_extract(m.message, '$.role'),
+                        json_extract(m.message, '$.status'), json_extract(m.message, '$.text'), m.sequence,
+                        p.id IS NOT NULL
+                 FROM messages m LEFT JOIN path p ON p.id = m.id
+                 WHERE m.conversation_id = ?1 AND m.sequence > ?3
+                 AND (?5 IS NULL OR m.parent = ?5)
+                 ORDER BY m.sequence ASC LIMIT ?4"
+            ))
+            .map_err(map_error)?;
         let rows = statement
-            .query_map([id.as_hex()], |row| {
+            .query_map(
+                params![
+                    conversation,
+                    active_leaf.map(|id| id.as_hex()),
+                    after,
+                    limit as i64,
+                    parent
+                ],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, i64>(5)?,
+                        row.get::<_, bool>(6)?,
+                    ))
+                },
+            )
+            .map_err(map_error)?;
+        let mut entries = Vec::new();
+        for row in rows {
+            let (id, parent, role, status, text, sequence, on_active_path) =
+                row.map_err(map_error)?;
+            let parent = match parent.as_deref() {
+                Some(value) => Some(MessageId::parse(value).ok_or(ConversationError::Corrupt)?),
+                None => None,
+            };
+            entries.push(TreeEntry {
+                id: MessageId::parse(&id).ok_or(ConversationError::Corrupt)?,
+                parent,
+                role: parse_role(&role)?,
+                status: parse_status(&status)?,
+                text,
+                sequence,
+                on_active_path,
+            });
+        }
+        Ok(entries)
+    }
+
+    fn load_messages(
+        &self,
+        id: &ConversationId,
+        leaf: Option<&str>,
+    ) -> Result<Vec<MessageFile>, ConversationError> {
+        let Some(leaf) = leaf else {
+            return Ok(Vec::new());
+        };
+        let mut statement = self
+            .connection
+            .prepare(&format!(
+                "{PATH_CTE} SELECT id, (SELECT message FROM messages WHERE conversation_id = ?1 AND id = path.id) FROM path ORDER BY depth DESC"
+            ))
+            .map_err(map_error)?;
+        let rows = statement
+            .query_map(params![id.as_hex(), leaf], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })
             .map_err(map_error)?;
@@ -483,10 +770,19 @@ impl Database {
         if metadata.active_job.as_deref() != Some(job.as_hex().as_str()) {
             return Err(ConversationError::Conflict);
         }
-        let json: String = transaction.query_row(
-            "SELECT message FROM messages WHERE conversation_id = ?1 ORDER BY position DESC LIMIT 1",
-            [&hex], |row| row.get(0),
-        ).map_err(map_error)?;
+        let leaf = metadata
+            .active_leaf
+            .as_deref()
+            .ok_or(ConversationError::Corrupt)?;
+        let json: String = transaction
+            .query_row(
+                "SELECT message FROM messages WHERE conversation_id = ?1 AND id = ?2",
+                params![hex, leaf],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(map_error)?
+            .ok_or(ConversationError::Corrupt)?;
         let mut message = super::message_from_file(
             serde_json::from_str(&json).map_err(|_| ConversationError::Corrupt)?,
         )?;
@@ -618,6 +914,10 @@ fn metadata_from_row(row: MetadataRow) -> Result<ConversationMetadata, Conversat
         ),
         None => None,
     };
+    let active_leaf = match metadata.active_leaf.as_deref() {
+        Some(value) => Some(MessageId::parse(value).ok_or(ConversationError::Corrupt)?),
+        None => None,
+    };
     Ok(ConversationMetadata {
         id,
         revision: metadata.revision,
@@ -627,6 +927,7 @@ fn metadata_from_row(row: MetadataRow) -> Result<ConversationMetadata, Conversat
         model,
         active_job,
         continuation: metadata.continuation.is_some(),
+        active_leaf,
         created_at_ms: metadata.created_at_ms,
         updated_at_ms: metadata.updated_at_ms,
         last_message_status,
@@ -692,34 +993,33 @@ fn write_messages(
 ) -> Result<(), ConversationError> {
     let previous: std::collections::BTreeMap<_, _> = previous
         .into_iter()
-        .flat_map(|record| record.messages.iter().enumerate())
-        .map(|(position, message)| (message.id, (position, message)))
+        .flat_map(|record| &record.messages)
+        .map(|message| (message.id, message))
         .collect();
     let mut retained = std::collections::BTreeSet::new();
-    for (position, message) in record.messages.iter().enumerate() {
-        if !retained.insert(message.id) {
+    let mut parent: Option<super::MessageId> = None;
+    for message in &record.messages {
+        if message.parent != parent || !retained.insert(message.id) {
             return Err(ConversationError::Message);
         }
-        if let Some((old_position, old)) = previous.get(&message.id) {
-            if *old != message || *old_position != position {
-                transaction.execute(
-                    "UPDATE messages SET message = ?3, position = ?4 WHERE conversation_id = ?1 AND id = ?2",
-                    params![conversation_id, message.id.as_hex(), message_json(message)?, position as i64],
-                ).map_err(map_error)?;
+        if let Some(old) = previous.get(&message.id) {
+            if old.parent != parent {
+                return Err(ConversationError::Message);
+            }
+            if *old != message {
+                transaction
+                    .execute(
+                        "UPDATE messages SET message = ?3 WHERE conversation_id = ?1 AND id = ?2",
+                        params![conversation_id, message.id.as_hex(), message_json(message)?],
+                    )
+                    .map_err(map_error)?;
             }
         } else {
-            // Failed attempts can precede the pending response in the transcript.
-            // Their presentation position must not change an existing append identity.
             transaction
                 .execute(
-                    "INSERT INTO messages (conversation_id, sequence, id, message, position)
-                 SELECT id, next_message_sequence, ?2, ?3, ?4 FROM conversations WHERE id = ?1",
-                    params![
-                        conversation_id,
-                        message.id.as_hex(),
-                        message_json(message)?,
-                        position as i64
-                    ],
+                    "INSERT INTO messages (conversation_id, sequence, id, message)
+                 SELECT id, next_message_sequence, ?2, ?3 FROM conversations WHERE id = ?1",
+                    params![conversation_id, message.id.as_hex(), message_json(message)?],
                 )
                 .map_err(map_error)?;
             transaction.execute(
@@ -727,6 +1027,7 @@ fn write_messages(
                 [conversation_id],
             ).map_err(map_error)?;
         }
+        parent = Some(message.id);
     }
     for id in previous.keys().filter(|id| !retained.contains(id)) {
         transaction
@@ -820,29 +1121,22 @@ fn reject_legacy_records(dir: &Path) -> Result<(), ConversationError> {
 #[cfg(test)]
 mod tests;
 
-fn window_rows(
-    connection: &Connection,
-    sql: &str,
-    parameters: impl rusqlite::Params,
-) -> Result<Vec<(i64, i64, ConversationMessage)>, ConversationError> {
-    let mut statement = connection.prepare(sql).map_err(map_error)?;
-    let rows = statement
-        .query_map(parameters, |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, i64>(1)?,
-                row.get::<_, String>(2)?,
-            ))
-        })
-        .map_err(map_error)?;
-    let mut result = Vec::new();
-    for row in rows {
-        let (sequence, position, json) = row.map_err(map_error)?;
-        let file: MessageFile =
-            serde_json::from_str(&json).map_err(|_| ConversationError::Corrupt)?;
-        result.push((sequence, position, super::message_from_file(file)?));
+fn parse_role(value: &str) -> Result<MessageRole, ConversationError> {
+    match value {
+        "user" => Ok(MessageRole::User),
+        "assistant" => Ok(MessageRole::Assistant),
+        _ => Err(ConversationError::Corrupt),
     }
-    Ok(result)
+}
+
+fn parse_status(value: &str) -> Result<MessageStatus, ConversationError> {
+    match value {
+        "complete" => Ok(MessageStatus::Complete),
+        "pending" => Ok(MessageStatus::Pending),
+        "interrupted" => Ok(MessageStatus::Interrupted),
+        "failed" => Ok(MessageStatus::Failed),
+        _ => Err(ConversationError::Corrupt),
+    }
 }
 
 fn map_error(error: rusqlite::Error) -> ConversationError {

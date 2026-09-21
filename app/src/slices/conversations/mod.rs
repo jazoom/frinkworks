@@ -20,6 +20,8 @@ pub(super) use title::live_router;
 mod page;
 pub(crate) mod settings;
 
+mod tree;
+
 mod workflow;
 
 #[cfg(test)]
@@ -110,6 +112,7 @@ pub(super) fn router() -> Router<AppState> {
             "/conversations/{conversation_id}/activity",
             get(activity::show),
         )
+        .route("/conversations/{conversation_id}/tree", get(tree::show))
         .route(
             "/conversations/{conversation_id}/workflow",
             get(workflow::show).post(workflow::launch),
@@ -342,6 +345,9 @@ struct ObserveQuery {
     before: String,
     after: String,
     around: String,
+    /// An explicit inspection leaf. The transcript follows its path without
+    /// changing the active leaf.
+    leaf: String,
     historical: bool,
     #[serde(default)]
     title: bool,
@@ -379,6 +385,21 @@ impl ObserveQuery {
         !self.before.trim().is_empty()
             || !self.after.trim().is_empty()
             || !self.around.trim().is_empty()
+    }
+
+    fn transcript_leaf(&self) -> (Option<MessageId>, &'static str) {
+        let raw = self.leaf.trim();
+        if raw.is_empty() {
+            return (None, "");
+        }
+        match MessageId::parse(raw) {
+            Some(leaf) => (Some(leaf), ""),
+            None => (None, "That inspection position is not valid."),
+        }
+    }
+
+    fn has_inspection_leaf(&self) -> bool {
+        !self.leaf.trim().is_empty()
     }
 }
 
@@ -460,7 +481,8 @@ async fn detail(
     let Some(conversation) = ConversationId::parse(&conversation_id) else {
         return Ok(responses::request_navigation(graft, "/conversations"));
     };
-    if query.has_transcript_cursor()
+    let (leaf, leaf_error) = query.transcript_leaf();
+    if (query.has_transcript_cursor() || query.has_inspection_leaf())
         && (!query.job.is_empty() || !query.cursor.is_empty() || query.title || query.historical)
     {
         return render_transcript(
@@ -469,6 +491,7 @@ async fn detail(
             graft,
             conversation,
             None,
+            leaf,
             "Observation cannot use a transcript position.",
         );
     }
@@ -480,13 +503,33 @@ async fn detail(
     }
     // A transcript cursor and live observation are incompatible modes.
     if query.has_transcript_cursor() {
-        let (cursor, error) = query.transcript_cursor();
-        return render_transcript(&state, session.0, graft, conversation, cursor, error);
+        let (cursor, cursor_error) = query.transcript_cursor();
+        let error = if !cursor_error.is_empty() {
+            cursor_error
+        } else {
+            leaf_error
+        };
+        return render_transcript(&state, session.0, graft, conversation, cursor, leaf, error);
+    }
+    // An inspection leaf without a cursor still opens its path, not the live tail.
+    if !leaf_error.is_empty() {
+        return render_transcript(
+            &state,
+            session.0,
+            graft,
+            conversation,
+            None,
+            None,
+            leaf_error,
+        );
+    }
+    if query.has_inspection_leaf() {
+        return render_transcript(&state, session.0, graft, conversation, None, leaf, "");
     }
     if graft == GraftRequest::Patch && !query.job.is_empty() {
         return observe_message(state, session.0, conversation, query);
     }
-    render_transcript(&state, session.0, graft, conversation, None, "")
+    render_transcript(&state, session.0, graft, conversation, None, None, "")
 }
 
 /// Render one bounded transcript window without loading every retained body.
@@ -497,28 +540,45 @@ fn render_transcript(
     graft: GraftRequest,
     conversation: ConversationId,
     cursor: Option<TranscriptCursor>,
+    mut leaf: Option<MessageId>,
     error: &'static str,
 ) -> AppResult<Response> {
-    let (record, window, error) = match state.conversations.transcript_window(&conversation, cursor)
-    {
-        Ok(Some((record, window))) => (record, window, error),
-        Ok(None) => return Ok(responses::request_navigation(graft, "/conversations")),
-        Err(ConversationError::Entry) => {
-            match state.conversations.transcript_window(&conversation, None) {
-                Ok(Some((record, window))) => (record, window, ConversationError::Entry.message()),
-                Ok(None) => return Ok(responses::request_navigation(graft, "/conversations")),
-                Err(error) => return Err(AppError::new("load transcript window", error)),
+    let (record, window, error) =
+        match state
+            .conversations
+            .transcript_window(&conversation, cursor, leaf)
+        {
+            Ok(Some((record, window))) => (record, window, error),
+            Ok(None) => return Ok(responses::request_navigation(graft, "/conversations")),
+            Err(ConversationError::Entry) => {
+                leaf = None;
+                match state
+                    .conversations
+                    .transcript_window(&conversation, None, None)
+                {
+                    Ok(Some((record, window))) => {
+                        (record, window, ConversationError::Entry.message())
+                    }
+                    Ok(None) => return Ok(responses::request_navigation(graft, "/conversations")),
+                    Err(error) => return Err(AppError::new("load transcript window", error)),
+                }
             }
-        }
-        Err(error) => return Err(AppError::new("load transcript window", error)),
-    };
+            Err(error) => return Err(AppError::new("load transcript window", error)),
+        };
     let status = if error.is_empty() {
         PatchStatus::Ok
     } else {
         PatchStatus::UnprocessableEntity
     };
-    let view =
-        detail_view_with_transcript(state, session, &record, &record.title, error, Some(&window));
+    let view = detail_view_with_transcript(
+        state,
+        session,
+        &record,
+        &record.title,
+        error,
+        Some(&window),
+        leaf,
+    );
     render_detail(state, session, graft, status, view)
 }
 
@@ -1814,7 +1874,15 @@ fn observe_message(
             )?
             .respond(PatchStatus::Ok)?);
     }
-    render_transcript(&state, session, GraftRequest::Patch, conversation, None, "")
+    render_transcript(
+        &state,
+        session,
+        GraftRequest::Patch,
+        conversation,
+        None,
+        None,
+        "",
+    )
 }
 
 async fn select_model(
@@ -2226,11 +2294,22 @@ fn detail_view(
     title: &str,
     error: &'static str,
 ) -> ConversationDetailView {
-    match state.conversations.transcript_window(&record.id, None) {
+    match state
+        .conversations
+        .transcript_window(&record.id, None, None)
+    {
         Ok(Some((window_record, window))) if window_record.revision == record.revision => {
-            detail_view_with_transcript(state, session, &window_record, title, error, Some(&window))
+            detail_view_with_transcript(
+                state,
+                session,
+                &window_record,
+                title,
+                error,
+                Some(&window),
+                None,
+            )
         }
-        _ => detail_view_with_transcript(state, session, record, title, error, None),
+        _ => detail_view_with_transcript(state, session, record, title, error, None, None),
     }
 }
 
@@ -2241,6 +2320,7 @@ fn detail_view_with_transcript(
     title: &str,
     error: &'static str,
     transcript: Option<&crate::conversations::TranscriptWindow>,
+    leaf: Option<MessageId>,
 ) -> ConversationDetailView {
     let snapshot = record
         .active_job
@@ -2288,6 +2368,7 @@ fn detail_view_with_transcript(
         source_candidate_review,
         linked_candidate_reviews,
         transcript,
+        leaf,
     )
     .with_access_status(state, session, record)
     .with_pending_question(

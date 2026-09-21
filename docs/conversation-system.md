@@ -30,7 +30,7 @@ Conversations persist in a private SQLite database inside the data-directory `co
 Metadata, messages and cumulative summary requests use separate tables:
 
 - One conversation row holds the title, revision, network access, model settings, approvals, continuation checkpoint, compaction record and queue.
-- Message rows have conversation-scoped identifiers and immutable append order. A separate presentation position lets failed attempts precede their pending response.
+- Message rows have conversation-scoped identifiers, immutable parents and immutable append order. Each parent exists earlier in the same conversation.
 - Summary-request rows are keyed by conversation and append order.
 
 A mutation commits only affected rows in one transaction. Unchanged message and request rows keep their bytes, including across appends. Output checkpoints load only metadata and the pending response. Summary-request updates and automatic titles do not load transcripts.
@@ -44,6 +44,18 @@ The database file and its SQLite sidecars stay inside the private directory boun
 Database locks have a five-second wait bound. Disk-full and database-busy errors stop the commit without automatic replay. An uncertain commit blocks later mutations until restart.
 
 An alpha record that still uses the JSON file format fails closed. The application does not migrate it and does not replace it.
+
+## Read-only conversation tree
+
+The Tree action opens the conversation companion. The canonical address is `/conversations/{conversation_id}/tree`. Each page contains at most 64 entries.
+
+Child pages expose retained alternatives. Text search scans at most 1,024 entries per page. Next entries continues a partial search.
+
+Transcript links bind inspection to an explicit leaf. Earlier and Later stay on that path. Latest returns to the active path.
+
+Inspection changes neither the active leaf nor execution ownership. It starts no model request. Settlement updates historical status without replacement of the tree or inspected transcript.
+
+Full conversation records contain only the active ancestor path. Provider requests, titles and independent forks consume that projection.
 
 ## Live execution
 

@@ -496,6 +496,9 @@ pub(super) struct ConversationDetailView {
 
     pub(super) omitted_messages: usize,
     window_entries: Vec<(String, String)>,
+    /// The inspection leaf query suffix. Omitted-entry links keep the
+    /// inspected path instead of jumping to the active leaf.
+    pub(super) inspection_leaf_query: String,
     pub(super) earlier_href: String,
     pub(super) later_href: String,
     pub(super) latest_href: String,
@@ -723,6 +726,7 @@ impl ConversationDetailView {
 
             omitted_messages: 0,
             window_entries: Vec::new(),
+            inspection_leaf_query: String::new(),
             earlier_href: String::new(),
             later_href: String::new(),
             latest_href: String::new(),
@@ -925,6 +929,7 @@ impl ConversationDetailView {
             None,
             Vec::new(),
             transcript,
+            None,
         )
     }
 
@@ -941,6 +946,7 @@ impl ConversationDetailView {
         source_candidate_review: Option<CandidateReviewLinkView>,
         linked_candidate_reviews: Vec<CandidateReviewLinkView>,
         transcript: Option<&crate::conversations::TranscriptWindow>,
+        inspection_leaf: Option<MessageId>,
     ) -> Self {
         let fallback = sources
             .preferences
@@ -1064,6 +1070,9 @@ impl ConversationDetailView {
         let retained = transcript.map_or(record.messages.len(), |window| window.total);
         let omitted_messages = retained.saturating_sub(messages.len());
         let latest_href = format!("/conversations/{}", record.id.as_hex());
+        let leaf_query = inspection_leaf
+            .map(|leaf| format!("&leaf={}", leaf.as_hex()))
+            .unwrap_or_default();
         let historical = transcript.is_some_and(|window| !window.live);
         let window_nav =
             historical || transcript.is_some_and(|window| window.has_before || window.has_after);
@@ -1074,7 +1083,7 @@ impl ConversationDetailView {
                     .then(|| {
                         window
                             .before_anchor
-                            .map(|id| format!("{latest_href}?before={}", id.as_hex()))
+                            .map(|id| format!("{latest_href}?before={}{leaf_query}", id.as_hex()))
                     })
                     .flatten()
                     .unwrap_or_default(),
@@ -1083,7 +1092,7 @@ impl ConversationDetailView {
                     .then(|| {
                         window
                             .after_anchor
-                            .map(|id| format!("{latest_href}?after={}", id.as_hex()))
+                            .map(|id| format!("{latest_href}?after={}{leaf_query}", id.as_hex()))
                     })
                     .flatten()
                     .unwrap_or_default(),
@@ -1119,6 +1128,7 @@ impl ConversationDetailView {
                     .map(|message| (message.id.as_hex(), message_id(&record.id, message)))
                     .collect()
             }),
+            inspection_leaf_query: leaf_query.clone(),
             earlier_href,
             later_href,
             latest_href,

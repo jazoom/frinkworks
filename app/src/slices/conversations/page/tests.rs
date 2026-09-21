@@ -21,6 +21,7 @@ fn escaped_history_keeps_the_latest_message_within_the_patch_bound() {
         .expect("record");
     record.messages = (0..8)
         .map(|_| ConversationMessage {
+            parent: None,
             id: crate::conversations::MessageId::generate().expect("message id"),
             continuation: Vec::new(),
             role: MessageRole::User,
@@ -127,6 +128,7 @@ fn dense_markup_uses_escaped_text_with_bounded_nodes() {
 
 fn assistant_message(text: &str, status: MessageStatus) -> ConversationMessage {
     ConversationMessage {
+        parent: None,
         id: crate::conversations::MessageId::generate().expect("message id"),
         role: MessageRole::Assistant,
         text: text.to_owned(),
@@ -304,6 +306,7 @@ fn candidate_review_escapes_untrusted_file_contents() {
         Some(gate),
         None,
         Vec::new(),
+        None,
         None,
     );
     let html = view.render().expect("page");

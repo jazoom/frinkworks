@@ -122,6 +122,15 @@
                 <use href="/static/images/workspace-icons.svg#play" /></svg
               >Run a workflow</a
             >
+            <a
+              href="/conversations/{{ saved.id }}/tree"
+              data-graft
+              data-tree-toggle
+              class="btn btn-ghost btn-sm"
+              ><svg class="workspace-icon" aria-hidden="true">
+                <use href="/static/images/workspace-icons.svg#folder" /></svg
+              >Tree</a
+            >
           {% endif %}
           {% if self.work_non_idle() || context.is_some() || summary_usage.is_some() %}
             {% if !companion_html.is_empty() %}
@@ -529,7 +538,7 @@
             <div class="flex flex-wrap gap-3 py-2">
               {% for entry in omitted %}
                 <a
-                  href="{{ latest_href }}?around={{ entry.0 }}"
+                  href="{{ latest_href }}?around={{ entry.0 }}{{ self.inspection_leaf_query }}"
                   data-graft
                   class="link"
                   >View omitted entry {{ loop.index }}</a

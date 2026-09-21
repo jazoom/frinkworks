@@ -31,6 +31,8 @@ const MAXIMUM_REVIEW_BRIEF_BYTES: usize = MAXIMUM_MESSAGE_BYTES;
 /// One transport window of retained history. It bounds the browser and the
 /// response payload, never the retained records themselves.
 pub(crate) const TRANSCRIPT_WINDOW: usize = 64;
+/// One bounded page of the read-only conversation tree.
+pub(crate) const TREE_PAGE: usize = 64;
 
 /// A validated position inside the append order of one conversation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -64,6 +66,31 @@ pub(crate) struct TranscriptWindow {
     pub(crate) total: usize,
     /// True when the window is the live tail rather than a browsed history page.
     pub(crate) live: bool,
+}
+
+/// Tree text excludes tool bodies. Tool details use the transcript route.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TreeEntry {
+    pub(crate) id: MessageId,
+    pub(crate) parent: Option<MessageId>,
+    pub(crate) role: MessageRole,
+    pub(crate) status: MessageStatus,
+    pub(crate) text: String,
+    pub(crate) on_active_path: bool,
+    /// Immutable append order. It orders tree pages and breaks ties.
+    pub(crate) sequence: i64,
+}
+
+/// One bounded page of tree entries. `partial` reports that a bounded search
+/// stopped at its work budget instead of an exhaustive match set.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TreeWindow {
+    pub(crate) entries: Vec<TreeEntry>,
+    pub(crate) active_leaf: Option<MessageId>,
+    pub(crate) has_more: bool,
+    pub(crate) next_cursor: Option<i64>,
+    pub(crate) total: usize,
+    pub(crate) partial: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -108,6 +135,9 @@ pub(crate) struct ConversationRecord {
     pub(crate) candidate_review_context: Option<CandidateReviewContext>,
     /// A fork records its source boundary. It holds no mutable alias.
     pub(crate) forked_from: Option<super::forks::ForkProvenance>,
+    /// The active path in root-first order. It is the only projection that
+    /// appends and the only path a provider request includes. Off-path
+    /// entries stay in the store and are read through the tree.
     pub(crate) messages: Vec<ConversationMessage>,
     pub(crate) active_job: Option<JobId>,
     pub(crate) continuation: Option<super::history::ContinuationCheckpoint>,
@@ -130,6 +160,9 @@ pub(crate) struct ConversationMetadata {
     pub(crate) model: Option<ConversationModelConfiguration>,
     pub(crate) active_job: Option<JobId>,
     pub(crate) continuation: bool,
+    /// The tail of the active path. It identifies the retained entry that the
+    /// next append extends and the transcript shows as the live branch.
+    pub(crate) active_leaf: Option<MessageId>,
     pub(crate) created_at_ms: u64,
     pub(crate) updated_at_ms: u64,
     pub(crate) last_message_status: Option<MessageStatus>,
@@ -147,6 +180,7 @@ impl ConversationRecord {
             model: self.model.clone(),
             active_job: self.active_job,
             continuation: self.continuation.is_some(),
+            active_leaf: self.messages.last().map(|message| message.id),
             created_at_ms: self.created_at_ms,
             updated_at_ms: self.updated_at_ms,
             last_message_status: self.messages.last().map(|message| message.status),
@@ -344,6 +378,10 @@ struct MetadataFile {
     continuation: Option<ContinuationFile>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     compaction: Option<CompactionFile>,
+    /// The retained entry at the end of the active path. A load walks its
+    /// parent chain to rebuild that path without reading every branch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    active_leaf: Option<String>,
     #[serde(default)]
     queue_revision: u32,
     #[serde(default)]
@@ -496,6 +534,10 @@ struct ArtefactRefFile {
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 struct MessageFile {
     id: String,
+    /// The immutable parent identity inside the conversation. Absent means the
+    /// entry starts a path. The store validates it before use.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    parent: Option<String>,
     role: MessageRole,
     text: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -552,15 +594,32 @@ impl ConversationStore {
         &self,
         id: &ConversationId,
         cursor: Option<TranscriptCursor>,
+        leaf: Option<MessageId>,
     ) -> Result<Option<(ConversationRecord, TranscriptWindow)>, ConversationError> {
         let database = self.database();
         let Some(shell) = database.load_shell(id)? else {
             return Ok(None);
         };
-        let window = database.transcript_window(id, cursor, TRANSCRIPT_WINDOW)?;
+        let window = database.transcript_window(id, cursor, leaf, TRANSCRIPT_WINDOW)?;
         let mut shell = shell;
         shell.messages = window.messages.clone();
         Ok(Some((shell, window)))
+    }
+
+    /// Load one bounded page of retained entries for the read-only tree. It
+    /// never loads a full record or an active path.
+    pub(crate) fn tree_window(
+        &self,
+        id: &ConversationId,
+        after: Option<i64>,
+        search: Option<&str>,
+        parent: Option<MessageId>,
+    ) -> Result<Option<TreeWindow>, ConversationError> {
+        let database = self.database();
+        if database.load_shell(id)?.is_none() {
+            return Ok(None);
+        }
+        database.tree_window(id, after, search, parent).map(Some)
     }
 
     pub(crate) fn create_saved(
@@ -643,7 +702,7 @@ impl ConversationStore {
             return Err(ConversationError::Conflict);
         }
         let now = now_ms();
-        let record = ConversationRecord {
+        let mut record = ConversationRecord {
             id,
             revision: 1,
             title,
@@ -673,6 +732,7 @@ impl ConversationStore {
             created_at_ms: now,
             updated_at_ms: now,
         };
+        project_active_path(&mut record);
         self.persist(&mut database, None, &record)?;
         Ok(record)
     }
@@ -1019,6 +1079,7 @@ impl ConversationStore {
                 current.model = Some(model);
             }
             current.messages.push(ConversationMessage {
+                parent: None,
                 id: user_id,
                 role: MessageRole::User,
                 text,
@@ -1031,6 +1092,7 @@ impl ConversationStore {
                 requests: Vec::new(),
             });
             current.messages.push(ConversationMessage {
+                parent: None,
                 id: assistant_id,
                 role: MessageRole::Assistant,
                 text: String::new(),
@@ -1085,8 +1147,11 @@ impl ConversationStore {
         self.update(id, 0, false, |record| {
             let active = active_assistant(record, request)?;
             apply_reply(active, committed);
+            let mut pending = active.clone();
+            pending.id = MessageId::generate().map_err(|_| ConversationError::Random)?;
             let failed = ConversationMessage {
-                id: MessageId::generate().map_err(|_| ConversationError::Random)?,
+                parent: active.parent,
+                id: active.id,
                 role: MessageRole::Assistant,
                 text: failed.text,
                 activity: failed.activity,
@@ -1097,8 +1162,9 @@ impl ConversationStore {
                 completion: Some(crate::providers::CompletionReason::Unknown),
                 requests: failed.usage,
             };
-            // Failed attempts stay local and never split a completed tool exchange.
-            record.messages.insert(record.messages.len() - 1, failed);
+            // Retain the original identity and parent. The retry extends it.
+            *active = failed;
+            record.messages.push(pending);
             super::history::validate_exchange(&record.messages)
                 .map_err(|_| ConversationError::Message)?;
             Ok(())
@@ -1216,6 +1282,7 @@ impl ConversationStore {
                 return Err(ConversationError::Active);
             }
             current.messages.push(ConversationMessage {
+                parent: None,
                 id: MessageId::generate().map_err(|_| ConversationError::Random)?,
                 role: MessageRole::Assistant,
                 text: String::new(),
@@ -1290,6 +1357,7 @@ impl ConversationStore {
                 return Err(ConversationError::Conflict);
             }
             current.messages.push(ConversationMessage {
+                parent: None,
                 id: assistant_id,
                 role: MessageRole::Assistant,
                 text: String::new(),
@@ -1476,6 +1544,7 @@ impl ConversationStore {
                 .checked_add(1)
                 .ok_or(ConversationError::Revision)?;
             current.messages.push(ConversationMessage {
+                parent: None,
                 id: user_id,
                 role: MessageRole::User,
                 text: item.text,
@@ -1488,6 +1557,7 @@ impl ConversationStore {
                 requests: Vec::new(),
             });
             current.messages.push(ConversationMessage {
+                parent: None,
                 id: assistant_id,
                 role: MessageRole::Assistant,
                 text: String::new(),
@@ -1518,6 +1588,7 @@ impl ConversationStore {
             super::history::project(&current.messages, None)
                 .map_err(|_| ConversationError::Unsettled)?;
             current.messages.push(ConversationMessage {
+                parent: None,
                 id: MessageId::generate().map_err(|_| ConversationError::Random)?,
                 role: MessageRole::Assistant,
                 text: String::new(),
@@ -1569,6 +1640,7 @@ impl ConversationStore {
                 .checked_add(1)
                 .ok_or(ConversationError::Revision)?;
             current.messages.push(ConversationMessage {
+                parent: None,
                 id: user_id,
                 role: MessageRole::User,
                 text: item.text.clone(),
@@ -1581,6 +1653,7 @@ impl ConversationStore {
                 requests: Vec::new(),
             });
             current.messages.push(ConversationMessage {
+                parent: None,
                 id: assistant_id,
                 role: MessageRole::Assistant,
                 text: String::new(),
@@ -1698,6 +1771,7 @@ impl ConversationStore {
         self.require_durable(id)?;
         let mut updated = current.clone();
         edit(&mut updated)?;
+        project_active_path(&mut updated);
         // Reverting settings must not resurrect consent from an earlier configuration.
         let access_digest = |record: &ConversationRecord| {
             record
@@ -1846,6 +1920,16 @@ fn unused_identifier(database: &Database) -> Result<ConversationId, Conversation
     Err(ConversationError::Random)
 }
 
+/// Bind every active-path entry to its predecessor. Appends extend the active
+/// path, so vector order is the authoritative parent chain.
+fn project_active_path(record: &mut ConversationRecord) {
+    let mut parent = None;
+    for message in &mut record.messages {
+        message.parent = parent;
+        parent = Some(message.id);
+    }
+}
+
 // Only read-only transcript shells skip cross-message validation.
 fn record_from_parts(
     file: MetadataFile,
@@ -1903,6 +1987,20 @@ fn record_from_parts(
     let mut seen = std::collections::BTreeSet::new();
     if messages.iter().any(|message| !seen.insert(message.id)) {
         return Err(ConversationError::Corrupt);
+    }
+    if !messages.is_empty() {
+        // The active path is a chain. A missing link, a foreign parent or a
+        // cycle leaves a path whose first entry still names a parent.
+        let stored_leaf = match file.active_leaf.as_deref() {
+            Some(value) => Some(MessageId::parse(value).ok_or(ConversationError::Corrupt)?),
+            None => None,
+        };
+        let chain = messages.iter().enumerate().all(|(index, message)| {
+            message.parent == index.checked_sub(1).map(|previous| messages[previous].id)
+        });
+        if !chain || stored_leaf != messages.last().map(|message| message.id) {
+            return Err(ConversationError::Corrupt);
+        }
     }
     let active_job = file.active_job.as_deref().and_then(JobId::parse);
     if file.active_job.is_some() && active_job.is_none() {
@@ -2183,6 +2281,13 @@ fn fork_provenance_from_file(
 
 fn message_from_file(file: MessageFile) -> Result<ConversationMessage, ConversationError> {
     let id = MessageId::parse(&file.id).ok_or(ConversationError::Corrupt)?;
+    let parent = match file.parent {
+        Some(value) => Some(MessageId::parse(&value).ok_or(ConversationError::Corrupt)?),
+        None => None,
+    };
+    if parent == Some(id) {
+        return Err(ConversationError::Corrupt);
+    }
     let limit = match file.role {
         MessageRole::User => MAXIMUM_MESSAGE_BYTES,
         MessageRole::Assistant => MAXIMUM_REPLY_BYTES,
@@ -2210,6 +2315,7 @@ fn message_from_file(file: MessageFile) -> Result<ConversationMessage, Conversat
     }
     Ok(ConversationMessage {
         id,
+        parent,
         role: file.role,
         text: file.text,
         activity: file.activity,
@@ -2253,6 +2359,7 @@ fn apply_owned_reply(message: &mut ConversationMessage, reply: crate::providers:
 fn message_to_file(message: &ConversationMessage) -> MessageFile {
     MessageFile {
         id: message.id.as_hex(),
+        parent: message.parent.map(|parent| parent.as_hex()),
         role: message.role,
         text: message.text.clone(),
         activity: message.activity.clone(),
@@ -2312,6 +2419,7 @@ fn metadata_to_file(record: &ConversationRecord) -> MetadataFile {
         active_job: record.active_job.map(|request| request.as_hex()),
         continuation: record.continuation.as_ref().map(continuation_to_file),
         compaction: record.compaction.as_ref().map(compaction_to_file),
+        active_leaf: record.messages.last().map(|message| message.id.as_hex()),
         queue_revision: record.queue.revision,
         queue: record.queue.items.iter().map(queue_item_to_file).collect(),
         created_at_ms: record.created_at_ms,

@@ -1,0 +1,148 @@
+<div class="mx-auto flex w-full max-w-3xl flex-col gap-4 p-5">
+  <header class="flex flex-wrap items-center justify-between gap-2">
+    <h1 class="text-lg font-semibold break-words">{{ heading }}</h1>
+    <a class="btn btn-ghost btn-sm" href="{{ conversation_href }}" data-graft
+      >Back to conversation</a
+    >
+  </header>
+
+  <p class="text-quiet text-sm">
+    This tree is read-only. It shows retained entries in append order.
+    Inspection changes neither the active branch nor the model context.
+    Execution ownership stays unchanged.
+  </p>
+
+  {% if !error.is_empty() %}
+    <div class="alert alert-warning" role="alert">{{ error }}</div>
+  {% endif %}
+
+  {% if !parent.is_empty() %}
+    <p class="text-quiet text-sm">
+      Children of the selected entry.
+      <a class="link" href="{{ conversation_href }}/tree" data-graft
+        >All entries</a
+      >
+    </p>
+  {% endif %}
+
+  <form
+    method="get"
+    action="{{ conversation_href }}/tree"
+    data-graft
+    class="flex flex-wrap items-end gap-2"
+    role="search"
+  >
+    <input type="hidden" name="parent" value="{{ parent }}" />
+    <label
+      class="flex min-w-0 flex-1 flex-col gap-1"
+      for="conversation-tree-search"
+    >
+      <span class="text-sm font-medium">Search retained entries</span>
+      <input
+        id="conversation-tree-search"
+        class="input input-bordered w-full"
+        type="search"
+        name="q"
+        value="{{ query }}"
+        maxlength="200"
+        autocomplete="off"
+      />
+    </label>
+    <button class="btn btn-primary" type="submit">Search</button>
+    {% if !query.is_empty() %}
+      <a class="btn btn-ghost" href="{{ conversation_href }}/tree" data-graft
+        >Clear</a
+      >
+    {% endif %}
+  </form>
+
+  {% if partial %}
+    <p class="text-quiet text-sm" role="status">
+      This page contains partial search results. Next entries continues the
+      search.
+    </p>
+  {% endif %}
+
+  {% if entries.is_empty() %}
+    <p class="text-quiet text-sm">
+      {% if query.is_empty() %}
+        This view has no retained entries.
+      {% else %}
+        No retained entry contains that text within the bounded search.
+      {% endif %}
+    </p>
+  {% else %}
+    <ol class="record-list" aria-label="Retained entries">
+      {% for entry in entries %}
+        <li class="record-row flex-col gap-1 py-2">
+          <div class="flex flex-wrap items-baseline gap-2">
+            <span class="text-sm font-medium">{{ entry.role }}</span>
+            {% if !entry.status.is_empty() %}
+              <span class="badge badge-sm">{{ entry.status }}</span>
+            {% endif %}
+            {% if entry.active_leaf %}
+              <span class="badge badge-primary badge-sm">Active leaf</span>
+            {% else if entry.on_active_path %}
+              <span class="badge badge-ghost badge-sm">Active path</span>
+            {% endif %}
+          </div>
+          <a
+            href="{{ entry.href }}"
+            data-graft
+            class="link link-hover text-left text-sm break-words"
+            >{{ entry.excerpt }}</a
+          >
+          <div class="flex gap-3 text-sm">
+            <a class="link" href="{{ entry.children_href }}" data-graft
+              >Children</a
+            >
+            {% if !entry.parent_href.is_empty() %}
+              <a class="link" href="{{ entry.parent_href }}" data-graft
+                >Siblings</a
+              >
+            {% endif %}
+          </div>
+        </li>
+      {% endfor %}
+    </ol>
+    <p class="text-quiet text-sm">
+      Showing {{ entries.len() }} of {{ total }} retained
+      {% if total == 1 %}entry{% else %}entries{% endif %}.
+    </p>
+  {% endif %}
+
+  {% if !leaves.is_empty() %}
+    <section aria-labelledby="conversation-tree-leaves" class="space-y-2">
+      <h2 id="conversation-tree-leaves" class="text-sm font-semibold">
+        Inspect a branch tip
+      </h2>
+      <p class="text-quiet text-sm">
+        Inspection follows a path in the transcript without changing the active
+        branch.
+      </p>
+      <ul class="record-list" aria-label="Branch tips">
+        {% for leaf in leaves %}
+          <li class="record-row flex-wrap gap-2">
+            <a
+              href="{{ leaf.href }}"
+              data-graft
+              class="link link-hover min-w-0 flex-1 text-sm break-words"
+              >{{ leaf.label }}</a
+            >
+            {% if leaf.active %}
+              <span class="badge badge-primary badge-sm">Active</span>
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    </section>
+  {% endif %}
+
+  {% if has_more %}
+    <div class="flex justify-end">
+      <a class="btn btn-ghost btn-sm" href="{{ next_href }}" data-graft
+        >Next entries</a
+      >
+    </div>
+  {% endif %}
+</div>

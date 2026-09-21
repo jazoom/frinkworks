@@ -23,6 +23,7 @@ fn usage() -> RequestUsage {
 
 fn user(text: &str) -> ConversationMessage {
     ConversationMessage {
+        parent: None,
         id: identifier(),
         role: MessageRole::User,
         text: text.to_owned(),
@@ -38,6 +39,7 @@ fn user(text: &str) -> ConversationMessage {
 
 fn assistant(text: &str) -> ConversationMessage {
     ConversationMessage {
+        parent: None,
         id: identifier(),
         role: MessageRole::Assistant,
         text: text.to_owned(),
@@ -53,6 +55,7 @@ fn assistant(text: &str) -> ConversationMessage {
 
 fn assistant_tool(id: &str, result: Option<ToolOutput>) -> ConversationMessage {
     ConversationMessage {
+        parent: None,
         id: identifier(),
         role: MessageRole::Assistant,
         text: String::new(),

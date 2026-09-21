@@ -22,5 +22,5 @@ pub(crate) use store::{
     CandidateReviewContext, CandidateReviewCreation, CandidateReviewLink, ConversationError,
     ConversationMetadata, ConversationModelConfiguration, ConversationRecord, ConversationStore,
     DirectoryApproval, MAXIMUM_MESSAGE_BYTES, MAXIMUM_TITLE_BYTES, TranscriptCursor,
-    TranscriptWindow, normalise_message, normalise_title,
+    TranscriptWindow, TreeWindow, normalise_message, normalise_title,
 };
