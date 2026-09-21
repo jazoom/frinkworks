@@ -189,8 +189,8 @@ fn an_attempt_persists_the_exact_initial_context_packet() {
             reserved_output_bytes: super::super::input_context::RESERVED_MODEL_OUTPUT_BYTES as u64,
             reserved_tool_bytes: super::super::input_context::RESERVED_TOOL_WORK_BYTES as u64,
             total_bytes,
-            estimated_input_tokens: packet_bytes.div_ceil(4),
-            estimated_total_tokens: total_bytes.div_ceil(4),
+            estimated_input_tokens: packet_bytes,
+            estimated_total_tokens: total_bytes,
             model_context_limit: None,
         },
     };

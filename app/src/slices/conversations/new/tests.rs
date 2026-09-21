@@ -621,7 +621,7 @@ async fn network_tool_reply_uses_private_workspace_without_catalogue_identity() 
             crate::environments::PreparationLogRecord::empty(),
         )
         .unwrap();
-    use crate::providers::{AssistantActivity, ModelEvent};
+    use crate::providers::ModelEvent;
     let backend = crate::providers::tests::ScriptedBackend::rounds(vec![
         vec![
             Ok(ModelEvent::Text("I will inspect the site.".to_owned())),
@@ -693,23 +693,22 @@ async fn network_tool_reply_uses_private_workspace_without_catalogue_identity() 
             .count(),
         1
     );
+    let history = crate::conversations::history::project(&settled.messages, None).unwrap();
+    assert_eq!(history.last().unwrap().text, "The network check completed.");
     assert_eq!(
-        settled.messages.last().unwrap().text,
-        "I will inspect the site.The tool can read it.The network check completed."
+        history
+            .iter()
+            .flat_map(|turn| &turn.calls)
+            .filter(|call| call.result.is_some())
+            .count(),
+        1
     );
-    assert!(
-        matches!(settled.messages.last().unwrap().activity.as_slice(), [
-        AssistantActivity::Response(_), AssistantActivity::Thinking(_), AssistantActivity::Response(_),
-        AssistantActivity::ToolCall { result: Some(_), .. }, AssistantActivity::Thinking(thought), AssistantActivity::Response(_)
-    ] if thought.is_empty())
-    );
-    assert!(
-        crate::conversations::history::project(&settled.messages, None)
-            .unwrap()
-            .last()
-            .unwrap()
-            .text
-            .contains("it.\n\nThe network")
+    assert_eq!(
+        history
+            .iter()
+            .filter(|turn| turn.text.contains("I will inspect the site"))
+            .count(),
+        1
     );
 }
 

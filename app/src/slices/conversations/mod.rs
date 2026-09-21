@@ -1,8 +1,10 @@
 mod activity;
+mod compaction;
 mod continuation;
 mod directories;
 mod handoff;
 mod job;
+pub(crate) use job::history_with_review;
 mod model_favourites;
 mod new;
 mod output;
@@ -157,6 +159,10 @@ pub(super) fn router() -> Router<AppState> {
         .route(
             "/conversations/{conversation_id}/continue/end",
             post(continuation::end_pause),
+        )
+        .route(
+            "/conversations/{conversation_id}/compact",
+            post(compaction::compact),
         )
         .route(
             "/conversations/{conversation_id}/questions/answer",

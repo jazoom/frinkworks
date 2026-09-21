@@ -123,7 +123,7 @@
               >Run a workflow</a
             >
           {% endif %}
-          {% if self.work_non_idle() %}
+          {% if self.work_non_idle() || context.is_some() || summary_usage.is_some() %}
             {% if !companion_html.is_empty() %}
               {% if let Some(saved) = self.saved() %}
                 <a
@@ -236,6 +236,29 @@
               Copies settings only. Starts with an empty history and requires
               fresh access approval.
             </p>
+            {% if can_compact %}
+              <form
+                data-graft
+                method="post"
+                action="/conversations/{{ saved.id }}/compact"
+              >
+                <input
+                  type="hidden"
+                  name="revision"
+                  value="{{ saved.revision }}"
+                />
+                <button
+                  class="btn btn-ghost w-full justify-start"
+                  type="submit"
+                >
+                  Compact context
+                </button>
+              </form>
+              <p class="text-quiet mb-3 text-sm">
+                A summary replaces earlier model context. The full transcript
+                stays on this computer.
+              </p>
+            {% endif %}
             <button
               type="button"
               class="btn btn-ghost w-full justify-start"

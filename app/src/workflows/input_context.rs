@@ -740,7 +740,7 @@ pub(crate) fn build_attempt_packet_for_request(
 fn reserved_bytes(model_context_limit: Option<u64>) -> (usize, usize) {
     let maximum = RESERVED_MODEL_OUTPUT_BYTES + RESERVED_TOOL_WORK_BYTES;
     let reserve = model_context_limit
-        .map(|tokens| tokens.saturating_mul(2).min(maximum as u64) as usize)
+        .map(|tokens| (tokens / 2).min(maximum as u64) as usize)
         .unwrap_or(maximum);
     let output = reserve / 7;
     (output, reserve - output)
@@ -753,10 +753,7 @@ fn json_byte_len(value: &impl Serialize) -> usize {
 }
 
 fn estimate_tokens(bytes: usize) -> Option<u64> {
-    u64::try_from(bytes)
-        .ok()
-        .and_then(|bytes| bytes.checked_add(3))
-        .map(|bytes| bytes / 4)
+    crate::execution::context::estimate_tokens(bytes)
 }
 
 fn verify_revision_feedback(

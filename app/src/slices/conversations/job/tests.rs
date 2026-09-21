@@ -417,6 +417,8 @@ fn pending_assistant_output_stays_out_of_the_next_request_history() {
         candidate_reviews: Vec::new(),
         candidate_review_context: None,
         continuation: None,
+        compaction: None,
+        summary_requests: Vec::new(),
         messages: vec![
             ConversationMessage {
                 id: crate::conversations::MessageId::generate().expect("message id"),

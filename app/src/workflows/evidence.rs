@@ -130,6 +130,24 @@ impl AttemptEvidenceContext {
             .append_history(self.run_id, self.attempt_id, turn, &self.phase)
     }
 
+    pub(crate) fn compaction(
+        &self,
+        covered_through: u32,
+        text: &str,
+        request: crate::conversations::RequestUsage,
+    ) -> Result<(), EvidenceError> {
+        self.store.record_compaction(
+            self.run_id,
+            self.attempt_id,
+            &self.phase,
+            WorkflowCompaction {
+                covered_through,
+                text: text.to_owned(),
+                request,
+            },
+        )
+    }
+
     pub(crate) fn terminal(
         &self,
         state: TerminalState,
@@ -262,6 +280,16 @@ pub(crate) struct AttemptEvidence {
     pub(crate) terminal: Option<TerminalResponse>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) history: Vec<crate::providers::ChatTurn>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) compaction: Option<WorkflowCompaction>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub(crate) struct WorkflowCompaction {
+    pub(crate) covered_through: u32,
+    pub(crate) text: String,
+    pub(crate) request: crate::conversations::RequestUsage,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -609,6 +637,42 @@ impl WorkflowEvidenceStore {
         Ok(())
     }
 
+    pub(crate) fn record_compaction(
+        &self,
+        run_id: RunId,
+        attempt_id: AttemptId,
+        phase: &str,
+        compaction: WorkflowCompaction,
+    ) -> Result<(), EvidenceError> {
+        if compaction.text.is_empty()
+            || compaction.text.len() > crate::conversations::compaction::MAXIMUM_SUMMARY_BYTES
+            || compaction.text.contains('\0')
+            || !compaction.request.valid()
+        {
+            return Err(EvidenceError::Corrupt);
+        }
+        let mut records = self.lock();
+        let key = (run_id, attempt_id);
+        let mut next = records
+            .get(&key)
+            .cloned()
+            .unwrap_or_else(|| empty_record(run_id, attempt_id, phase));
+        if next.phase != phase {
+            return Err(EvidenceError::Conflict);
+        }
+        let mut compaction = compaction;
+        if let Some(previous) = &next.compaction {
+            compaction.covered_through = previous
+                .covered_through
+                .checked_add(compaction.covered_through)
+                .ok_or(EvidenceError::Full)?;
+        }
+        next.compaction = Some(compaction);
+        persist_record(self.dir.as_deref(), &mut next)?;
+        records.insert(key, next);
+        Ok(())
+    }
+
     fn lock(&self) -> MutexGuard<'_, BTreeMap<(RunId, AttemptId), AttemptEvidence>> {
         self.inner
             .lock()
@@ -627,6 +691,7 @@ fn empty_record(run_id: RunId, attempt_id: AttemptId, phase: &str) -> AttemptEvi
         activity_truncated: false,
         terminal: None,
         history: Vec::new(),
+        compaction: None,
     }
 }
 
@@ -692,6 +757,12 @@ fn validate_record(record: &AttemptEvidence) -> Result<(), EvidenceError> {
         || record.events.len() > MAXIMUM_ACTIVITY_EVENTS
         || record.activity_bytes > MAXIMUM_ACTIVITY_BYTES
     {
+        return Err(EvidenceError::Corrupt);
+    }
+    if record.compaction.as_ref().is_some_and(|summary| {
+        !summary.request.valid()
+            || crate::conversations::compaction::validate_summary(&summary.text, None).is_err()
+    }) {
         return Err(EvidenceError::Corrupt);
     }
     let mut activity_bytes = 0usize;

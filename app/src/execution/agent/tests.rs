@@ -251,6 +251,149 @@ fn conversation_job(
     (record, job)
 }
 
+#[tokio::test]
+async fn automatic_compaction_fits_a_smaller_model_without_deleting_local_tool_results() {
+    use crate::providers::{
+        AssistantReply, ChatBackend, CompletionReason, ModelEvent, ProviderConnection,
+        ProviderKind, ToolOutput,
+    };
+    let mut state = crate::tests::test_state(crate::config::RuntimeConfig::development());
+    let backend = crate::tests::ScriptedBackend::events(vec![
+        Ok(ModelEvent::Text("Earlier file read completed.".to_owned())),
+        Ok(ModelEvent::Complete {
+            reason: CompletionReason::Stop,
+        }),
+    ]);
+    state.chat = std::sync::Arc::new(ChatBackend::Scripted(backend.clone()));
+    let (record, job) = conversation_job(&state);
+    for (id, output) in [
+        ("first", "x".repeat(15_000)),
+        ("latest", "Retained file result".to_owned()),
+    ] {
+        let mut reply = AssistantReply::default();
+        reply.start_tool(
+            id.to_owned(),
+            "read".to_owned(),
+            serde_json::json!({"path": "file.txt"}),
+        );
+        reply.finish_tool(
+            id,
+            ToolOutput {
+                label: "read".to_owned(),
+                output,
+                command: None,
+            },
+        );
+        reply.completion = Some(CompletionReason::ToolCalls);
+        state
+            .conversations
+            .settle_tool_batch(&record.id, job.id(), &reply)
+            .unwrap();
+    }
+    let mut spec = read_spec(
+        ProviderConnection::with_key(ProviderKind::Xai, "test-key", "uncatalogued-small-model"),
+        record.id,
+        record.revision,
+    );
+    spec.steering_session = Some(crate::sessions::generate_session_token().unwrap().id());
+    let mut turns = super::current_conversation_turns(&state, &spec).unwrap();
+    let before = turns.clone();
+    let mut attempts = 0;
+    let result = super::fit_context(&state, &spec, &job, &mut turns, &[], &[], &mut attempts).await;
+    assert!(matches!(result, Ok(estimate) if estimate.fits() && estimate.fallback_limit()));
+    assert_eq!(backend.turn_count(), 1);
+    assert_eq!(
+        turns
+            .iter()
+            .flat_map(|turn| &turn.calls)
+            .map(|call| call.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["latest"]
+    );
+    let stored = state.conversations.get(&record.id).unwrap();
+    assert_eq!(
+        crate::conversations::history::project(&stored.messages, None).unwrap(),
+        before
+    );
+    assert_eq!(stored.summary_requests.len(), 1);
+}
+
+#[tokio::test]
+async fn workflow_compaction_preserves_scope_and_complete_tool_exchanges() {
+    use crate::providers::{
+        ChatBackend, ChatTurn, CompletionReason, ModelEvent, ProviderConnection, ProviderKind,
+    };
+    let mut state = crate::tests::test_state(crate::config::RuntimeConfig::development());
+    let backend = crate::tests::ScriptedBackend::events(vec![
+        Ok(ModelEvent::Text("Phase summary".to_owned())),
+        Ok(ModelEvent::Complete {
+            reason: CompletionReason::Stop,
+        }),
+    ]);
+    state.chat = std::sync::Arc::new(ChatBackend::Scripted(backend.clone()));
+    let (record, job) = conversation_job(&state);
+    let mut spec = read_spec(
+        ProviderConnection::with_key(ProviderKind::Xai, "test-key", "grok-4.6"),
+        record.id,
+        record.revision,
+    );
+    let run = crate::workflows::RunId::generate().unwrap();
+    let attempt = crate::workflows::AttemptId::generate().unwrap();
+    spec.evidence = Some(crate::workflows::AttemptEvidenceContext::new(
+        state.workflow_evidence.clone(),
+        run,
+        attempt,
+        "phase",
+    ));
+    let mut first = ChatTurn::user("First phase response".to_owned());
+    first.role = crate::providers::Role::Assistant;
+    first.calls.push(crate::providers::ChatToolCall {
+        id: "call-one".to_owned(),
+        name: "read".to_owned(),
+        arguments: serde_json::json!({"path": "phase.txt"}),
+        result: Some(crate::providers::ToolOutput {
+            label: "read".to_owned(),
+            output: "Phase evidence".to_owned(),
+            command: None,
+        }),
+    });
+    let mut last = first.clone();
+    last.calls[0].id = "call-two".to_owned();
+    let mut turns = vec![
+        ChatTurn::user("Pinned phase input".to_owned()),
+        first,
+        last.clone(),
+    ];
+    let result = super::compact_history(&state, &spec, &job, &mut turns).await;
+    assert!(result.is_ok());
+    assert_eq!(turns.len(), 2);
+    assert_eq!(turns[1], last);
+    assert!(backend.last_tools().is_empty());
+    assert_eq!(backend.last_extra_len(), 0);
+    let prompt = &backend.last_history()[0].text;
+    assert!(prompt.contains("phase.txt"));
+    assert!(prompt.contains("Phase evidence"));
+    assert!(!prompt.contains("Read the file"));
+    assert!(
+        state
+            .conversations
+            .get(&record.id)
+            .unwrap()
+            .compaction
+            .is_none()
+    );
+    let evidence = state.workflow_evidence.get(&run, &attempt).unwrap();
+    assert_eq!(evidence.compaction.unwrap().covered_through, 1);
+    assert_eq!(
+        evidence
+            .events
+            .iter()
+            .filter(|event| event.request.is_some())
+            .count(),
+        1
+    );
+}
+
 fn read_spec(
     connection: crate::providers::ProviderConnection,
     conversation: crate::conversations::ConversationId,
@@ -716,7 +859,15 @@ async fn rate_limit_before_and_after_a_tool_runs_the_call_once() {
     let history = crate::conversations::history::project(&stored.messages, None).unwrap();
     assert!(!format!("{history:?}").contains("Discard this partial reply."));
     assert_eq!(history.iter().flat_map(|turn| &turn.calls).count(), 1);
-    assert!(backend.last_extra_len() >= 2);
+    assert_eq!(
+        backend
+            .last_history()
+            .iter()
+            .flat_map(|turn| &turn.calls)
+            .filter(|call| call.result.is_some())
+            .count(),
+        1
+    );
     assert_eq!(backend.turn_count(), 4);
     assert_eq!(ended.reply.text, "Done.");
 }
@@ -843,7 +994,15 @@ async fn steering_arrives_after_the_current_batch_and_continues_the_loop() {
     .await;
     assert_eq!(ended.outcome, super::AgentOutcome::Completed);
     assert_eq!(backend.turn_count(), 2);
-    assert_eq!(backend.last_extra_len(), 4);
+    let sent = backend.last_history();
+    assert_eq!(sent.last().unwrap().text, "Read the other file");
+    assert_eq!(
+        sent.iter()
+            .flat_map(|turn| &turn.calls)
+            .filter(|call| call.result.is_some())
+            .count(),
+        2
+    );
     assert_eq!(job.snapshot().output.text, "Adjusted after both tools");
     let stored = state.conversations.get(&record.id).expect("stored");
     assert!(stored.queue.items.is_empty());
@@ -954,7 +1113,14 @@ async fn steering_requires_a_complete_response_and_live_owner() {
         assert_eq!(stored.queue.items.is_empty(), delivered);
         assert_eq!(backend.turn_count(), if delivered { 2 } else { 1 });
         if delivered {
-            assert_eq!(backend.last_extra_len(), 2);
+            let sent = backend.last_history();
+            assert_eq!(
+                sent.iter()
+                    .filter(|turn| turn.text == "First answer")
+                    .count(),
+                1
+            );
+            assert_eq!(sent.len(), 3);
             assert_eq!(stored.messages[1].text, "First answer");
             assert_eq!(job.snapshot().output.text, "After correction");
             assert_eq!(ended.reply.text, "After correction");
@@ -1230,4 +1396,31 @@ async fn plan_authentication_does_not_snapshot_api_prices() {
         crate::conversations::history::request_cost(&ended.reply.usage[0]).known_micros,
         None
     );
+}
+
+#[tokio::test]
+async fn provider_requests_honour_the_selected_output_allowance() {
+    use crate::providers::{
+        ChatBackend, ChatTurn, CompletionReason, ModelEvent, ProviderConnection, ProviderKind,
+    };
+    let mut state = crate::tests::test_state(crate::config::RuntimeConfig::development());
+    let backend = crate::tests::ScriptedBackend::events(vec![
+        Ok(ModelEvent::Text("Hello".to_owned())),
+        Ok(ModelEvent::Complete {
+            reason: CompletionReason::Stop,
+        }),
+    ]);
+    state.chat = std::sync::Arc::new(ChatBackend::Scripted(backend.clone()));
+    let connection = ProviderConnection::with_key(ProviderKind::Xai, "test-key", "grok-4.6");
+    state.vault.put(connection.clone()).expect("provider");
+    let (record, job) = conversation_job(&state);
+    let ended = super::run_agent_action(
+        &state,
+        granted_read_spec(connection, record.id, record.revision),
+        vec![ChatTurn::user("Hello".to_owned())],
+        job,
+    )
+    .await;
+    assert_eq!(ended.outcome, super::AgentOutcome::Completed);
+    assert!(backend.last_max_tokens().is_some());
 }

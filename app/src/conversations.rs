@@ -1,4 +1,5 @@
 mod access;
+pub(crate) mod compaction;
 pub(crate) mod history;
 mod id;
 pub(crate) mod questions;
@@ -7,6 +8,7 @@ mod store;
 pub(crate) mod titles;
 
 pub(crate) use access::apply_settings_ceiling;
+pub(crate) use compaction::CompactionRecord;
 pub(crate) use history::{
     ContinuationBlock, ContinuationCheckpoint, ContinuationMetadata, ConversationMessage,
     MessageRole, MessageStatus, PausedOutputDraft, PriceProvenance, RequestUsage,

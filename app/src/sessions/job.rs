@@ -114,6 +114,7 @@ pub(crate) enum JobEventKind {
         delay: Duration,
         reason: String,
     },
+    Compacting,
     Completed,
     Failed,
     Cancelled,
@@ -140,6 +141,8 @@ pub(crate) struct JobSnapshot {
     pub(crate) output: AssistantReply,
     pub(crate) latest_seq: u64,
     pub(crate) retry: Option<JobRetry>,
+    pub(crate) compacting: bool,
+    pub(crate) context: Option<crate::execution::ContextEstimate>,
 }
 
 pub(crate) struct Job {
@@ -162,6 +165,8 @@ struct JobInner {
     progress_bytes: usize,
     progress_truncated: bool,
     retry: Option<JobRetry>,
+    compacting: bool,
+    context: Option<crate::execution::ContextEstimate>,
 }
 
 impl Job {
@@ -184,6 +189,8 @@ impl Job {
                 progress_bytes: 0,
                 progress_truncated: false,
                 retry: None,
+                compacting: false,
+                context: None,
             }),
             notify: Notify::new(),
             cancel: AtomicBool::new(false),
@@ -280,6 +287,8 @@ impl Job {
             output: inner.output.clone(),
             latest_seq: inner.latest_seq,
             retry: inner.retry.clone(),
+            compacting: inner.compacting,
+            context: inner.context,
         }
     }
 
@@ -380,8 +389,34 @@ impl Job {
         inner.events.clear();
         inner.latest_seq += 1;
         inner.retry = None;
+        inner.compacting = false;
         drop(inner);
         self.notify.notify_waiters();
+    }
+
+    pub(crate) fn set_context(&self, context: crate::execution::ContextEstimate) {
+        let mut inner = self.lock();
+        if inner.status != JobStatus::Running {
+            return;
+        }
+        inner.context = Some(context);
+        inner.latest_seq += 1;
+        drop(inner);
+        self.notify.notify_waiters();
+    }
+
+    pub(crate) fn set_compacting(&self) -> Option<u64> {
+        self.push_output_event(JobEventKind::Compacting)
+    }
+
+    pub(crate) fn clear_compacting(&self) {
+        let mut inner = self.lock();
+        if inner.compacting {
+            inner.compacting = false;
+            inner.latest_seq += 1;
+            drop(inner);
+            self.notify.notify_waiters();
+        }
     }
 
     pub(crate) fn set_retry(&self, attempt: u32, delay: Duration, reason: &str) -> Option<u64> {
@@ -409,12 +444,16 @@ impl Job {
             | JobEventKind::ToolProgress { .. }
             | JobEventKind::ToolFinished { .. }
             | JobEventKind::Usage { .. }
-            | JobEventKind::Retrying { .. } => false,
+            | JobEventKind::Retrying { .. }
+            | JobEventKind::Compacting => false,
             JobEventKind::Completed | JobEventKind::Failed | JobEventKind::Cancelled => true,
         };
         if empty
             || (!self.output_visible.load(Ordering::SeqCst)
-                && !matches!(kind, JobEventKind::Retrying { .. }))
+                && !matches!(
+                    kind,
+                    JobEventKind::Retrying { .. } | JobEventKind::Compacting
+                ))
         {
             return None;
         }
@@ -435,6 +474,9 @@ impl Job {
                 delay: *delay,
                 reason: reason.clone(),
             });
+        }
+        if matches!(kind, JobEventKind::Compacting) {
+            inner.compacting = true;
         }
         apply_output_event(&mut inner.output, &kind);
         inner.events.push(JobEvent { seq, kind });
@@ -459,6 +501,7 @@ impl Job {
         }
         inner.status = status;
         inner.retry = None;
+        inner.compacting = false;
         inner.error = error.map(str::to_owned);
         inner.latest_seq += 1;
         let seq = inner.latest_seq;
@@ -559,6 +602,7 @@ fn apply_output_event(output: &mut AssistantReply, event: &JobEventKind) {
             }
         }
         JobEventKind::Retrying { .. }
+        | JobEventKind::Compacting
         | JobEventKind::Completed
         | JobEventKind::Failed
         | JobEventKind::Cancelled => {}

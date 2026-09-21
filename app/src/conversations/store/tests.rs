@@ -73,6 +73,92 @@ impl ConversationStore {
 }
 
 #[test]
+fn compaction_survives_restart_with_a_later_pending_request() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = ConversationStore::open(dir.path().to_path_buf()).unwrap();
+    let mut record = store.create("Summary".to_owned()).unwrap();
+    let selection = ModelSelection::new(ProviderKind::Xai, "model".to_owned(), None).unwrap();
+    for text in ["First", "Retained"] {
+        let job = JobId::generate().unwrap();
+        record = store
+            .begin_message(
+                &record.id,
+                record.revision,
+                selection.clone(),
+                job,
+                text.to_owned(),
+            )
+            .unwrap();
+        store
+            .settle_message(
+                &record.id,
+                job,
+                crate::providers::AssistantReply::from("Reply"),
+                crate::conversations::MessageStatus::Complete,
+                None,
+            )
+            .unwrap();
+        record = store.get(&record.id).unwrap();
+    }
+    let original = record.messages.clone();
+    let job = JobId::generate().unwrap();
+    assert_eq!(
+        store.begin_compaction(&record.id, record.revision - 1, job),
+        Err(ConversationError::Conflict)
+    );
+    store
+        .begin_compaction(&record.id, record.revision, job)
+        .unwrap();
+    let request = crate::conversations::RequestUsage {
+        id: crate::conversations::RequestId::generate().unwrap(),
+        usage: crate::providers::ModelUsage::new(ProviderKind::Xai, "model"),
+        auth: crate::providers::AuthMethod::ApiKey,
+        prices: None,
+    };
+    store
+        .record_summary_request(&record.id, job, &request)
+        .unwrap();
+    store
+        .record_job_compaction(
+            &record.id,
+            job,
+            crate::conversations::CompactionRecord {
+                covered_through: original[1].id,
+                retained_from: original[2].id,
+                text: "Earlier context".to_owned(),
+                request: request.clone(),
+                created_at_ms: 1,
+            },
+        )
+        .unwrap();
+    let settled = store.finish_compaction(&record.id, job, None).unwrap();
+    assert_eq!(settled.messages, original);
+    let next = JobId::generate().unwrap();
+    store
+        .begin_message(
+            &record.id,
+            settled.revision,
+            selection,
+            next,
+            "Next request".to_owned(),
+        )
+        .unwrap();
+    drop(store);
+    let reopened = ConversationStore::open(dir.path().to_path_buf()).unwrap();
+    let loaded = reopened.get(&record.id).unwrap();
+    assert_eq!(loaded.summary_requests, vec![request]);
+    let projected = crate::conversations::compaction::project(
+        &loaded.messages,
+        None,
+        loaded.compaction.as_ref(),
+    )
+    .unwrap();
+    assert!(projected[0].text.ends_with("Earlier context"));
+    assert_eq!(projected[1].text, "Retained");
+    assert_eq!(projected.last().unwrap().text, "Next request");
+}
+
+#[test]
 fn restart_preserves_explicit_saves_with_or_without_a_manual_title() {
     let dir = tempfile::tempdir().unwrap();
     let store = ConversationStore::in_memory();

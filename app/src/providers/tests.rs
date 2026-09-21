@@ -213,6 +213,23 @@ fn verify_status_treats_rate_limits_as_rate_limited() {
 }
 
 #[test]
+fn context_overflow_is_classified_from_provider_payload() {
+    assert!(super::rig::context_overflow_payload(
+        Some(&serde_json::json!({"error": {"code": "context_length_exceeded"}})),
+        "ignored",
+    ));
+    assert!(super::rig::context_overflow_payload(
+        None,
+        "This model's maximum context length was exceeded",
+    ));
+    assert!(!super::rig::context_overflow_payload(
+        Some(&serde_json::json!({"error": {"code": "invalid_request"}})),
+        "bad request",
+    ));
+    assert!(!ProviderError::ContextOverflow.retry_eligible());
+}
+
+#[test]
 fn retry_eligibility_excludes_auth_refusal_and_malformed_context() {
     use super::{
         DEFAULT_PROVIDER_RETRY_DELAY, MAXIMUM_PROVIDER_RETRY_WAIT, classify_failure_status,
@@ -227,6 +244,7 @@ fn retry_eligibility_excludes_auth_refusal_and_malformed_context() {
         ProviderError::Refused,
         ProviderError::Incomplete,
         ProviderError::ReplyTooLong,
+        ProviderError::ContextOverflow,
         classify_failure_status(401, None),
         classify_failure_status(403, None),
         classify_failure_status(400, None),
@@ -596,6 +614,7 @@ mod scripted_fixture {
         last_history: Arc<Mutex<Vec<ChatTurn>>>,
         last_connection: Arc<Mutex<Option<CapturedConnection>>>,
         last_extra_len: Arc<AtomicUsize>,
+        last_max_tokens: Arc<Mutex<Option<u64>>>,
     }
 
     impl ScriptedBackend {
@@ -614,6 +633,7 @@ mod scripted_fixture {
                 last_history: Arc::new(Mutex::new(Vec::new())),
                 last_connection: Arc::new(Mutex::new(None)),
                 last_extra_len: Arc::new(AtomicUsize::new(0)),
+                last_max_tokens: Arc::new(Mutex::new(None)),
             }
         }
 
@@ -630,6 +650,7 @@ mod scripted_fixture {
                 last_history: Arc::new(Mutex::new(Vec::new())),
                 last_connection: Arc::new(Mutex::new(None)),
                 last_extra_len: Arc::new(AtomicUsize::new(0)),
+                last_max_tokens: Arc::new(Mutex::new(None)),
             }
         }
 
@@ -682,6 +703,7 @@ mod scripted_fixture {
                 last_history: Arc::new(Mutex::new(Vec::new())),
                 last_connection: Arc::new(Mutex::new(None)),
                 last_extra_len: Arc::new(AtomicUsize::new(0)),
+                last_max_tokens: Arc::new(Mutex::new(None)),
             }
         }
 
@@ -698,6 +720,7 @@ mod scripted_fixture {
                 last_history: Arc::new(Mutex::new(Vec::new())),
                 last_connection: Arc::new(Mutex::new(None)),
                 last_extra_len: Arc::new(AtomicUsize::new(0)),
+                last_max_tokens: Arc::new(Mutex::new(None)),
             }
         }
 
@@ -739,6 +762,13 @@ mod scripted_fixture {
             self.last_extra_len.load(Ordering::SeqCst)
         }
 
+        pub(crate) fn last_max_tokens(&self) -> Option<u64> {
+            *self
+                .last_max_tokens
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+        }
+
         pub(crate) fn turn_count(&self) -> usize {
             self.round.load(Ordering::SeqCst)
         }
@@ -750,6 +780,7 @@ mod scripted_fixture {
             extra: &[Message],
             tools: &[ToolDefinition],
             preamble: &str,
+            max_tokens: Option<u64>,
         ) -> Result<ModelStream, ProviderError> {
             *self
                 .last_connection
@@ -773,6 +804,10 @@ mod scripted_fixture {
                 .unwrap_or_else(|poisoned| poisoned.into_inner()) =
                 tools.iter().map(|tool| tool.name.clone()).collect();
             self.last_extra_len.store(extra.len(), Ordering::SeqCst);
+            *self
+                .last_max_tokens
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = max_tokens;
             match self.script.clone() {
                 Ok(Script::Chunks(items)) => {
                     let failed = items.iter().any(Result::is_err);

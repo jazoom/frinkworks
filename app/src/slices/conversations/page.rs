@@ -455,7 +455,17 @@ pub(super) struct ConversationDetailView {
     pub(super) model_available: bool,
     pub(super) job_active: bool,
     pub(super) retry: Option<RetryView>,
+    pub(super) context: Option<ContextView>,
+    pub(super) can_compact: bool,
+    pub(super) compaction: Option<super::compaction::CompactionView>,
+    summary_usage: Option<UsagePanelView>,
     pub(super) queue: super::queue::QueueView,
+}
+
+pub(super) struct ContextView {
+    pub(super) label: String,
+    pub(super) fallback: bool,
+    pub(super) compacting: bool,
 }
 
 pub(super) struct RetryView {
@@ -649,6 +659,10 @@ impl ConversationDetailView {
             model_available: !form.model.is_empty(),
             job_active: false,
             retry: None,
+            context: None,
+            can_compact: false,
+            compaction: None,
+            summary_usage: None,
             queue: super::queue::QueueView::from_queue(
                 &crate::conversations::ConversationQueue::default(),
                 false,
@@ -1028,6 +1042,20 @@ impl ConversationDetailView {
             directories_open: false,
             job_active,
             retry,
+            context: context_view(record, sources.models, job),
+            can_compact: !job_active
+                && pending_gate.is_none()
+                && record.continuation.is_none()
+                && crate::conversations::compaction::select_boundary(
+                    &record.messages,
+                    record.compaction.as_ref(),
+                )
+                .is_ok(),
+            summary_usage: usage_panel(&record.summary_requests),
+            compaction: record
+                .compaction
+                .as_ref()
+                .map(super::compaction::CompactionView::from_record),
             queue: super::queue::QueueView::from_queue(
                 &record.queue,
                 job_active || pending_gate.is_some() || record.continuation.is_some(),
@@ -2100,6 +2128,45 @@ fn activity_html(
     }
     .render()
     .expect("message content template")
+}
+
+fn context_view(
+    record: &ConversationRecord,
+    models: &ModelsDevCatalogue,
+    job: Option<&JobSnapshot>,
+) -> Option<ContextView> {
+    if let Some(estimate) = job.and_then(|job| job.context) {
+        return Some(ContextView {
+            label: estimate.label(),
+            fallback: estimate.fallback_limit(),
+            compacting: job.is_some_and(|job| job.compacting),
+        });
+    }
+    let model = record.model.as_ref()?;
+    let selection = &model.settings.model;
+    let turns = crate::conversations::compaction::project(
+        &record.messages,
+        Some(selection),
+        record.compaction.as_ref(),
+    )
+    .ok()?;
+    let tools = crate::tools::definitions_for(&model.settings.tools, model.settings.location);
+    let request = crate::execution::ContextRequest {
+        preamble: &model.settings.instructions,
+        tools: &tools,
+        turns: &turns,
+        extra: &[],
+    };
+    let estimate = crate::execution::context::inspect(
+        request,
+        models.context_limit(selection.provider, &selection.model),
+    )
+    .ok()?;
+    Some(ContextView {
+        label: estimate.label(),
+        fallback: estimate.fallback_limit(),
+        compacting: job.is_some_and(|job| job.compacting),
+    })
 }
 
 fn usage_panel(requests: &[crate::conversations::RequestUsage]) -> Option<UsagePanelView> {

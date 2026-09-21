@@ -566,6 +566,7 @@ pub(crate) enum ProviderError {
     EmptyReply,
     ReplyTooLong,
     Incomplete,
+    ContextOverflow,
     Detail(String),
 }
 
@@ -595,6 +596,9 @@ impl ProviderError {
                 "Power Plant truncated the model reply because it was too long. Try again."
             }
             Self::Incomplete => "The model response was incomplete. No tool ran.",
+            Self::ContextOverflow => {
+                "The provider rejected this request because it exceeded the model context."
+            }
             Self::Detail(text) => text,
         }
     }
@@ -612,6 +616,7 @@ impl ProviderError {
             | Self::EmptyReply
             | Self::ReplyTooLong
             | Self::Incomplete
+            | Self::ContextOverflow
             | Self::Detail(_) => hypergraft::PatchStatus::UnprocessableEntity,
         }
     }
@@ -802,7 +807,7 @@ impl ChatBackend {
             }
             #[cfg(test)]
             Self::Scripted(backend) => {
-                backend.stream_turn(connection, &history, &[], &[], preamble)
+                backend.stream_turn(connection, &history, &[], &[], preamble, None)
             }
         }
     }
@@ -814,12 +819,15 @@ impl ChatBackend {
         extra: &[Message],
         tools: &[ToolDefinition],
         preamble: &str,
+        max_tokens: Option<u64>,
     ) -> Result<ModelStream, ProviderError> {
         match self {
-            Self::Rig => rig::stream_turn(connection, history, extra, tools, preamble, None).await,
+            Self::Rig => {
+                rig::stream_turn(connection, history, extra, tools, preamble, max_tokens).await
+            }
             #[cfg(test)]
             Self::Scripted(backend) => {
-                backend.stream_turn(connection, history, extra, tools, preamble)
+                backend.stream_turn(connection, history, extra, tools, preamble, max_tokens)
             }
         }
     }

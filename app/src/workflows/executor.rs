@@ -2482,6 +2482,10 @@ async fn run_ordinary_file_agent(
             budget: ended.budget.expect("budget pause carries a snapshot"),
             reply: Box::new(ended.reply),
         },
+        AgentOutcome::ContextBlocked => StepOutcome::Failed {
+            category: FailureCategory::Provider,
+            error: ended.error,
+        },
     }
 }
 
@@ -2942,6 +2946,21 @@ async fn run_agent_step(
             };
         };
         turns.extend(stored.history);
+        if let Some(compaction) = stored.compaction {
+            match crate::conversations::compaction::project_turns(
+                &turns,
+                compaction.covered_through as usize,
+                &compaction.text,
+            ) {
+                Ok(projected) => turns = projected,
+                Err(error) => {
+                    return StepOutcome::Failed {
+                        category: FailureCategory::Operational,
+                        error: Some(error.message().to_owned()),
+                    };
+                }
+            }
+        }
     }
     let ended = crate::execution::run_agent_action(state, spec, turns, job.job.clone()).await;
     if ended.outcome != AgentOutcome::BudgetExhausted {
@@ -2951,7 +2970,8 @@ async fn run_agent_step(
             | AgentOutcome::ToolFailure
             | AgentOutcome::AuthorityFailure
             | AgentOutcome::PersistenceFailure
-            | AgentOutcome::UncertainEffect => crate::workflows::evidence::TerminalState::Failed,
+            | AgentOutcome::UncertainEffect
+            | AgentOutcome::ContextBlocked => crate::workflows::evidence::TerminalState::Failed,
             AgentOutcome::Cancelled => crate::workflows::evidence::TerminalState::Cancelled,
             AgentOutcome::BudgetExhausted => unreachable!("budget pause skips terminal evidence"),
         };
@@ -2988,6 +3008,10 @@ async fn run_agent_step(
         AgentOutcome::BudgetExhausted => StepOutcome::Paused {
             budget: ended.budget.expect("budget pause carries a snapshot"),
             reply: Box::new(ended.reply),
+        },
+        AgentOutcome::ContextBlocked => StepOutcome::Failed {
+            category: FailureCategory::Provider,
+            error: ended.error,
         },
     }
 }

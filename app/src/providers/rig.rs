@@ -238,6 +238,16 @@ async fn xai_plan_token(connection: &ProviderConnection) -> Result<String, Provi
 }
 
 pub(super) fn classify_completion_for(error: CompletionError, auth: AuthMethod) -> ProviderError {
+    let json = error.provider_response_json().ok().flatten();
+    if matches!(
+        error
+            .provider_response_status()
+            .map(|status| status.as_u16()),
+        None | Some(400 | 413 | 422)
+    ) && context_overflow_payload(json.as_ref(), &error.to_string())
+    {
+        return ProviderError::ContextOverflow;
+    }
     let classified = match error
         .provider_response_status()
         .map(|status| status.as_u16())
@@ -254,8 +264,20 @@ pub(super) fn classify_completion_for(error: CompletionError, auth: AuthMethod) 
             }
         }
     };
-    let json = error.provider_response_json().ok().flatten();
     with_json_detail(classified, json.as_ref())
+}
+
+pub(super) fn context_overflow_payload(json: Option<&serde_json::Value>, text: &str) -> bool {
+    let mut haystack = text.to_ascii_lowercase();
+    if let Some(json) = json {
+        haystack.push(' ');
+        haystack.push_str(&json.to_string().to_ascii_lowercase());
+    }
+    haystack.contains("context_length_exceeded")
+        || haystack.contains("context length")
+        || haystack.contains("maximum context")
+        || haystack.contains("prompt is too long")
+        || haystack.contains("too many tokens")
 }
 
 fn transient_transport_error(error: &CompletionError) -> bool {

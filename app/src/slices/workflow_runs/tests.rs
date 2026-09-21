@@ -259,8 +259,8 @@ fn context_packet(prompt: String) -> crate::workflows::input_context::AttemptCon
     packet.budget.total_bytes = packet.budget.packet_bytes
         + packet.budget.reserved_output_bytes
         + packet.budget.reserved_tool_bytes;
-    packet.budget.estimated_input_tokens = packet.budget.packet_bytes.div_ceil(4);
-    packet.budget.estimated_total_tokens = packet.budget.total_bytes.div_ceil(4);
+    packet.budget.estimated_input_tokens = packet.budget.packet_bytes;
+    packet.budget.estimated_total_tokens = packet.budget.total_bytes;
     packet
 }
 

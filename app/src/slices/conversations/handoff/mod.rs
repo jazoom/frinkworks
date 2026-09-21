@@ -350,7 +350,7 @@ async fn request_prompt(
     let mut redactor = StreamRedactor::new(secret);
     let mut stream = state
         .chat
-        .stream_turn(connection, &turns, &[], &[], INSTRUCTIONS)
+        .stream_turn(connection, &turns, &[], &[], INSTRUCTIONS, None)
         .await
         .map_err(|_| "The provider did not return a handoff prompt.")?;
     let mut prompt = String::new();

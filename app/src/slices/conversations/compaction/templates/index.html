@@ -1,0 +1,27 @@
+{% if let Some(summary) = compaction %}
+  <section
+    id="conversation-compaction"
+    class="space-y-2 p-5"
+    aria-labelledby="conversation-compaction-heading"
+  >
+    <h3 id="conversation-compaction-heading" class="text-lg font-semibold">
+      Compacted context
+    </h3>
+    <p class="text-quiet text-sm">
+      Earlier exchanges are summarised for the model. The full transcript stays
+      on this computer. Covered through {{ summary.covered }}. Retained from
+      {{ summary.retained }}.
+    </p>
+  </section>
+{% endif %}
+{% if let Some(usage) = summary_usage %}
+  <section class="space-y-2 p-5 text-sm" aria-label="Summary request usage">
+    <h3 class="font-semibold">Summary request usage</h3>
+    {% for request in usage.requests %}
+      <p>{{ request.model }} · {{ request.detail }} · {{ request.cost }}</p>
+    {% endfor %}
+    {% if usage.requests.len() > 1 && !usage.subtotal.is_empty() %}<p>
+      {{ usage.subtotal }}
+    </p>{% endif %}
+  </section>
+{% endif %}

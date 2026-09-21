@@ -708,7 +708,8 @@ fn settle(
         | AgentOutcome::AuthorityFailure
         | AgentOutcome::PersistenceFailure
         | AgentOutcome::UncertainEffect
-        | AgentOutcome::BudgetExhausted => (JobStatus::Failed, MessageStatus::Failed),
+        | AgentOutcome::BudgetExhausted
+        | AgentOutcome::ContextBlocked => (JobStatus::Failed, MessageStatus::Failed),
     };
     let error = error
         .and_then(|text| crate::providers::sanitise_detail(&crate::tools::redact(&text, secret)));

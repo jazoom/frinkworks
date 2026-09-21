@@ -1,4 +1,28 @@
 {% if let Some(saved) = self.saved() %}
+  {% if let Some(estimate) = context %}
+    <section
+      id="conversation-context"
+      class="space-y-2 p-5"
+      aria-labelledby="conversation-context-heading"
+    >
+      <h3 id="conversation-context-heading" class="text-lg font-semibold">
+        Estimated context
+      </h3>
+      <p class="text-quiet text-sm">{{ estimate.label }}</p>
+      <p class="text-quiet text-sm">
+        This estimate is separate from provider-reported usage.
+      </p>
+      {% if estimate.fallback %}
+        <p class="text-quiet text-sm">
+          Catalogue capacity is unavailable. Power Plant uses a conservative
+          limit.
+        </p>
+      {% endif %}
+      {% if estimate.compacting %}
+        <p class="text-sm">Compacting context. Stop remains available.</p>
+      {% endif %}
+    </section>
+  {% endif %}
   {% if let Some(retry) = retry %}
     <section
       id="conversation-retry"
@@ -105,6 +129,7 @@
       </div>
     </section>
   {% endif %}
+  {% include "conversations/compaction/templates/index.html" %}
   {% include "conversations/questions/templates/index.html" %}
   {% include "conversations/continuation/templates/index.html" %}
   {% if let Some(gate) = saved.pending_gate %}

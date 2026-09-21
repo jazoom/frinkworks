@@ -88,7 +88,8 @@ pub(super) async fn run(
         | AgentOutcome::AuthorityFailure
         | AgentOutcome::PersistenceFailure
         | AgentOutcome::UncertainEffect
-        | AgentOutcome::BudgetExhausted => (JobStatus::Failed, MessageStatus::Failed),
+        | AgentOutcome::BudgetExhausted
+        | AgentOutcome::ContextBlocked => (JobStatus::Failed, MessageStatus::Failed),
     };
     let error = error
         .and_then(|text| crate::providers::sanitise_detail(&crate::tools::redact(&text, secret)));
@@ -122,14 +123,18 @@ fn instructions(_state: &AppState, record: &ConversationRecord) -> String {
         .map_or_else(String::new, |model| model.settings.instructions.clone())
 }
 
-pub(super) fn history_with_review(
+pub(crate) fn history_with_review(
     state: &AppState,
     record: &ConversationRecord,
     secret: Option<&str>,
 ) -> Result<Vec<ChatTurn>, &'static str> {
     let selection = record.model.as_ref().map(|model| &model.settings.model);
-    let mut history = crate::conversations::history::project(&record.messages, selection)
-        .map_err(|error| error.message())?;
+    let mut history = crate::conversations::compaction::project(
+        &record.messages,
+        selection,
+        record.compaction.as_ref(),
+    )
+    .map_err(|error| error.message())?;
     if let Some(context) = &record.candidate_review_context {
         history.insert(
             0,

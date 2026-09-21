@@ -67,6 +67,7 @@ pub(crate) enum AgentOutcome {
     UncertainEffect,
     Cancelled,
     BudgetExhausted,
+    ContextBlocked,
 }
 
 pub(crate) struct AgentActionEnd {
@@ -106,6 +107,9 @@ pub(crate) async fn run_agent_action(
     let mut thinking_redactor = StreamRedactor::new(secret);
     let mut event_count = 0usize;
     let mut budget = Budget::start(spec.budget);
+    let mut turns = turns;
+    let mut summary_attempts = 0u32;
+    let mut overflow_recovery = 0u32;
 
     'round: loop {
         if let Some(reason) = budget.next_request_block() {
@@ -147,6 +151,32 @@ pub(crate) async fn run_agent_action(
             if let Some(reason) = budget.next_request_block() {
                 return pause_action(&job, reply, budget.snapshot(reason));
             }
+            if overflow_recovery > 0 && summary_attempts == 0 {
+                summary_attempts += 1;
+                if let Err(error) = compact_history(state, &spec, &job, &mut turns).await {
+                    return with_reply(error, reply);
+                }
+            }
+            let output_allowance = match fit_context(
+                state,
+                &spec,
+                &job,
+                &mut turns,
+                &extra,
+                &request_tools,
+                &mut summary_attempts,
+            )
+            .await
+            {
+                Ok(estimate) => Some(estimate.output_allowance),
+                Err(end) => return with_reply(end, reply),
+            };
+            if job.cancel_requested() {
+                return cancel_action(&job, &reply);
+            }
+            if let Some(reason) = budget.next_request_block() {
+                return pause_action(&job, reply, budget.snapshot(reason));
+            }
             budget.record_model_request();
             reply.completion = Some(CompletionReason::Unknown);
             if let Err(error) = start_model_request(state, &spec, &mut reply, &job) {
@@ -177,9 +207,61 @@ pub(crate) async fn run_agent_action(
                     &extra,
                     &request_tools,
                     &spec.preamble,
+                    output_allowance,
                 ) => match result {
                     Ok(stream) => stream,
                     Err(error) => {
+                        if matches!(error, ProviderError::ContextOverflow) {
+                            if overflow_recovery
+                                < crate::conversations::compaction::MAXIMUM_OVERFLOW_RECOVERY
+                            {
+                                overflow_recovery += 1;
+                                summary_attempts = 0;
+                                if let Err(error) = record_failed_attempt(
+                                    state,
+                                    &spec,
+                                    &job,
+                                    &reply,
+                                    &committed_reply,
+                                    &error,
+                                ) {
+                                    return store_failure(&reply, error);
+                                }
+                                restore_request(
+                                    &mut reply,
+                                    &committed_reply,
+                                    &mut published_response,
+                                    committed_response,
+                                    &mut thinking_progress,
+                                    committed_thinking,
+                                    &mut model_reply_bytes,
+                                    committed_model_bytes,
+                                    &mut thinking_bytes,
+                                    committed_thinking_bytes,
+                                    &mut visible_tool_bytes,
+                                    committed_visible_tool_bytes,
+                                    &mut response_redactor,
+                                    &mut thinking_redactor,
+                                    &mut event_count,
+                                    secret,
+                                    &job,
+                                );
+                                if let Err(error) =
+                                    persist_output(state, spec.conversation, &job, &reply, false)
+                                {
+                                    return store_failure(&reply, error);
+                                }
+                                continue 'provider;
+                            }
+                            thinking_progress.flush(&job, &reply.thinking);
+                            publish_reply_remaining(
+                                &job,
+                                &reply,
+                                published_response,
+                                thinking_progress.published,
+                            );
+                            return context_blocked(reply, error.message());
+                        }
                         if let Some(delay) = take_retry(&error, &mut retry_attempts, &mut retry_waited) {
                             if let Err(error) = record_failed_attempt(state, &spec, &job, &reply, &committed_reply, &error) {
                                 return store_failure(&reply, error);
@@ -475,6 +557,62 @@ pub(crate) async fn run_agent_action(
                         reply.completion = completion;
                     }
                     Err(error) => {
+                        if matches!(error, ProviderError::ContextOverflow) {
+                            if overflow_recovery
+                                < crate::conversations::compaction::MAXIMUM_OVERFLOW_RECOVERY
+                            {
+                                overflow_recovery += 1;
+                                summary_attempts = 0;
+                                let tail = response_redactor.finish_boundary();
+                                append_model_piece(&mut reply, &tail, &mut model_reply_bytes);
+                                let tail = thinking_redactor.finish_boundary();
+                                append_thinking_piece(&mut reply, &tail, &mut thinking_bytes);
+                                if let Err(error) = record_failed_attempt(
+                                    state,
+                                    &spec,
+                                    &job,
+                                    &reply,
+                                    &committed_reply,
+                                    &error,
+                                ) {
+                                    return store_failure(&reply, error);
+                                }
+                                restore_request(
+                                    &mut reply,
+                                    &committed_reply,
+                                    &mut published_response,
+                                    committed_response,
+                                    &mut thinking_progress,
+                                    committed_thinking,
+                                    &mut model_reply_bytes,
+                                    committed_model_bytes,
+                                    &mut thinking_bytes,
+                                    committed_thinking_bytes,
+                                    &mut visible_tool_bytes,
+                                    committed_visible_tool_bytes,
+                                    &mut response_redactor,
+                                    &mut thinking_redactor,
+                                    &mut event_count,
+                                    secret,
+                                    &job,
+                                );
+                                if let Err(error) =
+                                    persist_output(state, spec.conversation, &job, &reply, false)
+                                {
+                                    return store_failure(&reply, error);
+                                }
+                                continue 'provider;
+                            }
+                            reply.completion = Some(CompletionReason::Unknown);
+                            thinking_progress.flush(&job, &reply.thinking);
+                            publish_reply_remaining(
+                                &job,
+                                &reply,
+                                published_response,
+                                thinking_progress.published,
+                            );
+                            return context_blocked(reply, error.message());
+                        }
                         if let Some(delay) =
                             take_retry(&error, &mut retry_attempts, &mut retry_waited)
                         {
@@ -625,11 +763,28 @@ pub(crate) async fn run_agent_action(
                 if end.outcome != AgentOutcome::Completed {
                     return end;
                 }
+                if let Err(end) = compact_if_needed(
+                    state,
+                    &spec,
+                    &job,
+                    &mut turns,
+                    &extra,
+                    &request_tools,
+                    &mut summary_attempts,
+                )
+                .await
+                {
+                    return with_reply(end, reply);
+                }
                 match take_steering(state, &spec, &job, &reply) {
                     Ok(Some(steering)) => {
                         text.push_str(&response_tail);
-                        extra.push(Message::assistant(text));
-                        extra.push(Message::user(steering));
+                        let _ = (text, steering);
+                        extra.clear();
+                        match current_conversation_turns(state, &spec) {
+                            Ok(current) => turns = current,
+                            Err(error) => return context_blocked(reply, error),
+                        }
                         let _ = response_redactor.finish_boundary();
                         let _ = thinking_redactor.finish_boundary();
                         reset_round(
@@ -854,18 +1009,18 @@ pub(crate) async fn run_agent_action(
                 };
             }
         }
+        let completed_turn = crate::providers::ChatTurn {
+            role: crate::providers::Role::Assistant,
+            text: text.clone(),
+            thinking: String::new(),
+            tools: Vec::new(),
+            activity: Vec::new(),
+            usage: reply.usage[committed_reply.usage.len()..].to_vec(),
+            calls: resolved_calls,
+            continuation: reply.continuation[committed_reply.continuation.len()..].to_vec(),
+        };
         if let Some(evidence) = &spec.evidence
-            && !resolved_calls.is_empty()
-            && let Err(error) = evidence.turn(&crate::providers::ChatTurn {
-                role: crate::providers::Role::Assistant,
-                text: text.clone(),
-                thinking: String::new(),
-                tools: Vec::new(),
-                activity: Vec::new(),
-                usage: reply.usage.clone(),
-                calls: resolved_calls,
-                continuation: reply.continuation.clone(),
-            })
+            && let Err(error) = evidence.turn(&completed_turn)
         {
             return AgentActionEnd {
                 outcome: AgentOutcome::PersistenceFailure,
@@ -874,12 +1029,34 @@ pub(crate) async fn run_agent_action(
                 budget: None,
             };
         }
+        if spec.steering_session.is_none() {
+            turns.push(completed_turn);
+            extra.clear();
+        }
         if let Some(reason) = budget.next_request_block() {
             return pause_action(&job, reply, budget.snapshot(reason));
         }
+        if let Err(end) = compact_if_needed(
+            state,
+            &spec,
+            &job,
+            &mut turns,
+            &extra,
+            &request_tools,
+            &mut summary_attempts,
+        )
+        .await
+        {
+            return with_reply(end, reply);
+        }
         match take_steering(state, &spec, &job, &reply) {
             Ok(Some(text)) => {
-                extra.push(Message::user(text));
+                let _ = text;
+                extra.clear();
+                match current_conversation_turns(state, &spec) {
+                    Ok(current) => turns = current,
+                    Err(error) => return context_blocked(reply, error),
+                }
                 let _ = response_redactor.finish_boundary();
                 let _ = thinking_redactor.finish_boundary();
                 reset_round(
@@ -892,7 +1069,35 @@ pub(crate) async fn run_agent_action(
                     &mut output_visible,
                 );
             }
-            Ok(None) => {}
+            Ok(None) => {
+                if let Some(conversation) = spec
+                    .conversation
+                    .filter(|_| spec.steering_session.is_some())
+                {
+                    if let Err(error) =
+                        state
+                            .conversations
+                            .settle_tool_batch(&conversation, job.id(), &reply)
+                    {
+                        return store_failure(&reply, error);
+                    }
+                    extra.clear();
+                    match current_conversation_turns(state, &spec) {
+                        Ok(current) => turns = current,
+                        Err(error) => return context_blocked(reply, error),
+                    }
+                    job.restore_output(AssistantReply::default());
+                    reset_round(
+                        &mut reply,
+                        &mut model_reply_bytes,
+                        &mut thinking_bytes,
+                        &mut visible_tool_bytes,
+                        &mut published_response,
+                        &mut thinking_progress,
+                        &mut output_visible,
+                    );
+                }
+            }
             Err(error) => return store_failure(&reply, error),
         }
     }
@@ -1444,6 +1649,270 @@ fn pause_action(job: &Job, reply: AssistantReply, budget: BudgetSnapshot) -> Age
         reply,
         budget: Some(budget),
     }
+}
+
+fn context_blocked(reply: AssistantReply, error: &str) -> AgentActionEnd {
+    AgentActionEnd {
+        outcome: AgentOutcome::ContextBlocked,
+        error: Some(error.to_owned()),
+        reply,
+        budget: None,
+    }
+}
+
+fn with_reply(end: AgentActionEnd, reply: AssistantReply) -> AgentActionEnd {
+    if end.reply.is_empty() && end.outcome != AgentOutcome::Cancelled {
+        AgentActionEnd { reply, ..end }
+    } else {
+        end
+    }
+}
+
+fn current_conversation_turns(
+    state: &AppState,
+    spec: &AgentRunSpec,
+) -> Result<Vec<ChatTurn>, &'static str> {
+    let record = spec
+        .conversation
+        .and_then(|id| state.conversations.get(&id))
+        .ok_or("The conversation is unavailable.")?;
+    let secret = (spec.connection.auth == crate::providers::AuthMethod::ApiKey)
+        .then(|| spec.connection.api_key.expose());
+    crate::slices::conversations::history_with_review(state, &record, secret)
+}
+
+async fn fit_context(
+    state: &AppState,
+    spec: &AgentRunSpec,
+    job: &Job,
+    turns: &mut Vec<ChatTurn>,
+    extra: &[Message],
+    tools: &[rig_core::completion::ToolDefinition],
+    summary_attempts: &mut u32,
+) -> Result<crate::execution::ContextEstimate, AgentActionEnd> {
+    compact_if_needed(state, spec, job, turns, extra, tools, summary_attempts).await?;
+    let request = crate::execution::ContextRequest {
+        preamble: &spec.preamble,
+        tools,
+        turns,
+        extra,
+    };
+    let catalogue = state
+        .models_dev
+        .context_limit(spec.connection.kind, &spec.connection.model);
+    match crate::execution::context::inspect(request, catalogue) {
+        Ok(estimate) => {
+            job.set_context(estimate);
+            if estimate.fits() {
+                Ok(estimate)
+            } else {
+                Err(context_blocked(
+                    AssistantReply::default(),
+                    crate::execution::ContextError::Overflow.message(),
+                ))
+            }
+        }
+        Err(error) => Err(context_blocked(AssistantReply::default(), error.message())),
+    }
+}
+
+async fn compact_if_needed(
+    state: &AppState,
+    spec: &AgentRunSpec,
+    job: &Job,
+    turns: &mut Vec<ChatTurn>,
+    extra: &[Message],
+    tools: &[rig_core::completion::ToolDefinition],
+    summary_attempts: &mut u32,
+) -> Result<(), AgentActionEnd> {
+    let request = crate::execution::ContextRequest {
+        preamble: &spec.preamble,
+        tools,
+        turns,
+        extra,
+    };
+    let catalogue = state
+        .models_dev
+        .context_limit(spec.connection.kind, &spec.connection.model);
+    let estimate = match crate::execution::context::inspect(request, catalogue) {
+        Ok(estimate) => estimate,
+        Err(error) => {
+            return Err(context_blocked(AssistantReply::default(), error.message()));
+        }
+    };
+    job.set_context(estimate);
+    let compactable = if spec.steering_session.is_some() {
+        spec.conversation.is_some_and(|id| {
+            state.conversations.get(&id).is_some_and(|record| {
+                crate::conversations::compaction::select_boundary(
+                    &record.messages,
+                    record.compaction.as_ref(),
+                )
+                .is_ok()
+            })
+        })
+    } else {
+        spec.evidence.is_some()
+            && crate::conversations::compaction::workflow_cover_index(turns).is_ok()
+    };
+    if !estimate.needs_compaction(compactable) {
+        return Ok(());
+    }
+    if *summary_attempts >= crate::conversations::compaction::MAXIMUM_SUMMARY_ATTEMPTS {
+        return Ok(());
+    }
+    *summary_attempts += 1;
+    compact_history(state, spec, job, turns).await
+}
+
+async fn compact_history(
+    state: &AppState,
+    spec: &AgentRunSpec,
+    job: &Job,
+    turns: &mut Vec<ChatTurn>,
+) -> Result<(), AgentActionEnd> {
+    if job.cancel_requested() {
+        return Err(cancel_action(job, &AssistantReply::default()));
+    }
+    job.set_compacting();
+    let result = compact_history_inner(state, spec, job, turns).await;
+    job.clear_compacting();
+    result
+}
+
+async fn compact_history_inner(
+    state: &AppState,
+    spec: &AgentRunSpec,
+    job: &Job,
+    turns: &mut Vec<ChatTurn>,
+) -> Result<(), AgentActionEnd> {
+    if let Some(conversation) = spec
+        .conversation
+        .filter(|_| spec.steering_session.is_some())
+    {
+        let Some(record) = state.conversations.get(&conversation) else {
+            return Err(context_blocked(
+                AssistantReply::default(),
+                "The conversation is unavailable.",
+            ));
+        };
+        if let Ok((covered_through, retained_from)) =
+            crate::conversations::compaction::select_boundary(
+                &record.messages,
+                record.compaction.as_ref(),
+            )
+        {
+            let selection = record
+                .model
+                .as_ref()
+                .map(|model| model.settings.model.clone());
+            let covered = crate::conversations::compaction::covered_turns(
+                &record.messages,
+                selection.as_ref(),
+                covered_through,
+                record.compaction.as_ref(),
+            )
+            .map_err(|error| context_blocked(AssistantReply::default(), error.message()))?;
+            let (text, request) = generate_summary(state, spec, job, &covered).await?;
+            if job.cancel_requested() {
+                return Err(cancel_action(job, &AssistantReply::default()));
+            }
+            let compaction = crate::conversations::CompactionRecord {
+                covered_through,
+                retained_from,
+                text,
+                request,
+                created_at_ms: crate::workflows::now_ms(),
+            };
+            state
+                .conversations
+                .record_job_compaction(&conversation, job.id(), compaction.clone())
+                .map_err(|error| store_failure(&AssistantReply::default(), error))?;
+            *turns = current_conversation_turns(state, spec)
+                .map_err(|error| context_blocked(AssistantReply::default(), error))?;
+            return Ok(());
+        }
+        return Ok(());
+    }
+    let cover = match crate::conversations::compaction::workflow_cover_index(turns) {
+        Ok(cover) => cover,
+        Err(crate::conversations::compaction::CompactionError::NothingToCompact) => {
+            return Ok(());
+        }
+        Err(error) => {
+            return Err(context_blocked(AssistantReply::default(), error.message()));
+        }
+    };
+    let (text, request) = generate_summary(state, spec, job, &turns[..=cover]).await?;
+    if job.cancel_requested() {
+        return Err(cancel_action(job, &AssistantReply::default()));
+    }
+    let projected = crate::conversations::compaction::project_turns(turns, cover, &text)
+        .map_err(|error| context_blocked(AssistantReply::default(), error.message()))?;
+    let evidence = spec.evidence.as_ref().ok_or_else(|| {
+        context_blocked(
+            AssistantReply::default(),
+            "The summary has no durable history owner.",
+        )
+    })?;
+    evidence
+        .compaction(cover as u32, &text, request)
+        .map_err(|error| {
+            end(
+                AgentOutcome::PersistenceFailure,
+                Some(error.message().to_owned()),
+                AssistantReply::default(),
+            )
+        })?;
+    *turns = projected;
+    Ok(())
+}
+
+async fn generate_summary(
+    state: &AppState,
+    spec: &AgentRunSpec,
+    job: &Job,
+    turns: &[ChatTurn],
+) -> Result<(String, crate::conversations::RequestUsage), AgentActionEnd> {
+    let mut persistence_failed = false;
+    let result = crate::conversations::compaction::generation::generate(
+        state,
+        &spec.connection,
+        turns,
+        job,
+        |request| {
+            let result = if spec.steering_session.is_some() {
+                spec.conversation
+                    .ok_or("The conversation is unavailable.")
+                    .and_then(|id| {
+                        state
+                            .conversations
+                            .record_summary_request(&id, job.id(), request)
+                            .map_err(|error| error.message())
+                    })
+            } else if let Some(evidence) = &spec.evidence {
+                evidence.usage(request).map_err(|error| error.message())
+            } else {
+                Err("The summary has no durable history owner.")
+            };
+            persistence_failed |= result.is_err();
+            result
+        },
+    )
+    .await;
+    result.map_err(|error| {
+        if persistence_failed {
+            end(
+                AgentOutcome::PersistenceFailure,
+                Some(error.to_owned()),
+                AssistantReply::default(),
+            )
+        } else if job.cancel_requested() {
+            cancel_action(job, &AssistantReply::default())
+        } else {
+            context_blocked(AssistantReply::default(), error)
+        }
+    })
 }
 
 fn start_model_request(

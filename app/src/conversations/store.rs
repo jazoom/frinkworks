@@ -78,6 +78,8 @@ pub(crate) struct ConversationRecord {
     pub(crate) messages: Vec<ConversationMessage>,
     pub(crate) active_job: Option<JobId>,
     pub(crate) continuation: Option<super::history::ContinuationCheckpoint>,
+    pub(crate) compaction: Option<super::compaction::CompactionRecord>,
+    pub(crate) summary_requests: Vec<super::history::RequestUsage>,
     pub(crate) queue: super::queue::ConversationQueue,
     pub(crate) created_at_ms: u64,
     pub(crate) updated_at_ms: u64,
@@ -268,6 +270,10 @@ struct ConversationFile {
     active_job: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     continuation: Option<ContinuationFile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    compaction: Option<CompactionFile>,
+    #[serde(default)]
+    summary_requests: Vec<super::history::RequestUsage>,
     #[serde(default)]
     queue_revision: u32,
     #[serde(default)]
@@ -291,6 +297,16 @@ struct ContinuationFile {
     step: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     drafts: Vec<PausedDraftFile>,
+    created_at_ms: u64,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+struct CompactionFile {
+    covered_through: String,
+    retained_from: String,
+    text: String,
+    request: super::history::RequestUsage,
     created_at_ms: u64,
 }
 
@@ -493,9 +509,11 @@ impl ConversationStore {
             source_candidate_review: None,
             candidate_reviews: Vec::new(),
             candidate_review_context: None,
+            summary_requests: Vec::new(),
             messages: Vec::new(),
             active_job: None,
             continuation: None,
+            compaction: None,
             queue: super::queue::ConversationQueue::default(),
             created_at_ms: now,
             updated_at_ms: now,
@@ -582,9 +600,11 @@ impl ConversationStore {
                 source: source_link,
                 task_brief,
             }),
+            summary_requests: Vec::new(),
             messages: Vec::new(),
             active_job: None,
             continuation: None,
+            compaction: None,
             queue: super::queue::ConversationQueue::default(),
             created_at_ms: now,
             updated_at_ms: now,
@@ -1106,6 +1126,102 @@ impl ConversationStore {
         })
     }
 
+    pub(crate) fn record_summary_request(
+        &self,
+        id: &ConversationId,
+        job: JobId,
+        request: &super::history::RequestUsage,
+    ) -> Result<(), ConversationError> {
+        self.update(id, 0, false, |current| {
+            if current.active_job != Some(job) || !request.valid() {
+                return Err(ConversationError::Conflict);
+            }
+            if let Some(existing) = current
+                .summary_requests
+                .iter_mut()
+                .find(|entry| entry.id == request.id)
+            {
+                *existing = request.clone();
+            } else {
+                current.summary_requests.push(request.clone());
+            }
+            if !super::history::valid_requests(&current.summary_requests, MessageRole::Assistant) {
+                return Err(ConversationError::Message);
+            }
+            Ok(())
+        })
+        .map(|_| ())
+    }
+
+    pub(crate) fn begin_compaction(
+        &self,
+        id: &ConversationId,
+        revision: u32,
+        job: JobId,
+    ) -> Result<ConversationRecord, ConversationError> {
+        self.replace(id, revision, |current| {
+            if current.active_job.is_some() || current.continuation.is_some() {
+                return Err(ConversationError::Active);
+            }
+            if current.messages.len() >= MAXIMUM_MESSAGES {
+                return Err(ConversationError::Full);
+            }
+            current.messages.push(ConversationMessage {
+                id: MessageId::generate().map_err(|_| ConversationError::Random)?,
+                role: MessageRole::Assistant,
+                text: String::new(),
+                activity: Vec::new(),
+                continuation: Vec::new(),
+                status: MessageStatus::Pending,
+                error: None,
+                request: Some(job),
+                completion: None,
+                requests: Vec::new(),
+            });
+            current.active_job = Some(job);
+            Ok(())
+        })
+    }
+
+    pub(crate) fn finish_compaction(
+        &self,
+        id: &ConversationId,
+        job: JobId,
+        error: Option<&str>,
+    ) -> Result<ConversationRecord, ConversationError> {
+        self.update(id, 0, false, |current| {
+            if current.active_job != Some(job) {
+                return Err(ConversationError::Conflict);
+            }
+            if let Some(error) = error {
+                let message = current
+                    .messages
+                    .last_mut()
+                    .ok_or(ConversationError::Message)?;
+                message.status = MessageStatus::Failed;
+                message.error = Some(error.to_owned());
+            } else {
+                current.messages.pop();
+            }
+            current.active_job = None;
+            Ok(())
+        })
+    }
+
+    pub(crate) fn record_job_compaction(
+        &self,
+        id: &ConversationId,
+        request: JobId,
+        compaction: super::compaction::CompactionRecord,
+    ) -> Result<ConversationRecord, ConversationError> {
+        self.update(id, 0, false, |current| {
+            if current.active_job != Some(request) {
+                return Err(ConversationError::Conflict);
+            }
+            commit_compaction(current, compaction)
+        })
+    }
+
     pub(crate) fn claim_continuation(
         &self,
         id: &ConversationId,
@@ -1343,6 +1459,39 @@ impl ConversationStore {
             current.active_job = Some(request);
             Ok(())
         })
+    }
+
+    pub(crate) fn settle_tool_batch(
+        &self,
+        id: &ConversationId,
+        job: JobId,
+        reply: &crate::providers::AssistantReply,
+    ) -> Result<(), ConversationError> {
+        validate_reply(reply)?;
+        self.update(id, 0, false, |current| {
+            if current.messages.len() >= MAXIMUM_MESSAGES {
+                return Err(ConversationError::Full);
+            }
+            let message = active_assistant(current, job)?;
+            apply_reply(message, reply);
+            message.status = MessageStatus::Complete;
+            super::history::project(&current.messages, None)
+                .map_err(|_| ConversationError::Unsettled)?;
+            current.messages.push(ConversationMessage {
+                id: MessageId::generate().map_err(|_| ConversationError::Random)?,
+                role: MessageRole::Assistant,
+                text: String::new(),
+                activity: Vec::new(),
+                continuation: Vec::new(),
+                status: MessageStatus::Pending,
+                error: None,
+                request: Some(job),
+                completion: None,
+                requests: Vec::new(),
+            });
+            Ok(())
+        })
+        .map(|_| ())
     }
 
     pub(crate) fn deliver_steering(
@@ -1841,6 +1990,16 @@ fn record_from_file(file: ConversationFile) -> Result<ConversationRecord, Conver
             .continuation
             .map(|file| continuation_from_file(file, &messages))
             .transpose()?,
+        summary_requests: {
+            if !super::history::valid_requests(&file.summary_requests, MessageRole::Assistant) {
+                return Err(ConversationError::Corrupt);
+            }
+            file.summary_requests
+        },
+        compaction: file
+            .compaction
+            .map(|file| compaction_from_file(file, &messages))
+            .transpose()?,
         queue,
         created_at_ms: file.created_at_ms,
         updated_at_ms: file.updated_at_ms,
@@ -2243,6 +2402,8 @@ fn record_to_file(record: &ConversationRecord) -> ConversationFile {
             .collect(),
         active_job: record.active_job.map(|request| request.as_hex()),
         continuation: record.continuation.as_ref().map(continuation_to_file),
+        compaction: record.compaction.as_ref().map(compaction_to_file),
+        summary_requests: record.summary_requests.clone(),
         queue_revision: record.queue.revision,
         queue: record.queue.items.iter().map(queue_item_to_file).collect(),
         created_at_ms: record.created_at_ms,
@@ -2332,6 +2493,48 @@ fn continuation_from_file(
         return Err(ConversationError::Corrupt);
     }
     Ok(checkpoint)
+}
+
+fn commit_compaction(
+    current: &mut ConversationRecord,
+    compaction: super::compaction::CompactionRecord,
+) -> Result<(), ConversationError> {
+    if current.continuation.is_some() {
+        return Err(ConversationError::Active);
+    }
+    if !compaction.valid(&current.messages) {
+        return Err(ConversationError::Message);
+    }
+    current.compaction = Some(compaction);
+    Ok(())
+}
+
+fn compaction_to_file(record: &super::compaction::CompactionRecord) -> CompactionFile {
+    CompactionFile {
+        covered_through: record.covered_through.as_hex(),
+        retained_from: record.retained_from.as_hex(),
+        text: record.text.clone(),
+        request: record.request.clone(),
+        created_at_ms: record.created_at_ms,
+    }
+}
+
+fn compaction_from_file(
+    file: CompactionFile,
+    messages: &[ConversationMessage],
+) -> Result<super::compaction::CompactionRecord, ConversationError> {
+    let record = super::compaction::CompactionRecord {
+        covered_through: MessageId::parse(&file.covered_through)
+            .ok_or(ConversationError::Corrupt)?,
+        retained_from: MessageId::parse(&file.retained_from).ok_or(ConversationError::Corrupt)?,
+        text: file.text,
+        request: file.request,
+        created_at_ms: file.created_at_ms,
+    };
+    if !record.valid(messages) {
+        return Err(ConversationError::Corrupt);
+    }
+    Ok(record)
 }
 
 fn queue_from_file(
