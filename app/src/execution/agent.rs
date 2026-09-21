@@ -7,7 +7,7 @@ use rig_core::completion::{AssistantContent, Message};
 
 use crate::{
     agents::{AgentId, DirectoryPolicy, ToolId},
-    conversations::ConversationId,
+    conversations::{ConversationId, PriceProvenance, RequestId, RequestUsage},
     execution::{Budget, BudgetPolicy, BudgetSnapshot, ToolLocation},
     providers::{
         AssistantActivity, AssistantReply, ChatTurn, CompletionReason, ModelEvent, ModelUsage,
@@ -149,6 +149,9 @@ pub(crate) async fn run_agent_action(
             }
             budget.record_model_request();
             reply.completion = Some(CompletionReason::Unknown);
+            if let Err(error) = start_model_request(state, &spec, &mut reply, &job) {
+                return store_failure(&reply, error);
+            }
             thinking_progress.begin_phase();
             if job.cancel_requested() {
                 return cancel_action(&job, &reply);
@@ -401,17 +404,46 @@ pub(crate) async fn run_agent_action(
                         reply.start_tool(visible_id, visible_name, arguments.clone());
                         calls.push((id, name, arguments));
                     }
-                    Ok(ModelEvent::Usage { input_tokens }) => {
-                        let usage = ModelUsage {
-                            provider: spec.connection.kind,
-                            model: spec.connection.model.clone(),
-                            input_tokens,
-                        };
-                        reply.usage = Some(usage.clone());
-                        if let Some(evidence) = &spec.evidence {
-                            evidence.usage(&usage);
+                    Ok(ModelEvent::Usage {
+                        input_tokens,
+                        output_tokens,
+                        cache_read_tokens,
+                        cache_creation_tokens,
+                    }) => {
+                        if let Some(request) = reply.usage.last_mut() {
+                            if !request.usage.has_tokens() {
+                                request.usage.input_tokens = input_tokens;
+                                request.usage.output_tokens = output_tokens;
+                                request.usage.cache_read_tokens = cache_read_tokens;
+                                request.usage.cache_creation_tokens = cache_creation_tokens;
+                            }
+                            if !request.usage.valid() {
+                                return AgentActionEnd {
+                                    outcome: AgentOutcome::ProviderFailure,
+                                    error: Some(
+                                        crate::conversations::history::HistoryError::Usage
+                                            .message()
+                                            .to_owned(),
+                                    ),
+                                    reply,
+                                    budget: None,
+                                };
+                            }
+                            if let Some(evidence) = &spec.evidence
+                                && evidence.usage(request).is_err()
+                            {
+                                return store_failure(
+                                    &reply,
+                                    crate::conversations::ConversationError::Persist,
+                                );
+                            }
+                            job.push_usage(request.clone());
                         }
-                        job.push_usage(usage);
+                        if let Err(error) =
+                            persist_output(state, spec.conversation, &job, &reply, true)
+                        {
+                            return store_failure(&reply, error);
+                        }
                     }
                     Ok(ModelEvent::Continuation(metadata)) => {
                         reply.continuation.push(metadata);
@@ -830,7 +862,7 @@ pub(crate) async fn run_agent_action(
                 thinking: String::new(),
                 tools: Vec::new(),
                 activity: Vec::new(),
-                usage: None,
+                usage: reply.usage.clone(),
                 calls: resolved_calls,
                 continuation: reply.continuation.clone(),
             })
@@ -1298,7 +1330,7 @@ fn persist_output(
         return Ok(());
     };
     if job.snapshot().owner != crate::sessions::JobOwner::Conversation(conversation)
-        || reply.is_empty()
+        || (reply.is_empty() && reply.usage.is_empty())
         || state.conversations.get(&conversation).is_none()
     {
         return Ok(());
@@ -1414,6 +1446,43 @@ fn pause_action(job: &Job, reply: AssistantReply, budget: BudgetSnapshot) -> Age
     }
 }
 
+fn start_model_request(
+    state: &AppState,
+    spec: &AgentRunSpec,
+    reply: &mut AssistantReply,
+    job: &Job,
+) -> Result<(), crate::conversations::ConversationError> {
+    let prices = match spec.connection.auth {
+        crate::providers::AuthMethod::ApiKey => state
+            .models_dev
+            .prices(spec.connection.kind, &spec.connection.model)
+            .and_then(PriceProvenance::from_catalogue),
+        crate::providers::AuthMethod::Plan => None,
+    };
+    let request = RequestUsage {
+        id: RequestId::generate().map_err(|_| crate::conversations::ConversationError::Random)?,
+        usage: ModelUsage::new(spec.connection.kind, spec.connection.model.clone()),
+        auth: spec.connection.auth,
+        prices,
+    };
+    reply.usage.push(request.clone());
+    if !crate::conversations::history::valid_requests(
+        &reply.usage,
+        crate::conversations::MessageRole::Assistant,
+    ) {
+        reply.usage.pop();
+        return Err(crate::conversations::ConversationError::Message);
+    }
+    if let Some(evidence) = &spec.evidence {
+        evidence
+            .usage(&request)
+            .map_err(|_| crate::conversations::ConversationError::Persist)?;
+    }
+    persist_output(state, spec.conversation, job, reply, true)?;
+    job.push_usage(request);
+    Ok(())
+}
+
 fn record_failed_attempt(
     state: &AppState,
     spec: &AgentRunSpec,
@@ -1433,6 +1502,14 @@ fn record_failed_attempt(
             .strip_prefix(&committed.thinking)
             .unwrap_or_default(),
     );
+    let committed_ids: std::collections::BTreeSet<_> =
+        committed.usage.iter().map(|request| request.id).collect();
+    failed.usage = reply
+        .usage
+        .iter()
+        .filter(|request| !committed_ids.contains(&request.id))
+        .cloned()
+        .collect();
     state.conversations.record_provider_failure(
         &conversation,
         job.id(),

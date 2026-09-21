@@ -130,7 +130,8 @@ impl ThinkingEffort {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum AuthMethod {
     ApiKey,
     Plan,
@@ -286,7 +287,47 @@ pub(crate) enum AssistantActivity {
 pub(crate) struct ModelUsage {
     pub(crate) provider: ProviderKind,
     pub(crate) model: String,
-    pub(crate) input_tokens: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) input_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) output_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) cache_read_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) cache_creation_tokens: Option<u64>,
+}
+
+impl ModelUsage {
+    pub(crate) fn new(provider: ProviderKind, model: impl Into<String>) -> Self {
+        Self {
+            provider,
+            model: model.into(),
+            input_tokens: None,
+            output_tokens: None,
+            cache_read_tokens: None,
+            cache_creation_tokens: None,
+        }
+    }
+
+    pub(crate) fn valid(&self) -> bool {
+        model_is_bounded(&self.model) && !self.model.contains('\0') && self.cache_sum().is_ok()
+    }
+
+    /// Combined cache tokens. `Err` means the reported cache counts overflow.
+    pub(crate) fn cache_sum(&self) -> Result<Option<u64>, ()> {
+        match (self.cache_read_tokens, self.cache_creation_tokens) {
+            (None, None) => Ok(None),
+            (Some(left), None) | (None, Some(left)) => Ok(Some(left)),
+            (Some(left), Some(right)) => left.checked_add(right).ok_or(()).map(Some),
+        }
+    }
+
+    pub(crate) fn has_tokens(&self) -> bool {
+        self.input_tokens.is_some()
+            || self.output_tokens.is_some()
+            || self.cache_read_tokens.is_some()
+            || self.cache_creation_tokens.is_some()
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -330,7 +371,7 @@ pub(crate) struct AssistantReply {
     pub(crate) thinking: String,
     pub(crate) tools: Vec<ToolOutput>,
     pub(crate) activity: Vec<AssistantActivity>,
-    pub(crate) usage: Option<ModelUsage>,
+    pub(crate) usage: Vec<crate::conversations::RequestUsage>,
     /// Bounded provider-tagged continuation data that is not visible thought text.
     pub(crate) continuation: Vec<crate::conversations::ContinuationMetadata>,
     /// Transient live output for an active command. It is not durable history.
@@ -456,8 +497,8 @@ pub(crate) struct ChatTurn {
     pub(crate) tools: Vec<ToolOutput>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) activity: Vec<AssistantActivity>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) usage: Option<ModelUsage>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) usage: Vec<crate::conversations::RequestUsage>,
     /// Durable assistant tool calls with their matching structured results.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) calls: Vec<ChatToolCall>,
@@ -474,7 +515,7 @@ impl ChatTurn {
             thinking: String::new(),
             tools: Vec::new(),
             activity: Vec::new(),
-            usage: None,
+            usage: Vec::new(),
             calls: Vec::new(),
             continuation: Vec::new(),
         }
@@ -710,7 +751,10 @@ pub(crate) enum ModelEvent {
         arguments: serde_json::Value,
     },
     Usage {
-        input_tokens: u64,
+        input_tokens: Option<u64>,
+        output_tokens: Option<u64>,
+        cache_read_tokens: Option<u64>,
+        cache_creation_tokens: Option<u64>,
     },
     Complete {
         reason: CompletionReason,

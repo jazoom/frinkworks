@@ -51,6 +51,7 @@ async fn title_request_excludes_tools_presets_and_later_history() {
         error: None,
         request: None,
         completion: None,
+        requests: Vec::new(),
     });
     let mut headers = axum::http::HeaderMap::new();
     headers.insert(

@@ -8,12 +8,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::execution::BudgetSnapshot;
 use crate::providers::{
-    AssistantActivity, ChatToolCall, ChatTurn, CompletionReason, ModelSelection, ToolOutput,
+    AssistantActivity, AuthMethod, ChatToolCall, ChatTurn, CompletionReason, ModelSelection,
+    ModelUsage, ToolOutput,
 };
 use crate::sessions::JobId;
 use crate::workflows::{AttemptId, RunId};
 
-use super::id::{CheckpointId, MessageId};
+use super::id::{CheckpointId, MessageId, RequestId};
 
 pub(crate) const MAXIMUM_ACTIVITY_ITEMS: usize = 256;
 pub(crate) const MAXIMUM_ACTIVITY_BYTES: usize = 256 * 1024;
@@ -21,6 +22,9 @@ pub(crate) const MAXIMUM_CALL_IDENTIFIER_BYTES: usize = 512;
 const MAXIMUM_ARGUMENT_BYTES: usize = 64 * 1024;
 pub(crate) const MAXIMUM_CONTINUATION_BLOCKS: usize = 64;
 pub(crate) const MAXIMUM_CONTINUATION_BYTES: usize = 256 * 1024;
+pub(crate) const MAXIMUM_REQUEST_USAGE: usize = 256;
+const PRICE_SOURCE_MODELS_DEV: &str = "models.dev";
+const MICROS_PER_MILLION: u64 = 1_000_000;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -49,6 +53,40 @@ pub(crate) struct ConversationMessage {
     pub(crate) error: Option<String>,
     pub(crate) request: Option<JobId>,
     pub(crate) completion: Option<CompletionReason>,
+    pub(crate) requests: Vec<RequestUsage>,
+}
+
+/// One provider attempt, including retries. Token fields stay absent when the
+/// provider omitted them. Catalogue prices are snapshotted so later catalogue
+/// changes do not rewrite historical estimates.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub(crate) struct RequestUsage {
+    pub(crate) id: RequestId,
+    pub(crate) usage: ModelUsage,
+    pub(crate) auth: AuthMethod,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) prices: Option<PriceProvenance>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub(crate) struct PriceProvenance {
+    pub(crate) source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) input: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) output: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) cache_read: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) cache_write: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct CostCoverage {
+    pub(crate) known_micros: Option<u64>,
+    pub(crate) incomplete: bool,
 }
 
 /// Opaque blocks require the original provider and model. A provider change
@@ -136,6 +174,7 @@ pub(crate) enum HistoryError {
     Bound,
     Continuation,
     Unsettled,
+    Usage,
 }
 
 impl HistoryError {
@@ -149,6 +188,7 @@ impl HistoryError {
             Self::Unsettled => {
                 "A stored tool call has no trustworthy outcome. Resolve recovery before further work."
             }
+            Self::Usage => "Stored history contains invalid request usage.",
         }
     }
 }
@@ -160,6 +200,200 @@ impl std::fmt::Display for HistoryError {
 }
 
 impl std::error::Error for HistoryError {}
+
+impl RequestUsage {
+    pub(crate) fn valid(&self) -> bool {
+        self.usage.valid() && self.prices.as_ref().is_none_or(PriceProvenance::valid)
+    }
+}
+
+impl PriceProvenance {
+    pub(crate) fn from_catalogue(prices: crate::models::models_dev::ModelPrices) -> Option<Self> {
+        if prices.input.is_none()
+            && prices.output.is_none()
+            && prices.cache_read.is_none()
+            && prices.cache_write.is_none()
+        {
+            return None;
+        }
+        Some(Self {
+            source: PRICE_SOURCE_MODELS_DEV.to_owned(),
+            input: prices.input,
+            output: prices.output,
+            cache_read: prices.cache_read,
+            cache_write: prices.cache_write,
+        })
+    }
+
+    pub(crate) fn valid(&self) -> bool {
+        self.source == PRICE_SOURCE_MODELS_DEV
+            && (self.input.is_some()
+                || self.output.is_some()
+                || self.cache_read.is_some()
+                || self.cache_write.is_some())
+    }
+}
+
+impl CostCoverage {
+    fn unknown() -> Self {
+        Self {
+            known_micros: None,
+            incomplete: true,
+        }
+    }
+}
+
+/// Catalogue prices are millionths of a US dollar per million tokens.
+pub(crate) fn token_cost_micros(price: u64, tokens: u64) -> Option<u64> {
+    let product = price.checked_mul(tokens)?;
+    Some(product.div_ceil(MICROS_PER_MILLION))
+}
+
+pub(crate) fn request_cost(request: &RequestUsage) -> CostCoverage {
+    if request.auth != AuthMethod::ApiKey {
+        return CostCoverage::unknown();
+    }
+    if !request.usage.has_tokens() {
+        return CostCoverage::unknown();
+    }
+    let Some(prices) = request.prices.as_ref().filter(|prices| prices.valid()) else {
+        return CostCoverage::unknown();
+    };
+    let mut cost = 0u64;
+    let mut any = false;
+    let mut incomplete =
+        request.usage.input_tokens.is_none() || request.usage.output_tokens.is_none();
+    match priced_input(request, prices) {
+        Ok(Some(value)) => {
+            cost = match cost.checked_add(value) {
+                Some(total) => total,
+                None => return CostCoverage::unknown(),
+            };
+            any = true;
+        }
+        Ok(None) => {}
+        Err(()) => incomplete = true,
+    }
+    match priced_tokens(request.usage.output_tokens, prices.output) {
+        Ok(Some(value)) => {
+            cost = match cost.checked_add(value) {
+                Some(total) => total,
+                None => return CostCoverage::unknown(),
+            };
+            any = true;
+        }
+        Ok(None) => {}
+        Err(()) => incomplete = true,
+    }
+    if !any {
+        return CostCoverage {
+            known_micros: None,
+            incomplete: true,
+        };
+    }
+    CostCoverage {
+        known_micros: Some(cost),
+        incomplete,
+    }
+}
+
+pub(crate) fn total_cost(requests: &[RequestUsage]) -> CostCoverage {
+    if requests.is_empty() {
+        return CostCoverage {
+            known_micros: None,
+            incomplete: false,
+        };
+    }
+    let mut known = 0u64;
+    let mut any = false;
+    let mut incomplete = false;
+    for request in requests {
+        let part = request_cost(request);
+        incomplete |= part.incomplete;
+        if let Some(value) = part.known_micros {
+            known = match known.checked_add(value) {
+                Some(total) => total,
+                None => {
+                    return CostCoverage {
+                        known_micros: None,
+                        incomplete: true,
+                    };
+                }
+            };
+            any = true;
+        }
+    }
+    CostCoverage {
+        known_micros: any.then_some(known),
+        incomplete,
+    }
+}
+
+fn priced_input(request: &RequestUsage, prices: &PriceProvenance) -> Result<Option<u64>, ()> {
+    let cache = match request.usage.cache_sum() {
+        Ok(value) => value.unwrap_or(0),
+        Err(()) => return Err(()),
+    };
+    let cache_read = request.usage.cache_read_tokens;
+    let cache_write = request.usage.cache_creation_tokens;
+    if cache_read.is_none() && cache_write.is_none() {
+        return priced_tokens(request.usage.input_tokens, prices.input);
+    }
+    let mut cost = 0u64;
+    let mut any = false;
+    if let Some(input) = request.usage.input_tokens {
+        if cache > input {
+            return Err(());
+        }
+        match priced_tokens(Some(input - cache), prices.input) {
+            Ok(Some(value)) => {
+                cost = cost.checked_add(value).ok_or(())?;
+                any = true;
+            }
+            Ok(None) => {}
+            Err(()) => return Err(()),
+        }
+    }
+    match priced_tokens(cache_read, prices.cache_read) {
+        Ok(Some(value)) => {
+            cost = cost.checked_add(value).ok_or(())?;
+            any = true;
+        }
+        Ok(None) => {}
+        Err(()) => return Err(()),
+    }
+    match priced_tokens(cache_write, prices.cache_write) {
+        Ok(Some(value)) => {
+            cost = cost.checked_add(value).ok_or(())?;
+            any = true;
+        }
+        Ok(None) => {}
+        Err(()) => return Err(()),
+    }
+    if any { Ok(Some(cost)) } else { Err(()) }
+}
+
+fn priced_tokens(tokens: Option<u64>, price: Option<u64>) -> Result<Option<u64>, ()> {
+    match (tokens, price) {
+        (None, _) => Ok(None),
+        (Some(0), _) => Ok(Some(0)),
+        (Some(_), None) => Err(()),
+        (Some(tokens), Some(price)) => token_cost_micros(price, tokens).map(Some).ok_or(()),
+    }
+}
+
+pub(crate) fn valid_requests(requests: &[RequestUsage], role: MessageRole) -> bool {
+    if role == MessageRole::User {
+        return requests.is_empty();
+    }
+    if requests.len() > MAXIMUM_REQUEST_USAGE {
+        return false;
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    requests
+        .iter()
+        .all(|request| request.valid() && seen.insert(request.id))
+}
 
 /// Validate one assistant activity list against its visible response text.
 pub(crate) fn valid_activity(activity: &[AssistantActivity], text: &str) -> bool {
@@ -349,7 +583,7 @@ pub(crate) fn project(
                     thinking: String::new(),
                     tools,
                     activity: message.activity.clone(),
-                    usage: None,
+                    usage: message.requests.clone(),
                     calls,
                     continuation,
                 });
@@ -444,7 +678,20 @@ fn serialised_argument_bytes(arguments: &serde_json::Value) -> usize {
 /// across the whole retained exchange.
 pub(crate) fn validate_exchange(messages: &[ConversationMessage]) -> Result<(), HistoryError> {
     let mut known: Vec<&str> = Vec::new();
+    let mut request_ids = std::collections::BTreeSet::new();
     for message in messages {
+        if !valid_requests(&message.requests, message.role)
+            || message
+                .requests
+                .iter()
+                .any(|request| !request_ids.insert(request.id))
+        {
+            return Err(if message.requests.len() > MAXIMUM_REQUEST_USAGE {
+                HistoryError::Bound
+            } else {
+                HistoryError::Usage
+            });
+        }
         for activity in &message.activity {
             match activity {
                 AssistantActivity::ToolCall { id, .. } => {

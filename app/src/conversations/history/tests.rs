@@ -1,10 +1,13 @@
-use crate::providers::{AssistantActivity, ModelSelection, ProviderKind, ToolOutput};
+use crate::providers::{
+    AssistantActivity, AuthMethod, ModelSelection, ModelUsage, ProviderKind, ToolOutput,
+};
 
 use super::{
     ContinuationBlock, ContinuationMetadata, ConversationMessage, HistoryError, MessageRole,
-    MessageStatus, project, validate_exchange,
+    MessageStatus, PriceProvenance, RequestUsage, project, request_cost, total_cost,
+    validate_exchange,
 };
-use crate::conversations::MessageId;
+use crate::conversations::{MessageId, RequestId};
 
 fn identifier() -> MessageId {
     MessageId::generate().expect("message id")
@@ -38,6 +41,7 @@ fn assistant(activity: Vec<AssistantActivity>) -> ConversationMessage {
         error: None,
         request: None,
         completion: None,
+        requests: Vec::new(),
     }
 }
 
@@ -54,6 +58,7 @@ fn projection_keeps_tool_exchanges_and_matches_results() {
             error: None,
             request: None,
             completion: None,
+            requests: Vec::new(),
         },
         assistant(vec![tool_call("call-1", Some(output()))]),
     ];
@@ -262,4 +267,122 @@ fn invalid_continuation_metadata_is_rejected() {
         project(&[message], Some(&selection)),
         Err(HistoryError::Continuation)
     );
+}
+
+fn request(id: RequestId, usage: ModelUsage) -> RequestUsage {
+    RequestUsage {
+        id,
+        usage,
+        auth: AuthMethod::ApiKey,
+        prices: Some(PriceProvenance {
+            source: "models.dev".to_owned(),
+            input: Some(1_000_000),
+            output: Some(2_000_000),
+            cache_read: Some(100_000),
+            cache_write: Some(1_250_000),
+        }),
+    }
+}
+
+#[test]
+fn duplicate_request_identities_are_rejected() {
+    let id = RequestId::generate().expect("request");
+    let mut usage = ModelUsage::new(ProviderKind::Xai, "grok-4");
+    usage.input_tokens = Some(10);
+    let mut message = assistant(Vec::new());
+    message.requests = vec![request(id, usage.clone()), request(id, usage)];
+    assert_eq!(validate_exchange(&[message]), Err(HistoryError::Usage));
+}
+
+#[test]
+fn request_identity_cannot_appear_in_two_messages() {
+    let recorded = request(
+        RequestId::generate().expect("request"),
+        ModelUsage::new(ProviderKind::Xai, "grok-4"),
+    );
+    let mut first = assistant(Vec::new());
+    first.requests.push(recorded.clone());
+    let mut second = assistant(Vec::new());
+    second.requests.push(recorded);
+    assert_eq!(
+        validate_exchange(&[first, second]),
+        Err(HistoryError::Usage)
+    );
+}
+
+#[test]
+fn partial_usage_never_produces_a_complete_cost() {
+    let mut usage = ModelUsage::new(ProviderKind::Xai, "grok-4");
+    usage.input_tokens = Some(100);
+    let recorded = request(RequestId::generate().expect("request"), usage);
+    let cost = request_cost(&recorded);
+    assert_eq!(cost.known_micros, Some(100));
+    assert!(cost.incomplete);
+}
+
+#[test]
+fn malformed_cache_overflow_is_rejected() {
+    let mut usage = ModelUsage::new(ProviderKind::Xai, "grok-4");
+    usage.cache_read_tokens = Some(u64::MAX);
+    usage.cache_creation_tokens = Some(3);
+    let mut message = assistant(Vec::new());
+    message.requests = vec![request(RequestId::generate().expect("request"), usage)];
+    assert_eq!(validate_exchange(&[message]), Err(HistoryError::Usage));
+}
+
+#[test]
+fn cost_does_not_double_count_cache_tokens_included_in_input() {
+    let mut usage = ModelUsage::new(ProviderKind::Xai, "grok-4");
+    usage.input_tokens = Some(100);
+    usage.output_tokens = Some(10);
+    usage.cache_read_tokens = Some(40);
+    usage.cache_creation_tokens = Some(10);
+    let recorded = request(RequestId::generate().expect("request"), usage);
+    let cost = request_cost(&recorded);
+    assert!(!cost.incomplete);
+    // Uncached 50 * $1 + cache read 40 * $0.10 + cache write 10 * $1.25 + output 10 * $2
+    // Prices are micros per million tokens: 1_000_000 means $1 / MTok.
+    assert_eq!(cost.known_micros, Some(50 + 4 + 13 + 20));
+}
+
+#[test]
+fn plan_authentication_does_not_use_api_prices() {
+    let mut usage = ModelUsage::new(ProviderKind::Xai, "grok-4");
+    usage.input_tokens = Some(100);
+    usage.output_tokens = Some(10);
+    let mut recorded = request(RequestId::generate().expect("request"), usage);
+    recorded.auth = AuthMethod::Plan;
+    let cost = request_cost(&recorded);
+    assert!(cost.incomplete);
+    assert_eq!(cost.known_micros, None);
+}
+
+#[test]
+fn totals_stay_incomplete_when_a_request_lacks_usage() {
+    let mut known = ModelUsage::new(ProviderKind::Xai, "grok-4");
+    known.input_tokens = Some(1_000_000);
+    let unknown = ModelUsage::new(ProviderKind::OpenaiCodex, "gpt-5");
+    let total = total_cost(&[
+        request(RequestId::generate().expect("request"), known),
+        request(RequestId::generate().expect("request"), unknown),
+    ]);
+    assert!(total.incomplete);
+    assert_eq!(total.known_micros, Some(1_000_000));
+}
+
+#[test]
+fn cost_overflow_does_not_wrap_to_zero() {
+    let mut usage = ModelUsage::new(ProviderKind::Xai, "grok-4");
+    usage.input_tokens = Some(u64::MAX);
+    let mut recorded = request(RequestId::generate().expect("request"), usage);
+    recorded.prices = Some(PriceProvenance {
+        source: "models.dev".to_owned(),
+        input: Some(u64::MAX),
+        output: None,
+        cache_read: None,
+        cache_write: None,
+    });
+    let cost = request_cost(&recorded);
+    assert!(cost.incomplete);
+    assert_eq!(cost.known_micros, None);
 }

@@ -92,3 +92,27 @@ fn future_attempt_does_not_suppress_refresh() {
     assert!(!timestamp_is_recent(101, 100));
     assert!(timestamp_is_recent(100, 100));
 }
+
+#[test]
+fn prices_do_not_require_title_or_tool_eligibility() {
+    let catalogue = ModelsDevCatalogue::bundled();
+    assert!(
+        catalogue
+            .model(ProviderKind::Openrouter, "aion-labs/aion-rp-llama-3.1-8b")
+            .is_none()
+    );
+    assert_eq!(
+        catalogue.prices(ProviderKind::Openrouter, "aion-labs/aion-rp-llama-3.1-8b"),
+        Some(ModelPrices {
+            input: Some(800_000),
+            output: Some(1_600_000),
+            cache_read: None,
+            cache_write: None,
+        })
+    );
+    assert!(
+        catalogue
+            .prices(ProviderKind::Openrouter, "missing-model")
+            .is_none()
+    );
+}

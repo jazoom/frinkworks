@@ -1134,7 +1134,7 @@ async fn a_resumed_phase_keeps_its_tool_results_and_excludes_conversation_histor
         thinking: String::new(),
         tools: Vec::new(),
         activity: Vec::new(),
-        usage: None,
+        usage: Vec::new(),
         calls: vec![crate::providers::ChatToolCall {
             id: "completed-call".to_owned(),
             name: "list".to_owned(),

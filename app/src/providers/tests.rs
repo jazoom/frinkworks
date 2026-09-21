@@ -1,9 +1,9 @@
 use std::time::{Duration, Instant};
 
 use super::{
-    MAXIMUM_PROVIDER_DETAIL_BYTES, ProviderConnection, ProviderError, ProviderKind, SecretString,
-    ThinkingEffort, classify_failure_status, classify_verify_status, provider_detail,
-    rig::{VERIFY_TIMEOUT, map_finish_reason, thinking_parameters, verify_at},
+    MAXIMUM_PROVIDER_DETAIL_BYTES, ModelEvent, ProviderConnection, ProviderError, ProviderKind,
+    SecretString, ThinkingEffort, classify_failure_status, classify_verify_status, provider_detail,
+    rig::{VERIFY_TIMEOUT, map_finish_reason, reported_usage, thinking_parameters, verify_at},
     with_json_detail, with_provider_detail,
 };
 
@@ -70,6 +70,70 @@ fn finish_reasons_map_from_provider_data_not_output_text() {
         CompletionReason::Unknown
     );
     assert_eq!(map_finish_reason(None), CompletionReason::Unknown);
+}
+
+#[test]
+fn reported_usage_keeps_absent_counts_distinct_from_zero() {
+    let mut terminal =
+        rig_core::streaming::StreamFinal::new("openai", rig_core::completion::Usage::new());
+    assert!(reported_usage(&terminal).is_none());
+    let usage = &mut terminal.usage;
+    usage.input_tokens = 0;
+    usage.output_tokens = 12;
+    usage.cached_input_tokens = 0;
+    usage.cache_creation_input_tokens = 4;
+    match reported_usage(&terminal) {
+        Some(ModelEvent::Usage {
+            input_tokens,
+            output_tokens,
+            cache_read_tokens,
+            cache_creation_tokens,
+        }) => {
+            assert_eq!(input_tokens, None);
+            assert_eq!(output_tokens, Some(12));
+            assert_eq!(cache_read_tokens, None);
+            assert_eq!(cache_creation_tokens, Some(4));
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn raw_usage_retains_zero_and_does_not_infer_missing_output() {
+    let mut terminal =
+        rig_core::streaming::StreamFinal::new("openai", rig_core::completion::Usage::new());
+    terminal.usage.input_tokens = 20;
+    terminal.usage.output_tokens = 5;
+    terminal.raw = serde_json::json!({"usage": {
+        "prompt_tokens": 20, "total_tokens": 25,
+        "prompt_tokens_details": {"cached_tokens": 0}
+    }});
+    assert!(matches!(
+        reported_usage(&terminal),
+        Some(ModelEvent::Usage {
+            input_tokens: Some(20),
+            output_tokens: None,
+            cache_read_tokens: Some(0),
+            ..
+        })
+    ));
+    terminal.raw["usage"]["completion_tokens"] = serde_json::json!(0);
+    assert!(matches!(
+        reported_usage(&terminal),
+        Some(ModelEvent::Usage {
+            output_tokens: Some(0),
+            ..
+        })
+    ));
+}
+
+#[test]
+fn cache_token_overflow_is_malformed_usage() {
+    let mut usage = super::ModelUsage::new(ProviderKind::Xai, "grok-4");
+    usage.cache_read_tokens = Some(u64::MAX);
+    usage.cache_creation_tokens = Some(1);
+    assert_eq!(usage.cache_sum(), Err(()));
+    assert!(!usage.valid());
 }
 
 #[test]

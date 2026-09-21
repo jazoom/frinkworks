@@ -134,4 +134,20 @@
       </div>
     {% endif %}
   {% endfor %}
+  {% if let Some(usage) = usage %}
+    <section
+      class="text-quiet mt-2 flex flex-col gap-1 text-xs"
+      aria-label="Request usage"
+    >
+      {% for request in usage.requests %}
+        <p>
+          <span class="text-base-content font-medium">{{ request.model }}</span>
+          · {{ request.detail }} · {{ request.cost }}
+        </p>
+      {% endfor %}
+      {% if usage.requests.len() > 1 && !usage.subtotal.is_empty() %}
+        <p>{{ usage.subtotal }}</p>
+      {% endif %}
+    </section>
+  {% endif %}
 </div>

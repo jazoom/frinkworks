@@ -1140,3 +1140,94 @@ async fn a_tool_batch_cannot_exceed_the_dispatch_budget() {
         crate::execution::CommandTermination::NotDispatched
     );
 }
+
+#[tokio::test]
+async fn retry_keeps_separate_usage_records_including_unknown_values() {
+    use crate::conversations::MessageStatus;
+    use crate::providers::{
+        ChatBackend, ChatTurn, CompletionReason, ModelEvent, ProviderConnection, ProviderError,
+        ProviderKind,
+    };
+    let mut state = crate::tests::test_state(crate::config::RuntimeConfig::development());
+    let backend = crate::tests::ScriptedBackend::turn_results(vec![
+        Err(ProviderError::RateLimited { retry_after: None }),
+        Ok(vec![
+            Ok(ModelEvent::Text("Recovered.".to_owned())),
+            Ok(ModelEvent::Usage {
+                input_tokens: Some(11),
+                output_tokens: Some(4),
+                cache_read_tokens: None,
+                cache_creation_tokens: None,
+            }),
+            Ok(ModelEvent::Complete {
+                reason: CompletionReason::Stop,
+            }),
+        ]),
+    ]);
+    state.chat = std::sync::Arc::new(ChatBackend::Scripted(backend));
+    let connection = ProviderConnection::with_key(ProviderKind::Xai, "test-key", "grok-4.6");
+    let (record, job) = conversation_job(&state);
+    let ended = super::run_agent_action(
+        &state,
+        granted_read_spec(connection, record.id, record.revision),
+        vec![ChatTurn::user("Hello".to_owned())],
+        job,
+    )
+    .await;
+    assert_eq!(ended.outcome, super::AgentOutcome::Completed);
+    assert_eq!(ended.reply.usage.len(), 1);
+    assert_eq!(ended.reply.usage[0].usage.input_tokens, Some(11));
+    assert_eq!(ended.reply.usage[0].usage.output_tokens, Some(4));
+    assert_eq!(ended.reply.usage[0].usage.cache_read_tokens, None);
+    let stored = state.conversations.get(&record.id).expect("stored");
+    let failed = stored
+        .messages
+        .iter()
+        .find(|message| message.status == MessageStatus::Failed)
+        .expect("failed attempt");
+    assert_eq!(failed.requests.len(), 1);
+    assert!(!failed.requests[0].usage.has_tokens());
+    assert_ne!(failed.requests[0].id, ended.reply.usage[0].id);
+    assert_eq!(failed.requests[0].usage.model, "grok-4.6");
+    assert_eq!(ended.reply.usage[0].usage.model, "grok-4.6");
+}
+
+#[tokio::test]
+async fn plan_authentication_does_not_snapshot_api_prices() {
+    use crate::providers::{
+        AuthMethod, ChatBackend, ChatTurn, CompletionReason, ModelEvent, ProviderConnection,
+        ProviderKind,
+    };
+    let mut state = crate::tests::test_state(crate::config::RuntimeConfig::development());
+    let backend = crate::tests::ScriptedBackend::events(vec![
+        Ok(ModelEvent::Text("Hello".to_owned())),
+        Ok(ModelEvent::Usage {
+            input_tokens: Some(8),
+            output_tokens: Some(2),
+            cache_read_tokens: None,
+            cache_creation_tokens: None,
+        }),
+        Ok(ModelEvent::Complete {
+            reason: CompletionReason::Stop,
+        }),
+    ]);
+    state.chat = std::sync::Arc::new(ChatBackend::Scripted(backend));
+    let mut connection = ProviderConnection::with_key(ProviderKind::Xai, "test-key", "grok-4.6");
+    connection.auth = AuthMethod::Plan;
+    let (record, job) = conversation_job(&state);
+    let ended = super::run_agent_action(
+        &state,
+        granted_read_spec(connection, record.id, record.revision),
+        vec![ChatTurn::user("Hello".to_owned())],
+        job,
+    )
+    .await;
+    assert_eq!(ended.outcome, super::AgentOutcome::Completed);
+    assert_eq!(ended.reply.usage.len(), 1);
+    assert_eq!(ended.reply.usage[0].auth, AuthMethod::Plan);
+    assert!(ended.reply.usage[0].prices.is_none());
+    assert_eq!(
+        crate::conversations::history::request_cost(&ended.reply.usage[0]).known_micros,
+        None
+    );
+}

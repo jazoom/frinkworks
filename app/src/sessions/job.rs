@@ -12,8 +12,9 @@ use rand::rngs::SysRng;
 use tokio::sync::Notify;
 
 use crate::conversations::ConversationId;
+use crate::conversations::RequestUsage;
 use crate::hex;
-use crate::providers::{AssistantReply, ModelUsage, ToolOutput};
+use crate::providers::{AssistantReply, ToolOutput};
 
 /// Live progress is bounded separately from terminal tool results.
 pub(crate) const MAXIMUM_TOOL_PROGRESS_EVENTS: usize = 256;
@@ -106,7 +107,7 @@ pub(crate) enum JobEventKind {
         output: ToolOutput,
     },
     Usage {
-        usage: ModelUsage,
+        usage: RequestUsage,
     },
     Retrying {
         attempt: u32,
@@ -359,7 +360,7 @@ impl Job {
         self.push_output_event(JobEventKind::ToolFinished { id, output })
     }
 
-    pub(crate) fn push_usage(&self, usage: ModelUsage) -> Option<u64> {
+    pub(crate) fn push_usage(&self, usage: RequestUsage) -> Option<u64> {
         self.push_output_event(JobEventKind::Usage { usage })
     }
 
@@ -546,7 +547,17 @@ fn apply_output_event(output: &mut AssistantReply, event: &JobEventKind) {
             output.push_tool_progress(id, *stream, delta)
         }
         JobEventKind::ToolFinished { id, output: tool } => output.finish_tool(id, tool.clone()),
-        JobEventKind::Usage { usage } => output.usage = Some(usage.clone()),
+        JobEventKind::Usage { usage } => {
+            if let Some(existing) = output
+                .usage
+                .iter_mut()
+                .find(|existing| existing.id == usage.id)
+            {
+                *existing = usage.clone();
+            } else {
+                output.usage.push(usage.clone());
+            }
+        }
         JobEventKind::Retrying { .. }
         | JobEventKind::Completed
         | JobEventKind::Failed

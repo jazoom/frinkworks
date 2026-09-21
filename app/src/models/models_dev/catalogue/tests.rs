@@ -206,6 +206,79 @@ fn svg_validation_rejects_active_and_external_content() {
 }
 
 #[test]
+fn token_price_rejects_invalid_and_overflowing_values() {
+    assert_eq!(token_price(0.0), Some(0));
+    assert_eq!(token_price(1.25), Some(1_250_000));
+    assert!(token_price(f64::NAN).is_none());
+    assert!(token_price(f64::INFINITY).is_none());
+    assert!(token_price(-0.1).is_none());
+    assert!(token_price(1e30).is_none());
+}
+
+#[test]
+fn source_prices_keep_unknown_values_and_cache_rates() {
+    let mut source = serde_json::Map::new();
+    for kind in ProviderKind::ALL {
+        let mut model = serde_json::json!({
+            "attachment": false,
+            "tool_call": true,
+            "modalities": {"input": ["text"], "output": ["text"]},
+            "limit": {"context": 128000, "output": 8000}
+        });
+        if kind == ProviderKind::Xai {
+            model["cost"] = serde_json::json!({
+                "input": 3.0,
+                "output": 15.0,
+                "cache_read": 0.3,
+                "cache_write": 3.75,
+                "reasoning": f64::NAN
+            });
+        }
+        if kind == ProviderKind::Deepseek {
+            model["cost"] = serde_json::json!({"input": -1.0, "output": 2.0});
+        }
+        source.insert(
+            models_dev_id(kind).to_owned(),
+            serde_json::json!({"models": {kind.default_model(): model}}),
+        );
+    }
+    let snapshot = filter_source(
+        &serde_json::to_vec(&source).expect("source"),
+        "W/\"prices\"",
+        1,
+    )
+    .expect("filtered source");
+    let xai = snapshot
+        .providers
+        .iter()
+        .find(|provider| provider.id == ProviderKind::Xai.as_str())
+        .expect("xai")
+        .models
+        .iter()
+        .find(|model| model.id == ProviderKind::Xai.default_model())
+        .expect("model");
+    let prices = xai.prices.expect("prices");
+    assert_eq!(prices.input, Some(3_000_000));
+    assert_eq!(prices.output, Some(15_000_000));
+    assert_eq!(prices.cache_read, Some(300_000));
+    assert_eq!(prices.cache_write, Some(3_750_000));
+    let deepseek = snapshot
+        .providers
+        .iter()
+        .find(|provider| provider.id == ProviderKind::Deepseek.as_str())
+        .expect("deepseek")
+        .models
+        .iter()
+        .find(|model| model.id == ProviderKind::Deepseek.default_model())
+        .expect("model");
+    assert_eq!(
+        deepseek.prices.expect("output only").output,
+        Some(2_000_000)
+    );
+    assert!(deepseek.prices.unwrap().input.is_none());
+}
+
+#[test]
 fn atomic_write_replaces_a_file_without_temporary_files() {
     let directory = tempfile::tempdir().expect("directory");
     let path = directory.path().join("catalogue.json");

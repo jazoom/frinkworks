@@ -30,6 +30,7 @@ fn escaped_history_keeps_the_latest_message_within_the_patch_bound() {
             error: None,
             request: None,
             completion: None,
+            requests: Vec::new(),
         })
         .collect();
     let view = ConversationDetailView::from_record(
@@ -245,6 +246,7 @@ fn command_output_escapes_untrusted_stream_text() {
         "",
         &[crate::providers::AssistantActivity::Tool(tool)],
         &[],
+        &[],
         false,
         false,
     );
@@ -252,4 +254,56 @@ fn command_output_escapes_untrusted_stream_text() {
     assert!(!html.contains("<img"));
     assert!(html.contains("alert(1)"));
     assert!(html.contains("img src=x onerror=alert(1)"));
+}
+
+#[test]
+fn usage_panel_labels_unknown_cost_instead_of_a_zero_total() {
+    use crate::conversations::{PriceProvenance, RequestId, RequestUsage};
+    use crate::providers::{AuthMethod, ModelUsage, ProviderKind};
+    let conversation = crate::conversations::ConversationId::generate().expect("conversation");
+    let mut known = ModelUsage::new(ProviderKind::Xai, "grok-4");
+    known.input_tokens = Some(1_000_000);
+    let known_request = RequestUsage {
+        id: RequestId::generate().expect("request"),
+        usage: known,
+        auth: AuthMethod::ApiKey,
+        prices: Some(PriceProvenance {
+            source: "models.dev".to_owned(),
+            input: Some(1_000_000),
+            output: None,
+            cache_read: None,
+            cache_write: None,
+        }),
+    };
+    let unknown = RequestUsage {
+        id: RequestId::generate().expect("request"),
+        usage: ModelUsage::new(ProviderKind::OpenaiCodex, "gpt-5"),
+        auth: AuthMethod::ApiKey,
+        prices: None,
+    };
+    let plan = RequestUsage {
+        id: RequestId::generate().expect("request"),
+        usage: {
+            let mut usage = ModelUsage::new(ProviderKind::Xai, "grok-4");
+            usage.input_tokens = Some(20);
+            usage
+        },
+        auth: AuthMethod::Plan,
+        prices: None,
+    };
+    let html = activity_html(
+        &conversation,
+        "message-1",
+        "Done.",
+        &[],
+        &[],
+        &[known_request, unknown, plan],
+        false,
+        false,
+    );
+    assert!(html.contains("Estimated cost $1.00") || html.contains("Known subtotal $1.00"));
+    assert!(html.contains("Cost unknown"));
+    assert!(html.contains("Cost unknown for plan authentication"));
+    assert!(!html.contains("$0.00"));
+    assert!(html.contains("incomplete"));
 }

@@ -15,6 +15,7 @@ fn model(id: &str, date: &str, input: f64) -> Model {
             output_cost: 0.5,
             output_limit: 128,
         }),
+        prices: None,
     }
 }
 

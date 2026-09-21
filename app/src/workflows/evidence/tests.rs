@@ -57,6 +57,48 @@ fn ids() -> (RunId, AttemptId) {
 }
 
 #[test]
+fn request_usage_updates_one_durable_identity_and_rejects_model_changes() {
+    let root = tempfile::tempdir().unwrap();
+    let store = WorkflowEvidenceStore::open(root.path().to_owned()).unwrap();
+    let (run, attempt) = ids();
+    let mut request = crate::conversations::RequestUsage {
+        id: crate::conversations::RequestId::generate().unwrap(),
+        usage: crate::providers::ModelUsage::new(crate::providers::ProviderKind::Xai, "grok-4"),
+        auth: crate::providers::AuthMethod::ApiKey,
+        prices: None,
+    };
+    let append = |request: &crate::conversations::RequestUsage| {
+        store.append_activity(
+            run,
+            attempt,
+            ActivityInput {
+                phase: "implementation",
+                kind: ActivityKind::Usage,
+                text: "",
+                label: "",
+                provider: Some(request.usage.provider.as_str()),
+                input_tokens: request.usage.input_tokens,
+                request: Some(request.clone()),
+                secret: None,
+            },
+        )
+    };
+    assert_eq!(append(&request), Ok(true));
+    request.usage.input_tokens = Some(42);
+    assert_eq!(append(&request), Ok(true));
+    request.usage.model = "different-model".to_owned();
+    assert_eq!(append(&request), Err(EvidenceError::Conflict));
+    let reloaded = WorkflowEvidenceStore::open(root.path().to_owned()).unwrap();
+    let record = reloaded.get(&run, &attempt).unwrap();
+    assert_eq!(record.events.len(), 1);
+    let stored = record.events[0].request.as_ref().unwrap();
+    assert_eq!(stored.id, request.id);
+    assert_eq!(stored.usage.input_tokens, Some(42));
+    assert_eq!(stored.usage.output_tokens, None);
+    assert_eq!(stored.usage.model, "grok-4");
+}
+
+#[test]
 fn events_keep_attempt_and_phase_identity() {
     let store = WorkflowEvidenceStore::in_memory();
     let (run, attempt) = ids();
@@ -73,6 +115,7 @@ fn events_keep_attempt_and_phase_identity() {
                 label: "",
                 provider: None,
                 input_tokens: None,
+                request: None,
                 secret: None,
             },
         )
@@ -88,6 +131,7 @@ fn events_keep_attempt_and_phase_identity() {
                 label: "",
                 provider: None,
                 input_tokens: None,
+                request: None,
                 secret: None,
             },
         )
@@ -159,6 +203,7 @@ fn activity_is_bounded_and_marks_truncation() {
                 label: "",
                 provider: None,
                 input_tokens: None,
+                request: None,
                 secret: None,
             },
         )
@@ -180,6 +225,7 @@ fn activity_is_bounded_and_marks_truncation() {
                 label: "",
                 provider: None,
                 input_tokens: None,
+                request: None,
                 secret: None,
             },
         );
@@ -218,6 +264,7 @@ fn reopening_preserves_bounded_evidence() {
                 label: "",
                 provider: Some("xai"),
                 input_tokens: Some(42),
+                request: None,
                 secret: None,
             },
         )
@@ -264,6 +311,7 @@ fn a_full_store_rejects_new_attempts_but_keeps_existing_attempts_writable() {
                 label: "",
                 provider: None,
                 input_tokens: None,
+                request: None,
                 secret: None,
             }
         ),
@@ -297,6 +345,7 @@ fn escaped_activity_cannot_displace_the_terminal_result() {
                     label: "",
                     provider: None,
                     input_tokens: None,
+                    request: None,
                     secret: None,
                 },
             )
@@ -347,7 +396,7 @@ fn configured_step_history_stays_within_its_attempt() {
         thinking: String::new(),
         tools: Vec::new(),
         activity: Vec::new(),
-        usage: None,
+        usage: Vec::new(),
         calls: vec![ChatToolCall {
             id: "call-1".to_owned(),
             name: "read".to_owned(),

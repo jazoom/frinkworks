@@ -467,10 +467,8 @@ where
                 }
                 Ok(StreamedAssistantContent::Final(final_response)) => {
                     let mut events = Vec::new();
-                    if final_response.usage.input_tokens > 0 {
-                        events.push(Ok(ModelEvent::Usage {
-                            input_tokens: final_response.usage.input_tokens,
-                        }));
+                    if let Some(event) = reported_usage(&final_response) {
+                        events.push(Ok(event));
                     }
                     events.push(Ok(ModelEvent::Complete {
                         reason: map_finish_reason(final_response.finish_reason.as_ref()),
@@ -482,6 +480,75 @@ where
             };
         futures_util::stream::iter(events)
     })))
+}
+
+fn reported_tokens(value: u64) -> Option<u64> {
+    (value > 0).then_some(value)
+}
+
+/// The raw terminal preserves optional counts that Rig otherwise replaces with
+/// zero or derives from totals. Never use those derived totals as reported usage.
+pub(super) fn reported_usage(
+    final_response: &rig_core::streaming::StreamFinal,
+) -> Option<ModelEvent> {
+    let usage = &final_response.usage;
+    let raw = final_response.raw.get("usage");
+    let (input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens) =
+        if let Some(raw) = raw {
+            // Required wire counters also use zero in Rig's missing-usage sentinel.
+            // Optional counters retain presence, including an explicit zero.
+            let input = raw
+                .get("input_tokens")
+                .or_else(|| raw.get("prompt_tokens"))
+                .and_then(serde_json::Value::as_u64);
+            let output = raw
+                .get("output_tokens")
+                .or_else(|| raw.get("completion_tokens"))
+                .and_then(serde_json::Value::as_u64);
+            let details = raw
+                .get("input_tokens_details")
+                .or_else(|| raw.get("prompt_tokens_details"));
+            let cache_read = details
+                .and_then(|details| details.get("cached_tokens"))
+                .and_then(serde_json::Value::as_u64)
+                .or_else(|| {
+                    raw.get("prompt_cache_hit_tokens")
+                        .and_then(serde_json::Value::as_u64)
+                });
+            let cache_write = details
+                .and_then(|details| details.get("cache_write_tokens"))
+                .and_then(serde_json::Value::as_u64);
+            let present = usage.input_tokens > 0
+                || usage.output_tokens > 0
+                || raw
+                    .get("completion_tokens")
+                    .is_some_and(|value| value.is_u64())
+                || details.is_some_and(serde_json::Value::is_object);
+            if !present {
+                return None;
+            }
+            (input, output, cache_read, cache_write)
+        } else {
+            (
+                reported_tokens(usage.input_tokens),
+                reported_tokens(usage.output_tokens),
+                reported_tokens(usage.cached_input_tokens),
+                reported_tokens(usage.cache_creation_input_tokens),
+            )
+        };
+    if input_tokens.is_none()
+        && output_tokens.is_none()
+        && cache_read_tokens.is_none()
+        && cache_creation_tokens.is_none()
+    {
+        return None;
+    }
+    Some(ModelEvent::Usage {
+        input_tokens,
+        output_tokens,
+        cache_read_tokens,
+        cache_creation_tokens,
+    })
 }
 
 pub(super) fn map_finish_reason(reason: Option<&FinishReason>) -> CompletionReason {

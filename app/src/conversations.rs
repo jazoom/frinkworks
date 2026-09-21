@@ -9,9 +9,9 @@ pub(crate) mod titles;
 pub(crate) use access::apply_settings_ceiling;
 pub(crate) use history::{
     ContinuationBlock, ContinuationCheckpoint, ContinuationMetadata, ConversationMessage,
-    MessageRole, MessageStatus, PausedOutputDraft,
+    MessageRole, MessageStatus, PausedOutputDraft, PriceProvenance, RequestUsage,
 };
-pub(crate) use id::{CheckpointId, ConversationId, MessageId};
+pub(crate) use id::{CheckpointId, ConversationId, MessageId, RequestId};
 pub(crate) use questions::{PendingQuestion, QuestionAnswer, QuestionError};
 pub(crate) use queue::{ConversationQueue, QueueDelivery, QueueItemId};
 pub(crate) use store::{

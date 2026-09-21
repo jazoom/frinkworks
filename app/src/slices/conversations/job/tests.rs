@@ -428,6 +428,7 @@ fn pending_assistant_output_stays_out_of_the_next_request_history() {
                 error: None,
                 request: None,
                 completion: None,
+                requests: Vec::new(),
             },
             ConversationMessage {
                 id: crate::conversations::MessageId::generate().expect("message id"),
@@ -439,6 +440,7 @@ fn pending_assistant_output_stays_out_of_the_next_request_history() {
                 error: None,
                 request: Some(JobId::generate().expect("previous request")),
                 completion: None,
+                requests: Vec::new(),
             },
             ConversationMessage {
                 id: crate::conversations::MessageId::generate().expect("message id"),
@@ -450,6 +452,7 @@ fn pending_assistant_output_stays_out_of_the_next_request_history() {
                 error: None,
                 request: None,
                 completion: None,
+                requests: Vec::new(),
             },
             ConversationMessage {
                 id: crate::conversations::MessageId::generate().expect("message id"),
@@ -461,6 +464,7 @@ fn pending_assistant_output_stays_out_of_the_next_request_history() {
                 error: None,
                 request: Some(request),
                 completion: None,
+                requests: Vec::new(),
             },
         ],
         active_job: Some(request),

@@ -36,6 +36,20 @@ pub(super) struct ModelLimit {
     pub(super) context: u64,
 }
 
+/// Millionths of a US dollar per million tokens. Absent fields stay unknown.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ModelPrices {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) input: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) output: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) cache_read: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) cache_write: Option<u64>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Model {
@@ -47,6 +61,8 @@ pub(super) struct Model {
     pub(super) limit: ModelLimit,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) background: Option<super::background::BackgroundMetadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) prices: Option<ModelPrices>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -98,6 +114,8 @@ struct SourceCost {
     input: Option<f64>,
     output: Option<f64>,
     reasoning: Option<f64>,
+    cache_read: Option<f64>,
+    cache_write: Option<f64>,
 }
 
 #[derive(Deserialize)]
@@ -192,6 +210,7 @@ pub(super) fn filter_source(bytes: &[u8], etag: &str, now: u64) -> Result<Snapsh
                     context: model.limit.context,
                 },
                 background,
+                prices: model_prices(model.cost.as_ref()),
             });
         }
         if !models
@@ -237,6 +256,39 @@ pub(super) fn parse_snapshot(bytes: &[u8]) -> Result<Snapshot, ()> {
     let snapshot: Snapshot = serde_json::from_slice(bytes).map_err(|_| ())?;
     validate_snapshot(&snapshot)?;
     Ok(snapshot)
+}
+
+const PRICE_SCALE: f64 = 1_000_000.0;
+
+/// Convert a models.dev USD-per-million-tokens price to millionths of a dollar.
+pub(super) fn token_price(value: f64) -> Option<u64> {
+    if !value.is_finite() || value < 0.0 {
+        return None;
+    }
+    let scaled = value * PRICE_SCALE;
+    if scaled >= u64::MAX as f64 {
+        return None;
+    }
+    Some(scaled.round() as u64)
+}
+
+fn model_prices(cost: Option<&SourceCost>) -> Option<ModelPrices> {
+    let cost = cost?;
+    let prices = ModelPrices {
+        input: cost.input.and_then(token_price),
+        output: cost.output.and_then(token_price),
+        cache_read: cost.cache_read.and_then(token_price),
+        cache_write: cost.cache_write.and_then(token_price),
+    };
+    if prices.input.is_none()
+        && prices.output.is_none()
+        && prices.cache_read.is_none()
+        && prices.cache_write.is_none()
+    {
+        None
+    } else {
+        Some(prices)
+    }
 }
 
 fn background_metadata(
@@ -294,6 +346,12 @@ fn validate_snapshot(snapshot: &Snapshot) -> Result<(), ()> {
                 || model.efforts.len() > MAXIMUM_EFFORTS
                 || model.efforts.iter().any(|effort| {
                     ThinkingEffort::new(effort.clone()).is_none() || !efforts.insert(effort)
+                })
+                || model.prices.as_ref().is_some_and(|prices| {
+                    prices.input.is_none()
+                        && prices.output.is_none()
+                        && prices.cache_read.is_none()
+                        && prices.cache_write.is_none()
                 })
             {
                 return Err(());

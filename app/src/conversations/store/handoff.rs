@@ -211,6 +211,7 @@ fn apply_handoff(
             error: None,
             request: None,
             completion: None,
+            requests: Vec::new(),
         });
         record.messages.push(ConversationMessage {
             id: MessageId::generate().map_err(|_| ConversationError::Random)?,
@@ -222,6 +223,7 @@ fn apply_handoff(
             error: None,
             request: Some(job),
             completion: None,
+            requests: Vec::new(),
         });
         record.active_job = Some(job);
         record.revision = record

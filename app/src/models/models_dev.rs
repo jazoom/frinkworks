@@ -50,6 +50,15 @@ pub(crate) struct ModelMetadata {
     pub(crate) context_limit: u64,
 }
 
+/// Millionths of a US dollar per million tokens. Missing categories stay unknown.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ModelPrices {
+    pub(crate) input: Option<u64>,
+    pub(crate) output: Option<u64>,
+    pub(crate) cache_read: Option<u64>,
+    pub(crate) cache_write: Option<u64>,
+}
+
 impl ModelsDevCatalogue {
     pub(crate) fn open(path: PathBuf) -> Result<Self, String> {
         let bundled = parse_snapshot(BUNDLED)
@@ -178,6 +187,23 @@ impl ModelsDevCatalogue {
         self.model(kind, id)
             .map(|model| model.context_limit)
             .filter(|limit| *limit > 0)
+    }
+
+    /// Prices are independent of title-model eligibility and tool support.
+    pub(crate) fn prices(&self, kind: ProviderKind, id: &str) -> Option<ModelPrices> {
+        let active = self.read();
+        let model = active
+            .providers
+            .iter()
+            .find(|provider| provider.id == kind.as_str())
+            .and_then(|provider| provider.models.iter().find(|model| model.id == id))?;
+        let prices = model.prices?;
+        Some(ModelPrices {
+            input: prices.input,
+            output: prices.output,
+            cache_read: prices.cache_read,
+            cache_write: prices.cache_write,
+        })
     }
 
     pub(crate) fn efforts(&self, kind: ProviderKind, model: &str) -> Vec<ThinkingEffort> {

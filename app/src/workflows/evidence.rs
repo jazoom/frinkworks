@@ -59,6 +59,7 @@ impl AttemptEvidenceContext {
                 label: "",
                 provider: None,
                 input_tokens: None,
+                request: None,
                 secret,
             },
         );
@@ -75,6 +76,7 @@ impl AttemptEvidenceContext {
                 label: "",
                 provider: None,
                 input_tokens: None,
+                request: None,
                 secret,
             },
         );
@@ -91,13 +93,17 @@ impl AttemptEvidenceContext {
                 label: &tool.label,
                 provider: None,
                 input_tokens: None,
+                request: None,
                 secret,
             },
         );
     }
 
-    pub(crate) fn usage(&self, usage: &crate::providers::ModelUsage) {
-        let _ = self.store.append_activity(
+    pub(crate) fn usage(
+        &self,
+        usage: &crate::conversations::RequestUsage,
+    ) -> Result<(), EvidenceError> {
+        let stored = self.store.append_activity(
             self.run_id,
             self.attempt_id,
             ActivityInput {
@@ -105,11 +111,17 @@ impl AttemptEvidenceContext {
                 kind: ActivityKind::Usage,
                 text: "",
                 label: "",
-                provider: Some(usage.provider.as_str()),
-                input_tokens: Some(usage.input_tokens),
+                provider: Some(usage.usage.provider.as_str()),
+                input_tokens: usage.usage.input_tokens,
+                request: Some(usage.clone()),
                 secret: None,
             },
-        );
+        )?;
+        if stored {
+            Ok(())
+        } else {
+            Err(EvidenceError::Full)
+        }
     }
 
     /// The caller must exclude credentials before durable publication.
@@ -155,6 +167,7 @@ pub(crate) struct ActivityInput<'a> {
     pub(crate) label: &'a str,
     pub(crate) provider: Option<&'a str>,
     pub(crate) input_tokens: Option<u64>,
+    pub(crate) request: Option<crate::conversations::RequestUsage>,
     pub(crate) secret: Option<&'a str>,
 }
 
@@ -187,6 +200,8 @@ pub(crate) struct ActivityEvent {
     pub(crate) label: String,
     pub(crate) provider: Option<String>,
     pub(crate) input_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) request: Option<crate::conversations::RequestUsage>,
     pub(crate) truncated: bool,
 }
 
@@ -357,6 +372,7 @@ impl WorkflowEvidenceStore {
             label,
             provider,
             input_tokens,
+            request,
             secret,
         } = input;
         let mut records = self.lock();
@@ -386,6 +402,31 @@ impl WorkflowEvidenceStore {
             );
             (Some(value), truncated)
         });
+        if let Some(request) = &request {
+            if !request.valid() {
+                return Err(EvidenceError::Corrupt);
+            }
+            if let Some(event) = next.events.iter_mut().find(|event| {
+                event
+                    .request
+                    .as_ref()
+                    .is_some_and(|existing| existing.id == request.id)
+            }) {
+                let previous = event.request.as_ref().expect("matching request");
+                if previous.usage.provider != request.usage.provider
+                    || previous.usage.model != request.usage.model
+                    || previous.auth != request.auth
+                    || previous.prices != request.prices
+                {
+                    return Err(EvidenceError::Conflict);
+                }
+                event.request = Some(request.clone());
+                event.input_tokens = request.usage.input_tokens;
+                persist_record(self.dir.as_deref(), &mut next)?;
+                records.insert(key, next);
+                return Ok(true);
+            }
+        }
         let event_bytes = text
             .len()
             .saturating_add(label.len())
@@ -402,7 +443,12 @@ impl WorkflowEvidenceStore {
             records.insert(key, next);
             return Ok(false);
         }
-        if text.is_empty() && label.is_empty() && provider.is_none() && input_tokens.is_none() {
+        if text.is_empty()
+            && label.is_empty()
+            && provider.is_none()
+            && input_tokens.is_none()
+            && request.is_none()
+        {
             return Ok(false);
         }
         let sequence = next.events.last().map_or(1, |event| event.sequence + 1);
@@ -414,6 +460,7 @@ impl WorkflowEvidenceStore {
             label,
             provider,
             input_tokens,
+            request,
             truncated,
         });
         next.activity_bytes = next.activity_bytes.saturating_add(event_bytes);
@@ -648,8 +695,15 @@ fn validate_record(record: &AttemptEvidence) -> Result<(), EvidenceError> {
         return Err(EvidenceError::Corrupt);
     }
     let mut activity_bytes = 0usize;
+    let mut request_ids = std::collections::BTreeSet::new();
     for (expected_sequence, event) in (1..).zip(&record.events) {
-        if event.sequence != expected_sequence
+        if event.request.as_ref().is_some_and(|request| {
+            !request.valid()
+                || !request_ids.insert(request.id)
+                || event.kind != ActivityKind::Usage
+                || event.provider.as_deref() != Some(request.usage.provider.as_str())
+                || event.input_tokens != request.usage.input_tokens
+        }) || event.sequence != expected_sequence
             || event.phase != record.phase
             || event.text.len() > MAXIMUM_ACTIVITY_TEXT_BYTES
             || event.label.len() > MAXIMUM_ACTIVITY_TEXT_BYTES
@@ -727,6 +781,13 @@ fn persist_record(dir: Option<&Path>, record: &mut AttemptEvidence) -> Result<()
         let bytes = serde_json::to_vec(record).map_err(|_| EvidenceError::Persist)?;
         if bytes.len() <= MAXIMUM_EVIDENCE_RECORD_BYTES {
             break bytes;
+        }
+        if record
+            .events
+            .last()
+            .is_some_and(|event| event.request.is_some())
+        {
+            return Err(EvidenceError::Full);
         }
         if let Some(event) = record.events.pop() {
             record.activity_bytes -= event.text.len()

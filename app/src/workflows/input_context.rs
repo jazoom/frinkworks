@@ -408,7 +408,7 @@ impl AttemptContextPacket {
                         .filter_map(|call| call.result.clone())
                         .collect(),
                     activity: Vec::new(),
-                    usage: None,
+                    usage: Vec::new(),
                     calls: calls.clone(),
                     continuation: continuation.clone(),
                 },

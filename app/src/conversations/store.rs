@@ -413,6 +413,8 @@ struct MessageFile {
     request: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     completion: Option<crate::providers::CompletionReason>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    requests: Vec<super::history::RequestUsage>,
 }
 
 impl ConversationStore {
@@ -884,6 +886,7 @@ impl ConversationStore {
                 error: None,
                 request: None,
                 completion: None,
+                requests: Vec::new(),
             });
             current.messages.push(ConversationMessage {
                 id: assistant_id,
@@ -895,6 +898,7 @@ impl ConversationStore {
                 error: None,
                 request: Some(request),
                 completion: None,
+                requests: Vec::new(),
             });
             current.active_job = Some(request);
             Ok(())
@@ -943,10 +947,7 @@ impl ConversationStore {
                 return Err(ConversationError::Full);
             }
             let active = active_assistant(record, request)?;
-            active.text = committed.text.clone();
-            active.activity = committed.activity.clone();
-            active.continuation = committed.continuation.clone();
-            active.completion = committed.completion;
+            apply_reply(active, committed);
             let failed = ConversationMessage {
                 id: MessageId::generate().map_err(|_| ConversationError::Random)?,
                 role: MessageRole::Assistant,
@@ -957,6 +958,7 @@ impl ConversationStore {
                 error: Some(error),
                 request: Some(JobId::generate().map_err(|_| ConversationError::Random)?),
                 completion: Some(crate::providers::CompletionReason::Unknown),
+                requests: failed.usage,
             };
             // Failed attempts stay local and never split a completed tool exchange.
             record.messages.insert(record.messages.len() - 1, failed);
@@ -983,10 +985,7 @@ impl ConversationStore {
         let mut updated = current.clone();
         {
             let message = active_assistant(&mut updated, request)?;
-            message.text = reply.text;
-            message.activity = reply.activity;
-            message.continuation = reply.continuation;
-            message.completion = reply.completion;
+            apply_owned_reply(message, reply);
         }
         super::history::validate_exchange(&updated.messages)
             .map_err(|_| ConversationError::Message)?;
@@ -1050,12 +1049,9 @@ impl ConversationStore {
         }
         self.replace(id, 0, |current| {
             let message = active_assistant(current, request)?;
-            message.text = reply.text;
-            message.activity = reply.activity;
-            message.continuation = reply.continuation;
+            apply_owned_reply(message, reply);
             message.status = status;
             message.error = error;
-            message.completion = reply.completion;
             current.active_job = None;
             current.continuation = None;
             Ok(())
@@ -1086,12 +1082,9 @@ impl ConversationStore {
                 current.messages.pop();
             } else {
                 let message = active_assistant(current, request)?;
-                message.text = reply.text;
-                message.activity = reply.activity;
-                message.continuation = reply.continuation;
+                apply_owned_reply(message, reply);
                 message.status = MessageStatus::Complete;
                 message.error = None;
-                message.completion = reply.completion;
             }
             current.active_job = None;
             let boundary = current
@@ -1144,6 +1137,7 @@ impl ConversationStore {
                 error: None,
                 request: Some(request),
                 completion: None,
+                requests: Vec::new(),
             });
             current.active_job = Some(request);
             Ok(())
@@ -1332,6 +1326,7 @@ impl ConversationStore {
                 error: None,
                 request: None,
                 completion: None,
+                requests: Vec::new(),
             });
             current.messages.push(ConversationMessage {
                 id: assistant_id,
@@ -1343,6 +1338,7 @@ impl ConversationStore {
                 error: None,
                 request: Some(request),
                 completion: None,
+                requests: Vec::new(),
             });
             current.active_job = Some(request);
             Ok(())
@@ -1376,10 +1372,7 @@ impl ConversationStore {
                 .ok_or(ConversationError::Conflict)?;
             {
                 let message = active_assistant(current, request)?;
-                message.text = reply.text.clone();
-                message.activity = reply.activity.clone();
-                message.continuation = reply.continuation.clone();
-                message.completion = reply.completion;
+                apply_reply(message, &reply);
                 message.status = MessageStatus::Complete;
                 message.error = None;
             }
@@ -1399,6 +1392,7 @@ impl ConversationStore {
                 error: None,
                 request: None,
                 completion: None,
+                requests: Vec::new(),
             });
             current.messages.push(ConversationMessage {
                 id: assistant_id,
@@ -1410,6 +1404,7 @@ impl ConversationStore {
                 error: None,
                 request: Some(request),
                 completion: None,
+                requests: Vec::new(),
             });
             super::history::validate_exchange(&current.messages)
                 .map_err(|_| ConversationError::Message)?;
@@ -2034,6 +2029,7 @@ fn message_from_file(file: MessageFile) -> Result<ConversationMessage, Conversat
         || !valid_message_error(file.status, file.error.as_deref())
         || !valid_activity(&file.activity, &file.text)
         || !valid_continuation(&file.continuation)
+        || !super::history::valid_requests(&file.requests, file.role)
         || (file.role == MessageRole::User
             && (!file.activity.is_empty() || !file.continuation.is_empty()))
     {
@@ -2059,6 +2055,7 @@ fn message_from_file(file: MessageFile) -> Result<ConversationMessage, Conversat
         error: file.error,
         request,
         completion: file.completion,
+        requests: file.requests,
     })
 }
 
@@ -2067,10 +2064,27 @@ fn validate_reply(reply: &crate::providers::AssistantReply) -> Result<(), Conver
         || reply.text.contains('\0')
         || !valid_activity(&reply.activity, &reply.text)
         || !valid_continuation(&reply.continuation)
+        || !super::history::valid_requests(&reply.usage, MessageRole::Assistant)
     {
         return Err(ConversationError::Message);
     }
     Ok(())
+}
+
+fn apply_reply(message: &mut ConversationMessage, reply: &crate::providers::AssistantReply) {
+    message.text = reply.text.clone();
+    message.activity = reply.activity.clone();
+    message.continuation = reply.continuation.clone();
+    message.completion = reply.completion;
+    message.requests = reply.usage.clone();
+}
+
+fn apply_owned_reply(message: &mut ConversationMessage, reply: crate::providers::AssistantReply) {
+    message.text = reply.text;
+    message.activity = reply.activity;
+    message.continuation = reply.continuation;
+    message.completion = reply.completion;
+    message.requests = reply.usage;
 }
 
 fn reply_size(reply: &crate::providers::AssistantReply) -> usize {
@@ -2224,6 +2238,7 @@ fn record_to_file(record: &ConversationRecord) -> ConversationFile {
                 error: message.error.clone(),
                 request: message.request.map(|request| request.as_hex()),
                 completion: message.completion,
+                requests: message.requests.clone(),
             })
             .collect(),
         active_job: record.active_job.map(|request| request.as_hex()),

@@ -1853,6 +1853,7 @@ pub(super) fn message_view(
                 &message.text,
                 &message.activity,
                 &[],
+                &message.requests,
                 streaming,
                 message
                     .completion
@@ -1887,6 +1888,7 @@ pub(super) fn reply_view(
             &reply.text,
             &reply.activity,
             &reply.progress,
+            &reply.usage,
             streaming,
             reply
                 .completion
@@ -1932,6 +1934,18 @@ struct MessageContent<'a> {
     id: &'a str,
     output_base: &'a str,
     blocks: Vec<MessageBlock>,
+    usage: Option<UsagePanelView>,
+}
+
+struct UsagePanelView {
+    requests: Vec<RequestUsageView>,
+    subtotal: String,
+}
+
+struct RequestUsageView {
+    model: String,
+    detail: String,
+    cost: String,
 }
 
 struct MessageBlock {
@@ -1980,12 +1994,14 @@ fn command_view(command: &crate::execution::CommandResult) -> CommandView {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn activity_html(
     conversation: &ConversationId,
     id: &str,
     text: &str,
     activity: &[crate::providers::AssistantActivity],
     progress: &[crate::providers::ToolProgress],
+    requests: &[crate::conversations::RequestUsage],
     streaming: bool,
     incomplete: bool,
 ) -> String {
@@ -2080,9 +2096,101 @@ fn activity_html(
         id,
         output_base: &output_base,
         blocks,
+        usage: usage_panel(requests),
     }
     .render()
     .expect("message content template")
+}
+
+fn usage_panel(requests: &[crate::conversations::RequestUsage]) -> Option<UsagePanelView> {
+    if requests.is_empty() {
+        return None;
+    }
+    let total = crate::conversations::history::total_cost(requests);
+    Some(UsagePanelView {
+        requests: requests.iter().map(request_usage_view).collect(),
+        subtotal: cost_label(&total),
+    })
+}
+
+fn request_usage_view(request: &crate::conversations::RequestUsage) -> RequestUsageView {
+    RequestUsageView {
+        model: format!(
+            "{} · {}",
+            request.usage.provider.label(),
+            request.usage.model
+        ),
+        detail: token_detail(&request.usage),
+        cost: request_cost_label(request),
+    }
+}
+
+fn token_detail(usage: &crate::providers::ModelUsage) -> String {
+    let mut parts = Vec::new();
+    if let Some(value) = usage.input_tokens {
+        parts.push(format!("{} input", format_count(value)));
+    }
+    if let Some(value) = usage.output_tokens {
+        parts.push(format!("{} output", format_count(value)));
+    }
+    if let Some(value) = usage.cache_read_tokens {
+        parts.push(format!("{} cache read", format_count(value)));
+    }
+    if let Some(value) = usage.cache_creation_tokens {
+        parts.push(format!("{} cache write", format_count(value)));
+    }
+    if parts.is_empty() {
+        "Usage unknown".to_owned()
+    } else {
+        parts.join(", ")
+    }
+}
+
+fn request_cost_label(request: &crate::conversations::RequestUsage) -> String {
+    if request.auth == crate::providers::AuthMethod::Plan {
+        return "Cost unknown for plan authentication".to_owned();
+    }
+    cost_label(&crate::conversations::history::request_cost(request))
+}
+
+fn cost_label(coverage: &crate::conversations::history::CostCoverage) -> String {
+    match (coverage.known_micros, coverage.incomplete) {
+        (None, false) => String::new(),
+        (None, true) => "Cost unknown".to_owned(),
+        (Some(micros), false) => format!("Estimated cost {}", format_usd(micros)),
+        (Some(micros), true) => {
+            format!(
+                "Known subtotal {} (estimate, incomplete)",
+                format_usd(micros)
+            )
+        }
+    }
+}
+
+fn format_usd(micros: u64) -> String {
+    let whole = micros / 1_000_000;
+    let frac = micros % 1_000_000;
+    if frac == 0 {
+        format!("${whole}.00")
+    } else {
+        let mut frac_str = format!("{frac:06}");
+        while frac_str.ends_with('0') && frac_str.len() > 2 {
+            frac_str.pop();
+        }
+        format!("${whole}.{frac_str}")
+    }
+}
+
+fn format_count(value: u64) -> String {
+    let raw = value.to_string();
+    let mut formatted = String::new();
+    for (index, character) in raw.chars().rev().enumerate() {
+        if index > 0 && index % 3 == 0 {
+            formatted.push(',');
+        }
+        formatted.push(character);
+    }
+    formatted.chars().rev().collect()
 }
 
 pub(super) fn message_error(message: &ConversationMessage) -> String {
