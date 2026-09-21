@@ -582,33 +582,18 @@ async fn first_message_persists_an_independent_directory_grant() {
     })
     .await
     .expect("directory-backed reply");
-    let run_id = state.workflow_runs.summaries().pop().unwrap().id;
-    let run = state.workflow_runs.get(&run_id).unwrap();
-    let directory = run.attempts[0]
-        .capabilities
-        .directories
-        .iter()
-        .find(|directory| directory.alias == grant.alias)
-        .expect("directory capability");
-    assert_eq!(directory.guest_path, grant.guest_path());
-    assert_eq!(directory.access, crate::agents::AccessMode::ReadOnly);
+    assert!(state.workflow_runs.summaries().is_empty());
+    let settled = state.conversations.get(&record.id).unwrap();
     assert_eq!(
-        directory.role,
-        crate::workflows::capabilities::DirectoryRole::PrimarySource
+        settled.model.as_ref().unwrap().settings.directories,
+        vec![grant]
     );
-    assert_eq!(
-        run.attempts[0].capabilities.git_admin,
-        crate::agents::AccessMode::ReadOnly
-    );
+    assert!(!state.conversation_runtime.unsettled(record.id));
 }
 
 #[tokio::test]
 async fn network_tool_reply_uses_private_workspace_without_catalogue_identity() {
     let mut state = test_state();
-    let run_dir = tempfile::tempdir().unwrap();
-    state.workflow_runs = std::sync::Arc::new(
-        crate::workflows::WorkflowRunStore::open(run_dir.path().to_path_buf()).unwrap(),
-    );
     ready_starter_environment(&state).await;
     let (environment, _queued) = state
         .environments
@@ -661,7 +646,7 @@ async fn network_tool_reply_uses_private_workspace_without_catalogue_identity() 
             }),
         ],
     ]);
-    state.chat = std::sync::Arc::new(crate::providers::ChatBackend::Scripted(backend));
+    state.chat = std::sync::Arc::new(crate::providers::ChatBackend::Scripted(backend.clone()));
     let token = connected(&state);
     let effort = state
         .models_dev
@@ -694,20 +679,11 @@ async fn network_tool_reply_uses_private_workspace_without_catalogue_identity() 
     })
     .await
     .expect("tool reply");
-    let run_id = state
-        .workflow_runs
-        .summaries()
-        .pop()
-        .expect("source-free run summary")
-        .id;
-    let run = state.workflow_runs.get(&run_id).expect("source-free run");
-    assert!(run.agent_id.is_none());
-    assert_eq!(run.pinned.definition.default_environment(), environment.id);
-    assert!(matches!(run.source, crate::workflows::RunSource::None));
-    assert!(
-        matches!(run.state, crate::workflows::run::RunState::Completed),
-        "run: {run:#?}"
-    );
+    assert!(state.workflow_runs.summaries().is_empty());
+    assert!(!state.conversation_runtime.unsettled(conversation.id));
+    let preamble = backend.last_preamble().unwrap_or_default();
+    assert!(preamble.contains("/workspace"));
+    assert!(!preamble.contains("# Role"));
     let settled = state.conversations.get(&conversation.id).unwrap();
     assert_eq!(
         settled
@@ -735,19 +711,6 @@ async fn network_tool_reply_uses_private_workspace_without_catalogue_identity() 
             .text
             .contains("it.\n\nThe network")
     );
-    let capabilities = &run.attempts[0].capabilities;
-    assert_eq!(capabilities.primary().unwrap().guest_path, "/workspace");
-    assert_eq!(
-        capabilities.network,
-        crate::workflows::capabilities::NetworkCapability::Restricted(vec![
-            "example.com".to_owned()
-        ])
-    );
-    assert!(run.gates.is_empty());
-    assert!(run.artefacts.is_empty());
-    let reopened = crate::workflows::WorkflowRunStore::open(run_dir.path().to_path_buf()).unwrap();
-    let loaded = reopened.get(&run_id).expect("loaded source-free run");
-    assert!(matches!(loaded.source, crate::workflows::RunSource::None));
 }
 
 #[tokio::test]
@@ -911,12 +874,7 @@ async fn host_first_message_runs_without_a_sandbox_runtime() {
         .unwrap();
     assert_eq!(created.status(), StatusCode::OK, "{}", text(created).await);
     assert_eq!(state.conversations.list().len(), 1);
-    let run = state
-        .workflow_runs
-        .get(&state.workflow_runs.summaries()[0].id)
-        .unwrap();
-    assert_eq!(run.kind, crate::workflows::RunKind::QuickTask);
-    assert!(run.environments.environments.is_empty());
+    assert!(state.workflow_runs.summaries().is_empty());
     let settings = state.conversations.list()[0]
         .model
         .as_ref()

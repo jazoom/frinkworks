@@ -8,7 +8,9 @@ use crate::{
     environments::{
         EnvironmentCatalogue, EnvironmentPreparationScheduler, EnvironmentSnapshotRepository,
     },
-    execution::{AccessConsentStore, DirectoryPicker, HostApprovalStore, OutputStore},
+    execution::{
+        AccessConsentStore, ConversationRuntime, DirectoryPicker, HostApprovalStore, OutputStore,
+    },
     local_data::LocalDataReset,
     models::models_dev::ModelsDevCatalogue,
     plan_login::PlanLogin,
@@ -41,6 +43,7 @@ pub(crate) struct AppState {
     pub(crate) directory_picker: DirectoryPicker,
     pub(crate) access_consent: Arc<AccessConsentStore>,
     pub(crate) host_approvals: Arc<HostApprovalStore>,
+    pub(crate) conversation_runtime: Arc<ConversationRuntime>,
     pub(crate) local_data: LocalDataReset,
     pub(crate) sandboxes: Arc<SandboxFleet>,
     pub(crate) outputs: Arc<OutputStore>,
@@ -155,6 +158,10 @@ pub(crate) async fn build(
         directory_picker: DirectoryPicker::native(),
         access_consent: Arc::new(AccessConsentStore::new()),
         host_approvals: Arc::new(HostApprovalStore::new()),
+        conversation_runtime: Arc::new(
+            ConversationRuntime::open(data_dir.join("conversation-runtime"))
+                .map_err(str::to_owned)?,
+        ),
         local_data,
         sandboxes: Arc::new(sandboxes),
         outputs: Arc::new(outputs),
@@ -243,6 +250,14 @@ pub(crate) async fn build(
             .mutate(&run_id, |run| run.record_cleanup(attempt_id, cleanup))
             .map_err(|_| "Power Plant could not record workflow recovery.".to_owned())?;
     }
+    state
+        .conversation_runtime
+        .recover(
+            &guest_recovery,
+            &workspace_recovery,
+            &state.workflow_execution,
+        )
+        .map_err(str::to_owned)?;
     Ok(state)
 }
 

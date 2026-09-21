@@ -779,6 +779,7 @@ fn record_host_evidence(
     output: &str,
     command: Option<&crate::execution::CommandResult>,
 ) -> Result<(), &'static str> {
+    // Keep token-scoped approval evidence even without a workflow attempt.
     host.state
         .workflow_evidence
         .host_command(request, status, output, host.secret, command)

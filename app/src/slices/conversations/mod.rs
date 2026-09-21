@@ -1002,6 +1002,12 @@ pub(super) async fn preflight_execution(
             "Restore or resolve the pending decision before another message.",
         ));
     }
+    if conversation.is_some_and(|id| state.conversation_runtime.unsettled(id)) {
+        return Err(StartMessageError::User(
+            PatchStatus::Conflict,
+            "Execution remains unsettled. Continuation and retry stay unavailable until recovery and cleanup finish.",
+        ));
+    }
     if model.settings.location == crate::execution::ToolLocation::Sandbox
         && let Some(conversation) = conversation
         && model.settings.directories.iter().any(|grant| {
@@ -1061,6 +1067,19 @@ pub(super) async fn preflight_execution(
             PatchStatus::UnprocessableEntity,
             missing.message(),
         ));
+    }
+    if crate::execution::ordinary_kind(&model.settings)
+        == Some(crate::execution::OrdinaryKind::Sandbox)
+    {
+        return workflows::validate_replacement_environment(
+            &state.environments,
+            &state.environment_snapshots,
+            model.settings.environment,
+        )
+        .await
+        .map_err(|error| {
+            StartMessageError::User(PatchStatus::UnprocessableEntity, error.message())
+        });
     }
     let pinned = workflows::pin_agent_work(&model.settings).map_err(|error| {
         StartMessageError::User(PatchStatus::UnprocessableEntity, error.message())
@@ -1125,7 +1144,8 @@ async fn start_message_mode(
         ));
     };
     let advertised_tools = crate::tools::advertised(&model.settings.tools, model.settings.location);
-    let workflow = if !advertised_tools.is_empty() {
+    let ordinary = crate::execution::ordinary_kind(&model.settings);
+    let workflow = if ordinary.is_none() && !advertised_tools.is_empty() {
         let project_free =
             crate::execution::ProjectFreeAuthority::from_settings(record.revision, &model.settings)
                 .map_err(|error| StartMessageError::User(PatchStatus::Conflict, error.message()))?;
@@ -1149,6 +1169,16 @@ async fn start_message_mode(
             StartMessageError::Internal(AppError::new("create workflow run identifier", error))
         })?;
         Some((run_id, project_free, pinned, environments, execution))
+    } else {
+        None
+    };
+    let ordinary_execution = if ordinary.is_some() {
+        Some(
+            state
+                .workflow_execution
+                .acquire()
+                .map_err(|error| StartMessageError::User(PatchStatus::Conflict, error))?,
+        )
     } else {
         None
     };
@@ -1269,6 +1299,43 @@ async fn start_message_mode(
             },
             None,
             execution,
+        ));
+    } else if let Some(kind) = ordinary {
+        let secret = match connection.auth {
+            crate::providers::AuthMethod::ApiKey => Some(connection.api_key.expose()),
+            crate::providers::AuthMethod::Plan => None,
+        };
+        let turns = match job::history_with_review(state, &started, secret) {
+            Ok(turns) => turns,
+            Err(error) => {
+                let _ = state.conversations.settle_message(
+                    &started.id,
+                    job.id(),
+                    String::new(),
+                    crate::conversations::MessageStatus::Failed,
+                    Some(error.to_owned()),
+                );
+                let _ = state
+                    .sessions
+                    .finish_conversation_job(&session, started.id, job.id());
+                return Err(StartMessageError::User(
+                    PatchStatus::UnprocessableEntity,
+                    error,
+                ));
+            }
+        };
+        let execution = ordinary_execution.expect("ordinary work holds reset protection");
+        tokio::spawn(crate::execution::conversation::run(
+            state.clone(),
+            crate::execution::conversation::OrdinaryRun {
+                session,
+                record: started,
+                connection,
+                job,
+                execution,
+                kind,
+                turns,
+            },
         ));
     } else {
         tokio::spawn(job::run(
@@ -1727,7 +1794,10 @@ async fn delete_conversation(
             detail_view(&state, session.0, &record, &record.title, REVISION_MESSAGE),
         );
     };
-    if state.sessions.conversation_reserved(record.id) || has_pending_review(&state, record.id) {
+    if state.sessions.conversation_reserved(record.id)
+        || has_pending_review(&state, record.id)
+        || state.conversation_runtime.unsettled(record.id)
+    {
         return render_detail_command(
             graft,
             PatchStatus::Conflict,
@@ -1866,7 +1936,9 @@ fn valid_selection(state: &AppState, selection: &ModelSelection) -> Result<(), &
 }
 
 fn conversation_busy(state: &AppState, record: &ConversationRecord) -> bool {
-    record.active_job.is_some() || state.sessions.conversation_reserved(record.id)
+    record.active_job.is_some()
+        || state.sessions.conversation_reserved(record.id)
+        || state.conversation_runtime.unsettled(record.id)
 }
 
 fn detail_view(

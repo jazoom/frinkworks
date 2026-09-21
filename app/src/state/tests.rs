@@ -35,6 +35,7 @@ pub(crate) fn test_state(config: RuntimeConfig) -> AppState {
         directory_picker: crate::execution::DirectoryPicker::scripted(),
         access_consent: Arc::new(crate::execution::AccessConsentStore::new()),
         host_approvals: Arc::new(crate::execution::HostApprovalStore::new()),
+        conversation_runtime: Arc::new(crate::execution::ConversationRuntime::ephemeral()),
         local_data: crate::local_data::LocalDataReset::detached(),
         sandboxes: Arc::new(SandboxFleet::scripted()),
         outputs: Arc::new(crate::execution::OutputStore::ephemeral()),
