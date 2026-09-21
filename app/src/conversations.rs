@@ -20,6 +20,7 @@ pub(crate) use questions::{PendingQuestion, QuestionAnswer, QuestionError};
 pub(crate) use queue::{ConversationQueue, QueueDelivery, QueueItemId};
 pub(crate) use store::{
     CandidateReviewContext, CandidateReviewCreation, CandidateReviewLink, ConversationError,
-    ConversationModelConfiguration, ConversationRecord, ConversationStore, DirectoryApproval,
-    MAXIMUM_MESSAGE_BYTES, MAXIMUM_TITLE_BYTES, normalise_message, normalise_title,
+    ConversationMetadata, ConversationModelConfiguration, ConversationRecord, ConversationStore,
+    DirectoryApproval, MAXIMUM_MESSAGE_BYTES, MAXIMUM_TITLE_BYTES, normalise_message,
+    normalise_title,
 };

@@ -248,7 +248,7 @@ impl PresetsPage {
         preset: &str,
     ) -> Self {
         self.context = crate::conversations::ConversationId::parse(conversation)
-            .and_then(|id| state.conversations.get(&id))
+            .and_then(|id| state.conversations.metadata_for(&id))
             .map(|record| (record.id.as_hex(), record.title));
         if preset.is_empty() {
             return self;
@@ -261,7 +261,7 @@ impl PresetsPage {
         };
         self.selected_preset = preset.name;
         if self.context.is_none() {
-            let mut conversations = state.conversations.list();
+            let mut conversations = state.conversations.metadata();
             conversations.sort_by_key(|record| std::cmp::Reverse(record.updated_at_ms));
             self.destinations = conversations
                 .into_iter()

@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use crate::{
     agents::NetworkAccess,
     providers::{ModelSelection, ProviderKind},
@@ -9,6 +7,16 @@ use crate::{
 use super::{ConversationError, ConversationStore, MAXIMUM_TITLE_BYTES, MessageStatus};
 
 impl ConversationStore {
+    pub(crate) fn list(&self) -> Vec<super::ConversationRecord> {
+        let database = self.database();
+        database
+            .metadata_all()
+            .unwrap()
+            .into_iter()
+            .map(|record| database.load(&record.id).unwrap().unwrap())
+            .collect()
+    }
+
     fn create_record(
         &self,
         title: String,
@@ -62,9 +70,7 @@ impl ConversationStore {
 
     pub(crate) fn in_memory() -> Self {
         Self {
-            path: None,
-            inner: std::sync::Mutex::new(std::collections::BTreeMap::new()),
-            pending: std::sync::Mutex::new(std::collections::BTreeMap::new()),
+            database: std::sync::Mutex::new(super::sqlite::Database::in_memory().unwrap()),
             uncertain: std::sync::Mutex::new(std::collections::BTreeSet::new()),
             title_updates: tokio::sync::broadcast::channel(16).0,
             questions: super::super::questions::QuestionWaiters::new(),
@@ -163,11 +169,12 @@ fn compaction_survives_restart_with_a_later_pending_request() {
 #[test]
 fn restart_preserves_explicit_saves_with_or_without_a_manual_title() {
     let dir = tempfile::tempdir().unwrap();
-    let store = ConversationStore::in_memory();
-    let draft = store.create_untitled().unwrap();
-    let saved = store.create("New conversation".to_owned()).unwrap();
-    write_record(dir.path(), &draft);
-    write_record(dir.path(), &saved);
+    let (draft, saved);
+    {
+        let store = ConversationStore::open(dir.path().to_path_buf()).unwrap();
+        draft = store.create_untitled().unwrap();
+        saved = store.create("New conversation".to_owned()).unwrap();
+    }
 
     let reopened = ConversationStore::open(dir.path().to_path_buf()).unwrap();
     assert_eq!(reopened.get(&draft.id), Some(draft));
@@ -217,29 +224,148 @@ fn restart_preserves_directory_identity_and_guest_alias() {
 }
 
 #[test]
-fn capacity_never_evicts_saved_conversations() {
-    let store = ConversationStore::in_memory();
-    for _ in 0..super::MAXIMUM_CONVERSATIONS {
+fn history_beyond_former_message_byte_and_catalogue_limits_survives_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut ids = Vec::new();
+    {
+        let store = ConversationStore::open(dir.path().to_path_buf()).unwrap();
+        for _ in 0..130 {
+            let record = store
+                .create_saved(
+                    super::ConversationId::generate().unwrap(),
+                    None,
+                    None,
+                    Vec::new(),
+                )
+                .unwrap();
+            ids.push(record.id);
+        }
+        let previous = store.get(&ids[0]).unwrap();
+        let mut record = previous.clone();
+        for _ in 0..600 {
+            for role in [super::MessageRole::User, super::MessageRole::Assistant] {
+                record.messages.push(super::ConversationMessage {
+                    id: super::MessageId::generate().unwrap(),
+                    role,
+                    text: if role == super::MessageRole::User {
+                        "Question".to_owned()
+                    } else {
+                        "x".repeat(120 * 1024)
+                    },
+                    activity: Vec::new(),
+                    continuation: Vec::new(),
+                    status: MessageStatus::Complete,
+                    error: None,
+                    request: (role == super::MessageRole::Assistant)
+                        .then(|| JobId::generate().unwrap()),
+                    completion: None,
+                    requests: Vec::new(),
+                });
+            }
+        }
         store
-            .create_saved(
-                super::ConversationId::generate().unwrap(),
-                None,
-                None,
-                Vec::new(),
-            )
+            .persist(&mut store.database(), Some(&previous), &record)
             .unwrap();
+        let job = JobId::generate().unwrap();
+        store
+            .begin_compaction(&record.id, record.revision, job)
+            .unwrap();
+        for _ in 0..300 {
+            let request = crate::conversations::RequestUsage {
+                id: crate::conversations::RequestId::generate().unwrap(),
+                usage: crate::providers::ModelUsage::new(ProviderKind::Xai, "model"),
+                auth: crate::providers::AuthMethod::ApiKey,
+                prices: None,
+                sources: Vec::new(),
+                advertised: Vec::new(),
+            };
+            store
+                .record_summary_request(&record.id, job, &request)
+                .unwrap();
+        }
+        store.finish_compaction(&record.id, job, None).unwrap();
     }
-    let before = store.list();
-    assert_eq!(
-        store.create_saved(
-            super::ConversationId::generate().unwrap(),
-            None,
-            None,
-            Vec::new()
-        ),
-        Err(ConversationError::Full)
+    let reopened = ConversationStore::open(dir.path().to_path_buf()).unwrap();
+    assert_eq!(reopened.metadata().len(), 130);
+    assert!(ids.iter().all(|id| reopened.metadata_for(id).is_some()));
+    let record = reopened.get(&ids[0]).unwrap();
+    assert_eq!(record.messages.len(), 1200);
+    assert_eq!(record.summary_requests.len(), 300);
+    assert!(
+        record
+            .messages
+            .iter()
+            .skip(1)
+            .step_by(2)
+            .all(|message| message.text == "x".repeat(120 * 1024))
     );
-    assert_eq!(store.list(), before);
+}
+
+#[test]
+fn append_and_failed_attempts_preserve_existing_rows_and_append_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = ConversationStore::open(dir.path().to_path_buf()).unwrap();
+    let record = store.create("History".to_owned()).unwrap();
+    let job = JobId::generate().unwrap();
+    store
+        .begin_message_with_model(&record.id, record.revision, None, job, "First".to_owned())
+        .unwrap();
+    store
+        .settle_message(&record.id, job, "Reply", MessageStatus::Complete, None)
+        .unwrap();
+    let record = store.get(&record.id).unwrap();
+    let connection = rusqlite::Connection::open(dir.path().join("conversations.sqlite3")).unwrap();
+    connection
+        .execute_batch(
+            "CREATE TRIGGER protect_update BEFORE UPDATE ON messages WHEN OLD.position < 2
+         BEGIN SELECT RAISE(ABORT, 'old message changed'); END;
+         CREATE TRIGGER protect_delete BEFORE DELETE ON messages WHEN OLD.position < 2
+         BEGIN SELECT RAISE(ABORT, 'old message deleted'); END;",
+        )
+        .unwrap();
+    let job = JobId::generate().unwrap();
+    let started = store
+        .begin_message_with_model(&record.id, record.revision, None, job, "Next".to_owned())
+        .unwrap();
+    let pending = started.messages.last().unwrap().id.as_hex();
+    let sequence = || {
+        connection
+            .query_row(
+                "SELECT sequence FROM messages WHERE id = ?1",
+                [&pending],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap()
+    };
+    let original_sequence = sequence();
+    let mut reply = crate::providers::AssistantReply::default();
+    reply.push_response("Progress");
+    reply.start_tool(
+        "unique-call".to_owned(),
+        "list".to_owned(),
+        serde_json::json!({}),
+    );
+    store.checkpoint_output(&record.id, job, reply).unwrap();
+    store
+        .record_provider_failure(
+            &record.id,
+            job,
+            "Failed request".into(),
+            &"Progress".into(),
+            "Provider failure".to_owned(),
+        )
+        .unwrap();
+    assert_eq!(sequence(), original_sequence);
+    store
+        .checkpoint_output(&record.id, job, "More progress")
+        .unwrap();
+    store
+        .settle_message(&record.id, job, "Final", MessageStatus::Complete, None)
+        .unwrap();
+    let final_record = store.get(&record.id).unwrap();
+    assert_eq!(&final_record.messages[..2], record.messages.as_slice());
+    assert_eq!(final_record.messages[3].status, MessageStatus::Failed);
+    assert_eq!(final_record.messages[4].text, "Final");
 }
 
 #[test]
@@ -406,23 +532,6 @@ fn model_changes_preserve_execution_authority_and_reject_stale_revisions() {
     );
 }
 
-fn write_record(dir: &Path, record: &super::ConversationRecord) {
-    let bytes = serde_json::to_vec_pretty(&super::record_to_file(record)).expect("record");
-    std::fs::write(dir.join(format!("{}.json", record.id.as_hex())), bytes).expect("record");
-}
-
-fn record_path(dir: &Path) -> std::path::PathBuf {
-    std::fs::read_dir(dir)
-        .expect("directory")
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.path())
-        .find(|path| {
-            path.extension()
-                .is_some_and(|extension| extension == "json")
-        })
-        .expect("record file")
-}
-
 #[test]
 fn distinct_opaque_conversations_survive_a_restart() {
     let dir = tempfile::tempdir().expect("directory");
@@ -463,7 +572,7 @@ fn private_catalogue_path_rejects_a_symlink_without_replacement() {
 }
 
 #[test]
-fn corrupt_records_remain_unchanged() {
+fn legacy_records_fail_closed_without_replacement() {
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join(format!("{}.json", "0".repeat(32)));
     std::fs::write(&path, "{").expect("record");
@@ -474,27 +583,6 @@ fn corrupt_records_remain_unchanged() {
         Some(ConversationError::Corrupt)
     );
     assert_eq!(std::fs::read(path).expect("unchanged"), original);
-}
-
-#[test]
-fn missing_network_fields_reject_the_catalogue_without_replacement() {
-    for field in ["network", "network-domains"] {
-        let dir = tempfile::tempdir().expect("directory");
-        let store = ConversationStore::open(dir.path().to_path_buf()).expect("store");
-        store.create("Discussion".to_owned()).expect("record");
-        drop(store);
-        let path = record_path(dir.path());
-        let mut file: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&path).expect("record")).expect("JSON");
-        file.as_object_mut().expect("record").remove(field);
-        let bytes = serde_json::to_vec(&file).expect("JSON");
-        std::fs::write(&path, &bytes).expect("record");
-        assert_eq!(
-            ConversationStore::open(dir.path().to_path_buf()).err(),
-            Some(ConversationError::Corrupt)
-        );
-        assert_eq!(std::fs::read(path).expect("unchanged record"), bytes);
-    }
 }
 
 #[test]
@@ -517,7 +605,7 @@ fn stale_revisions_do_not_replace_current_records() {
 }
 
 #[test]
-fn titles_and_record_reads_are_bounded() {
+fn titles_are_bounded() {
     let store = ConversationStore::in_memory();
     for title in [
         String::new(),
@@ -527,30 +615,6 @@ fn titles_and_record_reads_are_bounded() {
     ] {
         assert_eq!(store.create(title).err(), Some(ConversationError::Title));
     }
-
-    let dir = tempfile::tempdir().expect("directory");
-    let path = dir.path().join(format!("{}.json", "1".repeat(32)));
-    std::fs::write(&path, "x".repeat(super::MAXIMUM_RECORD_BYTES + 1)).expect("record");
-    assert_eq!(
-        ConversationStore::open(dir.path().to_path_buf()).err(),
-        Some(ConversationError::Corrupt)
-    );
-}
-
-#[test]
-fn full_catalogue_rejects_creation_without_eviction() {
-    let store = ConversationStore::in_memory();
-    for index in 0..super::MAXIMUM_CONVERSATIONS {
-        store
-            .create(format!("Conversation {index}"))
-            .expect("create");
-    }
-    let original = store.list();
-    assert_eq!(
-        store.create("Overflow".to_owned()),
-        Err(ConversationError::Full)
-    );
-    assert_eq!(store.list(), original);
 }
 
 #[test]
@@ -558,13 +622,10 @@ fn rename_preserves_timestamp_order_after_clock_regression() {
     let dir = tempfile::tempdir().expect("directory");
     let store = ConversationStore::open(dir.path().to_path_buf()).expect("store");
     let record = store.create("Original".to_owned()).expect("create");
-    let mut future = record.clone();
-    future.created_at_ms = u64::MAX;
-    future.updated_at_ms = u64::MAX;
-    store.lock().insert(record.id, future);
     let renamed = store
         .rename(&record.id, record.revision, "Renamed".to_owned())
         .expect("rename");
+    assert!(renamed.updated_at_ms >= record.updated_at_ms);
     drop(store);
     let reopened = ConversationStore::open(dir.path().to_path_buf()).expect("reopen");
     assert_eq!(reopened.get(&record.id), Some(renamed));
@@ -654,13 +715,10 @@ fn active_request_rejects_stale_settlement() {
 }
 
 #[test]
-fn checkpoints_leave_other_records_and_control_revisions_unchanged() {
+fn append_output_leaves_other_records_and_control_revisions_unchanged() {
     let dir = tempfile::tempdir().unwrap();
     let store = ConversationStore::open(dir.path().to_path_buf()).unwrap();
     let other = store.create("Other".to_owned()).unwrap();
-    let other_path = super::record_file(dir.path(), other.id);
-    let other_bytes = std::fs::read(&other_path).unwrap();
-    let other_modified = std::fs::metadata(&other_path).unwrap().modified().unwrap();
     let record = store.create("Active".to_owned()).unwrap();
     let job = JobId::generate().unwrap();
     let record = store
@@ -672,18 +730,16 @@ fn checkpoints_leave_other_records_and_control_revisions_unchanged() {
             "Question".to_owned(),
         )
         .unwrap();
-    let path = super::record_file(dir.path(), record.id);
-    let started = std::fs::read(&path).unwrap();
     store.append_output(&record.id, job, "Partial").unwrap();
-    assert_eq!(std::fs::read(&path).unwrap(), started);
-    store.checkpoint_output(&record.id, job, "Partial").unwrap();
-    assert_ne!(std::fs::read(&path).unwrap(), started);
-    assert_eq!(store.get(&record.id).unwrap().revision, record.revision);
-    assert_eq!(std::fs::read(&other_path).unwrap(), other_bytes);
-    assert_eq!(
-        std::fs::metadata(&other_path).unwrap().modified().unwrap(),
-        other_modified
-    );
+    let current = store.get(&record.id).unwrap();
+    assert_eq!(current.revision, record.revision);
+    assert_eq!(current.messages.last().unwrap().text, "Partial");
+    assert_eq!(store.get(&other.id).unwrap(), other);
+    drop(store);
+    let reopened = ConversationStore::open(dir.path().to_path_buf()).unwrap();
+    let recovered = reopened.get(&record.id).unwrap();
+    assert_eq!(recovered.active_job, None);
+    assert_eq!(recovered.messages.last().unwrap().text, "Partial");
 }
 
 #[test]
@@ -892,46 +948,11 @@ fn transcript_progress_preserves_revision_without_weakening_request_identity() {
 }
 
 #[test]
-fn message_bounds_reserve_space_for_terminal_output() {
+fn message_bounds_apply_before_persistence() {
     let store = ConversationStore::in_memory();
     let record = store.create("Discussion".to_owned()).expect("conversation");
     let selection =
         ModelSelection::new(ProviderKind::Xai, "grok-4.6".to_owned(), None).expect("model");
-    // Existing history leaves less space than the escaped response needs without its reservation.
-    let mut history = store.create("History".to_owned()).unwrap();
-    let mut filled = false;
-    for _ in 0..super::MAXIMUM_MESSAGES {
-        let request = JobId::generate().unwrap();
-        match store.begin_message(
-            &history.id,
-            history.revision,
-            selection.clone(),
-            request,
-            "Question".to_owned(),
-        ) {
-            Ok(_) => {
-                store
-                    .settle_message(
-                        &history.id,
-                        request,
-                        "x".repeat(super::MAXIMUM_REPLY_BYTES),
-                        MessageStatus::Complete,
-                        None,
-                    )
-                    .unwrap();
-                history = store.get(&history.id).unwrap();
-            }
-            Err(ConversationError::Full) => {
-                filled = true;
-                break;
-            }
-            Err(error) => panic!("unexpected {error:?}"),
-        }
-    }
-    assert!(
-        filled,
-        "the per-record bound reserves terminal output space"
-    );
     let request = JobId::generate().expect("request");
     for text in [
         "x".repeat(super::MAXIMUM_MESSAGE_BYTES + 1),
@@ -1056,30 +1077,26 @@ fn invalid_message_errors_do_not_settle_the_request() {
 }
 
 #[test]
-fn invalid_record_fields_do_not_replace_the_record() {
+fn corrupted_stored_metadata_fails_closed_on_load() {
     let dir = tempfile::tempdir().expect("directory");
-    let store = ConversationStore::open(dir.path().to_path_buf()).expect("store");
-    store.create("Original".to_owned()).expect("create");
-    drop(store);
-    let path = record_path(dir.path());
-    let original: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&path).expect("read")).expect("json");
-    for (field, value) in [
-        ("id", serde_json::json!("../outside")),
-        ("revision", serde_json::json!(0)),
-        ("title", serde_json::json!(" padded ")),
-        ("updated-at-ms", serde_json::json!(0)),
-    ] {
-        let mut invalid = original.clone();
-        invalid[field] = value;
-        let bytes = serde_json::to_vec(&invalid).expect("encode");
-        std::fs::write(&path, &bytes).expect("write");
-        assert_eq!(
-            ConversationStore::open(dir.path().to_path_buf()).err(),
-            Some(ConversationError::Corrupt)
-        );
-        assert_eq!(std::fs::read(&path).expect("unchanged"), bytes);
+    let record;
+    {
+        let store = ConversationStore::open(dir.path().to_path_buf()).expect("store");
+        record = store.create("Original".to_owned()).expect("create");
     }
+    {
+        let connection =
+            rusqlite::Connection::open(dir.path().join("conversations.sqlite3")).expect("db");
+        connection
+            .execute(
+                "UPDATE conversations SET metadata = '{' WHERE id = ?1",
+                [record.id.as_hex()],
+            )
+            .expect("tamper");
+    }
+    let store = ConversationStore::open(dir.path().to_path_buf()).expect("reopen");
+    assert!(store.get(&record.id).is_none());
+    assert!(store.metadata_for(&record.id).is_none());
 }
 
 #[test]
@@ -1209,44 +1226,6 @@ fn message_identity_survives_restart_across_independent_conversations() {
         store.get(&records[0].id).unwrap().messages[0].id,
         store.get(&records[1].id).unwrap().messages[0].id
     );
-}
-
-#[test]
-fn duplicate_message_identities_reject_the_record() {
-    let dir = tempfile::tempdir().expect("directory");
-    let store = ConversationStore::open(dir.path().to_path_buf()).expect("store");
-    let record = store.create("Duplicate".to_owned()).expect("record");
-    drop(store);
-    let path = record_path(dir.path());
-    let mut file: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&path).expect("read")).expect("json");
-    let identifier = crate::conversations::MessageId::generate()
-        .expect("message id")
-        .as_hex();
-    file["messages"] = serde_json::json!([
-        {
-            "id": identifier,
-            "role": "user",
-            "text": "Question",
-            "status": "complete",
-            "request": null,
-        },
-        {
-            "id": identifier,
-            "role": "assistant",
-            "text": "Reply",
-            "status": "complete",
-            "request": null,
-        },
-    ]);
-    let bytes = serde_json::to_vec(&file).expect("encode");
-    std::fs::write(&path, &bytes).expect("write");
-    assert_eq!(
-        ConversationStore::open(dir.path().to_path_buf()).err(),
-        Some(ConversationError::Corrupt)
-    );
-    assert_eq!(std::fs::read(path).expect("unchanged"), bytes);
-    let _ = record;
 }
 
 #[test]

@@ -26,7 +26,7 @@ impl AttentionPage {
     pub(super) fn new(state: &AppState, page: usize, conversation: Option<ConversationId>) -> Self {
         // The optional conversation only selects the return destination.
         // Every decision stays visible so other conversations keep context.
-        let context = conversation.filter(|id| state.conversations.get(id).is_some());
+        let context = conversation.filter(|id| state.conversations.metadata_for(id).is_some());
         let suffix = context_suffix(context);
         let decisions = decisions(state);
         let total = decisions.len();
@@ -65,7 +65,7 @@ fn decisions(state: &AppState) -> Vec<Decision> {
     for run in runs {
         let owner = run
             .conversation_id
-            .and_then(|id| state.conversations.get(&id));
+            .and_then(|id| state.conversations.metadata_for(&id));
         for gate in run
             .gates
             .iter()
@@ -87,7 +87,7 @@ fn decisions(state: &AppState) -> Vec<Decision> {
             });
         }
     }
-    let mut conversations = state.conversations.list();
+    let mut conversations = state.conversations.metadata();
     conversations.sort_by_key(|record| std::cmp::Reverse(record.updated_at_ms));
     for record in conversations {
         if record

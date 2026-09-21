@@ -396,9 +396,12 @@ async fn provider_failure_retains_partial_output_and_safe_error_details() {
     let reopened =
         crate::conversations::ConversationStore::open(dir.path().to_path_buf()).expect("reopened");
     assert_eq!(reopened.get(&record.id).unwrap().messages, record.messages);
-    let bytes = std::fs::read_to_string(dir.path().join(format!("{}.json", record.id.as_hex())))
-        .expect("stored record");
-    assert!(!bytes.contains("test-key"));
+    drop(reopened);
+    for name in ["conversations.sqlite3", "conversations.sqlite3-wal"] {
+        if let Ok(bytes) = std::fs::read(dir.path().join(name)) {
+            assert!(!bytes.windows(8).any(|window| window == b"test-key"));
+        }
+    }
 }
 
 #[test]

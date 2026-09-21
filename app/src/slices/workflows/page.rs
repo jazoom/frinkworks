@@ -68,7 +68,7 @@ pub(super) struct CatalogueView {
 impl CatalogueView {
     pub(super) fn new(state: &crate::state::AppState, query: &super::Selection) -> Self {
         let context = crate::conversations::ConversationId::parse(&query.conversation)
-            .and_then(|id| state.conversations.get(&id))
+            .and_then(|id| state.conversations.metadata_for(&id))
             .map(|record| (record.id.as_hex(), record.title));
         let selection = crate::workflows::WorkflowSelection::parse(query.workflow.trim());
         let selected = selection
@@ -83,7 +83,7 @@ impl CatalogueView {
             .as_ref()
             .map(|record| record.pinned.definition.name().to_owned())
             .unwrap_or_default();
-        let mut conversations = state.conversations.list();
+        let mut conversations = state.conversations.metadata();
         conversations.sort_by_key(|record| std::cmp::Reverse(record.updated_at_ms));
         let destinations =
             selection

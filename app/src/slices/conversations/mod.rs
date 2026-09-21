@@ -356,7 +356,7 @@ async fn catalogue(
         || (query.directory.len() == 33
             && state
                 .conversations
-                .list()
+                .metadata()
                 .iter()
                 .flat_map(page::history_grants)
                 .any(|grant| page::history_directory_key(grant) == query.directory));
@@ -370,7 +370,7 @@ async fn catalogue(
     // The optional conversation only selects the return destination, as on
     // the attention page. History always lists every matching conversation.
     let back = crate::conversations::ConversationId::parse(query.conversation.trim())
-        .filter(|id| state.conversations.get(id).is_some());
+        .filter(|id| state.conversations.metadata_for(id).is_some());
     let (back_href, back_label) = match back {
         Some(id) => (
             format!("/conversations/{}", id.as_hex()),
@@ -2240,7 +2240,7 @@ fn render_catalogue(
         page::CATALOGUE_TITLE,
         &CatalogueView::from_records(
             state,
-            &state.conversations.list(),
+            &state.conversations.metadata(),
             filter,
             query,
             error,

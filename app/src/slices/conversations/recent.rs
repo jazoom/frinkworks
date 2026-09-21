@@ -43,7 +43,7 @@ pub(crate) fn status_dot(status: &str) -> &'static str {
 
 pub(crate) fn conversation_status(
     state: &AppState,
-    record: &crate::conversations::ConversationRecord,
+    record: &crate::conversations::ConversationMetadata,
 ) -> &'static str {
     let active = state.workflow_runs.active_runs();
     if active.iter().any(|run| {
@@ -76,7 +76,7 @@ pub(crate) fn conversation_status(
         } else {
             "In progress"
         }
-    } else if record.continuation.is_some() {
+    } else if record.continuation {
         "Paused"
     } else {
         let latest = state
@@ -87,14 +87,14 @@ pub(crate) fn conversation_status(
         if let Some(run) = latest {
             super::page::workflow_progress(&run).state
         } else {
-            idle_status(record.messages.last().map(|message| message.status))
+            idle_status(record.last_message_status)
         }
     }
 }
 
 pub(crate) fn conversation_meta(
     state: &AppState,
-    record: &crate::conversations::ConversationRecord,
+    record: &crate::conversations::ConversationMetadata,
 ) -> String {
     let directory = record
         .model
@@ -129,7 +129,7 @@ fn idle_status(last: Option<crate::conversations::MessageStatus>) -> &'static st
 
 impl RecentConversations {
     pub(crate) fn new(state: &AppState) -> Self {
-        let mut records = state.conversations.list();
+        let mut records = state.conversations.metadata();
         records.sort_by_key(|record| std::cmp::Reverse(record.updated_at_ms));
         let conversations = records
             .into_iter()

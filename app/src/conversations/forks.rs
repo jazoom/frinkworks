@@ -16,7 +16,6 @@ use super::id::{ConversationId, MessageId};
 use super::store::{ConversationModelConfiguration, ConversationRecord};
 
 pub(crate) const MAXIMUM_FORK_DRAFTS: usize = 16;
-const MAXIMUM_FORK_MESSAGES: usize = super::store::MAXIMUM_MESSAGES;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ForkError {
@@ -38,7 +37,7 @@ impl ForkError {
             Self::Uncertain => {
                 "That part of the conversation has an uncertain command outcome. Fork before it."
             }
-            Self::Bound => "This fork draft exceeds the conversation limit.",
+            Self::Bound => "That fork has no settled history to copy.",
         }
     }
 }
@@ -207,7 +206,7 @@ pub(crate) fn forkable(messages: &[ConversationMessage], index: usize) -> bool {
 }
 
 fn validate_prefix(prefix: &[ConversationMessage]) -> Result<(), ForkError> {
-    if prefix.is_empty() || prefix.len() > MAXIMUM_FORK_MESSAGES {
+    if prefix.is_empty() {
         return Err(ForkError::Bound);
     }
     // A complete exchange ends with a settled assistant response. A trailing

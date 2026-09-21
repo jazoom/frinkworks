@@ -1,7 +1,4 @@
-use std::collections::BTreeMap;
-use std::fs;
-use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
@@ -21,15 +18,12 @@ use super::id::{ConversationId, MessageId};
 use super::questions::QuestionWaiters;
 
 mod handoff;
+mod sqlite;
+
+use sqlite::Database;
 
 const CATALOGUE_VERSION: u32 = 1;
-const FILE_SUFFIX: &str = ".json";
-const MAXIMUM_RECORD_BYTES: usize = 8 * 1024 * 1024;
-const MAXIMUM_STORE_BYTES: usize = 64 * 1024 * 1024;
-const OUTPUT_CHECKPOINT_BYTES: usize = 16 * 1024;
-pub(crate) const MAXIMUM_CONVERSATIONS: usize = 128;
 pub(crate) const MAXIMUM_TITLE_BYTES: usize = 120;
-pub(crate) const MAXIMUM_MESSAGES: usize = 512;
 pub(crate) const MAXIMUM_MESSAGE_BYTES: usize = 32 * 1024;
 pub(crate) const MAXIMUM_REPLY_BYTES: usize = 128 * 1024;
 const MAXIMUM_LINKED_REVIEWS: usize = 32;
@@ -85,6 +79,42 @@ pub(crate) struct ConversationRecord {
     pub(crate) queue: super::queue::ConversationQueue,
     pub(crate) created_at_ms: u64,
     pub(crate) updated_at_ms: u64,
+}
+
+/// Catalogue metadata without message content. List and status views use this
+/// projection so a metadata change never loads every retained transcript.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ConversationMetadata {
+    pub(crate) id: ConversationId,
+    pub(crate) revision: u32,
+    pub(crate) title: String,
+    pub(crate) title_pending: bool,
+    pub(crate) network: crate::agents::NetworkAccess,
+    pub(crate) model: Option<ConversationModelConfiguration>,
+    pub(crate) active_job: Option<JobId>,
+    pub(crate) continuation: bool,
+    pub(crate) created_at_ms: u64,
+    pub(crate) updated_at_ms: u64,
+    pub(crate) last_message_status: Option<MessageStatus>,
+}
+
+impl ConversationRecord {
+    #[cfg(test)]
+    pub(crate) fn metadata(&self) -> ConversationMetadata {
+        ConversationMetadata {
+            id: self.id,
+            revision: self.revision,
+            title: self.title.clone(),
+            title_pending: self.title_pending,
+            network: self.network.clone(),
+            model: self.model.clone(),
+            active_job: self.active_job,
+            continuation: self.continuation.is_some(),
+            created_at_ms: self.created_at_ms,
+            updated_at_ms: self.updated_at_ms,
+            last_message_status: self.messages.last().map(|message| message.status),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -187,6 +217,7 @@ impl ConversationModelConfiguration {
 pub(crate) enum ConversationError {
     Random,
     Persist,
+    Busy,
     Unsettled,
     Corrupt,
     Full,
@@ -206,14 +237,13 @@ impl ConversationError {
     pub(crate) fn message(self) -> &'static str {
         match self {
             Self::Random => "Power Plant could not create a conversation identifier. Try again.",
-            Self::Persist => "Power Plant could not store the conversation. Try again.",
+            Self::Persist => "Power Plant cannot store the conversation.",
+            Self::Busy => "The conversation database is busy. The request did not commit.",
             Self::Unsettled => {
-                "Power Plant could not confirm that local history was stored. Restart before you continue."
+                "The local history commit has an uncertain outcome. Restart before you continue."
             }
             Self::Corrupt => "Stored conversation history is unreadable.",
-            Self::Full => {
-                "Delete an inactive conversation to free local history space. If this discussion reached its message limit, start another conversation."
-            }
+            Self::Full => "The disk has no space for more conversation data.",
             Self::Missing => "That conversation is not in the catalogue.",
             Self::Conflict => "That conversation changed in another tab. Reload it.",
             Self::Revision => "Power Plant cannot update this conversation again.",
@@ -237,19 +267,19 @@ impl std::fmt::Display for ConversationError {
 impl std::error::Error for ConversationError {}
 
 pub(crate) struct ConversationStore {
-    // The directory holds one private record file per conversation.
-    path: Option<PathBuf>,
-    inner: Mutex<BTreeMap<ConversationId, ConversationRecord>>,
-    // Unsynchronised transcript bytes since the last durable checkpoint.
-    pending: Mutex<BTreeMap<ConversationId, usize>>,
+    // This lock also protects ownership validation through the authoritative run commit.
+    database: Mutex<Database>,
+    // A commit I/O failure can leave the outcome unknown. Block new work until restart.
     uncertain: Mutex<std::collections::BTreeSet<ConversationId>>,
     title_updates: tokio::sync::broadcast::Sender<()>,
     questions: QuestionWaiters,
 }
 
+/// The durable, message-free projection of one conversation. Messages and
+/// summary requests live in their own tables.
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
-struct ConversationFile {
+struct MetadataFile {
     version: u32,
     id: String,
     revision: u32,
@@ -269,15 +299,12 @@ struct ConversationFile {
     candidate_review_context: Option<CandidateReviewContextFile>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     forked_from: Option<ForkProvenanceFile>,
-    messages: Vec<MessageFile>,
     #[serde(deserialize_with = "crate::storage::required_option")]
     active_job: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     continuation: Option<ContinuationFile>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     compaction: Option<CompactionFile>,
-    #[serde(default)]
-    summary_requests: Vec<super::history::RequestUsage>,
     #[serde(default)]
     queue_revision: u32,
     #[serde(default)]
@@ -449,27 +476,35 @@ struct MessageFile {
 
 impl ConversationStore {
     pub(crate) fn open(dir: PathBuf) -> Result<Self, ConversationError> {
-        crate::storage::ensure_private_dir(&dir).map_err(|_| ConversationError::Persist)?;
-        let mut conversations = load_dir(&dir)?;
-        if interrupt_recovered_requests(&mut conversations) {
-            persist_map(Some(&dir), &conversations)?;
-        }
-        Ok(Self {
-            path: Some(dir),
-            inner: Mutex::new(conversations),
-            pending: Mutex::new(BTreeMap::new()),
+        let database = Database::open(&dir)?;
+        let store = Self {
+            database: Mutex::new(database),
             uncertain: Mutex::new(std::collections::BTreeSet::new()),
             title_updates: tokio::sync::broadcast::channel(16).0,
             questions: QuestionWaiters::new(),
-        })
+        };
+        store.interrupt_requests()?;
+        Ok(store)
     }
 
-    pub(crate) fn list(&self) -> Vec<ConversationRecord> {
-        self.lock().values().cloned().collect()
+    pub(crate) fn metadata(&self) -> Vec<ConversationMetadata> {
+        self.try_metadata().unwrap_or_default()
+    }
+
+    pub(crate) fn try_metadata(&self) -> Result<Vec<ConversationMetadata>, ConversationError> {
+        self.database().metadata_all()
+    }
+
+    pub(crate) fn metadata_for(&self, id: &ConversationId) -> Option<ConversationMetadata> {
+        self.database().metadata(id).ok().flatten()
+    }
+
+    pub(crate) fn contains(&self, id: &ConversationId) -> bool {
+        self.database().contains(id).unwrap_or(true)
     }
 
     pub(crate) fn get(&self, id: &ConversationId) -> Option<ConversationRecord> {
-        self.lock().get(id).cloned()
+        self.database().load(id).ok().flatten()
     }
 
     pub(crate) fn create_saved(
@@ -491,9 +526,8 @@ impl ConversationStore {
             .as_ref()
             .map(|model| model.settings.network.clone())
             .unwrap_or_default();
-        let mut conversations = self.lock();
-        check_capacity(&conversations)?;
-        if conversations.contains_key(&id) {
+        let mut database = self.database();
+        if database.contains(&id)? {
             return Err(ConversationError::Conflict);
         }
         let now = now_ms();
@@ -519,13 +553,7 @@ impl ConversationStore {
             created_at_ms: now,
             updated_at_ms: now,
         };
-        conversations.insert(id, record.clone());
-        if let Err(error) = self.persist_one(&record) {
-            if error != ConversationError::Unsettled {
-                conversations.remove(&id);
-            }
-            return Err(error);
-        }
+        self.persist(&mut database, None, &record)?;
         Ok(record)
     }
 
@@ -549,17 +577,13 @@ impl ConversationStore {
             Some(title) => normalise_title(&title)?,
             None => "New conversation".to_owned(),
         };
-        if messages.len() > MAXIMUM_MESSAGES.saturating_sub(2) {
-            return Err(ConversationError::Full);
-        }
         super::history::validate_exchange(&messages).map_err(|_| ConversationError::Corrupt)?;
         let network = model
             .as_ref()
             .map(|model| model.settings.network.clone())
             .unwrap_or_default();
-        let mut conversations = self.lock();
-        check_capacity(&conversations)?;
-        if conversations.contains_key(&id) {
+        let mut database = self.database();
+        if database.contains(&id)? {
             return Err(ConversationError::Conflict);
         }
         let now = now_ms();
@@ -593,13 +617,7 @@ impl ConversationStore {
             created_at_ms: now,
             updated_at_ms: now,
         };
-        conversations.insert(id, record.clone());
-        if let Err(error) = self.persist_one(&record) {
-            if error != ConversationError::Unsettled {
-                conversations.remove(&id);
-            }
-            return Err(error);
-        }
+        self.persist(&mut database, None, &record)?;
         Ok(record)
     }
 
@@ -625,14 +643,11 @@ impl ConversationStore {
         {
             return Err(ConversationError::Review);
         }
-        let mut conversations = self.lock();
+        let mut database = self.database();
         let source = source_conversation
             .map(|(id, revision)| {
                 self.require_durable(&id)?;
-                let source = conversations
-                    .get(&id)
-                    .cloned()
-                    .ok_or(ConversationError::Missing)?;
+                let source = database.load(&id)?.ok_or(ConversationError::Missing)?;
                 if source.revision != revision {
                     return Err(ConversationError::Conflict);
                 }
@@ -645,8 +660,7 @@ impl ConversationStore {
                 Ok(source)
             })
             .transpose()?;
-        check_capacity(&conversations)?;
-        let id = unused_identifier(&conversations)?;
+        let id = unused_identifier(&database)?;
         let now = now_ms();
         let source_link = CandidateReviewLink {
             conversation_id: source.as_ref().map(|source| source.id),
@@ -686,7 +700,7 @@ impl ConversationStore {
             updated_at_ms: now,
         };
         let mut updated_source = None;
-        if let Some(source) = source {
+        if let Some(source) = source.as_ref() {
             let mut updated = source.clone();
             updated.revision = source
                 .revision
@@ -696,17 +710,11 @@ impl ConversationStore {
             updated.candidate_reviews.push(review_link);
             updated_source = Some(updated);
         }
-        let review_result = self.persist_one(&review);
-        if review_result.is_ok() || review_result == Err(ConversationError::Unsettled) {
-            conversations.insert(id, review.clone());
-        }
-        review_result?;
-        if let Some(source) = updated_source {
-            let result = self.persist_one(&source);
-            if result.is_ok() || result == Err(ConversationError::Unsettled) {
-                conversations.insert(source.id, source);
+        match (source.as_ref(), updated_source.as_ref()) {
+            (Some(previous), Some(updated)) => {
+                self.persist_pair(&mut database, None, &review, Some(previous), updated)?;
             }
-            result?;
+            _ => self.persist(&mut database, None, &review)?,
         }
         Ok(review)
     }
@@ -750,21 +758,9 @@ impl ConversationStore {
         title: String,
     ) -> Result<(), ConversationError> {
         let title = normalise_title(&title)?;
-        let mut records = self.lock();
+        let mut database = self.database();
         self.require_durable(id)?;
-        let current = records.get(id).cloned().ok_or(ConversationError::Missing)?;
-        if current.revision != revision {
-            return Err(ConversationError::Conflict);
-        }
-        let mut updated = current.clone();
-        updated.title = title;
-        records.insert(*id, updated.clone());
-        if let Err(error) = self.persist_one(&updated) {
-            if error != ConversationError::Unsettled {
-                records.insert(*id, current);
-            }
-            return Err(error);
-        }
+        self.commit_result(*id, database.save_automatic_title(id, revision, &title))?;
         let _ = self.title_updates.send(());
         Ok(())
     }
@@ -921,12 +917,9 @@ impl ConversationStore {
         settings: &crate::execution::ExecutionSettings,
         grant: &crate::execution::DirectoryGrant,
     ) -> bool {
-        self.lock().get(id).is_some_and(|record| {
-            record
-                .directory_approvals
-                .iter()
-                .any(|approval| approval.matches(settings, grant))
-        })
+        self.database()
+            .directory_approved(id, settings, grant)
+            .unwrap_or(false)
     }
 
     pub(crate) fn remove_directory(
@@ -966,9 +959,6 @@ impl ConversationStore {
             if current.active_job.is_some() {
                 return Err(ConversationError::Active);
             }
-            if current.messages.len() > MAXIMUM_MESSAGES.saturating_sub(2) {
-                return Err(ConversationError::Full);
-            }
             if let Some(model) = model {
                 current.model = Some(model);
             }
@@ -1001,8 +991,6 @@ impl ConversationStore {
         })
     }
 
-    // Transcript progress stays in memory. A checkpoint writes the record at an
-    // explicit boundary; a replaced-but-unsynced write blocks advancement.
     pub(crate) fn append_output(
         &self,
         id: &ConversationId,
@@ -1011,7 +999,7 @@ impl ConversationStore {
     ) -> Result<(), ConversationError> {
         let reply = reply.into();
         validate_reply(&reply)?;
-        self.update_output(id, request, reply, false)
+        self.update_output(id, request, reply)
     }
 
     pub(crate) fn checkpoint_output(
@@ -1022,7 +1010,7 @@ impl ConversationStore {
     ) -> Result<(), ConversationError> {
         let reply = reply.into();
         validate_reply(&reply)?;
-        self.update_output(id, request, reply, true)
+        self.update_output(id, request, reply)
     }
 
     pub(crate) fn record_provider_failure(
@@ -1039,9 +1027,6 @@ impl ConversationStore {
             return Err(ConversationError::Message);
         }
         self.update(id, 0, false, |record| {
-            if record.messages.len() >= MAXIMUM_MESSAGES {
-                return Err(ConversationError::Full);
-            }
             let active = active_assistant(record, request)?;
             apply_reply(active, committed);
             let failed = ConversationMessage {
@@ -1070,59 +1055,10 @@ impl ConversationStore {
         id: &ConversationId,
         request: JobId,
         reply: crate::providers::AssistantReply,
-        checkpoint: bool,
     ) -> Result<(), ConversationError> {
-        let bytes = reply_size(&reply);
-        let mut conversations = self.lock();
+        let mut database = self.database();
         self.require_durable(id)?;
-        let Some(current) = conversations.get(id).cloned() else {
-            return Err(ConversationError::Missing);
-        };
-        let mut updated = current.clone();
-        {
-            let message = active_assistant(&mut updated, request)?;
-            apply_owned_reply(message, reply);
-        }
-        super::history::validate_exchange(&updated.messages)
-            .map_err(|_| ConversationError::Message)?;
-        updated.updated_at_ms = now_ms().max(current.updated_at_ms);
-        conversations.insert(*id, updated.clone());
-        let due = {
-            let mut pending = self.pending.lock().unwrap_or_else(|p| p.into_inner());
-            let entry = pending.entry(*id).or_insert(0);
-            let previous = crate::providers::AssistantReply {
-                text: current
-                    .messages
-                    .last()
-                    .map_or_else(String::new, |message| message.text.clone()),
-                activity: current
-                    .messages
-                    .last()
-                    .map_or_else(Vec::new, |message| message.activity.clone()),
-                continuation: current
-                    .messages
-                    .last()
-                    .map_or_else(Vec::new, |message| message.continuation.clone()),
-                ..Default::default()
-            };
-            *entry = entry.saturating_add(bytes.abs_diff(reply_size(&previous)));
-            let due = checkpoint || *entry >= OUTPUT_CHECKPOINT_BYTES;
-            if due {
-                pending.remove(id);
-            }
-            due
-        };
-        if !due {
-            return Ok(());
-        }
-        match self.persist_one(&updated) {
-            Ok(()) => Ok(()),
-            Err(ConversationError::Unsettled) => Err(ConversationError::Unsettled),
-            Err(error) => {
-                conversations.insert(*id, current);
-                Err(error)
-            }
-        }
+        self.commit_result(*id, database.checkpoint_output(id, request, reply))
     }
 
     pub(crate) fn settle_message(
@@ -1208,25 +1144,9 @@ impl ConversationStore {
         job: JobId,
         request: &super::history::RequestUsage,
     ) -> Result<(), ConversationError> {
-        self.update(id, 0, false, |current| {
-            if current.active_job != Some(job) || !request.valid() {
-                return Err(ConversationError::Conflict);
-            }
-            if let Some(existing) = current
-                .summary_requests
-                .iter_mut()
-                .find(|entry| entry.id == request.id)
-            {
-                *existing = request.clone();
-            } else {
-                current.summary_requests.push(request.clone());
-            }
-            if !super::history::valid_requests(&current.summary_requests, MessageRole::Assistant) {
-                return Err(ConversationError::Message);
-            }
-            Ok(())
-        })
-        .map(|_| ())
+        let mut database = self.database();
+        self.require_durable(id)?;
+        self.commit_result(*id, database.record_summary_request(id, job, request))
     }
 
     pub(crate) fn begin_compaction(
@@ -1238,9 +1158,6 @@ impl ConversationStore {
         self.replace(id, revision, |current| {
             if current.active_job.is_some() || current.continuation.is_some() {
                 return Err(ConversationError::Active);
-            }
-            if current.messages.len() >= MAXIMUM_MESSAGES {
-                return Err(ConversationError::Full);
             }
             current.messages.push(ConversationMessage {
                 id: MessageId::generate().map_err(|_| ConversationError::Random)?,
@@ -1315,9 +1232,6 @@ impl ConversationStore {
             };
             if stored.id != checkpoint {
                 return Err(ConversationError::Conflict);
-            }
-            if current.messages.len() >= MAXIMUM_MESSAGES {
-                return Err(ConversationError::Full);
             }
             current.messages.push(ConversationMessage {
                 id: assistant_id,
@@ -1480,9 +1394,6 @@ impl ConversationStore {
             if current.queue.revision != expected_queue_revision {
                 return Err(ConversationError::Conflict);
             }
-            if current.messages.len() > MAXIMUM_MESSAGES.saturating_sub(2) {
-                return Err(ConversationError::Full);
-            }
             let index = current
                 .queue
                 .items
@@ -1545,9 +1456,6 @@ impl ConversationStore {
     ) -> Result<(), ConversationError> {
         validate_reply(reply)?;
         self.update(id, 0, false, |current| {
-            if current.messages.len() >= MAXIMUM_MESSAGES {
-                return Err(ConversationError::Full);
-            }
             let message = active_assistant(current, job)?;
             apply_reply(message, reply);
             message.status = MessageStatus::Complete;
@@ -1582,9 +1490,6 @@ impl ConversationStore {
         let assistant_id = MessageId::generate().map_err(|_| ConversationError::Random)?;
         let mut delivered = None;
         self.update(id, 0, false, |current| {
-            if current.messages.len() > MAXIMUM_MESSAGES.saturating_sub(2) {
-                return Err(ConversationError::Full);
-            }
             let index = current
                 .queue
                 .items
@@ -1696,10 +1601,10 @@ impl ConversationStore {
         id: &ConversationId,
         expected_revision: u32,
     ) -> Result<(), ConversationError> {
-        let mut conversations = self.lock();
+        let mut database = self.database();
         self.require_durable(id)?;
         self.questions.invalidate_conversation(*id);
-        let Some(current) = conversations.get(id).cloned() else {
+        let Some(current) = database.load(id)? else {
             return Err(ConversationError::Missing);
         };
         if current.revision != expected_revision {
@@ -1708,19 +1613,7 @@ impl ConversationStore {
         if current.active_job.is_some() {
             return Err(ConversationError::Active);
         }
-        conversations.remove(id);
-        if let Some(path) = self.path.as_deref() {
-            let file = record_file(path, *id);
-            if let Err(_error) = crate::storage::remove_private(&file) {
-                conversations.insert(*id, current);
-                return Err(ConversationError::Persist);
-            }
-        }
-        self.pending
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .remove(id);
-        Ok(())
+        self.commit_result(*id, database.remove(id))
     }
 
     fn replace(
@@ -1739,8 +1632,8 @@ impl ConversationStore {
         advance_revision: bool,
         edit: impl FnOnce(&mut ConversationRecord) -> Result<(), ConversationError>,
     ) -> Result<ConversationRecord, ConversationError> {
-        let mut conversations = self.lock();
-        let Some(current) = conversations.get(id).cloned() else {
+        let mut database = self.database();
+        let Some(current) = database.load(id)? else {
             return Err(ConversationError::Missing);
         };
         if expected_revision != 0 && current.revision != expected_revision {
@@ -1766,24 +1659,44 @@ impl ConversationStore {
                 .ok_or(ConversationError::Revision)?;
         }
         updated.updated_at_ms = now_ms().max(current.updated_at_ms);
-        conversations.insert(*id, updated.clone());
-        match self.persist_one(&updated) {
-            Ok(()) => Ok(updated),
-            Err(ConversationError::Unsettled) => Err(ConversationError::Unsettled),
-            Err(error) => {
-                conversations.insert(*id, current);
-                Err(error)
-            }
-        }
+        self.persist(&mut database, Some(&current), &updated)?;
+        Ok(updated)
     }
 
-    fn persist_one(&self, record: &ConversationRecord) -> Result<(), ConversationError> {
-        let result = persist_record(self.path.as_deref(), record);
+    /// Commit one conversation. An uncertain replacement blocks later work.
+    fn persist(
+        &self,
+        database: &mut Database,
+        previous: Option<&ConversationRecord>,
+        record: &ConversationRecord,
+    ) -> Result<(), ConversationError> {
+        self.commit_result(record.id, database.save(previous, record))
+    }
+
+    /// Commit two projections in one transaction for an ownership transfer.
+    fn persist_pair(
+        &self,
+        database: &mut Database,
+        first: Option<&ConversationRecord>,
+        first_record: &ConversationRecord,
+        second: Option<&ConversationRecord>,
+        second_record: &ConversationRecord,
+    ) -> Result<(), ConversationError> {
+        let result = database.save_pair(first, first_record, second, second_record);
+        let result = self.commit_result(first_record.id, result);
+        self.commit_result(second_record.id, result)
+    }
+
+    fn commit_result(
+        &self,
+        id: ConversationId,
+        result: Result<(), ConversationError>,
+    ) -> Result<(), ConversationError> {
         if result == Err(ConversationError::Unsettled) {
             self.uncertain
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
-                .insert(record.id);
+                .insert(id);
         }
         result
     }
@@ -1801,38 +1714,10 @@ impl ConversationStore {
         }
     }
 
-    fn lock(&self) -> MutexGuard<'_, BTreeMap<ConversationId, ConversationRecord>> {
-        self.inner
+    fn database(&self) -> MutexGuard<'_, Database> {
+        self.database
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-}
-
-impl Drop for ConversationStore {
-    // A clean shutdown flushes unsynchronised transcript progress. A crash keeps
-    // the last explicit checkpoint only.
-    fn drop(&mut self) {
-        let Some(dir) = self.path.as_deref() else {
-            return;
-        };
-        let pending: Vec<ConversationId> = self
-            .pending
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .keys()
-            .copied()
-            .collect();
-        if pending.is_empty() {
-            return;
-        }
-        let conversations = self.lock();
-        for id in pending {
-            if self.require_durable(&id).is_ok()
-                && let Some(record) = conversations.get(&id)
-            {
-                let _ = persist_record(Some(dir), record);
-            }
-        }
     }
 }
 
@@ -1853,29 +1738,24 @@ fn active_assistant(
         .ok_or(ConversationError::Conflict)
 }
 
-fn interrupt_recovered_requests(
-    conversations: &mut BTreeMap<ConversationId, ConversationRecord>,
-) -> bool {
-    let mut changed = false;
-    for record in conversations.values_mut() {
-        let Some(request) = record.active_job else {
-            continue;
-        };
-        if let Some(message) = record
-            .messages
-            .iter_mut()
-            .rev()
-            .find(|message| message.request == Some(request))
-        {
-            settle_interrupted_questions(message);
-            message.status = MessageStatus::Interrupted;
-        }
-        record.active_job = None;
-        record.revision = record.revision.saturating_add(1);
-        record.updated_at_ms = now_ms().max(record.updated_at_ms);
-        changed = true;
+/// Settle one recovered request. The caller persists only a changed record.
+fn interrupt_recovered_request(record: &mut ConversationRecord) -> bool {
+    let Some(request) = record.active_job else {
+        return false;
+    };
+    if let Some(message) = record
+        .messages
+        .iter_mut()
+        .rev()
+        .find(|message| message.request == Some(request))
+    {
+        settle_interrupted_questions(message);
+        message.status = MessageStatus::Interrupted;
     }
-    changed
+    record.active_job = None;
+    record.revision = record.revision.saturating_add(1);
+    record.updated_at_ms = now_ms().max(record.updated_at_ms);
+    true
 }
 
 /// Approvals must name an exact grant in the submitted settings. This accepts
@@ -1900,91 +1780,26 @@ fn valid_directory_approvals(
             })
 }
 
-fn check_capacity(
-    conversations: &BTreeMap<ConversationId, ConversationRecord>,
-) -> Result<(), ConversationError> {
-    if conversations.len() < MAXIMUM_CONVERSATIONS {
-        Ok(())
-    } else {
-        Err(ConversationError::Full)
-    }
-}
-
-fn unused_identifier(
-    conversations: &BTreeMap<ConversationId, ConversationRecord>,
-) -> Result<ConversationId, ConversationError> {
+fn unused_identifier(database: &Database) -> Result<ConversationId, ConversationError> {
     for _ in 0..16 {
         let id = ConversationId::generate().map_err(|_| ConversationError::Random)?;
-        if !conversations.contains_key(&id) {
+        if !database.contains(&id)? {
             return Ok(id);
         }
     }
     Err(ConversationError::Random)
 }
 
-fn load_dir(dir: &Path) -> Result<BTreeMap<ConversationId, ConversationRecord>, ConversationError> {
-    let mut conversations = BTreeMap::new();
-    let entries = match fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(conversations),
-        Err(_) => return Err(ConversationError::Corrupt),
-    };
-    let mut files = Vec::new();
-    for entry in entries {
-        let entry = entry.map_err(|_| ConversationError::Corrupt)?;
-        let name = entry.file_name();
-        let Some(name) = name.to_str() else {
-            continue;
-        };
-        let Some(stem) = name.strip_suffix(FILE_SUFFIX) else {
-            continue;
-        };
-        if stem.is_empty() || stem.starts_with('.') {
-            continue;
-        }
-        let Some(id) = ConversationId::parse(stem) else {
-            return Err(ConversationError::Corrupt);
-        };
-        let metadata = entry.metadata().map_err(|_| ConversationError::Corrupt)?;
-        if metadata.file_type().is_symlink() || !metadata.is_file() {
-            return Err(ConversationError::Corrupt);
-        }
-        files.push((id, entry.path()));
-    }
-    if files.len() > MAXIMUM_CONVERSATIONS {
-        return Err(ConversationError::Corrupt);
-    }
-    let mut total = 0usize;
-    for (id, path) in files {
-        if conversations.contains_key(&id) {
-            return Err(ConversationError::Corrupt);
-        }
-        let bytes = crate::storage::read_private_bounded(&path, MAXIMUM_RECORD_BYTES)
-            .map_err(|_| ConversationError::Corrupt)?;
-        total = total.saturating_add(bytes.len());
-        if total > MAXIMUM_STORE_BYTES {
-            return Err(ConversationError::Corrupt);
-        }
-        let file: ConversationFile =
-            serde_json::from_slice(&bytes).map_err(|_| ConversationError::Corrupt)?;
-        let record = record_from_file(file)?;
-        if record.id != id {
-            return Err(ConversationError::Corrupt);
-        }
-        conversations.insert(id, record);
-    }
-    Ok(conversations)
-}
-
-fn record_from_file(file: ConversationFile) -> Result<ConversationRecord, ConversationError> {
+fn record_from_parts(
+    file: MetadataFile,
+    message_files: Vec<MessageFile>,
+    summary_requests: Vec<super::history::RequestUsage>,
+) -> Result<ConversationRecord, ConversationError> {
     if file.version != CATALOGUE_VERSION {
         return Err(ConversationError::Corrupt);
     }
     let id = ConversationId::parse(&file.id).ok_or(ConversationError::Corrupt)?;
-    if file.revision == 0
-        || file.updated_at_ms < file.created_at_ms
-        || file.messages.len() > MAXIMUM_MESSAGES
-    {
+    if file.revision == 0 || file.updated_at_ms < file.created_at_ms {
         return Err(ConversationError::Corrupt);
     }
     let title = normalise_title(&file.title).map_err(|_| ConversationError::Corrupt)?;
@@ -2024,31 +1839,11 @@ fn record_from_file(file: ConversationFile) -> Result<ConversationRecord, Conver
     {
         return Err(ConversationError::Corrupt);
     }
-    let mut directory_approvals = Vec::with_capacity(file.directory_approvals.len());
-    for approval in file.directory_approvals {
-        let settings_digest: [u8; 32] =
-            crate::hex::decode(&approval.settings_digest).ok_or(ConversationError::Corrupt)?;
-        let candidate = DirectoryApproval {
-            settings_digest,
-            root: approval.host_path,
-            device: approval.device,
-            inode: approval.inode,
-            access: approval.access,
-        };
-        if directory_approvals.len() >= crate::execution::MAXIMUM_DIRECTORY_GRANTS
-            || directory_approvals.contains(&candidate)
-        {
-            return Err(ConversationError::Corrupt);
-        }
-        directory_approvals.push(candidate);
-    }
-    let messages: Result<Vec<_>, _> = file.messages.into_iter().map(message_from_file).collect();
+    let directory_approvals = directory_approvals_from_file(file.directory_approvals)?;
+    let messages: Result<Vec<_>, _> = message_files.into_iter().map(message_from_file).collect();
     let messages = messages?;
-    if messages
-        .iter()
-        .enumerate()
-        .any(|(index, message)| messages[..index].iter().any(|other| other.id == message.id))
-    {
+    let mut seen = std::collections::BTreeSet::new();
+    if messages.iter().any(|message| !seen.insert(message.id)) {
         return Err(ConversationError::Corrupt);
     }
     let active_job = file.active_job.as_deref().and_then(JobId::parse);
@@ -2074,6 +1869,14 @@ fn record_from_file(file: ConversationFile) -> Result<ConversationRecord, Conver
         .forked_from
         .map(fork_provenance_from_file)
         .transpose()?;
+    let continuation = file
+        .continuation
+        .map(|file| continuation_from_file(file, &messages))
+        .transpose()?;
+    let compaction = file
+        .compaction
+        .map(|file| compaction_from_file(file, &messages))
+        .transpose()?;
     Ok(ConversationRecord {
         id,
         revision: file.revision,
@@ -2087,26 +1890,48 @@ fn record_from_file(file: ConversationFile) -> Result<ConversationRecord, Conver
         candidate_reviews,
         candidate_review_context,
         forked_from,
-        messages: messages.clone(),
+        messages,
         active_job,
-        continuation: file
-            .continuation
-            .map(|file| continuation_from_file(file, &messages))
-            .transpose()?,
+        continuation,
         summary_requests: {
-            if !super::history::valid_requests(&file.summary_requests, MessageRole::Assistant) {
+            let mut seen = std::collections::BTreeSet::new();
+            if !summary_requests
+                .iter()
+                .all(|request| request.valid() && seen.insert(request.id))
+            {
                 return Err(ConversationError::Corrupt);
             }
-            file.summary_requests
+            summary_requests
         },
-        compaction: file
-            .compaction
-            .map(|file| compaction_from_file(file, &messages))
-            .transpose()?,
+        compaction,
         queue,
         created_at_ms: file.created_at_ms,
         updated_at_ms: file.updated_at_ms,
     })
+}
+
+fn directory_approvals_from_file(
+    files: Vec<DirectoryApprovalFile>,
+) -> Result<Vec<DirectoryApproval>, ConversationError> {
+    if files.len() > crate::execution::MAXIMUM_DIRECTORY_GRANTS {
+        return Err(ConversationError::Corrupt);
+    }
+    let mut approvals = Vec::with_capacity(files.len());
+    for file in files {
+        let approval = DirectoryApproval {
+            settings_digest: crate::hex::decode(&file.settings_digest)
+                .ok_or(ConversationError::Corrupt)?,
+            root: file.host_path,
+            device: file.device,
+            inode: file.inode,
+            access: file.access,
+        };
+        if approvals.contains(&approval) {
+            return Err(ConversationError::Corrupt);
+        }
+        approvals.push(approval);
+    }
+    Ok(approvals)
 }
 
 fn model_from_file(
@@ -2365,111 +2190,23 @@ fn apply_owned_reply(message: &mut ConversationMessage, reply: crate::providers:
     message.requests = reply.usage;
 }
 
-fn reply_size(reply: &crate::providers::AssistantReply) -> usize {
-    reply.text.len().saturating_add(
-        reply
-            .activity
-            .iter()
-            .map(|activity| match activity {
-                crate::providers::AssistantActivity::Response(text)
-                | crate::providers::AssistantActivity::Thinking(text) => text.len(),
-                crate::providers::AssistantActivity::Tool(tool) => tool.output.len(),
-                crate::providers::AssistantActivity::ToolCall {
-                    id, name, result, ..
-                } => id
-                    .len()
-                    .saturating_add(name.len())
-                    .saturating_add(result.as_ref().map_or(0, |tool| tool.output.len())),
-            })
-            .sum::<usize>(),
-    )
-}
-
-fn record_file(dir: &Path, id: ConversationId) -> PathBuf {
-    dir.join(format!("{}{FILE_SUFFIX}", id.as_hex()))
-}
-
-fn persist_record(
-    dir: Option<&Path>,
-    record: &ConversationRecord,
-) -> Result<(), ConversationError> {
-    let file = record_to_file(record);
-    let bytes = serde_json::to_vec_pretty(&file).map_err(|_| ConversationError::Persist)?;
-    let reserved = if record.active_job.is_some() {
-        let mut reserved_file = record_to_file(record);
-        if let Some(message) = reserved_file.messages.last_mut() {
-            message.text.clear();
-            message.activity.clear();
-            message.continuation.clear();
-        }
-        serde_json::to_vec_pretty(&reserved_file)
-            .map_err(|_| ConversationError::Persist)?
-            .len()
-            .saturating_add(
-                6 * (MAXIMUM_REPLY_BYTES
-                    + crate::conversations::history::MAXIMUM_ACTIVITY_BYTES
-                    + crate::conversations::history::MAXIMUM_CONTINUATION_BYTES
-                    + crate::providers::MAXIMUM_PROVIDER_DETAIL_BYTES),
-            )
-    } else {
-        bytes.len()
-    };
-    if bytes.len().max(reserved) > MAXIMUM_RECORD_BYTES {
-        return Err(ConversationError::Full);
-    }
-    let Some(dir) = dir else {
-        return Ok(());
-    };
-    crate::storage::ensure_private_dir(dir).map_err(|_| ConversationError::Persist)?;
-    let file = record_file(dir, record.id);
-    let mut total = bytes.len().max(reserved);
-    for entry in fs::read_dir(dir).map_err(|_| ConversationError::Persist)? {
-        let entry = entry.map_err(|_| ConversationError::Persist)?;
-        if entry.path() == file
-            || entry
-                .path()
-                .extension()
-                .is_none_or(|extension| extension != "json")
-        {
-            continue;
-        }
-        let size = entry
-            .metadata()
-            .map_err(|_| ConversationError::Persist)?
-            .len();
-        total = total.saturating_add(usize::try_from(size).unwrap_or(usize::MAX));
-        if total > MAXIMUM_STORE_BYTES {
-            return Err(ConversationError::Full);
-        }
-    }
-    match crate::storage::write_private_outcome(&file, &bytes) {
-        Ok(()) => Ok(()),
-        Err(crate::storage::PrivateWriteError::Unchanged) => Err(ConversationError::Persist),
-        Err(crate::storage::PrivateWriteError::Replaced) => Err(ConversationError::Unsettled),
+fn message_to_file(message: &ConversationMessage) -> MessageFile {
+    MessageFile {
+        id: message.id.as_hex(),
+        role: message.role,
+        text: message.text.clone(),
+        activity: message.activity.clone(),
+        continuation: message.continuation.clone(),
+        status: message.status,
+        error: message.error.clone(),
+        request: message.request.map(|request| request.as_hex()),
+        completion: message.completion,
+        requests: message.requests.clone(),
     }
 }
 
-fn persist_map(
-    dir: Option<&Path>,
-    conversations: &BTreeMap<ConversationId, ConversationRecord>,
-) -> Result<(), ConversationError> {
-    let mut total = 0usize;
-    for record in conversations.values() {
-        if dir.is_some() {
-            let bytes = serde_json::to_vec_pretty(&record_to_file(record))
-                .map_err(|_| ConversationError::Persist)?;
-            total = total.saturating_add(bytes.len());
-        }
-        persist_record(dir, record)?;
-    }
-    if total > MAXIMUM_STORE_BYTES {
-        return Err(ConversationError::Full);
-    }
-    Ok(())
-}
-
-fn record_to_file(record: &ConversationRecord) -> ConversationFile {
-    ConversationFile {
+fn metadata_to_file(record: &ConversationRecord) -> MetadataFile {
+    MetadataFile {
         version: CATALOGUE_VERSION,
         id: record.id.as_hex(),
         revision: record.revision,
@@ -2512,26 +2249,9 @@ fn record_to_file(record: &ConversationRecord) -> ConversationFile {
                 boundary: provenance.boundary.as_hex(),
                 candidate_review: provenance.candidate_review,
             }),
-        messages: record
-            .messages
-            .iter()
-            .map(|message| MessageFile {
-                id: message.id.as_hex(),
-                role: message.role,
-                text: message.text.clone(),
-                activity: message.activity.clone(),
-                continuation: message.continuation.clone(),
-                status: message.status,
-                error: message.error.clone(),
-                request: message.request.map(|request| request.as_hex()),
-                completion: message.completion,
-                requests: message.requests.clone(),
-            })
-            .collect(),
         active_job: record.active_job.map(|request| request.as_hex()),
         continuation: record.continuation.as_ref().map(continuation_to_file),
         compaction: record.compaction.as_ref().map(compaction_to_file),
-        summary_requests: record.summary_requests.clone(),
         queue_revision: record.queue.revision,
         queue: record.queue.items.iter().map(queue_item_to_file).collect(),
         created_at_ms: record.created_at_ms,

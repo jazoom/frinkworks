@@ -528,7 +528,7 @@ fn catalogue_conflict_includes_conversation_directory_grants() {
         .unwrap();
 
     assert_eq!(
-        local_data.catalogue_conflict(&[], &[record], &[], &[]),
+        local_data.catalogue_conflict(&[], &[record.metadata()], &[], &[]),
         Some(CatalogueResetConflict::ConversationGrant)
     );
 
@@ -554,7 +554,7 @@ fn catalogue_conflict_includes_conversation_directory_grants() {
         )
         .unwrap();
     assert_eq!(
-        local_data.catalogue_conflict(&[], &[broad_record], &[], &[]),
+        local_data.catalogue_conflict(&[], &[broad_record.metadata()], &[], &[]),
         Some(CatalogueResetConflict::ConversationGrant)
     );
 }

@@ -23,6 +23,28 @@ Preferences supply no consent. Additional workflow authority requires run-only a
 
 Review before apply isolates proposals. Direct write changes the named directory immediately. File application never implicitly creates a Git commit.
 
+## Storage
+
+Conversations persist in a private SQLite database inside the data-directory `conversations` folder. The database is the sole backend. Startup loads transcripts only for interrupted requests and ownership recovery.
+
+Metadata, messages and cumulative summary requests use separate tables:
+
+- One conversation row holds the title, revision, network access, model settings, approvals, continuation checkpoint, compaction record and queue.
+- Message rows have conversation-scoped identifiers and immutable append order. A separate presentation position lets failed attempts precede their pending response.
+- Summary-request rows are keyed by conversation and append order.
+
+A mutation commits only affected rows in one transaction. Unchanged message and request rows keep their bytes, including across appends. Output checkpoints load only metadata and the pending response. Summary-request updates and automatic titles do not load transcripts.
+
+`ConversationStore::metadata` reads catalogue fields without message content. Catalogue views and destination selectors use that projection. Reset queries propagate database errors instead of treating unreadable records as an empty catalogue.
+
+Message validation and queue bounds remain. Retained history has no aggregate message-count, conversation-size or catalogue-size ceiling.
+
+The database file and its SQLite sidecars stay inside the private directory boundary. SQLite uses WAL and full commit synchronisation before a separate ownership journal clears.
+
+Database locks have a five-second wait bound. Disk-full and database-busy errors stop the commit without automatic replay. An uncertain commit blocks later mutations until restart.
+
+An alpha record that still uses the JSON file format fails closed. The application does not migrate it and does not replace it.
+
 ## Live execution
 
 Ordinary messages share one model lifecycle. Tool-free messages use the chat job. Host tools without named directories and read-only sandbox tools use the ordinary conversation runtime. They do not create a workflow run.
@@ -116,9 +138,9 @@ The conversation lock protects source and destination revisions through the owne
 
 A bounded ownership history preserves review provenance. Decision revisions include the ownership generation, so source-page forms cannot approve transferred changes.
 
-A pending handoff journal resides in the run record. The application flushes that journal before it stores the source and destination projections.
+A pending handoff journal resides in the run record. The application flushes that journal first, then commits the source and destination projections in one transaction, then clears the journal. A failed projection keeps the journal and blocks execution. Startup completes both projections idempotently.
 
-A failed projection retains the journal and blocks execution. Startup completes the projections idempotently. A failed pre-commit write leaves ownership with the source.
+A failed pre-commit write leaves ownership with the source.
 
 Safe gates survive restart and session expiry. Restoration requires fresh runtime consent in the owner conversation.
 

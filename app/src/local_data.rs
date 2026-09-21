@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::agents::{AgentRecord, AgentStore};
 use crate::config::StartupConfig;
-use crate::conversations::{ConversationRecord, ConversationStore};
+use crate::conversations::{ConversationMetadata, ConversationStore};
 use crate::storage::{self, PersistError};
 use crate::workflows::{ExecutionGuard, WorkflowExecution};
 
@@ -171,7 +171,10 @@ impl LocalDataReset {
         }
         if let Some(conflict) = self.catalogue_conflict(
             &catalogues.agents.list(),
-            &catalogues.conversations.list(),
+            &catalogues
+                .conversations
+                .try_metadata()
+                .map_err(|_| ResetError::Persist(PersistError))?,
             &catalogues.presets.list(),
             &catalogues.workflows.list(),
         ) {
@@ -200,7 +203,7 @@ impl LocalDataReset {
     fn catalogue_conflict(
         &self,
         agents: &[AgentRecord],
-        conversations: &[ConversationRecord],
+        conversations: &[ConversationMetadata],
         presets: &[crate::presets::PresetRecord],
         workflows: &[crate::workflows::WorkflowRecord],
     ) -> Option<CatalogueResetConflict> {

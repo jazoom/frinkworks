@@ -990,6 +990,7 @@ async fn directory_history_matches_identity_without_granting_access() {
     moved.model.as_mut().unwrap().settings.directories =
         vec![crate::execution::DirectoryGrant::from_selected(&moved_path, &[]).unwrap()];
     for pair in [[original.clone(), moved.clone()], [moved, original]] {
+        let pair: Vec<_> = pair.iter().map(|record| record.metadata()).collect();
         let view = super::page::CatalogueView::from_records(
             &state,
             &pair,
@@ -1014,6 +1015,7 @@ async fn directory_history_matches_identity_without_granting_access() {
         .settings
         .directories = vec![replacement];
     records.push(replacement_record);
+    let records: Vec<_> = records.iter().map(|record| record.metadata()).collect();
     let view =
         super::page::CatalogueView::from_records(&state, &records, &key, "", "", String::new(), "");
     assert_eq!(view.conversations.len(), 2);
@@ -1051,7 +1053,7 @@ async fn history_lists_one_row_per_conversation_including_drafts() {
     state.workflow_runs.create(duplicate).expect("second run");
     let view = super::page::CatalogueView::from_records(
         &state,
-        &state.conversations.list(),
+        &state.conversations.metadata(),
         "",
         "",
         "",

@@ -101,7 +101,7 @@ pub(super) struct HistoryDirectoryOption {
 impl CatalogueView {
     pub(super) fn from_records(
         state: &crate::state::AppState,
-        records: &[ConversationRecord],
+        records: &[crate::conversations::ConversationMetadata],
         filter: &str,
         query: &str,
         error: &'static str,
@@ -164,7 +164,7 @@ impl CatalogueView {
 }
 
 pub(super) fn history_grants(
-    record: &ConversationRecord,
+    record: &crate::conversations::ConversationMetadata,
 ) -> impl Iterator<Item = &crate::execution::DirectoryGrant> {
     record
         .model

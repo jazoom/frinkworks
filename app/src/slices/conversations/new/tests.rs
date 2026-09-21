@@ -759,30 +759,6 @@ async fn first_message_preflight_requires_runtime_only_for_tools() {
 }
 
 #[tokio::test]
-async fn a_full_store_rejects_first_send_without_a_new_record() {
-    let state = test_state();
-    let token = connected(&state);
-    let effort = state
-        .models_dev
-        .effective_effort(ProviderKind::Xai, "grok-4.6", None)
-        .unwrap();
-    let fields = format!(
-        "action=send&provider=xai&model=grok-4.6&thinking={}&message=Hello",
-        effort.as_str()
-    );
-    for _ in 0..128 {
-        state.conversations.create("Saved".to_owned()).unwrap();
-    }
-    let response = app(&state)
-        .oneshot(command("/conversations/new", &token, &fields))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(state.conversations.list().len(), 128);
-    assert!(!state.sessions.busy(&session_id(&token)));
-}
-
-#[tokio::test]
 async fn host_first_message_runs_without_a_sandbox_runtime() {
     let mut state = test_state();
     let directory = tempfile::tempdir().unwrap();

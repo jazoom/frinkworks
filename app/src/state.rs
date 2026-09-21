@@ -110,7 +110,7 @@ pub(crate) async fn build(
     outputs
         .remove_abandoned(|scope| {
             if let Some(conversation) = scope.conversation {
-                conversations.get(&conversation).is_some()
+                conversations.contains(&conversation)
             } else {
                 scope.run.zip(scope.attempt).is_some_and(|(run, attempt)| {
                     workflow_runs

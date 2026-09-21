@@ -59,10 +59,17 @@ fn fixture() -> (
 fn committed_transfer_recovers_after_catalogue_failure_without_duplicate_ownership_or_file_writes()
 {
     let (state, root, source, destination, run, files) = fixture();
-    let path = state.conversations.path.as_ref().unwrap().clone();
-    let backup = path.with_extension("backup");
-    std::fs::rename(&path, &backup).unwrap();
-    std::fs::write(&path, b"blocked").unwrap();
+    let connection =
+        rusqlite::Connection::open(root.path().join("conversations/conversations.sqlite3"))
+            .unwrap();
+    // Reject the second projection after SQLite accepts the first one.
+    connection
+        .execute_batch(&format!(
+            "CREATE TRIGGER reject_destination BEFORE UPDATE ON conversations
+         WHEN NEW.id = '{}' BEGIN SELECT RAISE(ABORT, 'projection failure'); END;",
+            destination.id.as_hex(),
+        ))
+        .unwrap();
     let job = JobId::generate().unwrap();
     let moved = state
         .conversations
@@ -89,8 +96,14 @@ fn committed_transfer_recovers_after_catalogue_failure_without_duplicate_ownersh
             .is_err()
     );
     assert_eq!(moved.messages[0].text, "Exact continuation");
-    std::fs::remove_file(&path).unwrap();
-    std::fs::rename(&backup, &path).unwrap();
+    assert_eq!(state.conversations.get(&source.id), Some(source.clone()));
+    assert_eq!(
+        state.conversations.get(&destination.id),
+        Some(destination.clone())
+    );
+    connection
+        .execute_batch("DROP TRIGGER reject_destination")
+        .unwrap();
     let conversations = ConversationStore::open(root.path().join("conversations")).unwrap();
     let runs = WorkflowRunStore::open(root.path().join("runs")).unwrap();
     conversations.recover_handoffs(&runs).unwrap();
