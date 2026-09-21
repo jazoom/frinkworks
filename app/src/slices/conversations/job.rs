@@ -278,6 +278,7 @@ pub(super) fn observe_response(
     session: SessionId,
     job: Arc<Job>,
     cursor: u64,
+    historical: bool,
 ) -> axum::response::Response {
     let (tx, rx) = mpsc::channel(4);
     tokio::spawn(observe_segment(
@@ -287,6 +288,7 @@ pub(super) fn observe_response(
         session,
         job,
         cursor,
+        historical,
     ));
     hypergraft::outcome::stream_response(futures_util::stream::unfold(rx, |mut rx| async {
         rx.recv().await.map(|frame| (frame, rx))
@@ -300,30 +302,54 @@ async fn observe_segment(
     session: SessionId,
     job: Arc<Job>,
     cursor: u64,
+    historical: bool,
 ) {
     let mut cursor = cursor;
     let mut budget = hypergraft::StreamBudget::new();
-    let assistant = assistant_message(&state, &conversation, &job).map(|message| message.id);
+    let assistant = if historical {
+        None
+    } else {
+        assistant_message(&state, &conversation, &job).map(|message| message.id)
+    };
     let job_id = job.id().as_hex();
     job.wait_after(cursor, OBSERVE_WAIT).await;
     let started = std::time::Instant::now();
     while job.latest_seq() > cursor {
         let snapshot = job.snapshot();
         let output = job.output_up_to(snapshot.latest_seq);
-        if (!output.is_empty() || snapshot.retry.is_some())
-            && let Some(message) = assistant
-            && let Some(frame) = progress_frame(
-                &conversation,
-                &job_id,
-                message,
-                snapshot.latest_seq,
-                &output,
-                snapshot.retry.is_some(),
-                &mut budget,
-            )
-            && tx.send(frame).await.is_err()
-        {
-            return;
+        if !output.is_empty() || snapshot.retry.is_some() {
+            let frame = if historical {
+                historical_status_frame(
+                    &conversation,
+                    &job_id,
+                    snapshot.latest_seq,
+                    historical,
+                    if snapshot.retry.is_some() {
+                        "Retrying the provider."
+                    } else {
+                        "Work is in progress."
+                    },
+                    &mut budget,
+                )
+            } else if let Some(message) = assistant {
+                progress_frame(
+                    &conversation,
+                    &job_id,
+                    message,
+                    snapshot.latest_seq,
+                    &output,
+                    snapshot.retry.is_some(),
+                    historical,
+                    &mut budget,
+                )
+            } else {
+                None
+            };
+            if let Some(frame) = frame
+                && tx.send(frame).await.is_err()
+            {
+                return;
+            }
         }
         cursor = snapshot.latest_seq;
         if !job.is_running() || started.elapsed() >= OBSERVE_SEGMENT_MAX {
@@ -332,7 +358,14 @@ async fn observe_segment(
         job.wait_after(cursor, OBSERVE_WAIT).await;
     }
     let _ = tx
-        .send(final_frame(&state, &conversation, session, &job, cursor))
+        .send(final_frame(
+            &state,
+            &conversation,
+            session,
+            &job,
+            cursor,
+            historical,
+        ))
         .await;
 }
 
@@ -341,15 +374,21 @@ fn assistant_message(
     conversation: &ConversationId,
     job: &Job,
 ) -> Option<crate::conversations::ConversationMessage> {
-    state.conversations.get(conversation).and_then(|record| {
-        record
-            .messages
-            .iter()
-            .find(|message| message.request == Some(job.id()))
-            .cloned()
-    })
+    state
+        .conversations
+        .transcript_window(conversation, None)
+        .ok()
+        .flatten()
+        .and_then(|(record, _)| {
+            record
+                .messages
+                .iter()
+                .find(|message| message.request == Some(job.id()))
+                .cloned()
+        })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn progress_frame(
     conversation: &ConversationId,
     job_id: &str,
@@ -357,6 +396,7 @@ fn progress_frame(
     cursor: u64,
     reply: &AssistantReply,
     retrying: bool,
+    historical: bool,
     budget: &mut hypergraft::StreamBudget,
 ) -> Option<hypergraft::StreamFrame> {
     let mut message = super::page::reply_view(conversation, message, reply, true);
@@ -375,6 +415,45 @@ fn progress_frame(
                 job_id,
                 cursor,
                 active: true,
+                historical,
+            },
+        )
+        .ok()?;
+    let frame = patches.encode_progress().ok()?;
+    budget.try_progress(&frame).ok()?;
+    Some(frame)
+}
+
+/// A historical window has no live response element. Progress patches only the
+/// observation cursor and the status line, never an absent transcript entry.
+fn historical_status_frame(
+    conversation: &ConversationId,
+    job_id: &str,
+    cursor: u64,
+    historical: bool,
+    status: &str,
+    budget: &mut hypergraft::StreamBudget,
+) -> Option<hypergraft::StreamFrame> {
+    let latest_href = format!("/conversations/{}", conversation.as_hex());
+    let mut patches = PatchSet::new();
+    patches
+        .children(
+            "conversation-observe",
+            &ConversationObserveContents {
+                id: &conversation.as_hex(),
+                job_id,
+                cursor,
+                active: true,
+                historical,
+            },
+        )
+        .ok()?;
+    patches
+        .children(
+            "conversation-history-status",
+            &super::page::HistoryStatusContents {
+                history_status: status,
+                latest_href: &latest_href,
             },
         )
         .ok()?;
@@ -389,14 +468,33 @@ fn final_frame(
     session: SessionId,
     job: &Job,
     cursor: u64,
+    historical: bool,
 ) -> hypergraft::StreamFrame {
     let snapshot = job.snapshot();
-    let record = state.conversations.get(conversation);
+    let record = if historical {
+        None
+    } else {
+        state
+            .conversations
+            .transcript_window(conversation, None)
+            .ok()
+            .flatten()
+    };
     let mut patches = PatchSet::new();
-    if snapshot.status != JobStatus::Running
-        && let Some(record) = &record
+    // A historical window keeps its position. Settlement patches status only,
+    // never the whole detail view or an absent transcript entry.
+    if !historical
+        && snapshot.status != JobStatus::Running
+        && let Some((record, window)) = &record
     {
-        let view = super::detail_view(state, session, record, &record.title, "");
+        let view = super::detail_view_with_transcript(
+            state,
+            session,
+            record,
+            &record.title,
+            "",
+            Some(window),
+        );
         if patches
             .children("conversation-detail", &view.contents())
             .is_ok()
@@ -406,7 +504,8 @@ fn final_frame(
         }
         patches = PatchSet::new();
     }
-    if let Some(record) = record
+    if !historical
+        && let Some((record, _)) = record
         && let Some(found) = record
             .messages
             .iter()
@@ -435,6 +534,20 @@ fn final_frame(
     let active = snapshot.status == JobStatus::Running;
     let id = conversation.as_hex();
     let job_id = job.id().as_hex();
+    if historical {
+        let latest_href = format!("/conversations/{id}");
+        let _ = patches.children(
+            "conversation-history-status",
+            &super::page::HistoryStatusContents {
+                history_status: if snapshot.status == JobStatus::Running {
+                    "Work is in progress."
+                } else {
+                    "New output is available."
+                },
+                latest_href: &latest_href,
+            },
+        );
+    }
     let _ = patches.children(
         "conversation-observe",
         &ConversationObserveContents {
@@ -442,6 +555,7 @@ fn final_frame(
             job_id: &job_id,
             cursor,
             active,
+            historical,
         },
     );
     patches
@@ -460,6 +574,7 @@ fn final_frame(
                         job_id: &job_id,
                         cursor,
                         active: false,
+                        historical,
                     },
                 )
                 .expect("bounded observation controls");

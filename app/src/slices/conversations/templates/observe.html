@@ -7,6 +7,9 @@
     <form method="get" action="/conversations/{{ id }}" data-graft>
       <input type="hidden" name="job" value="{{ job_id }}" />
       <input type="hidden" name="cursor" value="{{ cursor }}" />
+      {% if historical %}
+        <input type="hidden" name="historical" value="true" />
+      {% endif %}
     </form>
   </div>
 {% endif %}

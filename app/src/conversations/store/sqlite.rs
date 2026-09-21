@@ -6,8 +6,9 @@ use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use crate::conversations::history::RequestUsage;
 
 use super::{
-    CATALOGUE_VERSION, ConversationError, ConversationId, ConversationMetadata, ConversationRecord,
-    MessageFile, MessageStatus, MetadataFile, message_to_file, metadata_to_file, model_from_file,
+    CATALOGUE_VERSION, ConversationError, ConversationId, ConversationMessage,
+    ConversationMetadata, ConversationRecord, MessageFile, MessageId, MessageStatus, MetadataFile,
+    TranscriptCursor, TranscriptWindow, message_to_file, metadata_to_file, model_from_file,
     parse_stored_network, record_from_parts,
 };
 
@@ -111,6 +112,30 @@ impl Database {
         &self,
         id: &ConversationId,
     ) -> Result<Option<ConversationRecord>, ConversationError> {
+        let Some((metadata, summary_requests)) = self.load_header(id)? else {
+            return Ok(None);
+        };
+        let messages = self.load_messages(id)?;
+        record_from_parts(metadata, messages, summary_requests, true).map(Some)
+    }
+
+    /// Metadata and summary requests without any message body. The caller
+    /// pairs this shell with one bounded transcript window.
+    pub(crate) fn load_shell(
+        &self,
+        id: &ConversationId,
+    ) -> Result<Option<ConversationRecord>, ConversationError> {
+        let Some((metadata, summary_requests)) = self.load_header(id)? else {
+            return Ok(None);
+        };
+        record_from_parts(metadata, Vec::new(), summary_requests, false).map(Some)
+    }
+
+    fn load_header(
+        &self,
+        id: &ConversationId,
+    ) -> Result<Option<(MetadataFile, Vec<super::super::history::RequestUsage>)>, ConversationError>
+    {
         let metadata_json: Option<String> = self
             .connection
             .query_row(
@@ -125,12 +150,138 @@ impl Database {
         };
         let metadata: MetadataFile =
             serde_json::from_str(&metadata_json).map_err(|_| ConversationError::Corrupt)?;
-        let messages = self.load_messages(id)?;
-        let summary_requests = self.load_summary_requests(id)?;
         if metadata.id != id.as_hex() {
             return Err(ConversationError::Corrupt);
         }
-        record_from_parts(metadata, messages, summary_requests).map(Some)
+        let summary_requests = self.load_summary_requests(id)?;
+        Ok(Some((metadata, summary_requests)))
+    }
+
+    /// Select one bounded window by immutable append order. The window sorts
+    /// its rows into presentation order and reports append-order neighbours.
+    pub(crate) fn transcript_window(
+        &self,
+        id: &ConversationId,
+        cursor: Option<TranscriptCursor>,
+        size: usize,
+    ) -> Result<TranscriptWindow, ConversationError> {
+        let hex = id.as_hex();
+        let total: i64 = self
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE conversation_id = ?1",
+                [&hex],
+                |row| row.get(0),
+            )
+            .map_err(map_error)?;
+        let size = size.max(1);
+        let limit = (size + 1) as i64;
+        let live = cursor.is_none();
+        let mut rows: Vec<(i64, i64, ConversationMessage)>;
+        let mut has_before = false;
+        let mut has_after = false;
+        let mut fallback: Option<MessageId> = None;
+        match cursor {
+            None => {
+                rows = window_rows(
+                    &self.connection,
+                    "SELECT sequence, position, message FROM messages WHERE conversation_id = ?1 ORDER BY sequence DESC LIMIT ?2",
+                    params![hex, limit],
+                )?;
+                if rows.len() > size {
+                    has_before = true;
+                    rows.truncate(size);
+                }
+            }
+            Some(cursor) => {
+                let message = cursor.message();
+                let sequence: Option<i64> = self
+                    .connection
+                    .query_row(
+                        "SELECT sequence FROM messages WHERE conversation_id = ?1 AND id = ?2",
+                        params![hex, message.as_hex()],
+                        |row| row.get(0),
+                    )
+                    .optional()
+                    .map_err(map_error)?;
+                let Some(sequence) = sequence else {
+                    return Err(ConversationError::Entry);
+                };
+                fallback = Some(message);
+                match cursor {
+                    TranscriptCursor::Before(_) => {
+                        rows = window_rows(
+                            &self.connection,
+                            "SELECT sequence, position, message FROM messages WHERE conversation_id = ?1 AND sequence < ?2 ORDER BY sequence DESC LIMIT ?3",
+                            params![hex, sequence, limit],
+                        )?;
+                        if rows.len() > size {
+                            has_before = true;
+                            rows.truncate(size);
+                        }
+                        has_after = true;
+                    }
+                    TranscriptCursor::After(_) => {
+                        rows = window_rows(
+                            &self.connection,
+                            "SELECT sequence, position, message FROM messages WHERE conversation_id = ?1 AND sequence > ?2 ORDER BY sequence ASC LIMIT ?3",
+                            params![hex, sequence, limit],
+                        )?;
+                        if rows.len() > size {
+                            has_after = true;
+                            rows.truncate(size);
+                        }
+                        has_before = true;
+                    }
+                    TranscriptCursor::Around(_) => {
+                        // A canonical entry view keeps byte-budget omissions reachable.
+                        let after_size = 0;
+                        let before_size = 1;
+                        let mut before = window_rows(
+                            &self.connection,
+                            "SELECT sequence, position, message FROM messages WHERE conversation_id = ?1 AND sequence <= ?2 ORDER BY sequence DESC LIMIT ?3",
+                            params![hex, sequence, (before_size + 1) as i64],
+                        )?;
+                        if before.len() > before_size {
+                            has_before = true;
+                            before.truncate(before_size);
+                        }
+                        let mut after = window_rows(
+                            &self.connection,
+                            "SELECT sequence, position, message FROM messages WHERE conversation_id = ?1 AND sequence > ?2 ORDER BY sequence ASC LIMIT ?3",
+                            params![hex, sequence, (after_size + 1) as i64],
+                        )?;
+                        if after.len() > after_size {
+                            has_after = true;
+                            after.truncate(after_size);
+                        }
+                        before.extend(after);
+                        rows = before;
+                    }
+                }
+            }
+        }
+        let before_anchor = rows
+            .iter()
+            .min_by_key(|(sequence, _, _)| *sequence)
+            .map(|(_, _, message)| message.id)
+            .or(fallback);
+        let after_anchor = rows
+            .iter()
+            .max_by_key(|(sequence, _, _)| *sequence)
+            .map(|(_, _, message)| message.id)
+            .or(fallback);
+        // Presentation order is the stored position, never append order.
+        rows.sort_by_key(|(_, position, _)| *position);
+        Ok(TranscriptWindow {
+            messages: rows.into_iter().map(|(_, _, message)| message).collect(),
+            has_before,
+            has_after,
+            before_anchor,
+            after_anchor,
+            total: usize::try_from(total).unwrap_or(usize::MAX),
+            live,
+        })
     }
 
     fn load_messages(&self, id: &ConversationId) -> Result<Vec<MessageFile>, ConversationError> {
@@ -668,6 +819,31 @@ fn reject_legacy_records(dir: &Path) -> Result<(), ConversationError> {
 
 #[cfg(test)]
 mod tests;
+
+fn window_rows(
+    connection: &Connection,
+    sql: &str,
+    parameters: impl rusqlite::Params,
+) -> Result<Vec<(i64, i64, ConversationMessage)>, ConversationError> {
+    let mut statement = connection.prepare(sql).map_err(map_error)?;
+    let rows = statement
+        .query_map(parameters, |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(map_error)?;
+    let mut result = Vec::new();
+    for row in rows {
+        let (sequence, position, json) = row.map_err(map_error)?;
+        let file: MessageFile =
+            serde_json::from_str(&json).map_err(|_| ConversationError::Corrupt)?;
+        result.push((sequence, position, super::message_from_file(file)?));
+    }
+    Ok(result)
+}
 
 fn map_error(error: rusqlite::Error) -> ConversationError {
     if let rusqlite::Error::SqliteFailure(code, _) = &error {

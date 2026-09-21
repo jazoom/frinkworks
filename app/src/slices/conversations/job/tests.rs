@@ -88,6 +88,7 @@ async fn untrusted_activity_keeps_its_order_and_stays_secret_safe_in_each_repres
                 job.latest_seq(),
                 &job.snapshot().output,
                 false,
+                false,
                 &mut hypergraft::StreamBudget::new(),
             )
             .unwrap()
@@ -95,7 +96,15 @@ async fn untrusted_activity_keeps_its_order_and_stays_secret_safe_in_each_repres
         )
         .unwrap(),
         String::from_utf8(
-            super::final_frame(&state, &record.id, token.id(), &job, job.latest_seq()).into_bytes(),
+            super::final_frame(
+                &state,
+                &record.id,
+                token.id(),
+                &job,
+                job.latest_seq(),
+                false,
+            )
+            .into_bytes(),
         )
         .unwrap(),
     ] {
@@ -230,7 +239,14 @@ async fn bounded_partial_reply_settles_and_observation_restores_commands() {
         backend.last_preamble().as_deref(),
         Some(instructions.as_str())
     );
-    let frame = super::final_frame(&state, &record.id, token.id(), &job, job.latest_seq());
+    let frame = super::final_frame(
+        &state,
+        &record.id,
+        token.id(),
+        &job,
+        job.latest_seq(),
+        false,
+    );
     let body = String::from_utf8(frame.into_bytes()).expect("frame");
     assert!(body.contains("target=\"conversation-detail\""));
     assert!(
@@ -387,7 +403,14 @@ async fn provider_failure_retains_partial_output_and_safe_error_details() {
     assert!(record.active_job.is_none());
     assert!(!state.sessions.busy(&token.id()));
     assert_eq!(history(&record).last().unwrap().text, "Question");
-    let frame = super::final_frame(&state, &record.id, token.id(), &job, job.latest_seq());
+    let frame = super::final_frame(
+        &state,
+        &record.id,
+        token.id(),
+        &job,
+        job.latest_seq(),
+        false,
+    );
     let body = String::from_utf8(frame.into_bytes()).expect("frame");
     assert!(body.contains("[redacted]"));
     assert!(!body.contains("test-key"));
@@ -482,4 +505,62 @@ fn pending_assistant_output_stays_out_of_the_next_request_history() {
     let history = history(&record);
     assert_eq!(history.len(), 3);
     assert_eq!(history.last().expect("last turn").text, "Second question");
+}
+
+#[tokio::test]
+async fn historical_observation_patches_status_without_replacing_the_window() {
+    let state = crate::tests::test_state(RuntimeConfig::development());
+    let token = generate_session_token().expect("session");
+    state.sessions.insert(token.id());
+    let connection = ProviderConnection::with_key(ProviderKind::Xai, "test-key", "grok-4.6");
+    state.vault.put(connection).expect("provider");
+    let record = state
+        .conversations
+        .create("History".to_owned())
+        .expect("conversation");
+    let job = state
+        .sessions
+        .begin_conversation_job(&token.id(), record.id)
+        .expect("job");
+    let selection =
+        ModelSelection::new(ProviderKind::Xai, "grok-4.6".to_owned(), None).expect("selection");
+    let record = state
+        .conversations
+        .begin_message(
+            &record.id,
+            record.revision,
+            selection,
+            job.id(),
+            "Question".to_owned(),
+        )
+        .expect("begin");
+    let message = record.messages.last().expect("pending").id;
+
+    let progress = super::historical_status_frame(
+        &record.id,
+        &job.id().as_hex(),
+        job.latest_seq(),
+        true,
+        "Work is in progress.",
+        &mut hypergraft::StreamBudget::new(),
+    )
+    .expect("progress");
+    let progress = String::from_utf8(progress.into_bytes()).expect("frame");
+    assert!(progress.contains("conversation-history-status"));
+    assert!(progress.contains("conversation-observe"));
+    assert!(!progress.contains(&format!(
+        "target=\"{}\"",
+        super::super::page::reply_id(&record.id, message)
+    )));
+
+    job.finish(JobStatus::Completed, None);
+    let frame = super::final_frame(&state, &record.id, token.id(), &job, job.latest_seq(), true);
+    let body = String::from_utf8(frame.into_bytes()).expect("frame");
+    assert!(body.contains("conversation-history-status"));
+    assert!(body.contains("New output is available."));
+    assert!(!body.contains("target=\"conversation-detail\""));
+    assert!(!body.contains(&format!(
+        "target=\"{}\"",
+        super::super::page::reply_id(&record.id, message)
+    )));
 }

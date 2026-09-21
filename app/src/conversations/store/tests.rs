@@ -4,7 +4,10 @@ use crate::{
     sessions::JobId,
 };
 
-use super::{ConversationError, ConversationStore, MAXIMUM_TITLE_BYTES, MessageStatus};
+use super::{
+    ConversationError, ConversationStore, MAXIMUM_TITLE_BYTES, MessageStatus, TRANSCRIPT_WINDOW,
+    TranscriptCursor,
+};
 
 impl ConversationStore {
     pub(crate) fn list(&self) -> Vec<super::ConversationRecord> {
@@ -1301,4 +1304,118 @@ fn a_fork_record_survives_restart_with_its_provenance() {
         loaded.candidate_review_context,
         source.candidate_review_context
     );
+}
+
+fn seed_exchanges(
+    store: &ConversationStore,
+    id: &super::ConversationId,
+    selection: ModelSelection,
+    count: usize,
+) -> super::ConversationRecord {
+    let mut record = store.get(id).expect("record");
+    for index in 0..count {
+        let job = JobId::generate().unwrap();
+        record = store
+            .begin_message(
+                &record.id,
+                record.revision,
+                selection.clone(),
+                job,
+                format!("Question {index}"),
+            )
+            .unwrap();
+        store
+            .settle_message(
+                &record.id,
+                job,
+                format!("Reply {index}"),
+                MessageStatus::Complete,
+                None,
+            )
+            .unwrap();
+        record = store.get(&record.id).unwrap();
+    }
+    record
+}
+
+#[test]
+fn transcript_windows_bind_to_one_conversation_and_follow_append_order() {
+    let store = ConversationStore::in_memory();
+    let selection = ModelSelection::new(ProviderKind::Xai, "model".to_owned(), None).unwrap();
+    let first = store.create("First".to_owned()).unwrap();
+    let second = store.create("Second".to_owned()).unwrap();
+    let first = seed_exchanges(&store, &first.id, selection.clone(), 70);
+    let second = seed_exchanges(&store, &second.id, selection.clone(), 2);
+
+    let (_, latest) = store.transcript_window(&first.id, None).unwrap().unwrap();
+    assert_eq!(latest.messages.len(), TRANSCRIPT_WINDOW);
+    assert_eq!(latest.total, first.messages.len());
+    assert!(latest.has_before);
+    assert!(!latest.has_after);
+    assert_eq!(
+        latest.messages.last().unwrap().id,
+        first.messages.last().unwrap().id
+    );
+
+    let anchor = latest.before_anchor.expect("earlier anchor");
+    let (_, earlier) = store
+        .transcript_window(&first.id, Some(TranscriptCursor::Before(anchor)))
+        .unwrap()
+        .unwrap();
+    assert!(earlier.has_after);
+    assert!(earlier.messages.len() <= TRANSCRIPT_WINDOW);
+    let earlier_ids: Vec<_> = earlier.messages.iter().map(|message| message.id).collect();
+
+    // A later append never changes an existing window's progress or content.
+    let first = seed_exchanges(&store, &first.id, selection, 1);
+    let (_, repeated) = store
+        .transcript_window(&first.id, Some(TranscriptCursor::Before(anchor)))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        repeated
+            .messages
+            .iter()
+            .map(|message| message.id)
+            .collect::<Vec<_>>(),
+        earlier_ids
+    );
+
+    // A cursor from another conversation is a foreign entry, not a position.
+    let foreign = second.messages[0].id;
+    assert_eq!(
+        store.transcript_window(&first.id, Some(TranscriptCursor::Around(foreign))),
+        Err(ConversationError::Entry)
+    );
+}
+
+#[test]
+fn transcript_windows_support_before_after_and_around_modes() {
+    let store = ConversationStore::in_memory();
+    let selection = ModelSelection::new(ProviderKind::Xai, "model".to_owned(), None).unwrap();
+    let record = store.create("Modes".to_owned()).unwrap();
+    let record = seed_exchanges(&store, &record.id, selection, 40);
+    let middle = record.messages[record.messages.len() / 2].id;
+
+    let (_, around) = store
+        .transcript_window(&record.id, Some(TranscriptCursor::Around(middle)))
+        .unwrap()
+        .unwrap();
+    assert_eq!(around.messages.len(), 1);
+    assert_eq!(around.messages[0].id, middle);
+    assert!(around.has_before && around.has_after);
+
+    let (_, after) = store
+        .transcript_window(&record.id, Some(TranscriptCursor::After(middle)))
+        .unwrap()
+        .unwrap();
+    assert!(!after.messages.iter().any(|message| message.id == middle));
+    assert!(after.has_before);
+
+    let (_, before) = store
+        .transcript_window(&record.id, Some(TranscriptCursor::Before(middle)))
+        .unwrap()
+        .unwrap();
+    assert!(!before.messages.iter().any(|message| message.id == middle));
+    assert!(before.has_after);
 }

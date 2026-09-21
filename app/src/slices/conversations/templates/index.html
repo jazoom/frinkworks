@@ -175,4 +175,23 @@
       {% endfor %}
     </ul>
   {% endif %}
+  {% if has_more || paged %}
+    <nav
+      class="mt-6 flex flex-wrap items-center justify-between gap-3"
+      aria-label="Conversation history pages"
+    >
+      {% if !newest_href.is_empty() %}
+        <a href="{{ newest_href }}" data-graft class="btn btn-ghost btn-sm"
+          >Newest first</a
+        >
+      {% else %}
+        <span></span>
+      {% endif %}
+      {% if has_more %}
+        <a href="{{ next_href }}" data-graft class="btn btn-outline btn-sm"
+          >Older conversations</a
+        >
+      {% endif %}
+    </nav>
+  {% endif %}
 {% endblock %}

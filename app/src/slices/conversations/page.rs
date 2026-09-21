@@ -89,6 +89,10 @@ pub(super) struct CatalogueView {
     pub(super) error: &'static str,
     pub(super) back_href: String,
     pub(super) back_label: &'static str,
+    pub(super) has_more: bool,
+    pub(super) next_href: String,
+    pub(super) newest_href: String,
+    pub(super) paged: bool,
 }
 
 pub(super) struct HistoryDirectoryOption {
@@ -98,26 +102,59 @@ pub(super) struct HistoryDirectoryOption {
     available: bool,
 }
 
+// The identifier breaks timestamp ties without mutable row offsets.
+pub(super) const CATALOGUE_PAGE_SIZE: usize = 50;
+
 impl CatalogueView {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn from_records(
         state: &crate::state::AppState,
         records: &[crate::conversations::ConversationMetadata],
         filter: &str,
         query: &str,
+        cursor: Option<(u64, crate::conversations::ConversationId)>,
         error: &'static str,
         back_href: String,
         back_label: &'static str,
     ) -> Self {
         let needle = query.trim().to_lowercase();
-        let mut ordered: Vec<_> = records.iter().collect();
-        ordered.sort_by_key(|record| std::cmp::Reverse(record.updated_at_ms));
-        let conversations: Vec<_> = ordered
-            .into_iter()
+        let mut ordered: Vec<_> = records
+            .iter()
             .filter(|record| {
                 (filter.is_empty()
                     || history_grants(record).any(|grant| history_directory_key(grant) == filter))
                     && (needle.is_empty() || record.title.to_lowercase().contains(&needle))
             })
+            .filter(|record| cursor.is_none_or(|cursor| catalogue_after(record, cursor)))
+            .collect();
+        // Filters apply before the page bound so every match is reachable.
+        ordered.sort_by(|left, right| {
+            right
+                .updated_at_ms
+                .cmp(&left.updated_at_ms)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        let has_more = ordered.len() > CATALOGUE_PAGE_SIZE;
+        ordered.truncate(CATALOGUE_PAGE_SIZE);
+        let next_href = ordered
+            .last()
+            .filter(|_| has_more)
+            .map(|record| {
+                catalogue_href(
+                    filter,
+                    query,
+                    &back_href,
+                    Some(&format!("{}-{}", record.updated_at_ms, record.id.as_hex())),
+                )
+            })
+            .unwrap_or_default();
+        let newest_href = if cursor.is_some() {
+            catalogue_href(filter, query, &back_href, None)
+        } else {
+            String::new()
+        };
+        let conversations: Vec<_> = ordered
+            .into_iter()
             .map(|record| {
                 let status = super::recent::conversation_status(state, record);
                 ConversationListItem {
@@ -159,7 +196,46 @@ impl CatalogueView {
             error,
             back_href,
             back_label,
+            has_more,
+            next_href,
+            newest_href,
+            paged: cursor.is_some(),
         }
+    }
+}
+
+fn catalogue_after(
+    record: &crate::conversations::ConversationMetadata,
+    cursor: (u64, crate::conversations::ConversationId),
+) -> bool {
+    match record.updated_at_ms.cmp(&cursor.0) {
+        std::cmp::Ordering::Less => true,
+        std::cmp::Ordering::Greater => false,
+        std::cmp::Ordering::Equal => record.id > cursor.1,
+    }
+}
+
+fn catalogue_href(filter: &str, query: &str, back_href: &str, cursor: Option<&str>) -> String {
+    let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+    if !filter.is_empty() {
+        serializer.append_pair("directory", filter);
+    }
+    let query = query.trim();
+    if !query.is_empty() {
+        serializer.append_pair("q", query);
+    }
+    let back = back_href.trim_start_matches("/conversations/");
+    if !back.is_empty() {
+        serializer.append_pair("conversation", back);
+    }
+    if let Some(cursor) = cursor {
+        serializer.append_pair("cursor", cursor);
+    }
+    let encoded = serializer.finish();
+    if encoded.is_empty() {
+        "/conversations".to_owned()
+    } else {
+        format!("/conversations?{encoded}")
     }
 }
 
@@ -419,6 +495,13 @@ pub(super) struct ConversationDetailView {
     pub(super) companion_title: String,
 
     pub(super) omitted_messages: usize,
+    window_entries: Vec<(String, String)>,
+    pub(super) earlier_href: String,
+    pub(super) later_href: String,
+    pub(super) latest_href: String,
+    pub(super) historical: bool,
+    pub(super) window_nav: bool,
+    pub(super) history_status: String,
     model_picker: ModelPicker,
     pub(super) presets: Vec<PresetOption>,
     pub(super) preset_name: String,
@@ -639,6 +722,13 @@ impl ConversationDetailView {
             companion_title: String::new(),
 
             omitted_messages: 0,
+            window_entries: Vec::new(),
+            earlier_href: String::new(),
+            later_href: String::new(),
+            latest_href: String::new(),
+            historical: false,
+            window_nav: false,
+            history_status: String::new(),
             directories,
             data_root: state.local_data.root().to_string_lossy().into_owned(),
             consent_path,
@@ -822,6 +912,7 @@ impl ConversationDetailView {
         job: Option<&JobSnapshot>,
         title: &str,
         error: &'static str,
+        transcript: Option<&crate::conversations::TranscriptWindow>,
     ) -> Self {
         Self::from_record_with_gate(
             record,
@@ -833,6 +924,7 @@ impl ConversationDetailView {
             None,
             None,
             Vec::new(),
+            transcript,
         )
     }
 
@@ -848,6 +940,7 @@ impl ConversationDetailView {
 
         source_candidate_review: Option<CandidateReviewLinkView>,
         linked_candidate_reviews: Vec<CandidateReviewLinkView>,
+        transcript: Option<&crate::conversations::TranscriptWindow>,
     ) -> Self {
         let fallback = sources
             .preferences
@@ -930,7 +1023,10 @@ impl ConversationDetailView {
         // The escaped model catalogue shares the transcript envelope.
         let message_budget =
             (672_usize * 1024).saturating_sub(ammonia::clean_text(&model_picker.catalogue).len());
-        let mut messages = visible_messages(record, message_budget);
+        let mut messages = match transcript {
+            Some(window) => message_views(record, message_budget, window.messages.len()),
+            None => visible_messages(record, message_budget),
+        };
         if let Some(job) = job
             && !job.output.is_empty()
             && let Some(message) = record.messages.iter().rev().find(|message| {
@@ -965,7 +1061,43 @@ impl ConversationDetailView {
                 message.status = "Retrying the provider";
             }
         }
-        let omitted_messages = record.messages.len() - messages.len();
+        let retained = transcript.map_or(record.messages.len(), |window| window.total);
+        let omitted_messages = retained.saturating_sub(messages.len());
+        let latest_href = format!("/conversations/{}", record.id.as_hex());
+        let historical = transcript.is_some_and(|window| !window.live);
+        let window_nav =
+            historical || transcript.is_some_and(|window| window.has_before || window.has_after);
+        let (earlier_href, later_href) = match transcript {
+            Some(window) => (
+                window
+                    .has_before
+                    .then(|| {
+                        window
+                            .before_anchor
+                            .map(|id| format!("{latest_href}?before={}", id.as_hex()))
+                    })
+                    .flatten()
+                    .unwrap_or_default(),
+                window
+                    .has_after
+                    .then(|| {
+                        window
+                            .after_anchor
+                            .map(|id| format!("{latest_href}?after={}", id.as_hex()))
+                    })
+                    .flatten()
+                    .unwrap_or_default(),
+            ),
+            None => (String::new(), String::new()),
+        };
+        // A historical window observes status only. The pending reply belongs
+        // to the live view, which the user reaches through Latest.
+        let history_status =
+            if historical && job.is_some_and(|job| job.status == JobStatus::Running) {
+                "Work is in progress. New output will appear at the latest view.".to_owned()
+            } else {
+                String::new()
+            };
         Self {
             show_thinking: sources.preferences.show_thinking(),
             thinking_visibility_error: None,
@@ -980,6 +1112,19 @@ impl ConversationDetailView {
             notice: "",
 
             omitted_messages,
+            window_entries: transcript.map_or_else(Vec::new, |window| {
+                window
+                    .messages
+                    .iter()
+                    .map(|message| (message.id.as_hex(), message_id(&record.id, message)))
+                    .collect()
+            }),
+            earlier_href,
+            later_href,
+            latest_href,
+            historical,
+            window_nav,
+            history_status,
             model_available: selection.is_some(),
             model_picker,
             presets,
@@ -1074,15 +1219,22 @@ impl ConversationDetailView {
             directories_open: false,
             job_active,
             retry,
-            context: context_view(record, sources.models, job),
+            context: if transcript.is_some_and(|window| window.total != record.messages.len())
+                && job.is_none_or(|job| job.context.is_none())
+            {
+                None
+            } else {
+                context_view(record, sources.models, job)
+            },
             can_compact: !job_active
                 && pending_gate.is_none()
                 && record.continuation.is_none()
-                && crate::conversations::compaction::select_boundary(
-                    &record.messages,
-                    record.compaction.as_ref(),
-                )
-                .is_ok(),
+                && (transcript.is_some_and(|window| window.total > record.messages.len())
+                    || crate::conversations::compaction::select_boundary(
+                        &record.messages,
+                        record.compaction.as_ref(),
+                    )
+                    .is_ok()),
             summary_usage: usage_panel(
                 &record.summary_requests,
                 &format!("/conversations/{}/context/", record.id.as_hex()),
@@ -1870,6 +2022,17 @@ fn candidate_file_name(path: &str) -> String {
 
 // The transcript uses the durable message identity so projection never depends on position.
 fn visible_messages(record: &ConversationRecord, byte_budget: usize) -> Vec<MessageView> {
+    message_views(record, byte_budget, 64)
+}
+
+/// Build bounded views from the newest entry. The newest entry always renders
+/// even past the byte budget, so an oversized response stays reachable instead
+/// of disappearing behind its own size.
+fn message_views(
+    record: &ConversationRecord,
+    byte_budget: usize,
+    limit: usize,
+) -> Vec<MessageView> {
     let mut messages = Vec::new();
     let mut bytes = 0;
     for (index, message) in record.messages.iter().enumerate().rev() {
@@ -1882,10 +2045,11 @@ fn visible_messages(record: &ConversationRecord, byte_budget: usize) -> Vec<Mess
                 message.id.as_hex()
             );
         }
-        bytes += view.html.len() + view.copy.as_ref().map_or(0, |copy| copy.escaped_bytes) + 2048;
-        if bytes > byte_budget || messages.len() >= 64 {
+        let cost = view.html.len() + view.copy.as_ref().map_or(0, |copy| copy.escaped_bytes) + 2048;
+        if !messages.is_empty() && (bytes + cost > byte_budget || messages.len() >= limit) {
             break;
         }
+        bytes += cost;
         messages.push(view);
     }
     messages.reverse();
@@ -2379,6 +2543,13 @@ pub(super) struct ActivityContents<'a> {
 }
 
 impl ConversationDetailView {
+    pub(super) fn omitted_entries(&self) -> Vec<&(String, String)> {
+        self.window_entries
+            .iter()
+            .filter(|(_, id)| !self.messages.iter().any(|message| message.id == *id))
+            .collect()
+    }
+
     pub(super) fn with_companion(mut self, html: String, kind: &'static str) -> Self {
         let budget = (672_usize * 1024)
             .saturating_sub(html.len())
@@ -2507,4 +2678,12 @@ pub(super) struct ConversationObserveContents<'a> {
     pub(super) job_id: &'a str,
     pub(super) cursor: u64,
     pub(super) active: bool,
+    pub(super) historical: bool,
+}
+
+#[derive(Template)]
+#[template(path = "conversations/templates/history_status.html")]
+pub(super) struct HistoryStatusContents<'a> {
+    pub(super) history_status: &'a str,
+    pub(super) latest_href: &'a str,
 }

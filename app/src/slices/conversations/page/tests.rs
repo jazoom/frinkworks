@@ -33,6 +33,15 @@ fn escaped_history_keeps_the_latest_message_within_the_patch_bound() {
             requests: Vec::new(),
         })
         .collect();
+    let window = crate::conversations::TranscriptWindow {
+        messages: record.messages.clone(),
+        total: record.messages.len(),
+        has_before: false,
+        has_after: false,
+        before_anchor: record.messages.first().map(|message| message.id),
+        after_anchor: record.messages.last().map(|message| message.id),
+        live: true,
+    };
     let view = ConversationDetailView::from_record(
         &record,
         ModelSources {
@@ -47,8 +56,14 @@ fn escaped_history_keeps_the_latest_message_within_the_patch_bound() {
         None,
         &record.title,
         "",
+        Some(&window),
     );
     assert!(view.omitted_messages > 0);
+    assert_eq!(view.omitted_entries().len(), view.omitted_messages);
+    let rendered = view.render().expect("page");
+    for entry in view.omitted_entries() {
+        assert!(rendered.contains(&format!("?around={}\"", entry.0)));
+    }
     assert_eq!(
         view.messages.last().expect("latest").id,
         format!(
@@ -64,11 +79,9 @@ fn escaped_history_keeps_the_latest_message_within_the_patch_bound() {
     patches
         .encode_final(hypergraft::PatchStatus::Ok)
         .expect("bounded envelope");
-    assert!(
-        view.render()
-            .expect("page")
-            .contains("remain in local history and model context")
-    );
+    let rendered = view.render().expect("page");
+    let rendered = rendered.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(rendered.contains("remain in local history and model context"));
 }
 
 #[test]
@@ -94,6 +107,7 @@ fn network_form_preserves_domains_without_a_live_preset_ceiling() {
         None,
         &record.title,
         "",
+        None,
     );
     assert_eq!(
         NetworkAccess::parse_form("restricted", &view.network_domains)
@@ -219,12 +233,26 @@ fn copy_source_bytes_share_the_transcript_budget() {
         .create("Budget".to_owned())
         .expect("record");
     let text = "Response with a fence\n\n```rust\nfn main() {}\n```\n".repeat(64);
-    record.messages = vec![assistant_message(&text, MessageStatus::Complete)];
-    let view = message_view(&record.id, &record.messages[0]);
+    let latest = assistant_message(&text, MessageStatus::Complete);
+    let older = assistant_message("Older reply", MessageStatus::Complete);
+    record.messages = vec![older, latest];
+    let view = message_view(&record.id, &record.messages[1]);
     let copy_len = view.copy.as_ref().expect("copy").escaped_bytes;
+    let older = message_view(&record.id, &record.messages[0]);
+    let older_cost =
+        older.html.len() + older.copy.as_ref().map_or(0, |copy| copy.escaped_bytes) + 2048;
     let without_copy = view.html.len() + 2048;
-    assert!(visible_messages(&record, without_copy).is_empty());
-    assert_eq!(visible_messages(&record, without_copy + copy_len).len(), 1);
+    // The newest entry always renders. Its copy bytes still decide whether the
+    // older entry shares the same budget.
+    assert_eq!(visible_messages(&record, without_copy).len(), 1);
+    assert_eq!(
+        visible_messages(&record, without_copy + copy_len - 1).len(),
+        1
+    );
+    assert_eq!(
+        visible_messages(&record, without_copy + copy_len + older_cost).len(),
+        2
+    );
 }
 
 #[test]
@@ -276,6 +304,7 @@ fn candidate_review_escapes_untrusted_file_contents() {
         Some(gate),
         None,
         Vec::new(),
+        None,
     );
     let html = view.render().expect("page");
     assert!(!html.contains("<script>alert(1)</script>"));

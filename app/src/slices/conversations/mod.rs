@@ -38,7 +38,7 @@ use crate::{
     agents::AgentId,
     conversations::{
         CandidateReviewCreation, CandidateReviewLink, ConversationError, ConversationId,
-        ConversationModelConfiguration, ConversationRecord,
+        ConversationModelConfiguration, ConversationRecord, MessageId, TranscriptCursor,
     },
     environments::EnvironmentId,
     error::{AppError, AppResult},
@@ -330,6 +330,7 @@ struct CatalogueQuery {
     directory: String,
     q: String,
     conversation: String,
+    cursor: String,
     index: bool,
 }
 
@@ -338,8 +339,47 @@ struct CatalogueQuery {
 struct ObserveQuery {
     job: String,
     cursor: String,
+    before: String,
+    after: String,
+    around: String,
+    historical: bool,
     #[serde(default)]
     title: bool,
+}
+
+impl ObserveQuery {
+    fn transcript_cursor(&self) -> (Option<TranscriptCursor>, &'static str) {
+        let positions = [
+            ("before", self.before.trim()),
+            ("after", self.after.trim()),
+            ("around", self.around.trim()),
+        ];
+        let selected: Vec<_> = positions
+            .iter()
+            .filter(|(_, value)| !value.is_empty())
+            .collect();
+        if selected.len() > 1 {
+            return (None, "Choose one transcript position.");
+        }
+        let Some((position, value)) = selected.first() else {
+            return (None, "");
+        };
+        let Some(id) = MessageId::parse(value) else {
+            return (None, "That transcript position is not valid.");
+        };
+        let cursor = match *position {
+            "before" => TranscriptCursor::Before(id),
+            "after" => TranscriptCursor::After(id),
+            _ => TranscriptCursor::Around(id),
+        };
+        (Some(cursor), "")
+    }
+
+    fn has_transcript_cursor(&self) -> bool {
+        !self.before.trim().is_empty()
+            || !self.after.trim().is_empty()
+            || !self.around.trim().is_empty()
+    }
 }
 
 async fn catalogue(
@@ -360,10 +400,13 @@ async fn catalogue(
                 .iter()
                 .flat_map(page::history_grants)
                 .any(|grant| page::history_directory_key(grant) == query.directory));
+    let cursor = parse_catalogue_cursor(&query.cursor);
     let error = if !valid_directory {
         "Choose a directory from conversation history."
     } else if trimmed.len() > 256 {
         "Search is too long. Use at most 256 characters."
+    } else if !query.cursor.trim().is_empty() && cursor.is_none() {
+        "That history position is not valid."
     } else {
         ""
     };
@@ -383,10 +426,20 @@ async fn catalogue(
         graft,
         &query.directory,
         trimmed,
+        cursor,
         error,
         back_href,
         back_label,
     )
+}
+
+fn parse_catalogue_cursor(raw: &str) -> Option<(u64, crate::conversations::ConversationId)> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let (updated_at, id) = raw.split_once('-')?;
+    Some((updated_at.parse().ok()?, ConversationId::parse(id)?))
 }
 
 async fn create(
@@ -404,17 +457,69 @@ async fn detail(
     Path(conversation_id): Path<String>,
     Query(query): Query<ObserveQuery>,
 ) -> AppResult<Response> {
-    let Some(record) = load_conversation(&state, &conversation_id) else {
+    let Some(conversation) = ConversationId::parse(&conversation_id) else {
         return Ok(responses::request_navigation(graft, "/conversations"));
     };
+    if query.has_transcript_cursor()
+        && (!query.job.is_empty() || !query.cursor.is_empty() || query.title || query.historical)
+    {
+        return render_transcript(
+            &state,
+            session.0,
+            graft,
+            conversation,
+            None,
+            "Observation cannot use a transcript position.",
+        );
+    }
     if graft == GraftRequest::Patch && query.title {
+        let Some(record) = state.conversations.get(&conversation) else {
+            return Ok(responses::request_navigation(graft, "/conversations"));
+        };
         return title::response(&record);
     }
-    if graft == GraftRequest::Patch && !query.job.is_empty() {
-        return observe_message(state, session.0, record, query);
+    // A transcript cursor and live observation are incompatible modes.
+    if query.has_transcript_cursor() {
+        let (cursor, error) = query.transcript_cursor();
+        return render_transcript(&state, session.0, graft, conversation, cursor, error);
     }
-    let view = detail_view(&state, session.0, &record, &record.title, "");
-    render_detail(&state, session.0, graft, PatchStatus::Ok, view)
+    if graft == GraftRequest::Patch && !query.job.is_empty() {
+        return observe_message(state, session.0, conversation, query);
+    }
+    render_transcript(&state, session.0, graft, conversation, None, "")
+}
+
+/// Render one bounded transcript window without loading every retained body.
+/// A foreign cursor falls back to the latest window and reports the rejection.
+fn render_transcript(
+    state: &AppState,
+    session: crate::sessions::SessionId,
+    graft: GraftRequest,
+    conversation: ConversationId,
+    cursor: Option<TranscriptCursor>,
+    error: &'static str,
+) -> AppResult<Response> {
+    let (record, window, error) = match state.conversations.transcript_window(&conversation, cursor)
+    {
+        Ok(Some((record, window))) => (record, window, error),
+        Ok(None) => return Ok(responses::request_navigation(graft, "/conversations")),
+        Err(ConversationError::Entry) => {
+            match state.conversations.transcript_window(&conversation, None) {
+                Ok(Some((record, window))) => (record, window, ConversationError::Entry.message()),
+                Ok(None) => return Ok(responses::request_navigation(graft, "/conversations")),
+                Err(error) => return Err(AppError::new("load transcript window", error)),
+            }
+        }
+        Err(error) => return Err(AppError::new("load transcript window", error)),
+    };
+    let status = if error.is_empty() {
+        PatchStatus::Ok
+    } else {
+        PatchStatus::UnprocessableEntity
+    };
+    let view =
+        detail_view_with_transcript(state, session, &record, &record.title, error, Some(&window));
+    render_detail(state, session, graft, status, view)
 }
 
 struct CandidateReviewSelection {
@@ -1668,11 +1773,11 @@ async fn settle_partial(
 fn observe_message(
     state: AppState,
     session: crate::sessions::SessionId,
-    record: ConversationRecord,
+    conversation: ConversationId,
     query: ObserveQuery,
 ) -> AppResult<Response> {
     if let Some(job) =
-        JobId::parse(&query.job).and_then(|id| state.sessions.conversation_job(record.id, id))
+        JobId::parse(&query.job).and_then(|id| state.sessions.conversation_job(conversation, id))
     {
         let cursor = query
             .cursor
@@ -1680,16 +1785,36 @@ fn observe_message(
             .unwrap_or(0)
             .min(job.latest_seq());
         return Ok(job::observe_response(
-            state, record.id, session, job, cursor,
+            state,
+            conversation,
+            session,
+            job,
+            cursor,
+            query.historical,
         ));
     }
-    render_detail(
-        &state,
-        session,
-        GraftRequest::Patch,
-        PatchStatus::Ok,
-        detail_view(&state, session, &record, &record.title, ""),
-    )
+    if query.historical {
+        return Ok(hypergraft::PatchSet::new()
+            .with_children(
+                "conversation-history-status",
+                &page::HistoryStatusContents {
+                    history_status: "Live observation ended. Open Latest for current status.",
+                    latest_href: &format!("/conversations/{}", conversation.as_hex()),
+                },
+            )?
+            .with_children(
+                "conversation-observe",
+                &page::ConversationObserveContents {
+                    id: &conversation.as_hex(),
+                    job_id: "",
+                    cursor: 0,
+                    active: false,
+                    historical: true,
+                },
+            )?
+            .respond(PatchStatus::Ok)?);
+    }
+    render_transcript(&state, session, GraftRequest::Patch, conversation, None, "")
 }
 
 async fn select_model(
@@ -2101,6 +2226,22 @@ fn detail_view(
     title: &str,
     error: &'static str,
 ) -> ConversationDetailView {
+    match state.conversations.transcript_window(&record.id, None) {
+        Ok(Some((window_record, window))) if window_record.revision == record.revision => {
+            detail_view_with_transcript(state, session, &window_record, title, error, Some(&window))
+        }
+        _ => detail_view_with_transcript(state, session, record, title, error, None),
+    }
+}
+
+fn detail_view_with_transcript(
+    state: &AppState,
+    session: crate::sessions::SessionId,
+    record: &ConversationRecord,
+    title: &str,
+    error: &'static str,
+    transcript: Option<&crate::conversations::TranscriptWindow>,
+) -> ConversationDetailView {
     let snapshot = record
         .active_job
         .and_then(|job_id| state.sessions.conversation_job(record.id, job_id))
@@ -2146,6 +2287,7 @@ fn detail_view(
         pending_gate,
         source_candidate_review,
         linked_candidate_reviews,
+        transcript,
     )
     .with_access_status(state, session, record)
     .with_pending_question(
@@ -2182,7 +2324,7 @@ fn conversation_links(
     let candidate_link_view = |link: &CandidateReviewLink| CandidateReviewLinkView {
         title: link
             .conversation_id
-            .and_then(|id| state.conversations.get(&id))
+            .and_then(|id| state.conversations.metadata_for(&id))
             .map_or_else(String::new, |conversation| conversation.title),
         href: link
             .conversation_id
@@ -2220,11 +2362,13 @@ fn status_for(error: ConversationError) -> PatchStatus {
         _ => PatchStatus::UnprocessableEntity,
     }
 }
+#[allow(clippy::too_many_arguments)]
 fn render_catalogue(
     state: &AppState,
     graft: GraftRequest,
     filter: &str,
     query: &str,
+    cursor: Option<(u64, ConversationId)>,
     error: &'static str,
     back_href: String,
     back_label: &'static str,
@@ -2243,6 +2387,7 @@ fn render_catalogue(
             &state.conversations.metadata(),
             filter,
             query,
+            cursor,
             error,
             back_href,
             back_label,

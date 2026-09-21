@@ -1,0 +1,7 @@
+<p class="m-0">Historical view. Send uses the latest conversation context.</p>
+{% if !history_status.is_empty() %}
+  <p class="m-0">{{ history_status }}</p>
+  {% if !latest_href.is_empty() %}
+    <a href="{{ latest_href }}" data-graft class="link">View latest</a>
+  {% endif %}
+{% endif %}

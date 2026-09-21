@@ -473,6 +473,71 @@
             </section>
           {% endif %}
         {% endif %}
+        {% if window_nav %}
+          <nav
+            class="mx-auto flex w-[calc(100%-2rem)] max-w-3xl shrink-0 flex-wrap items-center gap-2 py-3 sm:w-[calc(100%-4rem)]"
+            aria-label="Transcript history"
+          >
+            {% if !earlier_href.is_empty() %}
+              <a
+                href="{{ earlier_href }}"
+                data-graft
+                class="btn btn-ghost btn-sm"
+                >Earlier</a
+              >
+            {% else %}
+              <span
+                class="btn btn-ghost btn-sm btn-disabled"
+                aria-disabled="true"
+                >Earlier</span
+              >
+            {% endif %}
+            {% if !later_href.is_empty() %}
+              <a href="{{ later_href }}" data-graft class="btn btn-ghost btn-sm"
+                >Later</a
+              >
+            {% else %}
+              <span
+                class="btn btn-ghost btn-sm btn-disabled"
+                aria-disabled="true"
+                >Later</span
+              >
+            {% endif %}
+            <a href="{{ latest_href }}" data-graft class="btn btn-ghost btn-sm"
+              >Latest</a
+            >
+          </nav>
+        {% endif %}
+        {% if historical %}
+          <div
+            id="conversation-history-status"
+            class="text-quiet mx-auto flex w-[calc(100%-2rem)] max-w-3xl shrink-0 flex-wrap items-center gap-2 text-sm sm:w-[calc(100%-4rem)]"
+            role="status"
+            aria-live="polite"
+          >
+            {% include "conversations/templates/history_status.html" %}
+          </div>
+        {% endif %}
+        {% let omitted = self.omitted_entries() %}
+        {% if !omitted.is_empty() %}
+          <details
+            class="mx-auto w-[calc(100%-2rem)] max-w-3xl shrink-0 py-2 text-sm"
+          >
+            <summary class="cursor-pointer">
+              {{ omitted.len() }} entries exceed this window's display budget
+            </summary>
+            <div class="flex flex-wrap gap-3 py-2">
+              {% for entry in omitted %}
+                <a
+                  href="{{ latest_href }}?around={{ entry.0 }}"
+                  data-graft
+                  class="link"
+                  >View omitted entry {{ loop.index }}</a
+                >
+              {% endfor %}
+            </div>
+          </details>
+        {% endif %}
         {% if self.transcript_empty() %}
           <div class="empty-conversation m-auto max-w-xl px-6 py-8 text-center">
             <img src="/static/images/logo.svg" width="70" height="50" alt="" />
@@ -487,8 +552,15 @@
         {% endif %}
         {% if omitted_messages > 0 %}
           <p class="text-quiet text-sm">
-            {{ omitted_messages }} earlier messages exceed the display limit.
-            They remain in local history and model context.
+            {% if historical %}
+              {{ omitted_messages }}
+              messages are outside this window. They remain in local history and
+              model context.
+            {% else %}
+              {{ omitted_messages }}
+              earlier messages exceed the display limit. They remain in local
+              history and model context.
+            {% endif %}
           </p>
         {% endif %}
 
@@ -496,7 +568,7 @@
       </section>
       {% if let Some(saved) = self.saved() %}
         <div id="conversation-observe" hidden>
-          {% let active = observe_active %}{% let id = saved.id %}{% let job_id = saved.job_id %}{% let cursor = saved.cursor %}{% include "conversations/templates/observe.html" %}
+          {% let active = observe_active %}{% let id = saved.id %}{% let job_id = saved.job_id %}{% let cursor = saved.cursor %}{% let historical = historical %}{% include "conversations/templates/observe.html" %}
         </div>
       {% endif %}
       <aside

@@ -996,6 +996,7 @@ async fn directory_history_matches_identity_without_granting_access() {
             &pair,
             &key,
             "",
+            None,
             "",
             String::new(),
             "",
@@ -1016,8 +1017,16 @@ async fn directory_history_matches_identity_without_granting_access() {
         .directories = vec![replacement];
     records.push(replacement_record);
     let records: Vec<_> = records.iter().map(|record| record.metadata()).collect();
-    let view =
-        super::page::CatalogueView::from_records(&state, &records, &key, "", "", String::new(), "");
+    let view = super::page::CatalogueView::from_records(
+        &state,
+        &records,
+        &key,
+        "",
+        None,
+        "",
+        String::new(),
+        "",
+    );
     assert_eq!(view.conversations.len(), 2);
     assert!(
         view.conversations
@@ -1056,6 +1065,7 @@ async fn history_lists_one_row_per_conversation_including_drafts() {
         &state.conversations.metadata(),
         "",
         "",
+        None,
         "",
         String::new(),
         "",
@@ -1775,4 +1785,247 @@ async fn catalogue_title_search_trims_case_and_combines_with_directory() {
         StatusCode::BAD_REQUEST
     );
     assert_eq!(state.conversations.list().len(), 3);
+}
+
+fn seeded_history(
+    state: &AppState,
+    title: &str,
+    count: usize,
+) -> crate::conversations::ConversationRecord {
+    let selection =
+        ModelSelection::new(ProviderKind::Xai, "grok-4.6".to_owned(), None).expect("selection");
+    let mut record = state
+        .conversations
+        .create(title.to_owned())
+        .expect("conversation");
+    for index in 0..count {
+        let job = sessions::JobId::generate().expect("job");
+        record = state
+            .conversations
+            .begin_message(
+                &record.id,
+                record.revision,
+                selection.clone(),
+                job,
+                format!("Question {index}"),
+            )
+            .expect("begin");
+        state
+            .conversations
+            .settle_message(
+                &record.id,
+                job,
+                format!("Reply {index}"),
+                crate::conversations::MessageStatus::Complete,
+                None,
+            )
+            .expect("settle");
+        record = state.conversations.get(&record.id).expect("record");
+    }
+    record
+}
+
+#[tokio::test]
+async fn transcript_cursors_expose_bounded_history_across_representations() {
+    let state = test_state();
+    let token = connected(&state);
+    let record = seeded_history(&state, "History", 70);
+    let base = format!("/conversations/{}", record.id.as_hex());
+
+    let document_body = text(app(&state).oneshot(document(&base, &token)).await.unwrap()).await;
+    assert!(!document_body.contains(&super::page::message_id(&record.id, &record.messages[0])));
+    assert!(document_body.contains(&super::page::message_id(
+        &record.id,
+        record.messages.last().unwrap()
+    )));
+    assert!(normalised(&document_body).contains("remain in local history and model context"));
+
+    let (_, window) = state
+        .conversations
+        .transcript_window(&record.id, None)
+        .unwrap()
+        .unwrap();
+    let anchor = window.before_anchor.expect("earlier anchor");
+    let earlier_path = format!("{base}?before={}", anchor.as_hex());
+    let earlier = normalised(
+        &text(
+            app(&state)
+                .oneshot(document(&earlier_path, &token))
+                .await
+                .unwrap(),
+        )
+        .await,
+    );
+    assert!(earlier.contains(&format!("{base}?before=")));
+    assert!(earlier.contains(&format!("{base}?after=")));
+    assert!(!earlier.contains(&super::page::message_id(
+        &record.id,
+        record.messages.last().unwrap()
+    )));
+
+    let navigation = app(&state)
+        .oneshot(navigation(&earlier_path, &token))
+        .await
+        .unwrap();
+    assert_eq!(navigation.status(), StatusCode::OK);
+    let navigation = normalised(&text(navigation).await);
+    assert!(navigation.contains("target=\"chat-main\""));
+    assert!(navigation.contains("Earlier"));
+}
+
+#[tokio::test]
+async fn transcript_cursors_reject_invalid_foreign_and_incompatible_requests() {
+    let state = test_state();
+    let token = connected(&state);
+    let record = seeded_history(&state, "History", 3);
+    let other = seeded_history(&state, "Other", 2);
+    let base = format!("/conversations/{}", record.id.as_hex());
+    let first = record.messages[0].id.as_hex();
+    let foreign = other.messages[0].id.as_hex();
+    for (path, message) in [
+        (
+            format!("{base}?before={first}&after={first}"),
+            "one transcript position",
+        ),
+        (format!("{base}?before=nothex"), "not valid"),
+        (
+            format!("{base}?around={first}&title=true"),
+            "Observation cannot use a transcript position",
+        ),
+        (
+            format!("{base}?around={first}&cursor=1"),
+            "Observation cannot use a transcript position",
+        ),
+        (
+            format!("{base}?around={first}&historical=true"),
+            "Observation cannot use a transcript position",
+        ),
+        (
+            format!("{base}?before={foreign}"),
+            "not part of this conversation",
+        ),
+        (
+            format!("{base}?job=00000000000000000000000000000000&before={first}"),
+            "Observation cannot use a transcript position",
+        ),
+    ] {
+        let response = app(&state).oneshot(document(&path, &token)).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{path}"
+        );
+        assert!(
+            normalised(&text(response).await).contains(message),
+            "{path}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn expired_historical_observation_keeps_the_transcript_window() {
+    let state = test_state();
+    let token = connected(&state);
+    let record = seeded_history(&state, "History", 1);
+    let mut request = document(
+        &format!(
+            "/conversations/{}?job={}&historical=true",
+            record.id.as_hex(),
+            sessions::JobId::generate().unwrap().as_hex()
+        ),
+        &token,
+    );
+    request
+        .headers_mut()
+        .insert(hypergraft::GRAFT_REQUEST, "patch".parse().unwrap());
+    request
+        .headers_mut()
+        .insert(header::ACCEPT, hypergraft::MEDIA_TYPE.parse().unwrap());
+    let response = app(&state).oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = text(response).await;
+    assert!(body.contains("target=\"conversation-history-status\""));
+    assert!(body.contains("target=\"conversation-observe\""));
+    assert!(!body.contains("target=\"conversation-detail\""));
+    assert!(!body.contains("target=\"transcript\""));
+}
+
+#[tokio::test]
+async fn catalogue_pages_every_conversation_with_stable_keys() {
+    let state = test_state();
+    let token = connected(&state);
+    for index in 0..55 {
+        state
+            .conversations
+            .create(format!("History {index:02}"))
+            .expect("conversation");
+    }
+    state
+        .conversations
+        .create("Special title".to_owned())
+        .expect("special");
+
+    let first = text(
+        app(&state)
+            .oneshot(document("/conversations", &token))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let first = normalised(&first);
+    let visible_ids = |body: &str| -> std::collections::BTreeSet<_> {
+        let body = body
+            .split("aria-label=\"Saved conversations\"")
+            .nth(1)
+            .unwrap_or("")
+            .split("</ul>")
+            .next()
+            .unwrap();
+        state
+            .conversations
+            .metadata()
+            .into_iter()
+            .filter(|record| {
+                body.contains(&format!("href=\"/conversations/{}\"", record.id.as_hex()))
+            })
+            .map(|record| record.id)
+            .collect()
+    };
+    let first_ids = visible_ids(&first);
+    assert_eq!(first_ids.len(), 50);
+    assert!(first.contains("Older conversations"));
+    let cursor = first
+        .split("cursor=")
+        .nth(1)
+        .expect("cursor")
+        .split('"')
+        .next()
+        .expect("cursor value")
+        .to_owned();
+    let second = text(
+        app(&state)
+            .oneshot(document(&format!("/conversations?cursor={cursor}"), &token))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let second = normalised(&second);
+    let second_ids = visible_ids(&second);
+    assert_eq!(second_ids.len(), 6);
+    assert!(first_ids.is_disjoint(&second_ids));
+    assert!(!second.contains("Older conversations"));
+    assert!(second.contains("Newest first"));
+
+    // Filters apply before the page bound, so a match never hides behind it.
+    let filtered = text(
+        app(&state)
+            .oneshot(document("/conversations?q=Special", &token))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let filtered = normalised(&filtered);
+    assert_eq!(visible_ids(&filtered).len(), 1);
+    assert!(filtered.contains("Special title"));
+    assert!(!filtered.contains("Older conversations"));
 }

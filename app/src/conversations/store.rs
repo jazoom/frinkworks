@@ -28,6 +28,43 @@ pub(crate) const MAXIMUM_MESSAGE_BYTES: usize = 32 * 1024;
 pub(crate) const MAXIMUM_REPLY_BYTES: usize = 128 * 1024;
 const MAXIMUM_LINKED_REVIEWS: usize = 32;
 const MAXIMUM_REVIEW_BRIEF_BYTES: usize = MAXIMUM_MESSAGE_BYTES;
+/// One transport window of retained history. It bounds the browser and the
+/// response payload, never the retained records themselves.
+pub(crate) const TRANSCRIPT_WINDOW: usize = 64;
+
+/// A validated position inside the append order of one conversation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TranscriptCursor {
+    Before(MessageId),
+    After(MessageId),
+    Around(MessageId),
+}
+
+impl TranscriptCursor {
+    pub(crate) fn message(self) -> MessageId {
+        match self {
+            Self::Before(id) | Self::After(id) | Self::Around(id) => id,
+        }
+    }
+}
+
+/// One bounded window of retained entries. Messages keep presentation order.
+/// The anchors and existence flags follow the immutable append order, so a
+/// byte-budget omission in the view never changes cursor progress.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TranscriptWindow {
+    pub(crate) messages: Vec<ConversationMessage>,
+    pub(crate) has_before: bool,
+    pub(crate) has_after: bool,
+    /// The entry that an Earlier link from this window selects before.
+    pub(crate) before_anchor: Option<MessageId>,
+    /// The entry that a Later link from this window selects after.
+    pub(crate) after_anchor: Option<MessageId>,
+    /// Total retained entries in append order.
+    pub(crate) total: usize,
+    /// True when the window is the live tail rather than a browsed history page.
+    pub(crate) live: bool,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CandidateReviewLink {
@@ -226,6 +263,7 @@ pub(crate) enum ConversationError {
     Revision,
     Title,
     Message,
+    Entry,
     Active,
     Selection,
     Network,
@@ -249,6 +287,7 @@ impl ConversationError {
             Self::Revision => "Power Plant cannot update this conversation again.",
             Self::Title => "Enter a title of 1 to 120 bytes without control characters.",
             Self::Message => "Enter a message within the conversation limit.",
+            Self::Entry => "That entry is not part of this conversation.",
             Self::Active => "This conversation has an active request. Wait for it to finish.",
             Self::Selection => "Choose an available model before you send a message.",
             Self::Network => "Choose valid network access for this conversation.",
@@ -505,6 +544,23 @@ impl ConversationStore {
 
     pub(crate) fn get(&self, id: &ConversationId) -> Option<ConversationRecord> {
         self.database().load(id).ok().flatten()
+    }
+
+    /// Load metadata and one bounded transcript window without reading every
+    /// retained message body. `Err(Entry)` reports a foreign cursor entry.
+    pub(crate) fn transcript_window(
+        &self,
+        id: &ConversationId,
+        cursor: Option<TranscriptCursor>,
+    ) -> Result<Option<(ConversationRecord, TranscriptWindow)>, ConversationError> {
+        let database = self.database();
+        let Some(shell) = database.load_shell(id)? else {
+            return Ok(None);
+        };
+        let window = database.transcript_window(id, cursor, TRANSCRIPT_WINDOW)?;
+        let mut shell = shell;
+        shell.messages = window.messages.clone();
+        Ok(Some((shell, window)))
     }
 
     pub(crate) fn create_saved(
@@ -1790,10 +1846,12 @@ fn unused_identifier(database: &Database) -> Result<ConversationId, Conversation
     Err(ConversationError::Random)
 }
 
+// Only read-only transcript shells skip cross-message validation.
 fn record_from_parts(
     file: MetadataFile,
     message_files: Vec<MessageFile>,
     summary_requests: Vec<super::history::RequestUsage>,
+    validate_messages: bool,
 ) -> Result<ConversationRecord, ConversationError> {
     if file.version != CATALOGUE_VERSION {
         return Err(ConversationError::Corrupt);
@@ -1850,19 +1908,21 @@ fn record_from_parts(
     if file.active_job.is_some() && active_job.is_none() {
         return Err(ConversationError::Corrupt);
     }
-    let pending: Vec<_> = messages
-        .iter()
-        .filter(|message| message.status == MessageStatus::Pending)
-        .collect();
-    if match active_job {
-        Some(request) => {
-            pending.len() != 1
-                || pending[0].request != Some(request)
-                || messages.last() != pending.first().copied()
+    if validate_messages {
+        let pending: Vec<_> = messages
+            .iter()
+            .filter(|message| message.status == MessageStatus::Pending)
+            .collect();
+        if match active_job {
+            Some(request) => {
+                pending.len() != 1
+                    || pending[0].request != Some(request)
+                    || messages.last() != pending.first().copied()
+            }
+            None => !pending.is_empty(),
+        } {
+            return Err(ConversationError::Corrupt);
         }
-        None => !pending.is_empty(),
-    } {
-        return Err(ConversationError::Corrupt);
     }
     let queue = queue_from_file(file.queue_revision, file.queue)?;
     let forked_from = file
@@ -1871,11 +1931,11 @@ fn record_from_parts(
         .transpose()?;
     let continuation = file
         .continuation
-        .map(|file| continuation_from_file(file, &messages))
+        .map(|file| continuation_from_file(file, &messages, validate_messages))
         .transpose()?;
     let compaction = file
         .compaction
-        .map(|file| compaction_from_file(file, &messages))
+        .map(|file| compaction_from_file(file, &messages, validate_messages))
         .transpose()?;
     Ok(ConversationRecord {
         id,
@@ -2297,6 +2357,7 @@ fn continuation_to_file(checkpoint: &super::history::ContinuationCheckpoint) -> 
 fn continuation_from_file(
     file: ContinuationFile,
     messages: &[ConversationMessage],
+    validate_messages: bool,
 ) -> Result<super::history::ContinuationCheckpoint, ConversationError> {
     let pinned = model_from_file(file.pinned)?;
     let checkpoint = super::history::ContinuationCheckpoint {
@@ -2337,7 +2398,7 @@ fn continuation_from_file(
             .collect(),
         created_at_ms: file.created_at_ms,
     };
-    if !checkpoint.valid(messages) {
+    if validate_messages && !checkpoint.valid(messages) {
         return Err(ConversationError::Corrupt);
     }
     Ok(checkpoint)
@@ -2370,6 +2431,7 @@ fn compaction_to_file(record: &super::compaction::CompactionRecord) -> Compactio
 fn compaction_from_file(
     file: CompactionFile,
     messages: &[ConversationMessage],
+    validate_messages: bool,
 ) -> Result<super::compaction::CompactionRecord, ConversationError> {
     let record = super::compaction::CompactionRecord {
         covered_through: MessageId::parse(&file.covered_through)
@@ -2379,7 +2441,7 @@ fn compaction_from_file(
         request: file.request,
         created_at_ms: file.created_at_ms,
     };
-    if !record.valid(messages) {
+    if validate_messages && !record.valid(messages) {
         return Err(ConversationError::Corrupt);
     }
     Ok(record)
