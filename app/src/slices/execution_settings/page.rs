@@ -110,6 +110,7 @@ pub(crate) fn tool_options(selected: &[String]) -> Vec<ToolOption> {
             field_name: match tool {
                 ToolId::List => "tool_list",
                 ToolId::Read => "tool_read",
+                ToolId::Edit => "tool_edit",
                 ToolId::Write => "tool_write",
                 ToolId::Run => "tool_run",
             },
@@ -118,7 +119,8 @@ pub(crate) fn tool_options(selected: &[String]) -> Vec<ToolOption> {
             detail: match tool {
                 ToolId::List => "List files and directories.",
                 ToolId::Read => "Read file contents.",
-                ToolId::Write => "Create or edit files with write access.",
+                ToolId::Edit => "Apply exact replacements in existing files.",
+                ToolId::Write => "Create files or replace a whole file.",
                 ToolId::Run => "Run commands in the sandbox.",
             },
             selected: selected.iter().any(|value| value == tool.as_str()),

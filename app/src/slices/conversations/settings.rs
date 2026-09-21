@@ -38,6 +38,7 @@ pub(super) struct SettingsForm {
     pub(super) instructions: String,
     pub(super) tool_list: String,
     pub(super) tool_read: String,
+    pub(super) tool_edit: String,
     pub(super) tool_write: String,
     pub(super) tool_run: String,
     pub(super) location: String,
@@ -89,6 +90,7 @@ impl SettingsForm {
         [
             &self.tool_list,
             &self.tool_read,
+            &self.tool_edit,
             &self.tool_write,
             &self.tool_run,
         ]
@@ -1074,6 +1076,11 @@ pub(super) fn copy_settings_to_draft(
     };
     form.tool_read = if settings.tools.contains(&ToolId::Read) {
         "read".to_owned()
+    } else {
+        String::new()
+    };
+    form.tool_edit = if settings.tools.contains(&ToolId::Edit) {
+        "edit".to_owned()
     } else {
         String::new()
     };

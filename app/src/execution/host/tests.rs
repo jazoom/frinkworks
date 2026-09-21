@@ -156,7 +156,11 @@ async fn slow_commands_publish_replayable_progress_and_retain_cancelled_output()
     assert_eq!(failure.result.termination, CommandTermination::Cancelled);
     let reopened = OutputStore::open(directory.path().join("output")).unwrap();
     let page = reopened
-        .page(failure.result.retained_reference().unwrap(), &scope, 0)
+        .page(
+            failure.result.retained_reference().unwrap(),
+            &scope,
+            crate::tools::read::parse_request(None, None).expect("page"),
+        )
         .unwrap();
     assert_eq!(page.chunks, failure.result.chunks);
     assert!(!page.chunks.is_empty());

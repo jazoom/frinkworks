@@ -25,8 +25,6 @@ pub(crate) const MAXIMUM_OUTPUT_STORE_BYTES: usize = 64 * 1024 * 1024;
 pub(crate) const MAXIMUM_OUTPUT_REFERENCES: usize = 4096;
 /// Bytes shown for the first page of a command result.
 pub(crate) const OUTPUT_PREVIEW_BYTES: usize = 8 * 1024;
-/// Bytes returned by one `read_output` page.
-pub(crate) const OUTPUT_PAGE_BYTES: usize = 32 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum OutputError {
@@ -46,7 +44,7 @@ impl OutputError {
             Self::Missing => "That command output is not available.",
             Self::Forbidden => "That command output belongs to another conversation.",
             Self::Full => "Power Plant cannot retain more command output.",
-            Self::Cursor => "That output cursor is not valid.",
+            Self::Cursor => "That output offset is not valid.",
         }
     }
 }
@@ -113,8 +111,9 @@ pub(crate) struct RetainedOutput {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct OutputPage {
     pub(crate) chunks: Vec<CommandChunk>,
-    pub(crate) next: Option<usize>,
+    pub(crate) next: Option<u64>,
     pub(crate) truncated: bool,
+    pub(crate) line_truncated: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -254,12 +253,12 @@ impl OutputStore {
             .any(|record| scope.matches(record))
     }
 
-    /// One bounded page of retained output. Cursor values are byte offsets.
+    /// One bounded page of retained output. Offset values are 1-based lines.
     pub(crate) fn page(
         &self,
         reference: &str,
         scope: &OutputScope,
-        cursor: usize,
+        request: crate::tools::read::PageRequest,
     ) -> Result<OutputPage, OutputError> {
         let inner = self.lock();
         let record = inner.records.get(reference).ok_or(OutputError::Missing)?;
@@ -267,50 +266,15 @@ impl OutputStore {
             // Do not disclose another conversation's output.
             return Err(OutputError::Forbidden);
         }
-        if cursor > record.bytes() {
-            return Err(OutputError::Cursor);
+        match crate::tools::read::page_chunks(&record.chunks, request) {
+            Ok((chunks, next, line_truncated)) => Ok(OutputPage {
+                chunks,
+                next,
+                truncated: record.truncated,
+                line_truncated,
+            }),
+            Err(_) => Err(OutputError::Cursor),
         }
-        let mut chunks = Vec::new();
-        let mut remaining = OUTPUT_PAGE_BYTES;
-        let mut consumed = 0usize;
-        for chunk in &record.chunks {
-            let chunk_end = consumed + chunk.text.len();
-            if chunk_end <= cursor {
-                consumed = chunk_end;
-                continue;
-            }
-            if remaining == 0 {
-                break;
-            }
-            let start = cursor.saturating_sub(consumed);
-            let slice = chunk.text.get(start..).ok_or(OutputError::Cursor)?;
-            let text = if slice.len() <= remaining {
-                slice.to_owned()
-            } else {
-                let mut end = remaining;
-                while end > 0 && !slice.is_char_boundary(end) {
-                    end -= 1;
-                }
-                slice[..end].to_owned()
-            };
-            let partial = text.len() < slice.len();
-            remaining -= text.len();
-            chunks.push(CommandChunk {
-                stream: chunk.stream,
-                text,
-            });
-            if partial {
-                break;
-            }
-            consumed = chunk_end;
-        }
-        let delivered: usize = chunks.iter().map(|chunk| chunk.text.len()).sum();
-        let next = cursor + delivered;
-        Ok(OutputPage {
-            chunks,
-            next: (next < record.bytes()).then_some(next),
-            truncated: record.truncated,
-        })
     }
 
     pub(crate) fn remove_scope(&self, scope: &OutputScope) {

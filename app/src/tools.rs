@@ -9,6 +9,9 @@ use crate::execution::{
 use crate::sandbox::{GuestExec, GuestSandbox};
 use crate::sessions::Job;
 
+mod edit;
+pub(crate) mod read;
+
 pub(crate) const MAXIMUM_TOOL_BYTES: usize = 64 * 1024;
 pub(crate) const MAXIMUM_WRITE_BYTES: usize = 256 * 1024;
 pub(crate) const MAXIMUM_COMMAND_BYTES: usize = 32_768;
@@ -24,9 +27,14 @@ impl ToolId {
     fn description_for(self, location: ToolLocation) -> &'static str {
         match (self, location) {
             (Self::List, _) => "List files in a granted directory.",
-            (Self::Read, _) => "Read a file inside a granted directory.",
+            (Self::Read, _) => {
+                "Read a file inside a granted directory, up to the 8 MiB scan limit. Offset is a 1-based line. Returns the next offset when more content remains."
+            }
+            (Self::Edit, _) => {
+                "Apply exact-match replacements to one existing file inside a writable granted directory. Each search must occur once. Replacements use the original file, not earlier edits."
+            }
             (Self::Write, _) => {
-                "Write a file inside a writable granted directory. Creates parent directories."
+                "Write a file inside a writable granted directory. Creates parent directories. Use this for new files or complete replacements."
             }
             (Self::Run, ToolLocation::Host) => {
                 "Run a shell command on this computer after the user approves the exact command. Starts in the selected work location. Approval does not inspect script internals."
@@ -39,7 +47,7 @@ impl ToolId {
 
     fn parameters(self, location: ToolLocation) -> serde_json::Value {
         match self {
-            Self::List | Self::Read => serde_json::json!({
+            Self::List => serde_json::json!({
                 "type": "object",
                 "properties": {
                     "path": {
@@ -47,6 +55,59 @@ impl ToolId {
                         "description": "Path inside a granted guest directory. Defaults to the first authorised directory or /workspace."
                     }
                 },
+                "additionalProperties": false
+            }),
+            Self::Read => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path inside a granted guest directory. Defaults to the first authorised directory or /workspace."
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "1-based line to start from. Omit to start at the first line."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": read::MAXIMUM_PAGE_LINES,
+                        "description": "Maximum number of lines to return."
+                    }
+                },
+                "additionalProperties": false
+            }),
+            Self::Edit => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path of an existing file inside a writable granted guest directory."
+                    },
+                    "edits": {
+                        "type": "array",
+                        "description": "Exact-match replacements against the original file.",
+                        "minItems": 1,
+                        "maxItems": edit::MAXIMUM_EDIT_COUNT,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "search": {
+                                    "type": "string",
+                                    "description": "Non-empty text that must occur exactly once."
+                                },
+                                "replace": {
+                                    "type": "string",
+                                    "description": "Replacement text."
+                                }
+                            },
+                            "required": ["search", "replace"],
+                            "additionalProperties": false
+                        }
+                    }
+                },
+                "required": ["path", "edits"],
                 "additionalProperties": false
             }),
             Self::Write => serde_json::json!({
@@ -110,7 +171,7 @@ pub(crate) const READ_OUTPUT: &str = "read_output";
 pub(crate) fn read_output_definition() -> ToolDefinition {
     ToolDefinition {
         name: READ_OUTPUT.to_owned(),
-        description: "Read a later page of a retained command result. Use the reference shown with a command result. The cursor continues from the previous page.".to_owned(),
+        description: "Read a later page of a retained command result. Use the reference shown with a command result. Offset is a 1-based line. Returns the next offset when more content remains.".to_owned(),
         parameters: serde_json::json!({
             "type": "object",
             "properties": {
@@ -118,10 +179,16 @@ pub(crate) fn read_output_definition() -> ToolDefinition {
                     "type": "string",
                     "description": "The reference shown with a retained command result."
                 },
-                "cursor": {
+                "offset": {
                     "type": "integer",
-                    "minimum": 0,
-                    "description": "Byte position from the previous page. Omit for the first page."
+                    "minimum": 1,
+                    "description": "1-based line to start from. Omit to start at the first line."
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": read::MAXIMUM_PAGE_LINES,
+                    "description": "Maximum number of lines to return."
                 }
             },
             "required": ["reference"],
@@ -428,20 +495,13 @@ fn read_output(context: &AgentToolContext<'_>, arguments: &serde_json::Value) ->
             ToolFailureKind::Ordinary,
         );
     }
-    let cursor = match arguments.get("cursor") {
-        None | Some(serde_json::Value::Null) => 0,
-        Some(value) => match value.as_u64() {
-            Some(value) => value as usize,
-            None => {
-                return plain_failure(
-                    READ_OUTPUT,
-                    "That output cursor is not valid.",
-                    ToolFailureKind::Ordinary,
-                );
-            }
-        },
+    let request = match page_request(arguments) {
+        Ok(request) => request,
+        Err(message) => {
+            return plain_failure(READ_OUTPUT, message, ToolFailureKind::Ordinary);
+        }
     };
-    match outputs.page(reference, &scope, cursor) {
+    match outputs.page(reference, &scope, request) {
         Ok(page) => {
             let mut output = String::new();
             for chunk in &page.chunks {
@@ -457,8 +517,11 @@ fn read_output(context: &AgentToolContext<'_>, arguments: &serde_json::Value) ->
                     output.push('\n');
                 }
                 output.push_str(&format!(
-                    "More output remains. Read again with cursor={next}."
+                    "More output remains. Read again with offset={next}."
                 ));
+            }
+            if page.line_truncated {
+                output.push_str("\nThe last included line exceeded the byte limit.");
             }
             if page.truncated {
                 if !output.is_empty() && !output.ends_with('\n') {
@@ -572,38 +635,8 @@ async fn dispatch(
             )?;
             Ok(ToolRun::plain(format!("list `{path}`"), output))
         }
-        ToolId::Read => {
-            let args: PathArgs = parse_args(arguments).map_err(ToolFailure::Ordinary)?;
-            let (path, _) = context
-                .policy
-                .resolve(&args.path)
-                .map_err(ToolFailure::Authority)?;
-            if path == context.policy.primary_guest()
-                || context
-                    .policy
-                    .grants()
-                    .iter()
-                    .any(|grant| grant.guest_path == path)
-            {
-                return Err(ToolFailure::Ordinary("Choose a file to read."));
-            }
-            let maximum = MAXIMUM_TOOL_BYTES.to_string();
-            let output = plain_capture(
-                format!("read `{path}`"),
-                capture(
-                    context,
-                    call_id,
-                    confined_existing_command(
-                        &path,
-                        &context.policy.guest_roots(),
-                        "head",
-                        &["-c", &maximum],
-                    ),
-                )
-                .await,
-            )?;
-            Ok(ToolRun::plain(format!("read `{path}`"), output))
-        }
+        ToolId::Read => read_file(context, call_id, arguments).await,
+        ToolId::Edit => edit_file(context, call_id, arguments).await,
         ToolId::Write => {
             let args: WriteArgs = parse_args(arguments).map_err(ToolFailure::Ordinary)?;
             let (path, access) = context
@@ -999,6 +1032,20 @@ struct PathArgs {
 }
 
 #[derive(Deserialize)]
+struct ReadArgs {
+    #[serde(default)]
+    path: String,
+    offset: Option<u64>,
+    limit: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct EditArgs {
+    path: String,
+    edits: Vec<edit::Change>,
+}
+
+#[derive(Deserialize)]
 struct WriteArgs {
     path: String,
     contents: String,
@@ -1015,6 +1062,148 @@ fn parse_args<T: for<'de> Deserialize<'de>>(
     arguments: &serde_json::Value,
 ) -> Result<T, &'static str> {
     serde_json::from_value(arguments.clone()).map_err(|_| "Those tool arguments are not valid.")
+}
+
+fn page_request(arguments: &serde_json::Value) -> Result<read::PageRequest, &'static str> {
+    let offset = match arguments.get("offset") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(value) => Some(
+            value
+                .as_u64()
+                .ok_or("Read offset must be a 1-based line number.")?,
+        ),
+    };
+    let limit = match arguments.get("limit") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(value) => Some(
+            value
+                .as_u64()
+                .ok_or("Read limit must be a positive line count.")?,
+        ),
+    };
+    read::parse_request(offset, limit).map_err(read::PageError::message)
+}
+
+fn existing_file_path(context: &AgentToolContext<'_>, raw: &str) -> Result<String, ToolFailure> {
+    let (path, _) = context
+        .policy
+        .resolve(raw)
+        .map_err(ToolFailure::Authority)?;
+    reject_grant_root(context, &path, "Choose a file to read.")?;
+    Ok(path)
+}
+
+fn reject_grant_root(
+    context: &AgentToolContext<'_>,
+    path: &str,
+    message: &'static str,
+) -> Result<(), ToolFailure> {
+    if path == context.policy.primary_guest()
+        || context
+            .policy
+            .grants()
+            .iter()
+            .any(|grant| grant.guest_path == path)
+    {
+        return Err(ToolFailure::Ordinary(message));
+    }
+    Ok(())
+}
+
+async fn read_file(
+    context: &AgentToolContext<'_>,
+    call_id: &str,
+    arguments: &serde_json::Value,
+) -> Result<ToolRun, ToolFailure> {
+    let args: ReadArgs = parse_args(arguments).map_err(ToolFailure::Ordinary)?;
+    let request = read::parse_request(args.offset, args.limit)
+        .map_err(|error| ToolFailure::Ordinary(error.message()))?;
+    let path = existing_file_path(context, &args.path)?;
+    let bytes = capture_stdout_bytes(
+        context,
+        call_id,
+        confined_read_command(
+            &path,
+            &context.policy.guest_roots(),
+            read::MAXIMUM_SCAN_BYTES + 1,
+        ),
+    )
+    .await?;
+    if bytes.len() > read::MAXIMUM_SCAN_BYTES {
+        return Err(ToolFailure::Ordinary(
+            "That file exceeds the read scan limit.",
+        ));
+    }
+    let text = read::decode_text(&bytes).map_err(|error| ToolFailure::Ordinary(error.message()))?;
+    let page =
+        read::page_text(text, request).map_err(|error| ToolFailure::Ordinary(error.message()))?;
+    Ok(ToolRun::plain(
+        format!("read `{path}`"),
+        read::render_file_page(&page),
+    ))
+}
+
+async fn edit_file(
+    context: &AgentToolContext<'_>,
+    call_id: &str,
+    arguments: &serde_json::Value,
+) -> Result<ToolRun, ToolFailure> {
+    let args: EditArgs = parse_args(arguments).map_err(ToolFailure::Ordinary)?;
+    let (path, access) = context
+        .policy
+        .resolve(&args.path)
+        .map_err(ToolFailure::Authority)?;
+    if !access.is_writable() {
+        return Err(ToolFailure::Authority("That path is read-only."));
+    }
+    reject_grant_root(context, &path, "Choose a file to edit.")?;
+    let original_bytes = capture_stdout_bytes(
+        context,
+        call_id,
+        confined_read_command(
+            &path,
+            &context.policy.guest_roots(),
+            MAXIMUM_WRITE_BYTES.saturating_add(1),
+        ),
+    )
+    .await?;
+    if original_bytes.len() > MAXIMUM_WRITE_BYTES {
+        return Err(ToolFailure::Ordinary("That file is too large to edit."));
+    }
+    let original = read::decode_text(&original_bytes)
+        .map_err(|error| ToolFailure::Ordinary(error.message()))?;
+    let next = edit::apply(original, &args.edits)
+        .map_err(|error| ToolFailure::Ordinary(error.message()))?;
+    let output = plain_capture(
+        format!("edit `{path}`"),
+        capture(
+            context,
+            call_id,
+            confined_edit_command(&path, &context.policy.writable_roots())
+                .with_stdin(edit_payload(&original_bytes, next.as_bytes())),
+        )
+        .await,
+    )?;
+    let body = if output.trim().is_empty() {
+        "Updated the file.".to_owned()
+    } else {
+        output
+    };
+    Ok(ToolRun::plain(format!("edit `{path}`"), body))
+}
+
+fn edit_payload(original: &[u8], next: &[u8]) -> Vec<u8> {
+    let mut payload = format!(
+        "{}
+{}
+",
+        original.len(),
+        next.len()
+    )
+    .into_bytes();
+    payload.extend_from_slice(original);
+    payload.extend_from_slice(next);
+    payload
 }
 
 const CONFINED_EXISTING_SCRIPT: &str = r#"
@@ -1053,6 +1242,47 @@ fn confined_existing_command(
     ];
     command_args.extend(args.iter().map(|arg| (*arg).to_owned()));
     GuestExec::command("sh", command_args)
+}
+
+const CONFINED_READ_SCRIPT: &str = r#"
+roots=$1
+resolved=$(realpath "$2") || { printf '%s\n' 'That path does not exist.'; exit 1; }
+ok=0
+oldifs=$IFS
+IFS=:
+for root in $roots; do
+    case "$resolved" in
+        "$root"|"$root"/*) ok=1 ;;
+    esac
+done
+IFS=$oldifs
+if [ "$ok" -ne 1 ]; then
+    printf '%s\n' 'Stay inside a granted directory.'
+    exit 4
+fi
+if [ -d "$resolved" ]; then
+    printf '%s\n' 'That path is a directory.'
+    exit 2
+fi
+if [ ! -f "$resolved" ]; then
+    printf '%s\n' 'That path is not a file.'
+    exit 3
+fi
+head -c "$3" -- "$resolved"
+"#;
+
+fn confined_read_command(path: &str, roots: &[String], scan: usize) -> GuestExec {
+    GuestExec::command(
+        "sh",
+        vec![
+            "-c".to_owned(),
+            CONFINED_READ_SCRIPT.to_owned(),
+            "project-read".to_owned(),
+            encode_roots(roots),
+            path.to_owned(),
+            scan.to_string(),
+        ],
+    )
 }
 
 const CONFINED_WRITE_SCRIPT: &str = r#"
@@ -1123,6 +1353,71 @@ fn confined_write_command(path: &str, roots: &[String]) -> GuestExec {
             "-c".to_owned(),
             CONFINED_WRITE_SCRIPT.to_owned(),
             "project-write".to_owned(),
+            encode_roots(roots),
+            path.to_owned(),
+        ],
+    )
+}
+
+const CONFINED_EDIT_SCRIPT: &str = r#"
+roots=$1
+resolved=$(realpath "$2") || { printf '%s\n' 'That path does not exist.'; exit 1; }
+ok=0
+oldifs=$IFS
+IFS=:
+for root in $roots; do
+    case "$resolved" in
+        "$root"|"$root"/*) ok=1 ;;
+    esac
+done
+IFS=$oldifs
+if [ "$ok" -ne 1 ]; then
+    printf '%s\n' 'Stay inside a granted directory.'
+    exit 4
+fi
+if [ -d "$resolved" ]; then
+    printf '%s\n' 'That path is a directory.'
+    exit 2
+fi
+if [ ! -f "$resolved" ]; then
+    printf '%s\n' 'That path is not a file.'
+    exit 3
+fi
+IFS= read -r original_bytes || exit 1
+IFS= read -r new_bytes || exit 1
+case $original_bytes in
+    ''|*[!0-9]*) printf '%s\n' 'Those tool arguments are not valid.'; exit 1 ;;
+esac
+case $new_bytes in
+    ''|*[!0-9]*) printf '%s\n' 'Those tool arguments are not valid.'; exit 1 ;;
+esac
+dir=${resolved%/*}
+cd -P -- "$dir" || exit 1
+[ "$(pwd -P)" = "$dir" ] || exit 4
+target=./${resolved##*/}
+[ ! -L "$target" ] || exit 4
+umask 077
+tmp=$(mktemp -d .pp-edit.XXXXXXXXXX) || exit 1
+orig=$tmp/original
+next=$tmp/next
+trap 'rm -f -- "$orig" "$next"; rmdir -- "$tmp"' EXIT
+dd of="$orig" bs=1 count="$original_bytes" 2>/dev/null || exit 1
+[ "$(wc -c < "$orig")" -eq "$original_bytes" ] || exit 1
+cp -p -- "$target" "$next" || exit 1
+dd of="$next" bs=1 count="$new_bytes" 2>/dev/null || exit 1
+[ "$(wc -c < "$next")" -eq "$new_bytes" ] || exit 1
+[ ! -L "$target" ] || exit 4
+cmp -s -- "$orig" "$target" || { printf '%s\n' 'The file changed since it was read.'; exit 5; }
+mv -fT -- "$next" "$target"
+"#;
+
+fn confined_edit_command(path: &str, roots: &[String]) -> GuestExec {
+    GuestExec::command(
+        "sh",
+        vec![
+            "-c".to_owned(),
+            CONFINED_EDIT_SCRIPT.to_owned(),
+            "project-edit".to_owned(),
             encode_roots(roots),
             path.to_owned(),
         ],
@@ -1230,6 +1525,89 @@ async fn capture(
         None => CommandTermination::Unknown,
     };
     Ok(capture.into_result(termination))
+}
+
+async fn capture_stdout_bytes(
+    context: &AgentToolContext<'_>,
+    call_id: &str,
+    request: GuestExec,
+) -> Result<Vec<u8>, ToolFailure> {
+    let Some(sandbox) = context.sandbox else {
+        return Err(ToolFailure::Ordinary("That tool is not available."));
+    };
+    let _ = call_id;
+    let mut session = match sandbox.exec_cmd(request).await {
+        Ok(session) => session,
+        Err(error) => {
+            return Err(ToolFailure::Ordinary(error.message()));
+        }
+    };
+    let deadline = tokio::time::Instant::now() + SANDBOX_COMMAND_TIMEOUT;
+    let mut stdout = Vec::new();
+    let mut exit = None;
+    loop {
+        let event = tokio::select! {
+            biased;
+            _ = context.job.cancelled() => {
+                session.kill().await;
+                session.close().await;
+                return Err(ToolFailure::Cancellation);
+            }
+            _ = tokio::time::sleep_until(deadline) => {
+                session.kill().await;
+                session.close().await;
+                return Err(ToolFailure::Ordinary("The command exceeded the time limit."));
+            }
+            event = session.recv() => event,
+        };
+        let Some(event) = event else {
+            break;
+        };
+        match event {
+            crate::sandbox::CommandEvent::Output {
+                stream: crate::execution::CommandStream::Stdout,
+                bytes,
+            } => {
+                let cap = read::MAXIMUM_SCAN_BYTES
+                    .max(MAXIMUM_WRITE_BYTES)
+                    .saturating_add(1);
+                if stdout.len().saturating_add(bytes.len()) > cap {
+                    session.kill().await;
+                    session.close().await;
+                    return Err(ToolFailure::Ordinary("That read exceeded the size limit."));
+                }
+                stdout.extend_from_slice(&bytes);
+            }
+            crate::sandbox::CommandEvent::Output { .. } => {}
+            crate::sandbox::CommandEvent::Exited(code) => {
+                exit = Some(code);
+                break;
+            }
+            crate::sandbox::CommandEvent::Failed => {
+                session.kill().await;
+                session.close().await;
+                return Err(ToolFailure::Ordinary(
+                    "Power Plant could not run the command. Try again.",
+                ));
+            }
+        }
+    }
+    if exit.is_none() {
+        session.kill().await;
+    }
+    session.close().await;
+    match exit {
+        Some(0) => Ok(stdout),
+        Some(2) => Err(ToolFailure::Ordinary("That path is a directory.")),
+        Some(3) => Err(ToolFailure::Ordinary("That path is not a file.")),
+        Some(4) => Err(ToolFailure::Authority("Stay inside a granted directory.")),
+        Some(5) => Err(ToolFailure::Ordinary("The file changed since it was read.")),
+        Some(1) => Err(ToolFailure::Ordinary("That path does not exist.")),
+        Some(_) => Err(ToolFailure::Ordinary("The file tool command failed.")),
+        None => Err(ToolFailure::Ordinary(
+            "Power Plant could not run the command. Try again.",
+        )),
+    }
 }
 
 fn command_not_dispatched(message: &'static str) -> CommandFailure {

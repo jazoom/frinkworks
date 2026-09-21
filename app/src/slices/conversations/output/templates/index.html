@@ -28,6 +28,12 @@
     {% endfor %}
   {% endif %}
 
+  {% if line_truncated %}
+    <p class="text-warning text-sm" role="status">
+      The last included line exceeded the byte limit.
+    </p>
+  {% endif %}
+
   {% if truncated %}
     <p class="text-warning text-sm" role="status">
       The retained output reached its storage limit. Later output is not
@@ -35,13 +41,13 @@
     </p>
   {% endif %}
 
-  {% if let Some(cursor) = next_cursor %}
+  {% if let Some(offset) = next_offset %}
     <a
       class="btn btn-outline btn-sm self-start"
       href="{{ next_href }}"
       data-graft
     >
-      Next page from cursor {{ cursor }}
+      Next page from line {{ offset }}
     </a>
   {% endif %}
 </div>

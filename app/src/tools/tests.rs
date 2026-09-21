@@ -60,7 +60,18 @@ fn definitions_and_dispatch_use_the_same_selected_tool_set() {
         vec![ToolId::Run]
     );
     assert_eq!(
+        advertised(
+            &[ToolId::Read, ToolId::Edit, ToolId::Run],
+            ToolLocation::Host
+        ),
+        vec![ToolId::Run]
+    );
+    assert_eq!(
         authorised_tool(&[ToolId::List, ToolId::Run], "list", ToolLocation::Host),
+        None
+    );
+    assert_eq!(
+        authorised_tool(&[ToolId::Edit, ToolId::Run], "edit", ToolLocation::Host),
         None
     );
 }
@@ -257,6 +268,51 @@ async fn recoverable_read_error_is_ordinary() {
     assert_eq!(trace.failure, Some(ToolFailureKind::Ordinary));
     assert_eq!(trace.output, "Choose a file to read.");
     assert!(trace.command.is_none());
+}
+
+#[tokio::test]
+async fn read_offset_zero_is_ordinary() {
+    let policy = policy();
+    let job = tool_job();
+    let tools = [ToolId::Read];
+    let context = sandbox_context(&policy, &job, &tools);
+    let trace = super::invoke(
+        &context,
+        "call-1",
+        "read",
+        &serde_json::json!({"path": "src/main.rs", "offset": 0}),
+    )
+    .await;
+    assert_eq!(trace.failure, Some(ToolFailureKind::Ordinary));
+    assert_eq!(trace.output, "Read offset must be a 1-based line number.");
+}
+
+#[tokio::test]
+async fn edit_escape_and_read_only_are_authority_failures() {
+    let policy = policy();
+    let job = tool_job();
+    let tools = [ToolId::Edit];
+    let context = sandbox_context(&policy, &job, &tools);
+    let escape = super::invoke(
+        &context,
+        "call-1",
+        "edit",
+        &serde_json::json!({"path": "..", "edits": [{"search": "a", "replace": "b"}]}),
+    )
+    .await;
+    assert_eq!(escape.failure, Some(ToolFailureKind::Authority));
+    let read_only = super::invoke(
+        &context,
+        "call-1",
+        "edit",
+        &serde_json::json!({
+            "path": "/access/docs/readme",
+            "edits": [{"search": "a", "replace": "b"}]
+        }),
+    )
+    .await;
+    assert_eq!(read_only.failure, Some(ToolFailureKind::Authority));
+    assert!(read_only.command.is_none());
 }
 
 #[tokio::test]

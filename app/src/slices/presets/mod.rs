@@ -41,6 +41,7 @@ struct PresetForm {
     instructions: String,
     tool_list: String,
     tool_read: String,
+    tool_edit: String,
     tool_write: String,
     tool_run: String,
     location: String,
@@ -69,6 +70,7 @@ impl PresetForm {
         Self {
             tool_list: selected(ToolId::List),
             tool_read: selected(ToolId::Read),
+            tool_edit: selected(ToolId::Edit),
             tool_write: selected(ToolId::Write),
             tool_run: selected(ToolId::Run),
             ..Self::default()
@@ -86,6 +88,7 @@ impl PresetForm {
             &self.instructions,
             &self.tool_list,
             &self.tool_read,
+            &self.tool_edit,
             &self.tool_write,
             &self.tool_run,
             &self.location,
@@ -106,6 +109,7 @@ impl PresetForm {
         [
             &self.tool_list,
             &self.tool_read,
+            &self.tool_edit,
             &self.tool_write,
             &self.tool_run,
         ]
@@ -466,6 +470,7 @@ impl From<&PresetRecord> for PresetForm {
             instructions: s.instructions.clone(),
             tool_list: tool(ToolId::List),
             tool_read: tool(ToolId::Read),
+            tool_edit: tool(ToolId::Edit),
             tool_write: tool(ToolId::Write),
             tool_run: tool(ToolId::Run),
             location: s.location.as_str().to_owned(),

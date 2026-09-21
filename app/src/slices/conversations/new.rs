@@ -12,6 +12,7 @@ pub(super) struct NewForm {
     pub(super) instructions: String,
     pub(super) tool_list: String,
     pub(super) tool_read: String,
+    pub(super) tool_edit: String,
     pub(super) tool_write: String,
     pub(super) tool_run: String,
     pub(super) location: String,
@@ -67,6 +68,7 @@ pub(super) async fn show(
         network: "none".to_owned(),
         tool_list: selected(crate::agents::ToolId::List),
         tool_read: selected(crate::agents::ToolId::Read),
+        tool_edit: selected(crate::agents::ToolId::Edit),
         tool_write: selected(crate::agents::ToolId::Write),
         tool_run: selected(crate::agents::ToolId::Run),
         environment: super::default_environment(&state)
@@ -132,6 +134,7 @@ impl NewForm {
             &self.instructions,
             &self.tool_list,
             &self.tool_read,
+            &self.tool_edit,
             &self.tool_write,
             &self.tool_run,
             &self.location,
@@ -154,6 +157,7 @@ impl NewForm {
         [
             &self.tool_list,
             &self.tool_read,
+            &self.tool_edit,
             &self.tool_write,
             &self.tool_run,
         ]

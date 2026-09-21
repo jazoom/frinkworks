@@ -14,9 +14,10 @@ fn output_page_escapes_untrusted_stream_text() {
             stderr: true,
             text: "<script>alert(1)</script>".to_owned(),
         }],
-        next_cursor: Some("10".to_owned()),
-        next_href: "/conversations/abc/output/ref?cursor=10".to_owned(),
+        next_offset: Some("10".to_owned()),
+        next_href: "/conversations/abc/output/ref?offset=10".to_owned(),
         truncated: false,
+        line_truncated: false,
     };
     let html = view.render().expect("output page");
     assert!(!html.contains("<script>"));

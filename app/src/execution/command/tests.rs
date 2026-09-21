@@ -73,7 +73,13 @@ fn partial_output_survives_restart_and_storage_failure_retains_its_reference() {
     let reference = capture.retained.as_ref().unwrap().reference.clone();
     capture.push(CommandStream::Stdout, b"before secret after");
     let reopened = OutputStore::open(path.clone()).unwrap();
-    let page = reopened.page(&reference, &scope, 0).unwrap();
+    let page = reopened
+        .page(
+            &reference,
+            &scope,
+            crate::tools::read::parse_request(None, None).expect("page"),
+        )
+        .unwrap();
     assert_eq!(page.chunks[0].text, "before [redacted] after");
 
     std::fs::rename(&path, directory.path().join("previous")).unwrap();

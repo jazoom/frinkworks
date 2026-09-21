@@ -19,7 +19,7 @@ use super::super::load_conversation;
 #[derive(Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct OutputQuery {
-    cursor: String,
+    offset: String,
 }
 
 #[derive(Template)]
@@ -30,9 +30,10 @@ pub(super) struct OutputView {
     pub(super) back_href: String,
     pub(super) error: String,
     pub(super) chunks: Vec<OutputChunkView>,
-    pub(super) next_cursor: Option<String>,
+    pub(super) next_offset: Option<String>,
     pub(super) next_href: String,
     pub(super) truncated: bool,
+    pub(super) line_truncated: bool,
 }
 
 pub(super) struct OutputChunkView {
@@ -61,27 +62,33 @@ pub(crate) async fn show(
             "That command output reference is not valid.",
         );
     }
-    let cursor = match query.cursor.trim() {
-        "" => 0,
-        value => match value.parse::<usize>() {
-            Ok(cursor) => cursor,
+    let request = match query.offset.trim() {
+        "" => crate::tools::read::parse_request(None, None),
+        value => match value.parse::<u64>() {
+            Ok(offset) => crate::tools::read::parse_request(Some(offset), None),
             Err(_) => {
                 return render_output(
                     &state,
                     &record,
                     reference,
-                    "That output cursor is not valid.",
+                    "That output offset is not valid.",
                 );
             }
         },
     };
+    let request = match request {
+        Ok(request) => request,
+        Err(error) => {
+            return render_output(&state, &record, reference, error.message());
+        }
+    };
     let scope = OutputScope::conversation(record.id);
-    match state.outputs.page(reference, &scope, cursor) {
+    match state.outputs.page(reference, &scope, request) {
         Ok(page) => {
             let base = format!("/conversations/{}/output/{reference}", record.id.as_hex());
             let next_href = page
                 .next
-                .map(|next| format!("{base}?cursor={next}"))
+                .map(|next| format!("{base}?offset={next}"))
                 .unwrap_or_default();
             let view = OutputView {
                 heading: format!("Command output · {}", record.title),
@@ -97,9 +104,10 @@ pub(crate) async fn show(
                         text: chunk.text.clone(),
                     })
                     .collect(),
-                next_cursor: page.next.map(|next| next.to_string()),
+                next_offset: page.next.map(|next| next.to_string()),
                 next_href,
                 truncated: page.truncated,
+                line_truncated: page.line_truncated,
             };
             render_output_view(&state, view)
         }
@@ -121,9 +129,10 @@ fn render_output(
             back_href: format!("/conversations/{}", record.id.as_hex()),
             error: message.to_owned(),
             chunks: Vec::new(),
-            next_cursor: None,
+            next_offset: None,
             next_href: String::new(),
             truncated: false,
+            line_truncated: false,
         },
     )
 }

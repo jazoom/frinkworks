@@ -946,8 +946,14 @@ async fn partial_tool_selection_survives_an_unrelated_setup_save() {
         .unwrap();
     let body = text(response).await;
     assert!(body.contains("data-enable-tools"));
-    assert_eq!(body.matches("data-tool-field").count(), 4);
-    for name in ["tool_list", "tool_read", "tool_write", "tool_run"] {
+    assert_eq!(body.matches("data-tool-field").count(), 5);
+    for name in [
+        "tool_list",
+        "tool_read",
+        "tool_edit",
+        "tool_write",
+        "tool_run",
+    ] {
         let start = body
             .find(&format!("name=\"{name}\""))
             .expect("tool field renders");

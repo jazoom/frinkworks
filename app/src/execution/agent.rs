@@ -654,7 +654,7 @@ pub(crate) async fn run_agent_action(
                 let mut footer = format!("\nCommand outcome: {}.", command.status_text());
                 if let Some(retained) = &command.retained {
                     footer.push_str(&format!(
-                        "\nRetained output reference: {}. Read with read_output, cursor 0. Retained bytes: {}. Storage truncated: {}.",
+                        "\nRetained output reference: {}. Read with read_output, offset 1. Retained bytes: {}. Storage truncated: {}.",
                         retained.reference, retained.bytes, retained.truncated,
                     ));
                 }

@@ -1,5 +1,6 @@
 use super::*;
 use crate::execution::command::{CommandChunk, CommandResult, CommandStream, CommandTermination};
+use crate::tools::read::parse_request;
 
 fn conversation() -> ConversationId {
     ConversationId::generate().expect("conversation")
@@ -23,11 +24,17 @@ fn result(text: &str) -> CommandResult {
     )
 }
 
+fn first_page() -> crate::tools::read::PageRequest {
+    parse_request(None, None).expect("first page")
+}
+
 #[test]
-fn retained_output_round_trips_with_a_bounded_page_and_cursor() {
+fn retained_output_round_trips_with_a_bounded_page_and_offset() {
     let store = OutputStore::ephemeral();
     let conversation = conversation();
-    let text = "a".repeat(OUTPUT_PAGE_BYTES + 10);
+    let text = (1..=20)
+        .map(|line| format!("line-{line}\n"))
+        .collect::<String>();
     let retained = store
         .store(&key(conversation, "call-1"), &result(&text))
         .expect("store");
@@ -35,16 +42,29 @@ fn retained_output_round_trips_with_a_bounded_page_and_cursor() {
     assert!(!retained.truncated);
 
     let scope = OutputScope::conversation(conversation);
-    let first = store.page(&retained.reference, &scope, 0).expect("page");
-    assert_eq!(first.chunks.len(), 1);
-    assert_eq!(first.chunks[0].text.len(), OUTPUT_PAGE_BYTES);
-    assert_eq!(first.next, Some(OUTPUT_PAGE_BYTES));
+    let first = store
+        .page(
+            &retained.reference,
+            &scope,
+            parse_request(Some(1), Some(5)).expect("first"),
+        )
+        .expect("page");
+    assert_eq!(
+        first.chunks[0].text,
+        "line-1\nline-2\nline-3\nline-4\nline-5\n"
+    );
+    assert_eq!(first.next, Some(6));
 
     let second = store
-        .page(&retained.reference, &scope, first.next.unwrap())
+        .page(
+            &retained.reference,
+            &scope,
+            parse_request(first.next, Some(5)).expect("second"),
+        )
         .expect("second page");
-    assert_eq!(second.chunks[0].text.len(), 10);
-    assert_eq!(second.next, None);
+    assert!(second.chunks[0].text.starts_with("line-6\n"));
+    assert!(!second.chunks[0].text.contains("line-1\n"));
+    assert_eq!(second.next, Some(11));
 }
 
 #[test]
@@ -56,11 +76,19 @@ fn another_conversation_cannot_read_output() {
         .expect("store");
     let other = conversation();
     assert_eq!(
-        store.page(&retained.reference, &OutputScope::conversation(other), 0),
+        store.page(
+            &retained.reference,
+            &OutputScope::conversation(other),
+            first_page()
+        ),
         Err(OutputError::Forbidden)
     );
     assert_eq!(
-        store.page(&retained.reference, &OutputScope::conversation(owner), 0),
+        store.page(
+            &retained.reference,
+            &OutputScope::conversation(owner),
+            first_page()
+        ),
         Ok(OutputPage {
             chunks: vec![CommandChunk {
                 stream: CommandStream::Stdout,
@@ -68,32 +96,30 @@ fn another_conversation_cannot_read_output() {
             }],
             next: None,
             truncated: false,
+            line_truncated: false,
         })
     );
 }
 
 #[test]
-fn malformed_cursors_are_rejected() {
+fn malformed_offsets_are_rejected() {
     let store = OutputStore::ephemeral();
     let conversation = conversation();
     let retained = store
-        .store(&key(conversation, "call-1"), &result("data"))
+        .store(&key(conversation, "call-1"), &result("data\n"))
         .expect("store");
     let scope = OutputScope::conversation(conversation);
     assert_eq!(
-        store.page(&retained.reference, &scope, 9999),
+        store.page(
+            &retained.reference,
+            &scope,
+            parse_request(Some(9), None).expect("past end")
+        ),
         Err(OutputError::Cursor)
     );
     assert_eq!(
-        store.page("not-a-reference", &scope, 0),
+        store.page("not-a-reference", &scope, first_page()),
         Err(OutputError::Missing)
-    );
-    let unicode = store
-        .store(&key(conversation, "unicode"), &result("é"))
-        .expect("store");
-    assert_eq!(
-        store.page(&unicode.reference, &scope, 1),
-        Err(OutputError::Cursor)
     );
 }
 
@@ -122,7 +148,7 @@ fn redaction_happens_before_storage() {
         .page(
             &retained.reference,
             &OutputScope::conversation(conversation),
-            0,
+            first_page(),
         )
         .expect("page");
     let text: String = page
@@ -135,33 +161,42 @@ fn redaction_happens_before_storage() {
 }
 
 #[test]
-fn pages_preserve_unicode_and_stream_order_at_the_byte_bound() {
+fn pages_preserve_unicode_and_stream_order() {
     let store = OutputStore::ephemeral();
     let owner = conversation();
     let command = CommandResult::new(
         vec![
             CommandChunk {
                 stream: CommandStream::Stdout,
-                text: format!("{}é", "a".repeat(OUTPUT_PAGE_BYTES - 1)),
+                text: format!("é\n{}\n", "a".repeat(40)),
             },
             CommandChunk {
                 stream: CommandStream::Stderr,
-                text: "diagnostic".to_owned(),
+                text: "diagnostic\n".to_owned(),
             },
         ],
         CommandTermination::ResourceLimit,
     );
     let retained = store.store(&key(owner, "call"), &command).expect("store");
-    assert!(retained.truncated);
     let scope = OutputScope::conversation(owner);
-    let first = store.page(&retained.reference, &scope, 0).expect("first");
-    assert_eq!(first.next, Some(OUTPUT_PAGE_BYTES - 1));
-    assert_eq!(first.chunks.len(), 1);
+    let first = store
+        .page(
+            &retained.reference,
+            &scope,
+            parse_request(Some(1), Some(1)).expect("first"),
+        )
+        .expect("first");
+    assert_eq!(first.next, Some(2));
+    assert_eq!(first.chunks[0].text, "é\n");
     let second = store
-        .page(&retained.reference, &scope, first.next.unwrap())
+        .page(
+            &retained.reference,
+            &scope,
+            parse_request(first.next, Some(2)).expect("second"),
+        )
         .expect("second");
-    assert_eq!(second.chunks[0].text, "é");
-    assert_eq!(second.chunks[1], command.chunks[1]);
+    assert_eq!(second.chunks[0].text, format!("{}\n", "a".repeat(40)));
+    assert_eq!(second.chunks[1].text, "diagnostic\n");
     assert_eq!(second.next, None);
 }
 
