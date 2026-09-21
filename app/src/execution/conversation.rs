@@ -13,7 +13,7 @@ use crate::{
     sandbox::{GuestSandbox, MountSpec, SandboxSpec, TransientGuestRecovery},
     sessions::{Job, JobStatus, SessionId},
     state::AppState,
-    workflows::{AttemptId, ExecutionGuard, RunId, workspace::WorkspaceRecovery},
+    workflows::{AttemptId, ExecutionGuard, RunId, WorkflowJob, workspace::WorkspaceRecovery},
 };
 
 use super::{
@@ -31,6 +31,7 @@ const MAXIMUM_RUNTIME_RECORD_BYTES: usize = 4096;
 pub(crate) enum OrdinaryKind {
     Host,
     Sandbox,
+    FileChange,
 }
 
 pub(crate) fn ordinary_kind(settings: &ExecutionSettings) -> Option<OrdinaryKind> {
@@ -39,6 +40,7 @@ pub(crate) fn ordinary_kind(settings: &ExecutionSettings) -> Option<OrdinaryKind
     }
     match settings.location {
         ToolLocation::Host if settings.directories.is_empty() => Some(OrdinaryKind::Host),
+        ToolLocation::Host => Some(OrdinaryKind::FileChange),
         ToolLocation::Sandbox
             if settings
                 .directories
@@ -47,7 +49,7 @@ pub(crate) fn ordinary_kind(settings: &ExecutionSettings) -> Option<OrdinaryKind
         {
             Some(OrdinaryKind::Sandbox)
         }
-        ToolLocation::Host | ToolLocation::Sandbox => None,
+        ToolLocation::Sandbox => Some(OrdinaryKind::FileChange),
     }
 }
 
@@ -179,6 +181,11 @@ impl ConversationRuntime {
     }
 }
 
+pub(crate) struct FileChangeWork {
+    pub(crate) run_id: RunId,
+    pub(crate) project_free: ProjectFreeAuthority,
+}
+
 pub(crate) struct OrdinaryRun {
     pub(crate) session: SessionId,
     pub(crate) record: ConversationRecord,
@@ -187,9 +194,14 @@ pub(crate) struct OrdinaryRun {
     pub(crate) execution: ExecutionGuard,
     pub(crate) kind: OrdinaryKind,
     pub(crate) turns: Vec<ChatTurn>,
+    pub(crate) file: Option<FileChangeWork>,
 }
 
 pub(crate) async fn run(state: AppState, work: OrdinaryRun) {
+    if work.kind == OrdinaryKind::FileChange {
+        run_file_change(state, work).await;
+        return;
+    }
     let conversation = work.record.id;
     let secret = match work.connection.auth {
         crate::providers::AuthMethod::ApiKey => Some(work.connection.api_key.expose().to_owned()),
@@ -244,6 +256,69 @@ pub(crate) async fn run(state: AppState, work: OrdinaryRun) {
         secret,
         cleanup_failed,
     );
+}
+
+async fn run_file_change(state: AppState, mut work: OrdinaryRun) {
+    let Some(file) = work.file.take() else {
+        settle(
+            &state,
+            work,
+            AssistantReply::default(),
+            AgentOutcome::PersistenceFailure,
+            Some(persist_error().to_owned()),
+            None,
+            false,
+        );
+        return;
+    };
+    let Some(run) = state.workflow_runs.get(&file.run_id) else {
+        settle(
+            &state,
+            work,
+            AssistantReply::default(),
+            AgentOutcome::PersistenceFailure,
+            Some(persist_error().to_owned()),
+            None,
+            false,
+        );
+        return;
+    };
+    if run.conversation_id != Some(work.record.id) {
+        settle(
+            &state,
+            work,
+            AssistantReply::default(),
+            AgentOutcome::AuthorityFailure,
+            Some(
+                "The prepared changes belong to another conversation or need recovery.".to_owned(),
+            ),
+            None,
+            false,
+        );
+        return;
+    }
+    let host_policy = file.project_free.policy.clone();
+    let job = WorkflowJob {
+        run_id: file.run_id,
+        session_id: work.session,
+        agent_id: run.agent_id,
+        agent_revision: work.record.revision,
+        conversation_id: Some(work.record.id),
+        authority: None,
+        project_free_authority: Some(file.project_free),
+        grant_alias: String::new(),
+        connection: work.connection.clone(),
+        phase_providers: run
+            .model_phases()
+            .map(|phase| phase.selection.provider)
+            .collect(),
+        active_connection: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        host_policy,
+        turns: work.turns.clone(),
+        job: work.job.clone(),
+        eligible_reply: std::sync::Arc::new(std::sync::Mutex::new(String::new())),
+    };
+    crate::workflows::drive_ordinary_file_run(state, job, work.execution).await;
 }
 
 struct Prepared {
@@ -304,6 +379,12 @@ async fn prepare(
                 }),
                 ToolLocation::Sandbox,
             )
+        }
+        OrdinaryKind::FileChange => {
+            return Err(prepare_failure(
+                AgentOutcome::PersistenceFailure,
+                persist_error(),
+            ));
         }
     };
     if let Some(language) = state.sessions.language(&work.session) {

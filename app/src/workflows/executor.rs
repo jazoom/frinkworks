@@ -322,7 +322,25 @@ fn interrupt_continuations(state: &AppState, jobs: Vec<WorkflowJob>) -> Result<(
     Ok(())
 }
 
+pub(crate) async fn drive_ordinary_file_run(
+    state: AppState,
+    job: WorkflowJob,
+    execution: ExecutionGuard,
+) {
+    drive_attempts(state, job, None, execution).await;
+}
+
 pub(crate) async fn execute_run(
+    state: AppState,
+    job: WorkflowJob,
+    agent_lease: Option<LeaseGuard>,
+    execution_lease: ExecutionGuard,
+) {
+    drive_attempts(state, job, agent_lease, execution_lease).await;
+}
+
+// Both callers retain the same file journals, gate transitions and cleanup leases.
+async fn drive_attempts(
     state: AppState,
     mut job: WorkflowJob,
     _agent_lease: Option<LeaseGuard>,
@@ -1089,7 +1107,11 @@ async fn isolate_and_run(
                 captured: None,
             };
         };
-        let outcome = run_agent_step(state, job, action, None, drafts.clone()).await;
+        let outcome = if ordinary_file_agent(state, job) {
+            run_ordinary_file_agent(state, job, None).await
+        } else {
+            run_agent_step(state, job, action, None, drafts.clone()).await
+        };
         return IsolatedRun::Finished {
             outcome,
             cleanup: crate::workflows::run::AttemptCleanupRecord::Complete,
@@ -1293,7 +1315,11 @@ async fn isolate_and_run(
             captured: None,
         };
     }
-    let outcome = dispatch_step(state, job, step, &sandbox, drafts.clone()).await;
+    let outcome = if ordinary_file_agent(state, job) {
+        run_ordinary_file_agent(state, job, Some(&sandbox)).await
+    } else {
+        dispatch_step(state, job, step, &sandbox, drafts.clone()).await
+    };
     let stopped = sandbox.stop().await.is_ok();
     let captured = if stopped && !private_workspace {
         capture_isolated_candidate(
@@ -2101,6 +2127,290 @@ fn persist_cleanup(
         .workflow_runs
         .mutate(run_id, |run| run.record_cleanup(attempt_id, cleanup))
         .map(|_| ())
+}
+
+fn ordinary_file_agent(state: &AppState, job: &WorkflowJob) -> bool {
+    state
+        .workflow_runs
+        .get(&job.run_id)
+        .is_some_and(|run| run.kind == crate::workflows::run::RunKind::QuickTask)
+}
+
+fn append_preamble(preamble: &mut String, block: &str) {
+    let block = block.trim();
+    if block.is_empty() {
+        return;
+    }
+    if !preamble.is_empty() {
+        preamble.push_str("\n\n");
+    }
+    preamble.push_str(block);
+}
+
+async fn run_ordinary_file_agent(
+    state: &AppState,
+    job: &WorkflowJob,
+    sandbox: Option<&std::sync::Arc<GuestSandbox>>,
+) -> StepOutcome {
+    if let Err(error) = confirm_run_authority(state, job) {
+        return StepOutcome::Failed {
+            category: FailureCategory::Authority,
+            error: Some(error),
+        };
+    }
+    let Some(run) = state.workflow_runs.get(&job.run_id) else {
+        return StepOutcome::Failed {
+            category: FailureCategory::Operational,
+            error: Some(OPERATIONAL_STORE_ERROR.to_owned()),
+        };
+    };
+    let Some(step_key) = run
+        .active_attempt()
+        .and_then(|attempt| run.attempts.iter().find(|item| item.id == attempt))
+        .map(|attempt| attempt.step.clone())
+    else {
+        return StepOutcome::Failed {
+            category: FailureCategory::Operational,
+            error: Some(OPERATIONAL_STORE_ERROR.to_owned()),
+        };
+    };
+    let Some(step_definition) = run.pinned.definition.step(&step_key).cloned() else {
+        return StepOutcome::Failed {
+            category: FailureCategory::Operational,
+            error: Some(OPERATIONAL_STORE_ERROR.to_owned()),
+        };
+    };
+    let StepAction::Agent(action) = &step_definition.action else {
+        return StepOutcome::Failed {
+            category: FailureCategory::Definition,
+            error: Some("Ordinary file-change work must be a model step.".to_owned()),
+        };
+    };
+    let Some(settings) = run
+        .phase_settings(&step_key)
+        .cloned()
+        .or_else(|| run.directory_settings())
+    else {
+        return StepOutcome::Failed {
+            category: FailureCategory::Authority,
+            error: Some("The pinned execution settings are unavailable.".to_owned()),
+        };
+    };
+    let Some(authority) = job.project_free_authority.as_ref() else {
+        return StepOutcome::Failed {
+            category: FailureCategory::Authority,
+            error: Some(
+                "Ordinary file-change work needs conversation directory authority.".to_owned(),
+            ),
+        };
+    };
+    let pinned = match crate::execution::ProjectFreeAuthority::from_settings(
+        authority.revision,
+        &settings,
+    ) {
+        Ok(pinned) => pinned,
+        Err(_) => {
+            return StepOutcome::Failed {
+                category: FailureCategory::Authority,
+                error: Some("A phase directory changed identity before dispatch.".to_owned()),
+            };
+        }
+    };
+    if pinned != *authority {
+        return StepOutcome::Failed {
+            category: FailureCategory::Authority,
+            error: Some("The pinned directory authority changed before dispatch.".to_owned()),
+        };
+    }
+    let grants = pinned
+        .policy
+        .grants()
+        .iter()
+        .cloned()
+        .map(|mut grant| {
+            if action.candidate_authority == CandidateAuthority::Edit
+                && pinned.reviewed_aliases.contains(&grant.alias)
+            {
+                grant.access = AccessMode::ReadWrite;
+            }
+            grant
+        })
+        .collect();
+    let policy = DirectoryPolicy::from_grants_with_workspace(
+        grants,
+        pinned.policy.primary_alias().to_owned(),
+    );
+    let location = settings.location;
+    let connection = job.active_connection();
+    let secret = match &connection.auth {
+        crate::providers::AuthMethod::ApiKey => Some(connection.api_key.expose()),
+        crate::providers::AuthMethod::Plan => None,
+    };
+    let mut preamble = settings.instructions.trim().to_owned();
+    append_preamble(
+        &mut preamble,
+        &crate::workflows::input_context::authorised_source_text(
+            &settings,
+            step_definition.writes_primary_source(),
+        ),
+    );
+    if location == crate::execution::ToolLocation::Host {
+        let approval = if settings.automatic_host_commands() {
+            "This conversation authorises Run without approval."
+        } else {
+            "Each shell command waits for user approval bound to this conversation, job and settings revision."
+        };
+        append_preamble(
+            &mut preamble,
+            &format!(
+                "Tools run on this computer as the Power Plant process user. {approval} Approval does not inspect script internals. Command output is sent to the hosted model. Sandbox guest paths such as /access/<alias> and /workspace from earlier turns are not host paths and grant no authority."
+            ),
+        );
+    }
+    let project_instructions = match sandbox {
+        Some(sandbox) => {
+            match crate::workflows::input_context::read_directory_instructions(
+                sandbox, &pinned, secret,
+            )
+            .await
+            {
+                Ok(instructions) => instructions,
+                Err(error) => {
+                    return StepOutcome::Failed {
+                        category: FailureCategory::Authority,
+                        error: Some(error.message().to_owned()),
+                    };
+                }
+            }
+        }
+        None => crate::workflows::input_context::ProjectInstructions::Absent,
+    };
+    if let Some(language) = state.sessions.language(&job.session_id) {
+        language.append_instructions(&mut preamble);
+    }
+    let Some(conversation) = job.conversation_id else {
+        return StepOutcome::Failed {
+            category: FailureCategory::Authority,
+            error: Some("Ordinary file-change work needs a conversation.".to_owned()),
+        };
+    };
+    let Some(attempt_id) = run.active_attempt() else {
+        return StepOutcome::Failed {
+            category: FailureCategory::Operational,
+            error: Some(OPERATIONAL_STORE_ERROR.to_owned()),
+        };
+    };
+    let tools = crate::tools::advertised(&settings.tools, location);
+    let definitions = crate::tools::definitions_for(&tools, location);
+    let turns = if run.revision_feedback(&step_key).is_some() {
+        // Revisions use verified candidate feedback, not the original conversation request.
+        let inputs = run
+            .attempts
+            .last()
+            .map(|attempt| attempt.inputs.as_slice())
+            .unwrap_or_default();
+        let packet = match crate::workflows::input_context::build_attempt_packet_for_request(
+            &run,
+            &step_definition,
+            inputs,
+            &state.workflow_artefacts,
+            project_instructions,
+            &[],
+            &preamble,
+            &definitions,
+            state
+                .models_dev
+                .context_limit(connection.kind, &connection.model),
+            secret,
+        ) {
+            Ok(packet) => packet,
+            Err(error) => {
+                return StepOutcome::Failed {
+                    category: FailureCategory::Definition,
+                    error: Some(error.message().to_owned()),
+                };
+            }
+        };
+        if state
+            .workflow_runs
+            .mutate(&run.id, |run| {
+                run.record_initial_context(attempt_id, packet.clone())
+            })
+            .is_err()
+        {
+            return StepOutcome::Failed {
+                category: FailureCategory::Operational,
+                error: Some(OPERATIONAL_STORE_ERROR.to_owned()),
+            };
+        }
+        preamble = packet.prompt.clone();
+        packet.request_messages()
+    } else {
+        if let crate::workflows::input_context::ProjectInstructions::Present(text) =
+            project_instructions
+        {
+            append_preamble(&mut preamble, &text);
+        }
+        job.turns.clone()
+    };
+    let host =
+        (location == crate::execution::ToolLocation::Host).then(|| crate::tools::HostRunSpec {
+            session: job.session_id,
+            conversation,
+            execution_revision: job.agent_revision,
+            directory: crate::execution::command_directory(&settings.directories),
+            settings: settings.clone(),
+            run: Some(job.run_id.as_hex()),
+            step: Some(step_key.as_str().to_owned()),
+            attempt: Some(attempt_id.as_hex()),
+        });
+    let spec = AgentRunSpec {
+        agent_id: None,
+        revision: job.agent_revision,
+        preamble,
+        tools: definitions,
+        tool_ids: tools,
+        policy,
+        connection: connection.clone(),
+        location,
+        sandbox: sandbox.cloned(),
+        host,
+        output_drafts: None,
+        required_outputs: Vec::new(),
+        evidence: None,
+        output_scope: Some(crate::execution::OutputScope::conversation(conversation)),
+        conversation: Some(conversation),
+    };
+    let ended = crate::execution::run_agent_action(state, spec, turns, job.job.clone()).await;
+    if ended.outcome == AgentOutcome::Completed {
+        *job.eligible_reply
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = ended.reply.text.clone();
+    }
+    match ended.outcome {
+        AgentOutcome::Completed => StepOutcome::Completed,
+        AgentOutcome::ProviderFailure => StepOutcome::Failed {
+            category: FailureCategory::Provider,
+            error: ended.error,
+        },
+        AgentOutcome::ToolFailure => StepOutcome::Failed {
+            category: FailureCategory::Tool,
+            error: ended.error,
+        },
+        AgentOutcome::AuthorityFailure => StepOutcome::Failed {
+            category: FailureCategory::Authority,
+            error: ended.error,
+        },
+        AgentOutcome::PersistenceFailure => StepOutcome::Failed {
+            category: FailureCategory::Operational,
+            error: ended.error,
+        },
+        AgentOutcome::UncertainEffect => StepOutcome::Failed {
+            category: FailureCategory::Command,
+            error: ended.error,
+        },
+        AgentOutcome::Cancelled => StepOutcome::Cancelled,
+    }
 }
 
 async fn dispatch_step(

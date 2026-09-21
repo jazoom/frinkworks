@@ -25,11 +25,25 @@ Review before apply isolates proposals. Direct write changes the named directory
 
 ## Live execution
 
-Ordinary messages with tools use directory-backed internal agent execution. The internal execution record does not require workflow selection.
+Ordinary messages share one model lifecycle. Tool-free messages use the chat job. Host tools without named directories and read-only sandbox tools use the ordinary conversation runtime. They do not create a workflow run.
 
-Tool-free messages use the normal chat job. Host tools require explicit host consent and the selected command policy.
+Ordinary file-change work also uses that runtime. Reviewed directories, direct-write directories and directory-backed host tools still own a `WorkflowRun` for baselines, candidates, already-written snapshots, gates and apply journals. That record is not a configured model sequence.
 
-Configured workflows retain their explicit sequences. Directory grants pin directory identities for handoff and recovery.
+The ordinary adapter and configured executor share the file-attempt driver. That driver owns baseline capture, candidate materialisation, final snapshots and cleanup outside the model loop.
+
+Ordinary model requests omit workflow roles and required-output tools. Candidate revisions retain verified decision feedback and exclude the original conversation context. The application never treats a conversation reply as approval. Uncertain apply outcomes and incomplete cleanup block further work.
+
+Host tools require explicit host consent and the selected command policy.
+
+Configured workflows keep their explicit step sequences. Directory grants pin directory identities for handoff and recovery.
+
+### File-change review evidence
+
+Controlled provider tests execute host commands against temporary directories. They retain the original baseline and final snapshot after a write. Later host edits do not change those snapshots. Cancellation after a write preserves that write and its final snapshot.
+
+Authority tests reject stale directory identities and foreign conversation ownership. The Rust suite covers candidate approval, revision and configured workflow transitions. These tests do not establish hosted-provider success or a live sandbox review-before-apply flow.
+
+The browser review opened the new conversation and its directory setup panel without console or page errors. It did not execute a file-change request.
 
 Commit steps detect changed repositories from the approved candidate and pinned review-before-apply grants. They do not search parent directories or select a global destination.
 

@@ -39,7 +39,7 @@ use crate::{
     responses,
     sessions::{JobId, RequiredSession},
     state::AppState,
-    workflows::{self, WorkflowJob, WorkflowRun},
+    workflows::{self, WorkflowRun},
 };
 
 use self::page::model_picker::ModelPicker;
@@ -1002,7 +1002,9 @@ pub(super) async fn preflight_execution(
             "Restore or resolve the pending decision before another message.",
         ));
     }
-    if conversation.is_some_and(|id| state.conversation_runtime.unsettled(id)) {
+    if conversation.is_some_and(|id| {
+        state.conversation_runtime.unsettled(id) || has_uncertain_application(state, id)
+    }) {
         return Err(StartMessageError::User(
             PatchStatus::Conflict,
             "Execution remains unsettled. Continuation and retry stay unavailable until recovery and cleanup finish.",
@@ -1143,9 +1145,8 @@ async fn start_message_mode(
             "Choose a stored provider.",
         ));
     };
-    let advertised_tools = crate::tools::advertised(&model.settings.tools, model.settings.location);
     let ordinary = crate::execution::ordinary_kind(&model.settings);
-    let workflow = if ordinary.is_none() && !advertised_tools.is_empty() {
+    let workflow = if ordinary == Some(crate::execution::OrdinaryKind::FileChange) {
         let project_free =
             crate::execution::ProjectFreeAuthority::from_settings(record.revision, &model.settings)
                 .map_err(|error| StartMessageError::User(PatchStatus::Conflict, error.message()))?;
@@ -1172,7 +1173,10 @@ async fn start_message_mode(
     } else {
         None
     };
-    let ordinary_execution = if ordinary.is_some() {
+    let ordinary_execution = if matches!(
+        ordinary,
+        Some(crate::execution::OrdinaryKind::Host | crate::execution::OrdinaryKind::Sandbox)
+    ) {
         Some(
             state
                 .workflow_execution
@@ -1274,31 +1278,21 @@ async fn start_message_mode(
                 error,
             )));
         }
-        let host_policy = project_free.policy.clone();
-        tokio::spawn(workflows::execute_run(
+        tokio::spawn(crate::execution::conversation::run(
             state.clone(),
-            WorkflowJob {
-                run_id,
-                session_id: session,
-                agent_id: run.agent_id,
-                agent_revision: record.revision,
-                conversation_id: Some(started.id),
-                authority: None,
-                project_free_authority: Some(project_free),
-                grant_alias: String::new(),
+            crate::execution::conversation::OrdinaryRun {
+                session,
+                record: started,
                 connection,
-                phase_providers: run
-                    .model_phases()
-                    .map(|phase| phase.selection.provider)
-                    .collect(),
-                active_connection: std::sync::Arc::new(std::sync::Mutex::new(None)),
-                host_policy,
+                job,
+                execution,
+                kind: crate::execution::OrdinaryKind::FileChange,
                 turns,
-                job: job.clone(),
-                eligible_reply: std::sync::Arc::new(std::sync::Mutex::new(String::new())),
+                file: Some(crate::execution::conversation::FileChangeWork {
+                    run_id,
+                    project_free,
+                }),
             },
-            None,
-            execution,
         ));
     } else if let Some(kind) = ordinary {
         let secret = match connection.auth {
@@ -1335,6 +1329,7 @@ async fn start_message_mode(
                 execution,
                 kind,
                 turns,
+                file: None,
             },
         ));
     } else {
@@ -1797,6 +1792,7 @@ async fn delete_conversation(
     if state.sessions.conversation_reserved(record.id)
         || has_pending_review(&state, record.id)
         || state.conversation_runtime.unsettled(record.id)
+        || has_uncertain_application(&state, record.id)
     {
         return render_detail_command(
             graft,
@@ -1905,6 +1901,14 @@ pub(super) fn has_pending_review(state: &AppState, conversation: ConversationId)
         })
 }
 
+fn has_uncertain_application(state: &AppState, conversation: ConversationId) -> bool {
+    state
+        .workflow_runs
+        .for_conversation(&conversation)
+        .into_iter()
+        .any(|run| run.apply_is_uncertain())
+}
+
 fn valid_selection(state: &AppState, selection: &ModelSelection) -> Result<(), &'static str> {
     if !state.vault.contains(selection.provider) {
         return Err("Choose a stored provider.");
@@ -1939,6 +1943,7 @@ fn conversation_busy(state: &AppState, record: &ConversationRecord) -> bool {
     record.active_job.is_some()
         || state.sessions.conversation_reserved(record.id)
         || state.conversation_runtime.unsettled(record.id)
+        || has_uncertain_application(state, record.id)
 }
 
 fn detail_view(

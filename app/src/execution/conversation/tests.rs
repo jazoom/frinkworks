@@ -60,6 +60,7 @@ fn failed_preparation_retains_reservations_until_cleanup_settles() {
             execution,
             kind: OrdinaryKind::Sandbox,
             turns: Vec::new(),
+            file: None,
         },
         crate::providers::AssistantReply::default(),
         super::AgentOutcome::AuthorityFailure,
@@ -156,7 +157,7 @@ fn execution_settings(tools: Vec<ToolId>, location: ToolLocation) -> ExecutionSe
 }
 
 #[test]
-fn ordinary_kind_covers_host_without_directories_and_read_only_sandbox() {
+fn ordinary_kind_covers_host_sandbox_and_file_change() {
     assert_eq!(
         ordinary_kind(&execution_settings(vec![ToolId::Run], ToolLocation::Host)),
         Some(OrdinaryKind::Host)
@@ -177,17 +178,32 @@ fn ordinary_kind_covers_host_without_directories_and_read_only_sandbox() {
     let host_with_directory = execution_settings(vec![ToolId::Run], ToolLocation::Host)
         .with_directories(vec![grant.clone()])
         .unwrap();
-    assert_eq!(ordinary_kind(&host_with_directory), None);
+    assert_eq!(
+        ordinary_kind(&host_with_directory),
+        Some(OrdinaryKind::FileChange)
+    );
     let read_only = execution_settings(vec![ToolId::Read], ToolLocation::Sandbox)
         .with_directories(vec![grant.clone()])
         .unwrap();
     assert_eq!(ordinary_kind(&read_only), Some(OrdinaryKind::Sandbox));
-    let mut writable = grant;
+    let mut writable = grant.clone();
     writable.access = DirectoryAccess::DirectWrite;
     let sandbox_write = execution_settings(vec![ToolId::Read], ToolLocation::Sandbox)
         .with_directories(vec![writable])
         .unwrap();
-    assert_eq!(ordinary_kind(&sandbox_write), None);
+    assert_eq!(
+        ordinary_kind(&sandbox_write),
+        Some(OrdinaryKind::FileChange)
+    );
+    let mut reviewed = grant;
+    reviewed.access = DirectoryAccess::ReviewBeforeApply;
+    let sandbox_review = execution_settings(vec![ToolId::Read], ToolLocation::Sandbox)
+        .with_directories(vec![reviewed])
+        .unwrap();
+    assert_eq!(
+        ordinary_kind(&sandbox_review),
+        Some(OrdinaryKind::FileChange)
+    );
 }
 
 #[test]
@@ -354,6 +370,7 @@ async fn ordinary_host_run_keeps_tool_history_without_a_workflow() {
             execution,
             kind: OrdinaryKind::Host,
             turns: vec![ChatTurn::user("Run both commands".to_owned())],
+            file: None,
         },
     )
     .await;
@@ -377,4 +394,388 @@ async fn ordinary_host_run_keeps_tool_history_without_a_workflow() {
         2
     );
     assert!(!state.conversation_runtime.unsettled(record.id));
+}
+
+fn host_file_change_settings(
+    state: &crate::state::AppState,
+    grant: crate::execution::DirectoryGrant,
+) -> ExecutionSettings {
+    let effort = state
+        .models_dev
+        .effective_effort(ProviderKind::Xai, "grok-4.6", None)
+        .unwrap();
+    ExecutionSettings::new(
+        crate::providers::ModelSelection::new(
+            ProviderKind::Xai,
+            "grok-4.6".to_owned(),
+            Some(effort),
+        )
+        .unwrap(),
+        String::new(),
+        vec![ToolId::Run],
+        crate::tests::test_environment_id(),
+    )
+    .unwrap()
+    .with_location(ToolLocation::Host)
+    .with_directories(vec![grant])
+    .unwrap()
+    .with_host_approval(crate::execution::HostApprovalPolicy::Automatic)
+}
+
+fn start_file_change_conversation(
+    state: &crate::state::AppState,
+    session: crate::sessions::SessionId,
+    settings: ExecutionSettings,
+    text: &str,
+) -> (
+    crate::conversations::ConversationRecord,
+    std::sync::Arc<crate::sessions::Job>,
+) {
+    let record = state
+        .conversations
+        .create("File change".to_owned())
+        .unwrap();
+    let record = state
+        .conversations
+        .update_execution_settings(&record.id, record.revision, settings.clone())
+        .unwrap();
+    state
+        .access_consent
+        .approve_host_conversation(
+            &state
+                .access_consent
+                .request_host_conversation(session, record.id, &settings)
+                .unwrap(),
+            session,
+            record.id,
+            &settings,
+        )
+        .unwrap();
+    let job = state
+        .sessions
+        .begin_conversation_job(&session, record.id)
+        .unwrap();
+    let record = state
+        .conversations
+        .begin_message_with_model(&record.id, record.revision, None, job.id(), text.to_owned())
+        .unwrap();
+    (record, job)
+}
+
+fn file_change_run(
+    state: &crate::state::AppState,
+    conversation: crate::conversations::ConversationId,
+    settings: &ExecutionSettings,
+) -> (
+    crate::workflows::RunId,
+    crate::execution::ProjectFreeAuthority,
+) {
+    let pinned = crate::workflows::pin_agent_work(settings).unwrap();
+    let project_free = crate::execution::ProjectFreeAuthority::from_snapshot(1, settings).unwrap();
+    let run_id = crate::workflows::RunId::generate().unwrap();
+    let phase_models = pinned
+        .definition
+        .steps()
+        .iter()
+        .filter(|step| {
+            matches!(
+                &step.action,
+                crate::workflows::definition::StepAction::Agent(_)
+            )
+        })
+        .map(|step| crate::workflows::PhaseModelSelection {
+            step: step.key.clone(),
+            selection: settings.model.clone(),
+            instructions: settings.instructions.clone(),
+            preset: None,
+            settings: Some(settings.clone()),
+        })
+        .collect();
+    let environments = crate::tests::test_environment_set(&pinned.definition);
+    let mut run = crate::workflows::WorkflowRun::create_source_free_for_conversation(
+        run_id,
+        crate::workflows::now_ms(),
+        conversation,
+        pinned,
+        environments,
+        phase_models,
+    );
+    run.launch_brief = "Change the file".to_owned();
+    state.workflow_runs.create(run).unwrap();
+    (run_id, project_free)
+}
+
+#[tokio::test]
+async fn file_change_host_run_binds_baseline_to_owned_conversation() {
+    use crate::providers::{ChatBackend, ChatTurn, CompletionReason, ModelEvent};
+    let mut state = crate::tests::test_state(crate::config::RuntimeConfig::development());
+    let backend = crate::tests::ScriptedBackend::rounds(vec![
+        vec![
+            Ok(ModelEvent::ToolCall {
+                id: "write-note".to_owned(),
+                name: "run".to_owned(),
+                arguments: serde_json::json!({
+                    "command": "printf 'after\\n' > note.txt",
+                    "explanation": "Replace the note",
+                }),
+            }),
+            Ok(ModelEvent::Complete {
+                reason: CompletionReason::ToolCalls,
+            }),
+        ],
+        vec![
+            Ok(ModelEvent::Text("Done.".to_owned())),
+            Ok(ModelEvent::Complete {
+                reason: CompletionReason::Stop,
+            }),
+        ],
+    ]);
+    state.chat = std::sync::Arc::new(ChatBackend::Scripted(backend));
+    let connection =
+        crate::providers::ProviderConnection::with_key(ProviderKind::Xai, "test-key", "grok-4.6");
+    state.vault.put(connection.clone()).unwrap();
+    let token = crate::sessions::generate_session_token().unwrap();
+    let session = token.id();
+    state.sessions.insert(session);
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("note.txt"), "before\n").unwrap();
+    let grant = crate::execution::DirectoryGrant::from_selected(directory.path(), &[]).unwrap();
+    let settings = host_file_change_settings(&state, grant);
+    let (record, job) =
+        start_file_change_conversation(&state, session, settings.clone(), "Change the file");
+    let (run_id, project_free) = file_change_run(&state, record.id, &settings);
+    let execution = state.workflow_execution.acquire().unwrap();
+    super::run(
+        state.clone(),
+        super::OrdinaryRun {
+            session,
+            record: record.clone(),
+            connection,
+            job,
+            execution,
+            kind: OrdinaryKind::FileChange,
+            turns: vec![ChatTurn::user("Change the file".to_owned())],
+            file: Some(super::FileChangeWork {
+                run_id,
+                project_free,
+            }),
+        },
+    )
+    .await;
+    let run = state.workflow_runs.get(&run_id).unwrap();
+    assert_eq!(run.conversation_id, Some(record.id));
+    assert_eq!(run.attempts.len(), 1);
+    let changes = run.attempts[0].direct_changes.as_ref().unwrap();
+    let diff = changes.diff(&state).unwrap();
+    assert_eq!(
+        diff.object(0, "base", &state.workflow_artefacts).unwrap().1,
+        b"before\n"
+    );
+    assert_eq!(
+        diff.object(0, "target", &state.workflow_artefacts)
+            .unwrap()
+            .1,
+        b"after\n"
+    );
+    assert_eq!(
+        std::fs::read(directory.path().join("note.txt")).unwrap(),
+        b"after\n"
+    );
+    std::fs::write(directory.path().join("note.txt"), "later\n").unwrap();
+    assert_eq!(
+        diff.object(0, "target", &state.workflow_artefacts)
+            .unwrap()
+            .1,
+        b"after\n"
+    );
+    let settled = state.conversations.get(&record.id).unwrap();
+    assert!(settled.active_job.is_none());
+    assert!(!state.conversation_runtime.unsettled(record.id));
+}
+
+#[tokio::test]
+async fn stale_directory_identity_cannot_bind_file_change_work() {
+    use crate::providers::{ChatBackend, ChatTurn, CompletionReason, ModelEvent};
+    let mut state = crate::tests::test_state(crate::config::RuntimeConfig::development());
+    let backend = crate::tests::ScriptedBackend::rounds(vec![vec![
+        Ok(ModelEvent::Text("Done.".to_owned())),
+        Ok(ModelEvent::Complete {
+            reason: CompletionReason::Stop,
+        }),
+    ]]);
+    state.chat = std::sync::Arc::new(ChatBackend::Scripted(backend));
+    let connection =
+        crate::providers::ProviderConnection::with_key(ProviderKind::Xai, "test-key", "grok-4.6");
+    state.vault.put(connection.clone()).unwrap();
+    let token = crate::sessions::generate_session_token().unwrap();
+    let session = token.id();
+    state.sessions.insert(session);
+    let directory = tempfile::tempdir().unwrap();
+    let grant = crate::execution::DirectoryGrant::from_selected(directory.path(), &[]).unwrap();
+    let settings = host_file_change_settings(&state, grant.clone());
+    let (record, job) =
+        start_file_change_conversation(&state, session, settings.clone(), "Change the file");
+    let mut stale = settings.clone();
+    stale.directories[0].identity.inode = grant.identity.inode.wrapping_add(1);
+    let (run_id, project_free) = file_change_run(&state, record.id, &stale);
+    let execution = state.workflow_execution.acquire().unwrap();
+    super::run(
+        state.clone(),
+        super::OrdinaryRun {
+            session,
+            record: record.clone(),
+            connection,
+            job,
+            execution,
+            kind: OrdinaryKind::FileChange,
+            turns: vec![ChatTurn::user("Change the file".to_owned())],
+            file: Some(super::FileChangeWork {
+                run_id,
+                project_free,
+            }),
+        },
+    )
+    .await;
+    let settled = state.conversations.get(&record.id).unwrap();
+    assert!(settled.active_job.is_none());
+    let run = state.workflow_runs.get(&run_id).unwrap();
+    assert!(run.is_terminal());
+    assert_ne!(
+        run.state.as_label(),
+        crate::workflows::run::RunState::Completed.as_label()
+    );
+}
+
+#[tokio::test]
+async fn file_change_run_rejects_foreign_conversation_owner() {
+    use crate::providers::ChatTurn;
+    let state = crate::tests::test_state(crate::config::RuntimeConfig::development());
+    let connection =
+        crate::providers::ProviderConnection::with_key(ProviderKind::Xai, "test-key", "grok-4.6");
+    let token = crate::sessions::generate_session_token().unwrap();
+    let session = token.id();
+    state.sessions.insert(session);
+    let directory = tempfile::tempdir().unwrap();
+    let grant = crate::execution::DirectoryGrant::from_selected(directory.path(), &[]).unwrap();
+    let settings = host_file_change_settings(&state, grant);
+    let (record, job) =
+        start_file_change_conversation(&state, session, settings.clone(), "Change the file");
+    let foreign = state.conversations.create("Other".to_owned()).unwrap();
+    let (run_id, project_free) = file_change_run(&state, foreign.id, &settings);
+    let execution = state.workflow_execution.acquire().unwrap();
+    super::run(
+        state.clone(),
+        super::OrdinaryRun {
+            session,
+            record: record.clone(),
+            connection,
+            job,
+            execution,
+            kind: OrdinaryKind::FileChange,
+            turns: vec![ChatTurn::user("Change the file".to_owned())],
+            file: Some(super::FileChangeWork {
+                run_id,
+                project_free,
+            }),
+        },
+    )
+    .await;
+    let settled = state.conversations.get(&record.id).unwrap();
+    assert!(settled.active_job.is_none());
+    assert_eq!(
+        settled.messages.last().unwrap().status,
+        crate::conversations::MessageStatus::Failed
+    );
+    let run = state.workflow_runs.get(&run_id).unwrap();
+    assert_eq!(run.conversation_id, Some(foreign.id));
+    assert!(run.attempts.is_empty());
+}
+
+#[tokio::test]
+async fn cancelled_file_change_retains_written_files_and_final_snapshot() {
+    use crate::providers::{ChatBackend, ChatTurn, CompletionReason, ModelEvent};
+    let mut state = crate::tests::test_state(crate::config::RuntimeConfig::development());
+    let connection =
+        crate::providers::ProviderConnection::with_key(ProviderKind::Xai, "test-key", "grok-4.6");
+    state.vault.put(connection.clone()).unwrap();
+    let token = crate::sessions::generate_session_token().unwrap();
+    let session = token.id();
+    state.sessions.insert(session);
+    let directory = tempfile::tempdir().unwrap();
+    let note = directory.path().join("note.txt");
+    std::fs::write(&note, "before\n").unwrap();
+    let grant = crate::execution::DirectoryGrant::from_selected(directory.path(), &[]).unwrap();
+    let settings = host_file_change_settings(&state, grant);
+    let (record, job) =
+        start_file_change_conversation(&state, session, settings.clone(), "Change the file");
+    let (run_id, project_free) = file_change_run(&state, record.id, &settings);
+    state.chat = std::sync::Arc::new(ChatBackend::Scripted(
+        crate::tests::ScriptedBackend::rounds(vec![vec![
+            Ok(ModelEvent::ToolCall {
+                id: "write-then-wait".to_owned(),
+                name: "run".to_owned(),
+                arguments: serde_json::json!({
+                    "command": "printf 'after\\n' > note.txt; sleep 30",
+                    "explanation": "Write the note, then wait",
+                }),
+            }),
+            Ok(ModelEvent::Complete {
+                reason: CompletionReason::ToolCalls,
+            }),
+        ]]),
+    ));
+    let execution = state.workflow_execution.acquire().unwrap();
+    let running = tokio::spawn(super::run(
+        state.clone(),
+        super::OrdinaryRun {
+            session,
+            record: record.clone(),
+            connection,
+            job: job.clone(),
+            execution,
+            kind: OrdinaryKind::FileChange,
+            turns: vec![ChatTurn::user("Change the file".to_owned())],
+            file: Some(super::FileChangeWork {
+                run_id,
+                project_free,
+            }),
+        },
+    ));
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while std::fs::read_to_string(&note).unwrap() != "after\n" {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    job.request_cancel();
+    tokio::time::timeout(std::time::Duration::from_secs(5), running)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(std::fs::read_to_string(&note).unwrap(), "after\n");
+    let run = state.workflow_runs.get(&run_id).unwrap();
+    let diff = run.attempts[0]
+        .direct_changes
+        .as_ref()
+        .unwrap()
+        .diff(&state)
+        .unwrap();
+    assert_eq!(
+        diff.object(0, "base", &state.workflow_artefacts).unwrap().1,
+        b"before\n"
+    );
+    assert_eq!(
+        diff.object(0, "target", &state.workflow_artefacts)
+            .unwrap()
+            .1,
+        b"after\n"
+    );
+    let run = state.workflow_runs.get(&run_id).unwrap();
+    assert_eq!(
+        run.state.as_label(),
+        crate::workflows::run::RunState::Cancelled.as_label()
+    );
+    let settled = state.conversations.get(&record.id).unwrap();
+    assert!(settled.active_job.is_none());
 }
