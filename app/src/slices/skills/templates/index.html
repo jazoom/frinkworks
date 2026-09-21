@@ -1,0 +1,175 @@
+{% extends "layout/catalogue.html" %}
+{% block section %}skills{% endblock %}
+{% block heading %}Skills{% endblock %}
+{% block description %}
+  <p>
+    Reusable instructions that the model reads when a task needs them. Skills
+    grant no tool or directory authority.
+  </p>
+{% endblock %}
+{% block actions %}
+  <a href="/skills" data-graft class="btn btn-ghost btn-sm">Refresh</a>
+  <a href="/skills?new=1" data-graft class="btn btn-primary btn-sm"
+    >New skill</a
+  >
+{% endblock %}
+{% block catalogue_content %}
+  {% if !error.is_empty() %}
+    <p role="alert" class="alert alert-error">{{ error }}</p>
+  {% endif %}
+  <details class="space-y-3" {% if editor.is_none() %}open{% endif %}>
+    <summary class="cursor-pointer text-lg font-semibold">
+      Use existing files
+    </summary>
+    <p class="max-w-prose text-sm">
+      Global skills are available across projects in both host and sandbox
+      modes. The model needs the read tool to use a skill.
+    </p>
+    <p class="text-sm">
+      Place each skill folder directly inside this directory:
+    </p>
+    <p
+      class="border-base-300 bg-base-200 border p-3 font-mono text-sm break-all select-all"
+    >
+      {{ global_path }}
+    </p>
+    <p class="text-quiet text-sm">
+      Example:
+      <code class="break-all">{{ global_path }}/my-skill/SKILL.md</code>
+    </p>
+    <p class="max-w-prose text-sm">
+      Each folder contains an ordinary <code>SKILL.md</code> file with YAML
+      frontmatter. No Power Plant identifiers or revision fields are required.
+      The next request discovers copied files without a restart.
+    </p>
+    <p class="text-sm">Select Refresh to see copied files in this catalogue.</p>
+    <p class="max-w-prose text-sm">
+      Project skills belong at
+      <code
+        >&lt;authorised-directory&gt;/.agents/skills/&lt;skill-folder&gt;/SKILL.md</code
+      >. Power Plant does not search nested project directories.
+    </p>
+  </details>
+  {% if let Some(form) = editor %}
+    <section
+      class="border-base-300 border-t pt-6"
+      aria-labelledby="skill-editor-heading"
+    >
+      <h2 id="skill-editor-heading" class="text-xl font-semibold">
+        {% if form.directory.is_empty() %}New skill{% else %}Edit skill{% endif %}
+      </h2>
+      {% if form.directory.is_empty() %}
+        <p class="text-quiet mt-2 text-sm">
+          The name supplies the folder name for a new skill.
+        </p>
+      {% else %}
+        <p class="text-quiet mt-2 font-mono text-sm break-all">
+          {{ global_path }}/{{ form.directory }}/SKILL.md
+        </p>
+      {% endif %}
+      <form
+        id="skill-editor"
+        method="post"
+        action="/skills/save"
+        data-graft
+        class="mt-5 flex flex-col gap-4"
+      >
+        <input type="hidden" name="directory" value="{{ form.directory }}" />
+        <input
+          type="hidden"
+          name="fingerprint"
+          value="{{ form.fingerprint }}"
+        />
+        <label for="skill-markdown" class="text-sm font-medium">SKILL.md</label>
+        <p id="skill-format-help" class="text-quiet max-w-prose text-sm">
+          The YAML header requires a name and description. Other metadata is
+          optional. The model gets only the description before it opens the
+          file, so the description must state when to use the skill.
+        </p>
+        <textarea
+          id="skill-markdown"
+          class="textarea textarea-bordered min-h-96 w-full font-mono text-base leading-relaxed"
+          name="markdown"
+          rows="20"
+          spellcheck="false"
+          aria-describedby="skill-format-help"
+          required
+        >
+{{ form.markdown }}</textarea>
+        <div class="flex flex-wrap items-center gap-2">
+          <button class="btn btn-primary btn-sm" type="submit">
+            Save skill
+          </button>
+          <a href="/skills" data-graft class="btn btn-ghost btn-sm">Cancel</a>
+          {% if !form.directory.is_empty() %}
+            <a
+              href="/skills?edit={{ form.directory }}"
+              data-graft
+              class="link text-sm"
+              >Reload stored file</a
+            >
+          {% endif %}
+        </div>
+      </form>
+    </section>
+  {% endif %}
+  <section
+    aria-labelledby="saved-skills-heading"
+    class="border-base-300 border-t pt-6"
+  >
+    <h2 id="saved-skills-heading" class="text-lg font-semibold">
+      Global skills
+    </h2>
+    <div class="divide-base-300 divide-y">
+      {% for row in rows %}
+        <article class="flex flex-wrap items-start justify-between gap-3 py-4">
+          <div class="min-w-0 flex-1">
+            <a
+              href="/skills?edit={{ row.directory }}"
+              data-graft
+              class="link font-semibold break-words"
+              >{{ row.name }}</a
+            >
+            <p class="text-quiet text-sm break-words">{{ row.description }}</p>
+            <p class="text-quiet mt-1 font-mono text-xs break-all">
+              {{ row.directory }}/SKILL.md
+            </p>
+          </div>
+          <details>
+            <summary class="btn btn-ghost btn-sm">Delete…</summary>
+            <form
+              id="skill-delete-{{ loop.index }}"
+              method="post"
+              action="/skills/delete"
+              data-graft
+              class="mt-3 max-w-xs space-y-2"
+            >
+              <input
+                type="hidden"
+                name="directory"
+                value="{{ row.directory }}"
+              />
+              <input
+                type="hidden"
+                name="fingerprint"
+                value="{{ row.fingerprint }}"
+              />
+              <p class="text-sm">
+                Delete {{ row.name }} and its folder, including any supporting
+                files?
+              </p>
+              <button class="btn btn-error btn-sm" type="submit">
+                Delete skill
+              </button>
+            </form>
+          </details>
+        </article>
+      {% else %}
+        <p class="text-quiet py-4 text-sm">
+          No skills to display. Copy a skill folder into the global directory or
+          select New skill.
+        </p>
+      {% endfor %}
+    </div>
+  </section>
+{% endblock %}

@@ -1,6 +1,6 @@
 use super::{
-    AgentToolContext, MAXIMUM_TOOL_BYTES, ToolFailureKind, advertised, authorised_tool,
-    definitions_for, mark_truncated, redact, valid_output_reference,
+    AgentToolContext, MAXIMUM_TOOL_BYTES, ToolFailureKind, authorised_tool, definitions_for,
+    mark_truncated, redact, valid_output_reference,
 };
 use crate::agents::{AccessMode, AgentId, AgentRecord, DirectoryGrant, DirectoryPolicy, ToolId};
 use crate::conversations::ConversationId;
@@ -37,43 +37,20 @@ fn policy() -> DirectoryPolicy {
 
 #[test]
 fn definitions_and_dispatch_use_the_same_selected_tool_set() {
-    let selected = [ToolId::Read, ToolId::List];
-    let names: Vec<_> = definitions_for(&selected, ToolLocation::Sandbox)
-        .into_iter()
-        .map(|definition| definition.name)
-        .collect();
-    assert_eq!(names, vec!["read", "list"]);
-    assert_eq!(
-        authorised_tool(&selected, "read", ToolLocation::Sandbox),
-        Some(ToolId::Read)
-    );
-    assert_eq!(
-        authorised_tool(&selected, "write", ToolLocation::Sandbox),
-        None
-    );
-    assert_eq!(
-        authorised_tool(&selected, "forged", ToolLocation::Sandbox),
-        None
-    );
-    assert_eq!(
-        advertised(&[ToolId::List, ToolId::Run], ToolLocation::Host),
-        vec![ToolId::Run]
-    );
-    assert_eq!(
-        advertised(
-            &[ToolId::Read, ToolId::Edit, ToolId::Run],
-            ToolLocation::Host
-        ),
-        vec![ToolId::Run]
-    );
-    assert_eq!(
-        authorised_tool(&[ToolId::List, ToolId::Run], "list", ToolLocation::Host),
-        None
-    );
-    assert_eq!(
-        authorised_tool(&[ToolId::Edit, ToolId::Run], "edit", ToolLocation::Host),
-        None
-    );
+    for location in [ToolLocation::Sandbox, ToolLocation::Host] {
+        for selected in [ToolId::ALL.as_slice(), &[ToolId::Read, ToolId::List], &[]] {
+            let definitions = definitions_for(selected, location);
+            assert_eq!(definitions.len(), selected.len());
+            for definition in definitions {
+                assert_eq!(
+                    authorised_tool(selected, &definition.name),
+                    ToolId::parse(&definition.name)
+                );
+            }
+            assert_eq!(authorised_tool(selected, "forged"), None);
+        }
+    }
+    assert_eq!(authorised_tool(&[ToolId::Read], "write"), None);
 }
 
 #[test]
@@ -318,19 +295,282 @@ async fn edit_escape_and_read_only_are_authority_failures() {
 }
 
 #[tokio::test]
-async fn host_run_without_host_context_is_an_authority_failure() {
+async fn host_tools_without_host_context_are_authority_failures() {
     let policy = policy();
     let job = tool_job();
-    let tools = [ToolId::Run];
-    let mut context = sandbox_context(&policy, &job, &tools);
+    let mut context = sandbox_context(&policy, &job, &ToolId::ALL);
     context.location = ToolLocation::Host;
-    let trace = super::invoke(
-        &context,
-        "call-1",
-        "run",
-        &serde_json::json!({"command": "echo hi", "explanation": "probe"}),
+    for tool in ToolId::ALL {
+        let trace = super::invoke(&context, "call-1", tool.as_str(), &serde_json::json!({})).await;
+        assert_eq!(trace.failure, Some(ToolFailureKind::Authority));
+        assert!(trace.command.is_none());
+    }
+}
+
+struct HostFixture {
+    state: crate::state::AppState,
+    settings: crate::execution::ExecutionSettings,
+    session: crate::sessions::SessionId,
+    record: crate::conversations::ConversationRecord,
+    job: std::sync::Arc<Job>,
+    policy: DirectoryPolicy,
+}
+
+impl HostFixture {
+    fn new(directory: &std::path::Path, global: Option<&std::path::Path>) -> Self {
+        let state = crate::tests::test_state(crate::config::RuntimeConfig::development());
+        let settings = crate::execution::ExecutionSettings::new(
+            crate::providers::ModelSelection::new(
+                crate::providers::ProviderKind::Xai,
+                "grok-4.6".to_owned(),
+                None,
+            )
+            .unwrap(),
+            String::new(),
+            vec![ToolId::List, ToolId::Read, ToolId::Edit, ToolId::Write],
+            crate::tests::test_environment_id(),
+        )
+        .unwrap()
+        .with_location(ToolLocation::Host)
+        .with_directories(vec![
+            crate::execution::DirectoryGrant::from_selected(directory, &[]).unwrap(),
+        ])
+        .unwrap();
+        let session = crate::sessions::generate_session_token().unwrap().id();
+        state.sessions.insert(session);
+        let record = state
+            .conversations
+            .create("Host file tools".to_owned())
+            .unwrap();
+        let record = state
+            .conversations
+            .update_execution_settings(&record.id, record.revision, settings.clone())
+            .unwrap();
+        let job = state
+            .sessions
+            .begin_conversation_job(&session, record.id)
+            .unwrap();
+        let record = state
+            .conversations
+            .begin_message_with_model(
+                &record.id,
+                record.revision,
+                None,
+                job.id(),
+                "Use file tools".to_owned(),
+            )
+            .unwrap();
+        let policy = crate::execution::ProjectFreeAuthority::from_settings(1, &settings)
+            .unwrap()
+            .policy
+            .with_skill_root(crate::execution::global_skill_root(global))
+            .on_host(directory);
+        Self {
+            state,
+            settings,
+            session,
+            record,
+            job,
+            policy,
+        }
+    }
+
+    fn approve(&self) {
+        let token = self
+            .state
+            .access_consent
+            .request_host_conversation(self.session, self.record.id, &self.settings)
+            .unwrap();
+        self.state
+            .access_consent
+            .approve_host_conversation(&token, self.session, self.record.id, &self.settings)
+            .unwrap();
+    }
+
+    fn context(&self) -> AgentToolContext<'_> {
+        let mut context = sandbox_context(&self.policy, &self.job, &self.settings.tools);
+        context.location = ToolLocation::Host;
+        context.secret = Some("sk-secret");
+        context.host = Some(super::HostToolContext {
+            state: &self.state,
+            settings: &self.settings,
+            secret: context.secret,
+            session: self.session,
+            conversation: self.record.id,
+            execution_revision: self.record.revision,
+            directory: self.settings.directories[0].host_path.clone(),
+            run: None,
+            step: None,
+            attempt: None,
+        });
+        context
+    }
+}
+
+#[tokio::test]
+async fn host_file_tools_require_live_consent_without_run_authority() {
+    let root = tempfile::tempdir().unwrap();
+    let fixture = HostFixture::new(root.path(), None);
+    assert!(fixture.settings.host_tools());
+    let args = serde_json::json!({"path": "note.txt", "contents": "original"});
+    let denied = super::invoke(&fixture.context(), "write", "write", &args).await;
+    assert_eq!(denied.failure, Some(ToolFailureKind::Authority));
+    assert!(!root.path().join("note.txt").exists());
+    fixture.approve();
+    let written = super::invoke(&fixture.context(), "write", "write", &args).await;
+    assert_eq!(written.failure, None, "{}", written.output);
+    fixture
+        .state
+        .access_consent
+        .invalidate_conversation(fixture.record.id);
+    let denied = super::invoke(
+        &fixture.context(),
+        "read",
+        "read",
+        &serde_json::json!({"path": "note.txt"}),
     )
     .await;
-    assert_eq!(trace.failure, Some(ToolFailureKind::Authority));
-    assert!(trace.command.is_none());
+    assert_eq!(denied.failure, Some(ToolFailureKind::Authority));
+}
+
+#[tokio::test]
+async fn host_file_tools_preserve_literal_paths_paging_and_edit_validation() {
+    let root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let fixture = HostFixture::new(root.path(), None);
+    fixture.approve();
+    let context = fixture.context();
+    let path = "nested/quote' : $(false).txt";
+    let written = super::invoke(
+        &context,
+        "write",
+        "write",
+        &serde_json::json!({
+            "path": path, "contents": "one\nsk-secret\nthree\n"
+        }),
+    )
+    .await;
+    assert_eq!(written.failure, None, "{}", written.output);
+    let read = super::invoke(
+        &context,
+        "read",
+        "read",
+        &serde_json::json!({"path": path, "offset": 2, "limit": 1}),
+    )
+    .await;
+    assert_eq!(read.failure, None, "{}", read.output);
+    let visible = redact(&read.output, context.secret);
+    assert!(visible.contains("[redacted]"));
+    assert!(!visible.contains("sk-secret"));
+    assert!(!read.output.contains("three"));
+    let invalid = super::invoke(
+        &context,
+        "edit",
+        "edit",
+        &serde_json::json!({"path": path, "edits": [{"search": "absent", "replace": "x"}]}),
+    )
+    .await;
+    assert_eq!(invalid.failure, Some(ToolFailureKind::Ordinary));
+    assert_eq!(
+        std::fs::read_to_string(root.path().join(path)).unwrap(),
+        "one\nsk-secret\nthree\n"
+    );
+    let edited = super::invoke(
+        &context,
+        "edit",
+        "edit",
+        &serde_json::json!({"path": path, "edits": [{"search": "three", "replace": "four"}]}),
+    )
+    .await;
+    assert_eq!(edited.failure, None, "{}", edited.output);
+    assert_eq!(
+        std::fs::read_to_string(root.path().join(path)).unwrap(),
+        "one\nsk-secret\nfour\n"
+    );
+    let listed = super::invoke(
+        &context,
+        "list",
+        "list",
+        &serde_json::json!({"path": "nested"}),
+    )
+    .await;
+    assert_eq!(listed.failure, None, "{}", listed.output);
+    assert!(listed.output.contains("$(false).txt"));
+    let external_path = outside.path().join("host.txt");
+    let external = super::invoke(
+        &context,
+        "external",
+        "write",
+        &serde_json::json!({"path": external_path, "contents": "direct"}),
+    )
+    .await;
+    assert_eq!(external.failure, None, "{}", external.output);
+    assert_eq!(std::fs::read_to_string(external_path).unwrap(), "direct");
+    let denied = super::invoke(
+        &context,
+        "run",
+        "run",
+        &serde_json::json!({"command": "true", "explanation": "Not selected"}),
+    )
+    .await;
+    assert_eq!(denied.failure, Some(ToolFailureKind::Authority));
+}
+
+#[tokio::test]
+async fn host_skills_preserve_discovered_identity_and_reject_credentials() {
+    let root = tempfile::tempdir().unwrap();
+    let global = tempfile::tempdir().unwrap();
+    let project_file = root.path().join(".agents/skills/local/SKILL.md");
+    let global_file = global.path().join("global/SKILL.md");
+    let text = "---\nname: test\ndescription: Test guidance\n---\nRead this body.\n";
+    for file in [&project_file, &global_file] {
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, text).unwrap();
+    }
+    let fixture = HostFixture::new(root.path(), Some(global.path()));
+    fixture.approve();
+    let skills = crate::execution::discover_skills(None, &fixture.policy, None)
+        .await
+        .unwrap();
+    assert_eq!(skills.len(), 2);
+    let sources = skills
+        .iter()
+        .map(|skill| skill.source.clone())
+        .collect::<Vec<_>>();
+    let mut context = fixture.context();
+    context.advertised_resources = &sources;
+    for skill in &skills {
+        let read = super::invoke(
+            &context,
+            "skill",
+            "read",
+            &serde_json::json!({"path": skill.read_path}),
+        )
+        .await;
+        assert_eq!(read.failure, None, "{}", read.output);
+        assert_eq!(read.resource.as_ref(), Some(&skill.source));
+        assert!(read.output.contains("Read this body."));
+    }
+    std::fs::write(&global_file, text.replace("body", "changed body")).unwrap();
+    let changed = super::invoke(
+        &context,
+        "changed",
+        "read",
+        &serde_json::json!({"path": global_file}),
+    )
+    .await;
+    assert_eq!(changed.failure, Some(ToolFailureKind::Ordinary));
+    assert!(!changed.output.contains("changed body"));
+    std::fs::write(&project_file, text.replace("body", "sk-secret")).unwrap();
+    context.advertised_resources = &[];
+    let secret = super::invoke(
+        &context,
+        "secret",
+        "read",
+        &serde_json::json!({"path": project_file}),
+    )
+    .await;
+    assert_eq!(secret.failure, Some(ToolFailureKind::Ordinary));
+    assert!(secret.resource.is_none());
+    assert!(!secret.output.contains("sk-secret"));
 }

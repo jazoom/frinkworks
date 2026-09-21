@@ -20,6 +20,7 @@ mod sandbox;
 mod security;
 mod server;
 mod sessions;
+mod skills;
 mod slices;
 mod state;
 mod storage;

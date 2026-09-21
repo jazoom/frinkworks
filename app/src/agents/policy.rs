@@ -15,11 +15,32 @@ pub(crate) struct PolicyGrant {
     pub(crate) access: AccessMode,
 }
 
+/// A read-only skill root outside the directory grants. Power Plant owns the
+/// global skills directory and mounts it into each sandbox. The root is not
+/// part of the directory authority, so policy equality ignores it.
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SkillRoot {
+    pub(crate) scope: String,
+    pub(crate) guest_path: String,
+    pub(crate) host_path: PathBuf,
+}
+
+#[derive(Clone, Debug, Eq)]
 pub(crate) struct DirectoryPolicy {
     grants: Vec<PolicyGrant>,
     primary_alias: String,
     private_workspace: bool,
+    skill_root: Option<SkillRoot>,
+    host_directory: Option<String>,
+}
+
+impl PartialEq for DirectoryPolicy {
+    fn eq(&self, other: &Self) -> bool {
+        self.grants == other.grants
+            && self.primary_alias == other.primary_alias
+            && self.private_workspace == other.private_workspace
+            && self.host_directory == other.host_directory
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -62,6 +83,8 @@ impl DirectoryPolicy {
             grants,
             primary_alias: primary_alias.to_owned(),
             private_workspace: false,
+            skill_root: None,
+            host_directory: None,
         }
     }
 
@@ -70,6 +93,8 @@ impl DirectoryPolicy {
             grants,
             primary_alias,
             private_workspace: false,
+            skill_root: None,
+            host_directory: None,
         }
     }
 
@@ -81,7 +106,36 @@ impl DirectoryPolicy {
             grants,
             primary_alias,
             private_workspace: true,
+            skill_root: None,
+            host_directory: None,
         }
+    }
+
+    pub(crate) fn with_skill_root(mut self, skill_root: Option<SkillRoot>) -> Self {
+        self.skill_root = skill_root;
+        self
+    }
+
+    // Host consent authorises process-user access. Saved sandbox grants do not confine host tools.
+    pub(crate) fn on_host(mut self, directory: &std::path::Path) -> Self {
+        self.private_workspace = false;
+        self.host_directory = Some(directory.to_string_lossy().into_owned());
+        for grant in &mut self.grants {
+            grant.guest_path = grant.host_path.to_string_lossy().into_owned();
+            grant.access = AccessMode::ReadWrite;
+        }
+        if let Some(root) = &mut self.skill_root {
+            root.guest_path = root.host_path.to_string_lossy().into_owned();
+        }
+        self
+    }
+
+    pub(crate) fn host_directory(&self) -> Option<&str> {
+        self.host_directory.as_deref()
+    }
+
+    pub(crate) fn skill_root(&self) -> Option<&SkillRoot> {
+        self.skill_root.as_ref()
     }
 
     pub(crate) fn grants(&self) -> &[PolicyGrant] {
@@ -93,6 +147,9 @@ impl DirectoryPolicy {
     }
 
     pub(crate) fn primary_guest(&self) -> &str {
+        if let Some(directory) = &self.host_directory {
+            return directory;
+        }
         self.grants
             .iter()
             .find(|grant| grant.alias == self.primary_alias)
@@ -105,6 +162,9 @@ impl DirectoryPolicy {
     }
 
     pub(crate) fn primary_access(&self) -> AccessMode {
+        if self.host_directory.is_some() {
+            return AccessMode::ReadWrite;
+        }
         self.grants
             .iter()
             .find(|grant| grant.alias == self.primary_alias)
@@ -130,6 +190,15 @@ impl DirectoryPolicy {
             format!("{}/{raw}", self.primary_guest())
         };
         let normalised = normalise_absolute(&joined)?;
+        if let Some(root) = &self.skill_root
+            && (normalised == root.guest_path
+                || normalised.starts_with(&format!("{}/", root.guest_path)))
+        {
+            return Ok((normalised, AccessMode::ReadOnly));
+        }
+        if self.host_directory.is_some() {
+            return Ok((normalised, AccessMode::ReadWrite));
+        }
         if self.private_workspace
             && (normalised == GUEST_WORKSPACE
                 || normalised.starts_with(&format!("{GUEST_WORKSPACE}/")))
@@ -146,16 +215,37 @@ impl DirectoryPolicy {
     }
 
     pub(crate) fn guest_roots(&self) -> Vec<String> {
+        if self.host_directory.is_some() {
+            return vec!["/".to_owned()];
+        }
         let mut roots = self
             .private_workspace
             .then(|| GUEST_WORKSPACE.to_owned())
             .into_iter()
             .collect::<Vec<_>>();
         roots.extend(self.grants.iter().map(|grant| grant.guest_path.clone()));
+        if let Some(root) = &self.skill_root {
+            roots.push(root.guest_path.clone());
+        }
         roots
     }
 
+    /// The alias that owns a guest path. Global skills use their own scope.
+    pub(crate) fn resource_scope(&self, path: &str) -> Option<String> {
+        if let Some(root) = &self.skill_root
+            && (path == root.guest_path || path.starts_with(&format!("{}/", root.guest_path)))
+        {
+            return Some(root.scope.clone());
+        }
+        self.grant_for(path)
+            .map(|grant| grant.alias.clone())
+            .or_else(|| self.host_directory.as_ref().map(|_| "host".to_owned()))
+    }
+
     pub(crate) fn writable_roots(&self) -> Vec<String> {
+        if self.host_directory.is_some() {
+            return vec!["/".to_owned()];
+        }
         let mut roots = self
             .private_workspace
             .then(|| GUEST_WORKSPACE.to_owned())

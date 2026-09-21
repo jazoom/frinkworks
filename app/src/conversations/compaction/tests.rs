@@ -85,7 +85,7 @@ fn compaction_preserves_consumed_resource_provenance() {
     let source = crate::execution::ResourceSource::new(
         crate::execution::ResourceKind::Skill,
         "project",
-        "/project/.pi/skills/review/SKILL.md",
+        "/project/.agents/skills/review/SKILL.md",
         b"review instructions",
     );
     let messages = vec![

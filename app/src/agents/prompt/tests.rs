@@ -35,4 +35,10 @@ fn composed_preamble_omits_host_paths() {
     assert!(preamble.contains("- read"));
     assert!(!preamble.contains("secret-repo"));
     assert!(!preamble.contains("/home/user"));
+    let host = policy.on_host(&record.directories[0].host_path);
+    let preamble = compose_role(&record.name, "", &record.instructions, &record.tools, &host);
+    assert!(preamble.contains("/home/user/src/secret-repo"));
+    assert!(preamble.contains("File changes take effect immediately."));
+    assert!(!preamble.contains("Host paths are not available."));
+    assert!(!preamble.contains("/project"));
 }

@@ -29,7 +29,7 @@ pub(crate) fn pin_agent_work(
             .iter()
             .any(|grant| grant.access == crate::execution::DirectoryAccess::ReviewBeforeApply);
     let pinned = pin_project_free_quick_task_with_directories(
-        &crate::tools::advertised(&settings.tools, settings.location),
+        &settings.tools,
         &settings.instructions,
         settings.environment,
         settings

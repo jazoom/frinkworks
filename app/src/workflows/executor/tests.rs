@@ -383,7 +383,8 @@ fn project_free_mounts_require_direct_write_authority_for_live_host_writes() {
                 &authority,
             )
             .unwrap();
-        let spec = super::project_free_attempt_spec(&capabilities, &workspace, &authority).unwrap();
+        let spec =
+            super::project_free_attempt_spec(&capabilities, &workspace, &authority, None).unwrap();
         assert_eq!(spec.mounts.len(), grants.len() + 1);
         assert_eq!(spec.mounts[0].host, workspace.project);
         assert_eq!(spec.mounts[0].guest, "/workspace");
@@ -404,7 +405,7 @@ fn project_free_mounts_require_direct_write_authority_for_live_host_writes() {
             let mut forged = capabilities.clone();
             forged.directories[0].access = AccessMode::ReadWrite;
             assert_eq!(
-                super::project_free_attempt_spec(&forged, &workspace, &authority).is_ok(),
+                super::project_free_attempt_spec(&forged, &workspace, &authority, None).is_ok(),
                 direct
             );
         } else {
@@ -469,7 +470,8 @@ fn mixed_quick_task_mounts_only_reviewed_roots_as_copies() {
         root: root.path().join("attempt"),
         project: root.path().join("attempt/workspace"),
     };
-    let spec = super::project_free_attempt_spec(&capabilities, &workspace, &authority).unwrap();
+    let spec =
+        super::project_free_attempt_spec(&capabilities, &workspace, &authority, None).unwrap();
     assert_eq!(spec.mounts[1].host, grants[0].host_path);
     assert!(!spec.mounts[1].read_only);
     assert_eq!(
@@ -523,7 +525,8 @@ fn read_only_review_mounts_the_pinned_copy_instead_of_live_host_files() {
                 &authority,
             )
             .unwrap();
-        let spec = super::project_free_attempt_spec(&capabilities, &workspace, &authority).unwrap();
+        let spec =
+            super::project_free_attempt_spec(&capabilities, &workspace, &authority, None).unwrap();
         assert_eq!(spec.workdir, reference.guest_path());
         let mount = spec
             .mounts
@@ -1461,7 +1464,8 @@ fn attempt_spec_mounts_isolated_source_and_read_only_git() {
         });
 
         assert!(!workspace.project.join(".git").exists());
-        let spec = attempt_spec(&capabilities, &workspace, project.path(), &host).expect("spec");
+        let spec =
+            attempt_spec(&capabilities, &workspace, project.path(), &host, None).expect("spec");
 
         assert!(workspace.project.join(".git").is_dir());
         assert_eq!(
@@ -1482,7 +1486,7 @@ fn attempt_spec_mounts_isolated_source_and_read_only_git() {
         std::fs::remove_dir(workspace.project.join(".git")).expect("remove placeholder");
         std::os::unix::fs::symlink(project.path().join(".git"), workspace.project.join(".git"))
             .expect("symlink");
-        assert!(attempt_spec(&capabilities, &workspace, project.path(), &host).is_err());
+        assert!(attempt_spec(&capabilities, &workspace, project.path(), &host, None).is_err());
         workspace.destroy().expect("destroy");
     }
 }

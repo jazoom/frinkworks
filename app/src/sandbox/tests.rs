@@ -61,11 +61,7 @@ impl ScriptedGuest {
         } else if *lock_mutex(&self.fail_command) {
             *lock_mutex(&self.fail_command) = false;
             command::ScriptedCommand::output(request.display(), 1)
-        } else if request
-            .args
-            .iter()
-            .any(|arg| arg.contains("for dir in .pi/skills/*"))
-        {
+        } else if request.args.iter().any(|arg| arg == "skill-list") {
             command::ScriptedCommand::output(String::new(), 3)
         } else {
             command::ScriptedCommand::output(request.display(), 0)

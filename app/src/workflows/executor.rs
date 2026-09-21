@@ -2305,8 +2305,14 @@ async fn run_ordinary_file_agent(
     let policy = DirectoryPolicy::from_grants_with_workspace(
         grants,
         pinned.policy.primary_alias().to_owned(),
-    );
+    )
+    .with_skill_root(crate::execution::global_skill_root(state.skills.host_dir()));
     let location = settings.location;
+    let policy = if location == crate::execution::ToolLocation::Host {
+        policy.on_host(&crate::execution::command_directory(&settings.directories))
+    } else {
+        policy
+    };
     let connection = job.active_connection();
     let secret = match &connection.auth {
         crate::providers::AuthMethod::ApiKey => Some(connection.api_key.expose()),
@@ -2366,21 +2372,22 @@ async fn run_ordinary_file_agent(
             error: Some(OPERATIONAL_STORE_ERROR.to_owned()),
         };
     };
-    let tools = crate::tools::advertised(&settings.tools, location);
+    let tools = settings.tools.clone();
     let definitions = crate::tools::definitions_for(&tools, location);
-    let skills = match sandbox {
-        Some(sandbox) => {
-            match crate::execution::discover_skills(sandbox, policy.grants(), secret).await {
-                Ok(skills) => skills,
-                Err(error) => {
-                    return StepOutcome::Failed {
-                        category: FailureCategory::Authority,
-                        error: Some(error.message().to_owned()),
-                    };
-                }
-            }
+    let skills = match crate::execution::discover_skills(
+        sandbox.map(AsRef::as_ref),
+        &policy,
+        secret,
+    )
+    .await
+    {
+        Ok(skills) => skills,
+        Err(error) => {
+            return StepOutcome::Failed {
+                category: FailureCategory::Authority,
+                error: Some(error.message().to_owned()),
+            };
         }
-        None => Vec::new(),
     };
     let instruction_sources = project_instructions
         .sources()
@@ -2715,6 +2722,15 @@ async fn run_agent_step(
             }
         }
     };
+    let policy =
+        policy.with_skill_root(crate::execution::global_skill_root(state.skills.host_dir()));
+    let policy = if let Some(settings) = run.phase_settings(&step_key)
+        && settings.location == crate::execution::ToolLocation::Host
+    {
+        policy.on_host(&crate::execution::command_directory(&settings.directories))
+    } else {
+        policy
+    };
     let Some(role) = run.pinned.definition.role(&action.role).cloned() else {
         return StepOutcome::Failed {
             category: FailureCategory::Definition,
@@ -2927,19 +2943,20 @@ async fn run_agent_step(
     } else {
         None
     };
-    let skills = match sandbox {
-        Some(sandbox) => {
-            match crate::execution::discover_skills(sandbox, policy.grants(), secret).await {
-                Ok(skills) => skills,
-                Err(error) => {
-                    return StepOutcome::Failed {
-                        category: FailureCategory::Authority,
-                        error: Some(error.message().to_owned()),
-                    };
-                }
-            }
+    let skills = match crate::execution::discover_skills(
+        sandbox.map(AsRef::as_ref),
+        &policy,
+        secret,
+    )
+    .await
+    {
+        Ok(skills) => skills,
+        Err(error) => {
+            return StepOutcome::Failed {
+                category: FailureCategory::Authority,
+                error: Some(error.message().to_owned()),
+            };
         }
-        None => Vec::new(),
     };
     let resource_context =
         crate::execution::context::compose_resources(&packet.prompt, &[], &skills);
@@ -3379,9 +3396,10 @@ async fn start_attempt_sandbox(
             .and_then(|id| run.attempts.iter().find(|attempt| attempt.id == id))
             .and_then(|attempt| attempt.commit_transaction.as_ref())
             .ok_or("The commit targets are unavailable.")?;
-        commit_attempt_spec(transaction)?
+        commit_attempt_spec(transaction, state.skills.host_dir())?
     } else if let Some(authority) = job.project_free_authority.as_ref() {
-        let spec = project_free_attempt_spec(capabilities, workspace, authority)?;
+        let spec =
+            project_free_attempt_spec(capabilities, workspace, authority, state.skills.host_dir())?;
         for grant in authority.policy.grants() {
             crate::sandbox::confirm_host_write_access(&spec, &grant.host_path, grant.access)
                 .map_err(|error| error.message())?;
@@ -3394,6 +3412,7 @@ async fn start_attempt_sandbox(
             workspace,
             &user_project.host_path,
             &job.host_policy,
+            state.skills.host_dir(),
         )?;
         crate::sandbox::confirm_host_write_access(
             &spec,
@@ -3421,6 +3440,7 @@ fn project_free_attempt_spec(
     capabilities: &crate::workflows::capabilities::AttemptCapabilities,
     workspace: &crate::workflows::workspace::AttemptWorkspace,
     authority: &crate::execution::ProjectFreeAuthority,
+    global_skills: Option<&std::path::Path>,
 ) -> Result<crate::sandbox::SandboxSpec, &'static str> {
     let mut mounts = vec![crate::sandbox::MountSpec {
         guest: crate::execution::GUEST_WORKSPACE.to_owned(),
@@ -3458,6 +3478,7 @@ fn project_free_attempt_spec(
             read_only: !directory.access.is_writable(),
         });
     }
+    add_global_skills_mount(&mut mounts, global_skills);
     Ok(crate::sandbox::SandboxSpec {
         mounts,
         workdir: capabilities
@@ -3471,6 +3492,7 @@ fn project_free_attempt_spec(
 
 fn commit_attempt_spec(
     transaction: &crate::workflows::commit::CommitTransaction,
+    global_skills: Option<&std::path::Path>,
 ) -> Result<crate::sandbox::SandboxSpec, &'static str> {
     let mut mounts = Vec::new();
     for root in &transaction.roots {
@@ -3490,6 +3512,7 @@ fn commit_attempt_spec(
             read_only: false,
         });
     }
+    add_global_skills_mount(&mut mounts, global_skills);
     Ok(crate::sandbox::SandboxSpec {
         mounts,
         workdir: transaction
@@ -3507,6 +3530,7 @@ fn attempt_spec(
     workspace: &crate::workflows::workspace::AttemptWorkspace,
     user_project: &std::path::Path,
     host: &DirectoryPolicy,
+    global_skills: Option<&std::path::Path>,
 ) -> Result<crate::sandbox::SandboxSpec, &'static str> {
     let mut mounts = Vec::new();
     let Some(primary) = capabilities.primary() else {
@@ -3545,11 +3569,27 @@ fn attempt_spec(
             read_only: true,
         });
     }
+    add_global_skills_mount(&mut mounts, global_skills);
     Ok(crate::sandbox::SandboxSpec {
         mounts,
         workdir: primary.guest_path.clone(),
         network: capabilities.sandbox_network(),
     })
+}
+
+/// Every sandbox attempt receives the read-only global skill mount. The mount
+/// grants no directory authority and the model still needs the read tool.
+fn add_global_skills_mount(
+    mounts: &mut Vec<crate::sandbox::MountSpec>,
+    global_skills: Option<&std::path::Path>,
+) {
+    if let Some(dir) = global_skills {
+        mounts.push(crate::sandbox::MountSpec {
+            guest: crate::execution::GUEST_GLOBAL_SKILLS.to_owned(),
+            host: dir.to_path_buf(),
+            read_only: true,
+        });
+    }
 }
 
 fn confirm_run_authority(

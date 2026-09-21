@@ -29,7 +29,7 @@ fn metadata_rejects_ambiguous_fields_and_bounds_only_the_header() {
 
 #[test]
 fn body_reads_reject_changed_identity_and_credentials() {
-    let path = "/project/.pi/skills/alpha/SKILL.md";
+    let path = "/project/.agents/skills/alpha/SKILL.md";
     let original = ResourceSource::new(ResourceKind::Skill, "project", path, b"original");
     original
         .validate_read(b"original", std::slice::from_ref(&original), None)
@@ -69,10 +69,10 @@ fn shell(root: &std::path::Path, script: &str, args: &[&str]) -> std::process::O
 fn discovery_rejects_links_at_every_component() {
     use std::os::unix::fs::symlink;
     for component in [
-        ".pi",
-        ".pi/skills",
-        ".pi/skills/alpha",
-        ".pi/skills/alpha/SKILL.md",
+        ".agents",
+        ".agents/skills",
+        ".agents/skills/alpha",
+        ".agents/skills/alpha/SKILL.md",
     ] {
         let root = tempfile::tempdir().expect("root");
         let outside = tempfile::tempdir().expect("outside");
@@ -85,7 +85,7 @@ fn discovery_rejects_links_at_every_component() {
         let read = shell(
             root.path(),
             super::SKILL_READ_COMMAND,
-            &[".pi/skills/alpha/SKILL.md"],
+            &[".agents/skills/alpha/SKILL.md"],
         );
         assert_eq!(read.status.code(), Some(6), "{component}");
         assert!(read.stdout.is_empty());
@@ -95,7 +95,7 @@ fn discovery_rejects_links_at_every_component() {
 #[test]
 fn discovery_bounds_entries_and_returns_the_full_body_hash() {
     let root = tempfile::tempdir().expect("root");
-    let directory = root.path().join(".pi/skills/alpha");
+    let directory = root.path().join(".agents/skills/alpha");
     std::fs::create_dir_all(&directory).expect("skill");
     let bytes = format!(
         "---\nname: alpha\ndescription: work\n---\n{}",
@@ -104,18 +104,19 @@ fn discovery_bounds_entries_and_returns_the_full_body_hash() {
     std::fs::write(directory.join("SKILL.md"), &bytes).expect("body");
     let listed = shell(root.path(), super::SKILL_LIST_COMMAND, &[]);
     assert!(listed.status.success());
-    assert_eq!(listed.stdout, b".pi/skills/alpha/SKILL.md\0");
+    assert_eq!(listed.stdout, b".agents/skills/alpha/SKILL.md\0");
     let read = shell(
         root.path(),
         super::SKILL_READ_COMMAND,
-        &[".pi/skills/alpha/SKILL.md"],
+        &[".agents/skills/alpha/SKILL.md"],
     );
     assert!(read.status.success());
     let digest = super::content_hash(bytes.as_bytes());
     assert!(read.stdout.starts_with(&digest.as_bytes()[7..]));
     assert!(read.stdout.len() <= super::MAXIMUM_SKILL_METADATA_BYTES + 68);
     for index in 0..64 {
-        std::fs::create_dir(root.path().join(format!(".pi/skills/item-{index}"))).expect("entry");
+        std::fs::create_dir(root.path().join(format!(".agents/skills/item-{index}")))
+            .expect("entry");
     }
     let listed = shell(root.path(), super::SKILL_LIST_COMMAND, &[]);
     assert_eq!(listed.status.code(), Some(7));

@@ -25,6 +25,7 @@ pub(crate) use consent::{AccessConsentStore, draft_nonce, settings_digest};
 pub(crate) use context::{ContextError, ContextEstimate, ContextRequest};
 pub(crate) use conversation::{ConversationRuntime, OrdinaryKind, ordinary_kind};
 pub(crate) use directory_picker::{DirectoryPick, DirectoryPicker};
+pub(crate) use host::files::capture as capture_host_file;
 pub(crate) use host::{
     COMMAND_TIMEOUT, CommandReporter, HostIdentity, command_directory, run_shell_reported,
 };
@@ -39,3 +40,17 @@ pub(crate) use settings::{
 };
 
 pub(crate) const GUEST_WORKSPACE: &str = "/workspace";
+/// The read-only guest mount of the Power Plant global skills directory.
+pub(crate) const GUEST_GLOBAL_SKILLS: &str = "/.agents/skills";
+
+/// Build the ambient skill root for the current process. The policy equality
+/// ignores this root, because it is not directory authority.
+pub(crate) fn global_skill_root(
+    host_dir: Option<&std::path::Path>,
+) -> Option<crate::agents::SkillRoot> {
+    host_dir.map(|dir| crate::agents::SkillRoot {
+        scope: "Global skills".to_owned(),
+        guest_path: GUEST_GLOBAL_SKILLS.to_owned(),
+        host_path: dir.to_path_buf(),
+    })
+}

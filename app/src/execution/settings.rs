@@ -245,7 +245,7 @@ impl ExecutionSettings {
     }
 
     pub(crate) fn host_tools(&self) -> bool {
-        self.location == ToolLocation::Host && self.tools.contains(&ToolId::Run)
+        self.location == ToolLocation::Host && !self.tools.is_empty()
     }
 
     pub(crate) fn automatic_host_commands(&self) -> bool {

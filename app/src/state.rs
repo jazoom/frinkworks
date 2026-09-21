@@ -19,6 +19,7 @@ use crate::{
     providers::ChatBackend,
     sandbox::SandboxFleet,
     sessions::SessionStore,
+    skills::SkillStore,
     vault::ProviderVault,
     workflows::{
         ApplyJournals, CommitJournals, WorkflowArtefactRepository, WorkflowCatalogue,
@@ -39,6 +40,7 @@ pub(crate) struct AppState {
     pub(crate) preferences: Arc<Preferences>,
     pub(crate) presets: Arc<PresetStore>,
     pub(crate) agents: Arc<AgentStore>,
+    pub(crate) skills: Arc<SkillStore>,
     pub(crate) conversations: Arc<ConversationStore>,
     pub(crate) forks: Arc<crate::conversations::ForkDrafts>,
     pub(crate) directory_picker: DirectoryPicker,
@@ -74,6 +76,8 @@ pub(crate) async fn build(
     let data_dir = local_data.root();
     let agents =
         AgentStore::open(data_dir.join("agents")).map_err(|error| error.message().to_owned())?;
+    let skills =
+        SkillStore::open(data_dir.join("skills")).map_err(|error| error.message().to_owned())?;
     let conversations = ConversationStore::open(data_dir.join("conversations"))
         .map_err(|error| error.message().to_owned())?;
     let presets =
@@ -155,6 +159,7 @@ pub(crate) async fn build(
         preferences: Arc::new(preferences),
         presets: Arc::new(presets),
         agents: Arc::new(agents),
+        skills: Arc::new(skills),
         conversations: Arc::new(conversations),
         forks: Arc::new(crate::conversations::ForkDrafts::default()),
         directory_picker: DirectoryPicker::native(),

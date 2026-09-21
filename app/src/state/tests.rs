@@ -31,6 +31,7 @@ pub(crate) fn test_state(config: RuntimeConfig) -> AppState {
         preferences: Arc::new(Preferences::in_memory()),
         presets: Arc::new(crate::presets::PresetStore::in_memory()),
         agents: Arc::new(AgentStore::in_memory()),
+        skills: Arc::new(crate::skills::SkillStore::temporary()),
         conversations: Arc::new(crate::conversations::ConversationStore::in_memory()),
         forks: Arc::new(crate::conversations::ForkDrafts::default()),
         directory_picker: crate::execution::DirectoryPicker::scripted(),

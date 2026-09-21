@@ -144,12 +144,12 @@ fn resource_text_stays_below_explicit_and_server_instructions() {
         source: ResourceSource::new(
             ResourceKind::Skill,
             "project",
-            "/project/.pi/skills/alpha/SKILL.md",
+            "/project/.agents/skills/alpha/SKILL.md",
             b"meta",
         ),
         name: "alpha".to_owned(),
         description: "alpha work".to_owned(),
-        read_path: "/project/.pi/skills/alpha/SKILL.md".to_owned(),
+        read_path: "/project/.agents/skills/alpha/SKILL.md".to_owned(),
     }];
     let composed = super::compose_resources("Server boundary.", &instructions, &skills);
     let server = composed.text.find("Server boundary.").expect("server");

@@ -66,7 +66,6 @@ async fn context_view_reports_the_sources_of_one_request() {
         let body = text(response).await;
         assert!(body.contains("/project/AGENTS.md"));
         assert!(body.contains(&hash));
-        assert!(body.contains("No project skill was advertised"));
     }
 }
 

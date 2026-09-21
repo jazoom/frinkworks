@@ -18,24 +18,22 @@ pub(crate) const MAXIMUM_RESOURCE_SOURCES: usize = 128;
 pub(crate) const MAXIMUM_RESOURCE_SCOPE_BYTES: usize = 256;
 pub(crate) const MAXIMUM_RESOURCE_PATH_BYTES: usize = 4096;
 pub(crate) const MAXIMUM_SKILLS: usize = 64;
-pub(crate) const MAXIMUM_SKILL_METADATA_BYTES: usize = 4 * 1024;
-pub(crate) const MAXIMUM_SKILL_NAME_BYTES: usize = 128;
-pub(crate) const MAXIMUM_SKILL_DESCRIPTION_BYTES: usize = 1024;
-pub(crate) const MAXIMUM_SKILL_ADVERTISEMENT_BYTES: usize = 64 * 1024;
-pub(crate) const MAXIMUM_SKILL_BODY_BYTES: usize = 256 * 1024;
+pub(crate) const MAXIMUM_SKILL_METADATA_BYTES: usize = 16 * 1024;
+pub(crate) const MAXIMUM_SKILL_NAME_BYTES: usize = 256;
+pub(crate) const MAXIMUM_SKILL_DESCRIPTION_BYTES: usize = 4 * 1024;
+pub(crate) const MAXIMUM_SKILL_ADVERTISEMENT_BYTES: usize = 256 * 1024;
+pub(crate) const MAXIMUM_SKILL_BODY_BYTES: usize = 1024 * 1024;
 pub(crate) const SKILL_METADATA_NAME: &str = "SKILL.md";
 
-const DISCOVERY_DEADLINE: Duration = if cfg!(test) {
-    Duration::from_millis(50)
-} else {
-    Duration::from_secs(5)
-};
+const DISCOVERY_DEADLINE: Duration = Duration::from_secs(5);
 const SKILL_LIST_COMMAND: &str = r#"
 export LC_ALL=C
-if [ -L .pi ] || [ -L .pi/skills ]; then exit 6; fi
-if [ ! -d .pi/skills ]; then exit 3; fi
+root=${1:-.agents/skills}
+if [ "$root" = .agents/skills ] && [ -L .agents ]; then exit 6; fi
+if [ -L "$root" ]; then exit 6; fi
+if [ ! -d "$root" ]; then exit 3; fi
 count=0
-for dir in .pi/skills/*; do
+for dir in "$root"/*; do
     count=$((count + 1))
     if [ "$count" -gt 64 ]; then exit 7; fi
     if [ -L "$dir" ]; then exit 6; fi
@@ -48,12 +46,14 @@ done
 // Hash the bounded file, but return only its header during discovery.
 const SKILL_READ_COMMAND: &str = r#"
 file=$1
-if [ -L .pi ] || [ -L .pi/skills ] || [ -L "${file%/*}" ] || [ -L "$file" ]; then exit 6; fi
+root=${2:-.agents/skills}
+if [ "$root" = .agents/skills ] && [ -L .agents ]; then exit 6; fi
+if [ -L "$root" ] || [ -L "${file%/*}" ] || [ -L "$file" ]; then exit 6; fi
 if [ ! -f "$file" ] || [ ! -r "$file" ]; then exit 1; fi
 size=$(wc -c < "$file") || exit 1
-if [ "$size" -gt 262144 ]; then exit 7; fi
+if [ "$size" -gt 1048576 ]; then exit 7; fi
 sha256sum < "$file" || exit 1
-head -c 4096 -- "$file" | awk '{ print; if (NR > 1 && $0 ~ /^---\r?$/) exit }'
+head -c 16384 -- "$file" | awk '{ print; if (NR > 1 && $0 ~ /^---\r?$/) exit }'
 "#;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -151,7 +151,7 @@ impl InstructionSource {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 pub(crate) struct SkillMetadata {
     pub(crate) name: String,
     pub(crate) description: String,
@@ -222,55 +222,32 @@ pub(crate) fn parse_skill_metadata(bytes: &[u8]) -> Result<SkillMetadata, Resour
     if lines.next().map(str::trim) != Some("---") {
         return Err(ResourceError::Invalid);
     }
-    let mut name = None;
-    let mut description = None;
-    let mut closed = false;
-    for line in lines {
-        if line.trim() == "---" {
-            closed = true;
-            break;
-        }
-        if line.trim().is_empty() || line.trim_start().starts_with('#') {
-            continue;
-        }
-        let (key, value) = line.split_once(':').ok_or(ResourceError::Invalid)?;
-        let value = value.trim();
-        let value = if value.starts_with(['\'', '"']) {
-            let quote = value.as_bytes()[0] as char;
-            value
-                .strip_prefix(quote)
-                .and_then(|v| v.strip_suffix(quote))
-                .ok_or(ResourceError::Invalid)?
-        } else {
-            if value.starts_with(['[', '{', '|', '>']) {
-                return Err(ResourceError::Invalid);
-            }
-            value
-        };
-        match key.trim() {
-            "name" if name.is_none() => name = Some(value.to_owned()),
-            "description" if description.is_none() => description = Some(value.to_owned()),
-            "name" | "description" => return Err(ResourceError::Invalid),
-            _ => {}
-        }
-    }
-    if !closed {
+    let yaml = lines
+        .take_while(|line| line.trim_end() != "---")
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut metadata: SkillMetadata =
+        serde_yaml_ng::from_str(&yaml).map_err(|_| ResourceError::Invalid)?;
+    metadata.name = metadata.name.trim().to_owned();
+    // YAML block scalars are valid descriptions. Advertisements remain single-line text.
+    metadata.description = metadata
+        .description
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if !valid_metadata_field(&metadata.name, MAXIMUM_SKILL_NAME_BYTES)
+        || !valid_metadata_field(&metadata.description, MAXIMUM_SKILL_DESCRIPTION_BYTES)
+    {
         return Err(ResourceError::Invalid);
     }
-    let name = name.filter(|name| valid_metadata_field(name, MAXIMUM_SKILL_NAME_BYTES));
-    let description =
-        description.filter(|value| valid_metadata_field(value, MAXIMUM_SKILL_DESCRIPTION_BYTES));
-    match (name, description) {
-        (Some(name), Some(description)) => Ok(SkillMetadata { name, description }),
-        _ => Err(ResourceError::Invalid),
-    }
+    Ok(metadata)
 }
 
 fn metadata_end(bytes: &[u8]) -> Option<usize> {
     let mut offset = 0;
     for (index, line) in bytes.split_inclusive(|byte| *byte == b'\n').enumerate() {
         offset += line.len();
-        if index > 0 && line.trim_ascii() == b"---" {
+        if index > 0 && line.trim_ascii_end() == b"---" {
             return Some(offset);
         }
     }
@@ -281,9 +258,11 @@ fn valid_metadata_field(value: &str, maximum: usize) -> bool {
     !value.is_empty() && value.len() <= maximum && !value.chars().any(char::is_control)
 }
 
-/// Recognise a path below `.pi/skills/` and return the enclosing skill directory.
+/// Recognise a path below the skill directory and return the enclosing skill
+/// directory. Project paths use `<grant>/.agents/skills/`. Global skills use
+/// `/.agents/skills/`.
 pub(crate) fn skill_directory(path: &str) -> Option<String> {
-    let marker = "/.pi/skills/";
+    let marker = "/.agents/skills/";
     let index = path.find(marker)?;
     let rest = &path[index + marker.len()..];
     let name = rest.split('/').next()?;
@@ -294,83 +273,138 @@ pub(crate) fn skill_directory(path: &str) -> Option<String> {
 }
 
 pub(crate) fn validate_skill_read(path: &str, bytes: &[u8]) -> Result<(), ResourceError> {
-    if skill_directory(path).is_none() {
-        return Ok(());
-    }
-    if path.ends_with(SKILL_METADATA_NAME) {
+    if path.ends_with(&format!("/{SKILL_METADATA_NAME}")) {
         parse_skill_metadata(bytes)?;
     }
     Ok(())
 }
 
-/// Discover skill metadata below each authorised grant root. The grant order is
-/// preserved and the total count and advertised bytes stay bounded.
+/// Discover skill metadata below each authorised grant root, then below the
+/// global skill root. The grant order is preserved and the total count and
+/// advertised bytes stay bounded.
 pub(crate) async fn discover_skills(
-    sandbox: &GuestSandbox,
-    grants: &[crate::agents::PolicyGrant],
+    sandbox: Option<&GuestSandbox>,
+    policy: &crate::agents::DirectoryPolicy,
     secret: Option<&str>,
 ) -> Result<Vec<SkillAdvertisement>, ResourceError> {
     let mut skills = Vec::new();
     let mut advertised_bytes = 0usize;
-    for grant in grants {
-        let files = list_skill_files(sandbox, &grant.guest_path).await?;
-        for relative in files {
-            if skills.len() >= MAXIMUM_SKILLS {
-                return Ok(skills);
-            }
-            let (hash, bytes) =
-                match read_skill_metadata(sandbox, &grant.guest_path, &relative).await? {
-                    Some(snapshot) => snapshot,
-                    None => continue,
-                };
-            if secret.is_some_and(|secret| !secret.is_empty() && contains_secret(&bytes, secret)) {
-                return Err(ResourceError::Credential);
-            }
-            let metadata = parse_skill_metadata(&bytes)?;
-            let path = format!("{}/{}", grant.guest_path, relative);
-            if secret.is_some_and(|secret| {
-                !secret.is_empty() && (path.contains(secret) || grant.alias.contains(secret))
-            }) {
-                return Err(ResourceError::Credential);
-            }
-            let advertisement = SkillAdvertisement {
-                source: ResourceSource {
-                    kind: ResourceKind::Skill,
-                    scope: grant.alias.clone(),
-                    path: path.clone(),
-                    content_hash: hash,
-                },
-                name: metadata.name,
-                description: metadata.description,
-                read_path: path,
-            };
-            if !advertisement.source.valid() {
-                return Err(ResourceError::Invalid);
-            }
-            advertised_bytes = advertised_bytes.saturating_add(
-                advertisement.name.len()
-                    + advertisement.description.len()
-                    + advertisement.read_path.len(),
-            );
-            if advertised_bytes > MAXIMUM_SKILL_ADVERTISEMENT_BYTES {
-                return Err(ResourceError::Bound);
-            }
-            skills.push(advertisement);
-        }
+    for grant in policy.grants() {
+        discover_in_root(
+            sandbox,
+            &grant.guest_path,
+            ".agents/skills",
+            &grant.alias,
+            secret,
+            &mut skills,
+            &mut advertised_bytes,
+        )
+        .await?;
+    }
+    if let Some(root) = policy.skill_root() {
+        discover_in_root(
+            sandbox,
+            "/",
+            if sandbox.is_some() {
+                ".agents/skills"
+            } else {
+                &root.guest_path
+            },
+            &root.scope,
+            secret,
+            &mut skills,
+            &mut advertised_bytes,
+        )
+        .await?;
     }
     Ok(skills)
 }
 
+async fn discover_in_root(
+    sandbox: Option<&GuestSandbox>,
+    search_directory: &str,
+    root: &str,
+    scope: &str,
+    secret: Option<&str>,
+    skills: &mut Vec<SkillAdvertisement>,
+    advertised_bytes: &mut usize,
+) -> Result<(), ResourceError> {
+    for relative in list_skill_files(sandbox, search_directory, root).await? {
+        if skills.len() >= MAXIMUM_SKILLS {
+            return Ok(());
+        }
+        let (hash, bytes) =
+            match read_skill_metadata(sandbox, search_directory, root, &relative).await? {
+                Some(snapshot) => snapshot,
+                None => continue,
+            };
+        if secret.is_some_and(|secret| !secret.is_empty() && contains_secret(&bytes, secret)) {
+            return Err(ResourceError::Credential);
+        }
+        let metadata = parse_skill_metadata(&bytes)?;
+        let path = if relative.starts_with('/') {
+            relative
+        } else {
+            format!("{}/{}", search_directory.trim_end_matches('/'), relative)
+        };
+        if secret.is_some_and(|secret| {
+            !secret.is_empty() && (path.contains(secret) || scope.contains(secret))
+        }) {
+            return Err(ResourceError::Credential);
+        }
+        let advertisement = SkillAdvertisement {
+            source: ResourceSource {
+                kind: ResourceKind::Skill,
+                scope: scope.to_owned(),
+                path: path.clone(),
+                content_hash: hash,
+            },
+            name: metadata.name,
+            description: metadata.description,
+            read_path: path,
+        };
+        if !advertisement.source.valid() {
+            return Err(ResourceError::Invalid);
+        }
+        *advertised_bytes = advertised_bytes.saturating_add(
+            advertisement.name.len()
+                + advertisement.description.len()
+                + advertisement.read_path.len(),
+        );
+        if *advertised_bytes > MAXIMUM_SKILL_ADVERTISEMENT_BYTES {
+            return Err(ResourceError::Bound);
+        }
+        skills.push(advertisement);
+    }
+    Ok(())
+}
+
 async fn list_skill_files(
-    sandbox: &GuestSandbox,
+    sandbox: Option<&GuestSandbox>,
     directory: &str,
+    root: &str,
 ) -> Result<Vec<String>, ResourceError> {
-    let command = sandbox
-        .exec_cmd(GuestExec::shell(SKILL_LIST_COMMAND).in_dir(directory))
-        .await
-        .map_err(|_| ResourceError::Read)?;
-    let stdout =
-        collect_stdout(command, MAXIMUM_SKILLS * (MAXIMUM_RESOURCE_PATH_BYTES + 1)).await?;
+    let (exit, stdout) = resource_output(
+        sandbox,
+        GuestExec::command(
+            "sh",
+            vec![
+                "-c".to_owned(),
+                SKILL_LIST_COMMAND.to_owned(),
+                "skill-list".to_owned(),
+                root.to_owned(),
+            ],
+        )
+        .in_dir(directory),
+        MAXIMUM_SKILLS * (MAXIMUM_RESOURCE_PATH_BYTES + 1),
+    )
+    .await?;
+    match exit {
+        Some(0 | 3) => {}
+        Some(6) => return Err(ResourceError::UnsafeLink),
+        Some(7) => return Err(ResourceError::Bound),
+        _ => return Err(ResourceError::Read),
+    }
     let text = std::str::from_utf8(&stdout).map_err(|_| ResourceError::Invalid)?;
     let mut files = Vec::new();
     for line in text.split('\0') {
@@ -380,13 +414,15 @@ async fn list_skill_files(
         if line.len() > MAXIMUM_RESOURCE_PATH_BYTES || line.chars().any(char::is_control) {
             return Err(ResourceError::Bound);
         }
-        let parts = line.split('/').collect::<Vec<_>>();
-        if parts.len() != 4
-            || parts[0] != ".pi"
-            || parts[1] != "skills"
-            || parts[2].is_empty()
-            || matches!(parts[2], "." | "..")
-            || parts[3] != SKILL_METADATA_NAME
+        let relative = line
+            .strip_prefix(root)
+            .and_then(|path| path.strip_prefix('/'))
+            .ok_or(ResourceError::Invalid)?;
+        let parts = relative.split('/').collect::<Vec<_>>();
+        if parts.len() != 2
+            || parts[0].is_empty()
+            || matches!(parts[0], "." | "..")
+            || parts[1] != SKILL_METADATA_NAME
         {
             return Err(ResourceError::Invalid);
         }
@@ -399,65 +435,27 @@ async fn list_skill_files(
 }
 
 async fn read_skill_metadata(
-    sandbox: &GuestSandbox,
+    sandbox: Option<&GuestSandbox>,
     directory: &str,
+    root: &str,
     relative: &str,
 ) -> Result<Option<(String, Vec<u8>)>, ResourceError> {
-    let mut command = sandbox
-        .exec_cmd(
-            GuestExec::command(
-                "sh",
-                vec![
-                    "-c".to_owned(),
-                    SKILL_READ_COMMAND.to_owned(),
-                    "skill-read".to_owned(),
-                    relative.to_owned(),
-                ],
-            )
-            .in_dir(directory),
+    let (exited, stdout) = resource_output(
+        sandbox,
+        GuestExec::command(
+            "sh",
+            vec![
+                "-c".to_owned(),
+                SKILL_READ_COMMAND.to_owned(),
+                "skill-read".to_owned(),
+                relative.to_owned(),
+                root.to_owned(),
+            ],
         )
-        .await
-        .map_err(|_| ResourceError::Read)?;
-    let mut stdout = Vec::new();
-    let deadline = Instant::now() + DISCOVERY_DEADLINE;
-    let exited = loop {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            command.kill().await;
-            command.close().await;
-            return Err(ResourceError::Read);
-        }
-        let event = match tokio::time::timeout(remaining, command.recv()).await {
-            Ok(event) => event,
-            Err(_) => {
-                command.kill().await;
-                command.close().await;
-                return Err(ResourceError::Read);
-            }
-        };
-        let Some(event) = event else {
-            break None;
-        };
-        match event {
-            CommandEvent::Output { stream, bytes } => {
-                if stream != CommandStream::Stdout {
-                    continue;
-                }
-                if stdout.len().saturating_add(bytes.len()) > MAXIMUM_SKILL_METADATA_BYTES + 68 {
-                    command.kill().await;
-                    command.close().await;
-                    return Err(ResourceError::Bound);
-                }
-                stdout.extend_from_slice(&bytes);
-            }
-            CommandEvent::Exited(code) => break Some(code),
-            CommandEvent::Failed => {
-                command.close().await;
-                return Err(ResourceError::Read);
-            }
-        }
-    };
-    command.close().await;
+        .in_dir(directory),
+        MAXIMUM_SKILL_METADATA_BYTES + 68,
+    )
+    .await?;
     if exited == Some(6) {
         return Err(ResourceError::UnsafeLink);
     }
@@ -488,10 +486,27 @@ async fn read_skill_metadata(
     Ok(Some((hash, bytes[..end].to_vec())))
 }
 
-async fn collect_stdout(
-    mut command: crate::sandbox::CommandSession,
+async fn resource_output(
+    sandbox: Option<&GuestSandbox>,
+    request: GuestExec,
     maximum: usize,
-) -> Result<Vec<u8>, ResourceError> {
+) -> Result<(Option<i32>, Vec<u8>), ResourceError> {
+    let Some(sandbox) = sandbox else {
+        let output = super::capture_host_file(request, None, DISCOVERY_DEADLINE, maximum)
+            .await
+            .map_err(|failure| {
+                if failure.result.termination == super::CommandTermination::ResourceLimit {
+                    ResourceError::Bound
+                } else {
+                    ResourceError::Read
+                }
+            })?;
+        return Ok((output.status.code(), output.stdout));
+    };
+    let mut command = sandbox
+        .exec_cmd(request)
+        .await
+        .map_err(|_| ResourceError::Read)?;
     let mut stdout = Vec::new();
     let deadline = Instant::now() + DISCOVERY_DEADLINE;
     let mut exited = None;
@@ -535,12 +550,7 @@ async fn collect_stdout(
         }
     }
     command.close().await;
-    match exited {
-        Some(0 | 3) => Ok(stdout),
-        Some(6) => Err(ResourceError::UnsafeLink),
-        Some(7) => Err(ResourceError::Bound),
-        _ => Err(ResourceError::Read),
-    }
+    Ok((exited, stdout))
 }
 
 pub(crate) fn consumed_sources(
@@ -596,8 +606,7 @@ pub(crate) fn compose_skills(skills: &[SkillAdvertisement]) -> String {
     if skills.is_empty() {
         return String::new();
     }
-    let mut composed =
-        String::from("Available project skills. Read a skill body before you use it:\n");
+    let mut composed = String::from("Available skills. Read a skill body before you use it:\n");
     for skill in skills {
         composed.push_str(&skill.advertisement());
         composed.push('\n');

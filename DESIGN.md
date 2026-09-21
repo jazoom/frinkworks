@@ -133,13 +133,17 @@ Conversation pages carry their own header with the mobile menu trigger. The sepa
 
 Needs your attention lists real unresolved decisions with owning context links. An optional conversation identifier selects the return destination only: valid context shows Back to conversation, while any other value omits the return link. Refresh and decision pages preserve valid context, and every decision stays visible. History connects conversations to runs and evidence.
 
-The sidebar resource group links directly to Workflows, Presets, Environments and Agents. Providers and Settings stay separate below the group.
+The sidebar resource group links directly to Workflows, Presets, Environments, Agents and Skills. Providers and Settings stay separate below the group.
 
 The sidebar has no local status footer. Catalogue headers omit generic return links to conversations.
 
 Workflows and Presets each combine use and management on their canonical page. An optional conversation identifier selects the destination only.
 
 Valid context retains Back to conversation. Without valid context, the selected resource offers a conversation chooser on its own page.
+
+Skills combines the global skill catalogue and a plain Markdown editor on one page. The editor contains the complete `SKILL.md` file, including standard YAML frontmatter. The page shows the actual global directory and explains direct file placement. Copied files appear on refresh and become available to the next request without a restart.
+
+Project skills live in `.agents/skills` directly inside each authorised directory. Discovery does not search nested project directories. Power Plant advertises the skill name and description. The model reads the body with the read tool.
 
 Stale workflow or preset identities report an error without substitution. Resource navigation starts no work and grants no access. The breadcrumb group reads Resources.
 
@@ -205,6 +209,8 @@ Directories shows the applied execution context and directory access controls. I
 Explicit workflow commit steps detect each changed repository. Approval names the commit consequence. The run details show each repository's result separately.
 
 New forms select the available tools by default. An explicit empty tool choice stays empty after validation and on copied records.
+
+Host and sandbox modes expose the same tool selections. Host consent covers file tools as well as Run. Host file changes take effect immediately. Command approval applies only to Run.
 
 Ordinary setup controls apply when they change. There is no Save, Done, Keep draft or Cancel action. Close hides Setup. The application requires JavaScript.
 

@@ -58,7 +58,8 @@
       <h2 class="text-base font-semibold">Skills advertised</h2>
       {% if advertised.is_empty() %}
         <p class="text-quiet text-sm">
-          No project skill was advertised for this request.
+          No skill was advertised for this request.
+          <a class="link" href="/skills" data-graft>Manage skills</a>.
         </p>
       {% else %}
         <ul class="flex flex-col gap-3">

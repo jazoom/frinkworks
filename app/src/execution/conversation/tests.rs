@@ -287,6 +287,14 @@ async fn ordinary_host_run_keeps_tool_history_without_a_workflow() {
     state.conversations = std::sync::Arc::new(
         crate::conversations::ConversationStore::open(records.path().to_owned()).unwrap(),
     );
+    let global = tempfile::tempdir().unwrap();
+    state.skills =
+        std::sync::Arc::new(crate::skills::SkillStore::open(global.path().to_owned()).unwrap());
+    let skill = state
+        .skills
+        .create("---\nname: global-guidance\ndescription: Guidance without a project\n---\nGlobal skill body.".to_owned())
+        .unwrap();
+    let skill_path = global.path().join(&skill.directory).join("SKILL.md");
     let backend = crate::tests::ScriptedBackend::rounds(vec![
         vec![
             Ok(ModelEvent::ToolCall {
@@ -304,11 +312,8 @@ async fn ordinary_host_run_keeps_tool_history_without_a_workflow() {
         vec![
             Ok(ModelEvent::ToolCall {
                 id: "call-2".to_owned(),
-                name: "run".to_owned(),
-                arguments: serde_json::json!({
-                    "command": "printf two",
-                    "explanation": "Print the second marker",
-                }),
+                name: "read".to_owned(),
+                arguments: serde_json::json!({"path": skill_path}),
             }),
             Ok(ModelEvent::Complete {
                 reason: CompletionReason::ToolCalls,
@@ -328,7 +333,7 @@ async fn ordinary_host_run_keeps_tool_history_without_a_workflow() {
     let session = token.id();
     state.sessions.insert(session);
     let record = state.conversations.create("Host".to_owned()).unwrap();
-    let host = execution_settings(vec![ToolId::Run], ToolLocation::Host)
+    let host = execution_settings(vec![ToolId::Run, ToolId::Read], ToolLocation::Host)
         .with_host_approval(crate::execution::HostApprovalPolicy::Automatic);
     let record = state
         .conversations
@@ -392,8 +397,16 @@ async fn ordinary_host_run_keeps_tool_history_without_a_workflow() {
                     .is_some_and(|result| result.command.is_some())
             })
             .count(),
-        2
+        1
     );
+    let source = history
+        .iter()
+        .flat_map(|turn| &turn.calls)
+        .filter_map(|call| call.result.as_ref()?.resource.as_ref())
+        .next()
+        .unwrap();
+    assert_eq!(source.kind, crate::execution::ResourceKind::Skill);
+    assert_eq!(source.path, skill_path.to_str().unwrap());
     assert!(!state.conversation_runtime.unsettled(record.id));
 }
 
@@ -513,11 +526,21 @@ async fn file_change_host_run_binds_baseline_to_owned_conversation() {
     let backend = crate::tests::ScriptedBackend::rounds(vec![
         vec![
             Ok(ModelEvent::ToolCall {
+                id: "read-skill".to_owned(),
+                name: "read".to_owned(),
+                arguments: serde_json::json!({"path": ".agents/skills/local/SKILL.md"}),
+            }),
+            Ok(ModelEvent::Complete {
+                reason: CompletionReason::ToolCalls,
+            }),
+        ],
+        vec![
+            Ok(ModelEvent::ToolCall {
                 id: "write-note".to_owned(),
-                name: "run".to_owned(),
+                name: "write".to_owned(),
                 arguments: serde_json::json!({
-                    "command": "printf 'after\\n' > note.txt",
-                    "explanation": "Replace the note",
+                    "path": "note.txt",
+                    "contents": "after\n",
                 }),
             }),
             Ok(ModelEvent::Complete {
@@ -531,7 +554,7 @@ async fn file_change_host_run_binds_baseline_to_owned_conversation() {
             }),
         ],
     ]);
-    state.chat = std::sync::Arc::new(ChatBackend::Scripted(backend));
+    state.chat = std::sync::Arc::new(ChatBackend::Scripted(backend.clone()));
     let connection =
         crate::providers::ProviderConnection::with_key(ProviderKind::Xai, "test-key", "grok-4.6");
     state.vault.put(connection.clone()).unwrap();
@@ -540,8 +563,17 @@ async fn file_change_host_run_binds_baseline_to_owned_conversation() {
     state.sessions.insert(session);
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(directory.path().join("note.txt"), "before\n").unwrap();
+    let skill_path = directory.path().join(".agents/skills/local/SKILL.md");
+    std::fs::create_dir_all(skill_path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &skill_path,
+        "---\nname: local\ndescription: Local guidance\n---\nPrivate skill body.\n",
+    )
+    .unwrap();
     let grant = crate::execution::DirectoryGrant::from_selected(directory.path(), &[]).unwrap();
-    let settings = host_file_change_settings(&state, grant);
+    let mut settings = host_file_change_settings(&state, grant);
+    settings.tools = vec![ToolId::Read, ToolId::Write];
+    settings.host_approval = crate::execution::HostApprovalPolicy::AskEachTime;
     let (record, job) =
         start_file_change_conversation(&state, session, settings.clone(), "Change the file");
     let (run_id, project_free) = file_change_run(&state, record.id, &settings);
@@ -563,6 +595,13 @@ async fn file_change_host_run_binds_baseline_to_owned_conversation() {
         },
     )
     .await;
+    let preamble = backend.last_preamble().unwrap();
+    assert!(preamble.contains(skill_path.to_str().unwrap()));
+    assert!(!preamble.contains("Private skill body."));
+    let tools = backend.last_tools();
+    assert!(tools.contains(&"read".to_owned()));
+    assert!(tools.contains(&"write".to_owned()));
+    assert!(!tools.contains(&"run".to_owned()));
     let run = state.workflow_runs.get(&run_id).unwrap();
     assert_eq!(run.conversation_id, Some(record.id));
     assert_eq!(run.attempts.len(), 1);

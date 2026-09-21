@@ -35,7 +35,7 @@ pub(crate) enum OrdinaryKind {
 }
 
 pub(crate) fn ordinary_kind(settings: &ExecutionSettings) -> Option<OrdinaryKind> {
-    if crate::tools::advertised(&settings.tools, settings.location).is_empty() {
+    if settings.tools.is_empty() {
         return None;
     }
     match settings.location {
@@ -364,14 +364,19 @@ async fn prepare(
         append_block(&mut preamble, &host_policy_text(&settings));
     }
     let mut instruction_sources = Vec::new();
-    let mut skills = Vec::new();
+    let skills;
     let (policy, sandbox, guest, location) = match work.kind {
-        OrdinaryKind::Host => (
-            DirectoryPolicy::from_grants(Vec::new(), String::new()),
-            None,
-            None,
-            ToolLocation::Host,
-        ),
+        OrdinaryKind::Host => {
+            let policy = DirectoryPolicy::from_grants(Vec::new(), String::new())
+                .with_skill_root(crate::execution::global_skill_root(state.skills.host_dir()))
+                .on_host(&crate::execution::command_directory(&settings.directories));
+            skills = crate::execution::discover_skills(None, &policy, secret)
+                .await
+                .map_err(|error| {
+                    prepare_failure(AgentOutcome::AuthorityFailure, error.message())
+                })?;
+            (policy, None, None, ToolLocation::Host)
+        }
         OrdinaryKind::Sandbox => {
             let prepared =
                 prepare_sandbox(state, work.record.id, work.job.id(), &settings, secret).await?;
@@ -401,7 +406,7 @@ async fn prepare(
     if let Some(language) = state.sessions.language(&work.session) {
         language.append_instructions(&mut preamble);
     }
-    let tools = crate::tools::advertised(&settings.tools, location);
+    let tools = settings.tools.clone();
     let host = (location == ToolLocation::Host).then(|| crate::tools::HostRunSpec {
         session: work.session,
         conversation: work.record.id,
@@ -455,8 +460,11 @@ async fn prepare_sandbox(
     settings: &ExecutionSettings,
     secret: Option<&str>,
 ) -> Result<SandboxPrepared, PrepareFailure> {
-    let authority = ProjectFreeAuthority::from_settings(1, settings)
+    let mut authority = ProjectFreeAuthority::from_settings(1, settings)
         .map_err(|error| prepare_failure(AgentOutcome::AuthorityFailure, error.message()))?;
+    authority.policy = authority
+        .policy
+        .with_skill_root(crate::execution::global_skill_root(state.skills.host_dir()));
     let run = RunId::generate()
         .map_err(|_| prepare_failure(AgentOutcome::PersistenceFailure, persist_error()))?;
     let attempt = AttemptId::generate()
@@ -590,12 +598,8 @@ async fn prepare_sandbox(
             ));
         }
     };
-    let skills = match crate::execution::discover_skills(
-        &sandbox,
-        authority.policy.grants(),
-        secret,
-    )
-    .await
+    let skills = match crate::execution::discover_skills(Some(&sandbox), &authority.policy, secret)
+        .await
     {
         Ok(skills) => skills,
         Err(error) => {
@@ -640,6 +644,13 @@ pub(crate) fn sandbox_spec(
         mounts.push(MountSpec {
             guest: grant.guest_path.clone(),
             host: grant.host_path.clone(),
+            read_only: true,
+        });
+    }
+    if let Some(root) = authority.policy.skill_root() {
+        mounts.push(MountSpec {
+            guest: root.guest_path.clone(),
+            host: root.host_path.clone(),
             read_only: true,
         });
     }

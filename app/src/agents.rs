@@ -7,7 +7,7 @@ mod store;
 mod tool_id;
 
 pub(crate) use id::AgentId;
-pub(crate) use policy::{DirectoryPolicy, EffectiveAuthority, PolicyGrant};
+pub(crate) use policy::{DirectoryPolicy, EffectiveAuthority, PolicyGrant, SkillRoot};
 pub(crate) use prompt::compose_role;
 pub(crate) use record::{
     AccessMode, AgentDraft, AgentError, AgentRecord, DirectoryGrant, GUEST_PROJECT, MAXIMUM_GRANTS,

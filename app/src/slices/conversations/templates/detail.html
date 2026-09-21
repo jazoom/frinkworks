@@ -1447,7 +1447,7 @@
                 <span
                   ><strong>Enable tools</strong
                   ><small
-                    >List, read, write and run. Directory access still needs
+                    >List, read, edit, write and run. File access still needs
                     approval.</small
                   ></span
                 >
@@ -1545,7 +1545,9 @@
                   data-execution-host-policy
                   {% if !location_host %}hidden{% endif %}
                 >
-                  Commands run directly as the Power Plant process user.
+                  Tools run directly as the Power Plant process user. File
+                  changes take effect immediately. Command approval applies only
+                  to Run.
                 </p>
                 <label
                   class="flex flex-col gap-1"
@@ -1593,12 +1595,12 @@
                       {% if host_elevated %}
                         <p>
                           This process already has elevated privileges. Host
-                          commands inherit that authority.
+                          tools inherit that authority.
                         </p>
                       {% endif %}
                       <p>
-                        The model receives command output. Work locations do not
-                        limit which files commands can access.
+                        The model receives tool output. Work locations do not
+                        limit which files tools can access.
                         {% if host_approval_automatic %}
                           Run without approval lets the model run commands
                           without a decision from you for each command. Power

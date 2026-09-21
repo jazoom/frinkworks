@@ -37,8 +37,8 @@
   <legend class="text-sm font-semibold">Available tools</legend>
   <p class="text-quiet text-xs">
     {% if tools_host %}
-      Only Run is available on this computer. Commands can access any file that
-      Power Plant can access.
+      The selected tools use Power Plant's host permissions. File changes take
+      effect immediately. Host command approval applies only to Run.
     {% else %}
       The model can use the execution tools that you select. Plan actions grant
       no file or command access.
@@ -46,10 +46,7 @@
   </p>
   <div class="grid gap-2 sm:grid-cols-2">
     {% for tool in tool_options %}
-      <label
-        class="border-base-300 flex min-h-16 items-start gap-3 border p-3"
-        {% if tools_host && tool.value != "run" %}hidden{% endif %}
-      >
+      <label class="border-base-300 flex min-h-16 items-start gap-3 border p-3">
         <input
           {% if !settings_form.is_empty() %}form="{{ settings_form }}"{% endif %}
           type="checkbox"

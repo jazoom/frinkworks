@@ -70,7 +70,9 @@ Application transactions retain recovery journals and preimages. Uncertain file 
 
 Cancellation and discarded proposals do not undo direct writes or other host effects.
 
-Sandbox tools use authorised mounts. Host commands run as the Power Plant process user, without additional privileges or path confinement.
+Sandbox tools use authorised mounts. Host tools run as the Power Plant process user, without additional privileges or path confinement.
+
+Both modes offer the selected file and command tools. Host file changes take effect immediately. Host command approval applies only to Run.
 
 Ask each time is the default host command policy. Run without approval requires fresh consent for the destination settings.
 
@@ -103,11 +105,17 @@ Restart preserves safe gates. The destination requires fresh run-only consent be
 
 ## Resources
 
-The resource navigation links directly to Workflows, Presets, Environments and Agents. Providers and Settings stay separate below the group.
+The resource navigation links directly to Workflows, Presets, Environments, Agents and Skills. Providers and Settings stay separate below the group.
 
 Catalogue navigation creates no conversation or execution. It grants no access.
 
 Agents supply reusable instructions and requested settings. A saved agent is not a subagent or an implicit workflow participant.
+
+A skill is an ordinary `SKILL.md` file with YAML frontmatter. Global skills live at `<data_root>/skills/<skill-folder>/SKILL.md`. Users can copy skill folders directly or edit complete files on the Skills page. No Power Plant identifiers or revision fields are required. The next request discovers copied files without a restart.
+
+A new global directory starts with code review, debugging and test design skills. Restart does not replace user files or restore deleted defaults.
+
+Project skills live in `.agents/skills` directly inside each authorised directory. Discovery does not search nested project directories. Power Plant advertises a skill name and description in both host and sandbox modes. The model reads the body with the read tool. A skill grants no tool, directory or command authority.
 
 Environment recipes supply an OCI image and optional setup script. Each sandbox attempt pins a ready prepared snapshot.
 

@@ -15,6 +15,8 @@ use super::command::{
     CommandCapture, CommandFailure, CommandResult, CommandStream, CommandTermination,
 };
 
+pub(crate) mod files;
+
 pub(crate) const COMMAND_TIMEOUT: Duration = if cfg!(test) {
     Duration::from_millis(200)
 } else {

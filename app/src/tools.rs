@@ -26,6 +26,18 @@ pub(crate) const SANDBOX_COMMAND_TIMEOUT: Duration = if cfg!(test) {
 impl ToolId {
     fn description_for(self, location: ToolLocation) -> &'static str {
         match (self, location) {
+            (Self::List, ToolLocation::Host) => {
+                "List files on this computer with the Power Plant process user's permissions."
+            }
+            (Self::Read, ToolLocation::Host) => {
+                "Read a file on this computer, up to the 8 MiB scan limit. Offset is a 1-based line. Returns the next offset when more content remains."
+            }
+            (Self::Edit, ToolLocation::Host) => {
+                "Apply exact-match replacements to one existing host file. Each search must occur once in the original file. Changes take effect immediately."
+            }
+            (Self::Write, ToolLocation::Host) => {
+                "Write a host file. Creates parent directories. Use this for new files or complete replacements. Changes take effect immediately."
+            }
             (Self::List, _) => "List files in a granted directory.",
             (Self::Read, _) => {
                 "Read a file inside a granted directory, up to the 8 MiB scan limit. Offset is a 1-based line. Returns the next offset when more content remains."
@@ -46,13 +58,21 @@ impl ToolId {
     }
 
     fn parameters(self, location: ToolLocation) -> serde_json::Value {
+        let path_description = match location {
+            ToolLocation::Host => {
+                "An absolute host path or a path relative to the selected work location. Defaults to the work location."
+            }
+            ToolLocation::Sandbox => {
+                "Path inside a granted guest directory. Defaults to the first authorised directory or /workspace."
+            }
+        };
         match self {
             Self::List => serde_json::json!({
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Path inside a granted guest directory. Defaults to the first authorised directory or /workspace."
+                        "description": path_description
                     }
                 },
                 "additionalProperties": false
@@ -62,7 +82,7 @@ impl ToolId {
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Path inside a granted guest directory. Defaults to the first authorised directory or /workspace."
+                        "description": path_description
                     },
                     "offset": {
                         "type": "integer",
@@ -83,7 +103,7 @@ impl ToolId {
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Path of an existing file inside a writable granted guest directory."
+                        "description": path_description
                     },
                     "edits": {
                         "type": "array",
@@ -115,7 +135,7 @@ impl ToolId {
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Path inside a writable granted guest directory."
+                        "description": path_description
                     },
                     "contents": {
                         "type": "string",
@@ -144,20 +164,10 @@ impl ToolId {
     }
 }
 
-pub(crate) fn advertised(selected: &[ToolId], location: ToolLocation) -> Vec<ToolId> {
-    match location {
-        ToolLocation::Sandbox => selected.to_vec(),
-        ToolLocation::Host => selected
-            .iter()
-            .copied()
-            .filter(|tool| *tool == ToolId::Run)
-            .collect(),
-    }
-}
-
 pub(crate) fn definitions_for(selected: &[ToolId], location: ToolLocation) -> Vec<ToolDefinition> {
-    advertised(selected, location)
-        .into_iter()
+    selected
+        .iter()
+        .copied()
         .map(|kind| ToolDefinition {
             name: kind.as_str().to_owned(),
             description: kind.description_for(location).to_owned(),
@@ -468,7 +478,7 @@ pub(crate) async fn invoke(
     if name == ASK_USER {
         return ask_user(context, call_id, arguments).await;
     }
-    let Some(kind) = authorised_tool(context.tools, name, context.location) else {
+    let Some(kind) = authorised_tool(context.tools, name) else {
         return ToolTrace::fail(
             name.to_owned(),
             "That tool is not available.".to_owned(),
@@ -521,8 +531,8 @@ pub(crate) async fn invoke(
     }
 }
 
-fn authorised_tool(selected: &[ToolId], name: &str, location: ToolLocation) -> Option<ToolId> {
-    ToolId::parse(name).filter(|kind| advertised(selected, location).contains(kind))
+fn authorised_tool(selected: &[ToolId], name: &str) -> Option<ToolId> {
+    ToolId::parse(name).filter(|kind| selected.contains(kind))
 }
 
 fn read_output(context: &AgentToolContext<'_>, arguments: &serde_json::Value) -> ToolTrace {
@@ -761,10 +771,12 @@ async fn dispatch(
     kind: ToolId,
     arguments: &serde_json::Value,
 ) -> Result<ToolRun, ToolFailure> {
-    if context.location == ToolLocation::Host && kind != ToolId::Run {
-        return Err(ToolFailure::Authority(
-            "That tool is not available on this computer.",
-        ));
+    if context.location == ToolLocation::Host {
+        let host = context
+            .host
+            .as_ref()
+            .ok_or(ToolFailure::Authority("Host execution is not available."))?;
+        validate_host_dispatch(host, context.job).map_err(ToolFailure::Authority)?;
     }
     match kind {
         ToolId::List => {
@@ -1255,6 +1267,10 @@ fn reject_grant_root(
             .grants()
             .iter()
             .any(|grant| grant.guest_path == path)
+        || context
+            .policy
+            .skill_root()
+            .is_some_and(|root| root.guest_path == path)
     {
         return Err(ToolFailure::Ordinary(message));
     }
@@ -1270,7 +1286,11 @@ async fn read_file(
     let request = read::parse_request(args.offset, args.limit)
         .map_err(|error| ToolFailure::Ordinary(error.message()))?;
     let path = existing_file_path(context, &args.path)?;
-    let skill = crate::execution::resources::skill_directory(&path).is_some();
+    let skill = crate::execution::resources::skill_directory(&path).is_some()
+        || context
+            .policy
+            .skill_root()
+            .is_some_and(|root| path.starts_with(&format!("{}/", root.guest_path)));
     let scan = if skill {
         crate::execution::resources::MAXIMUM_SKILL_BODY_BYTES
     } else {
@@ -1297,11 +1317,9 @@ async fn read_file(
     let page =
         read::page_text(text, request).map_err(|error| ToolFailure::Ordinary(error.message()))?;
     let resource = if skill || path.ends_with("/AGENTS.md") {
-        let grant = context
+        let scope = context
             .policy
-            .grants()
-            .iter()
-            .find(|grant| path.starts_with(&format!("{}/", grant.guest_path)))
+            .resource_scope(&path)
             .ok_or(ToolFailure::Authority(
                 "That resource has no authorised root.",
             ))?;
@@ -1311,7 +1329,7 @@ async fn read_file(
             } else {
                 crate::execution::ResourceKind::Instruction
             },
-            &grant.alias,
+            scope,
             &path,
             &bytes,
         );
@@ -1400,6 +1418,7 @@ ok=0
 oldifs=$IFS
 IFS=:
 for root in $roots; do
+    root=${root%/}
     case "$resolved" in
         "$root"|"$root"/*) ok=1 ;;
     esac
@@ -1438,6 +1457,7 @@ ok=0
 oldifs=$IFS
 IFS=:
 for root in $roots; do
+    root=${root%/}
     case "$resolved" in
         "$root"|"$root"/*) ok=1 ;;
     esac
@@ -1488,6 +1508,7 @@ ok=0
 oldifs=$IFS
 IFS=:
 for root in $roots; do
+    root=${root%/}
     case "$resolved" in
         "$root"|"$root"/*) ok=1 ;;
     esac
@@ -1504,6 +1525,7 @@ ok=0
 oldifs=$IFS
 IFS=:
 for root in $roots; do
+    root=${root%/}
     case "$resolved" in
         "$root"|"$root"/*) ok=1 ;;
     esac
@@ -1520,6 +1542,7 @@ if [ -L "$target" ]; then
     oldifs=$IFS
     IFS=:
     for root in $roots; do
+        root=${root%/}
         case "$target" in
             "$root"/*) ok=1 ;;
         esac
@@ -1553,6 +1576,7 @@ ok=0
 oldifs=$IFS
 IFS=:
 for root in $roots; do
+    root=${root%/}
     case "$resolved" in
         "$root"|"$root"/*) ok=1 ;;
     esac
@@ -1620,6 +1644,18 @@ async fn capture(
     call_id: &str,
     request: GuestExec,
 ) -> Result<CommandResult, CommandFailure> {
+    if context.location == ToolLocation::Host {
+        let output = capture_host_file(context, request, MAXIMUM_TOOL_BYTES).await?;
+        let mut capture = crate::execution::command::CommandCapture::with_secret(context.secret);
+        capture.push(crate::execution::CommandStream::Stdout, &output.stdout);
+        capture.push(crate::execution::CommandStream::Stderr, &output.stderr);
+        return Ok(capture.into_result(
+            output
+                .status
+                .code()
+                .map_or(CommandTermination::Unknown, CommandTermination::Exited),
+        ));
+    }
     let Some(sandbox) = context.sandbox else {
         return Err(command_not_dispatched("That tool is not available."));
     };
@@ -1719,6 +1755,15 @@ async fn capture_stdout_bytes(
     call_id: &str,
     request: GuestExec,
 ) -> Result<Vec<u8>, ToolFailure> {
+    if context.location == ToolLocation::Host {
+        let output = capture_host_file(context, request, read::MAXIMUM_SCAN_BYTES + 1)
+            .await
+            .map_err(|failure| ToolFailure::Command {
+                label: "File read".to_owned(),
+                failure,
+            })?;
+        return file_stdout(output.status.code(), output.stdout);
+    }
     let Some(sandbox) = context.sandbox else {
         return Err(ToolFailure::Ordinary("That tool is not available."));
     };
@@ -1783,6 +1828,29 @@ async fn capture_stdout_bytes(
         session.kill().await;
     }
     session.close().await;
+    file_stdout(exit, stdout)
+}
+
+async fn capture_host_file(
+    context: &AgentToolContext<'_>,
+    request: GuestExec,
+    maximum: usize,
+) -> Result<std::process::Output, CommandFailure> {
+    let host = context
+        .host
+        .as_ref()
+        .ok_or_else(|| command_not_dispatched("Host execution is not available."))?;
+    validate_host_dispatch(host, context.job).map_err(command_not_dispatched)?;
+    crate::execution::capture_host_file(
+        request.in_dir(host.directory.to_string_lossy()),
+        Some(context.job),
+        crate::execution::COMMAND_TIMEOUT,
+        maximum,
+    )
+    .await
+}
+
+fn file_stdout(exit: Option<i32>, stdout: Vec<u8>) -> Result<Vec<u8>, ToolFailure> {
     match exit {
         Some(0) => Ok(stdout),
         Some(2) => Err(ToolFailure::Ordinary("That path is a directory.")),
