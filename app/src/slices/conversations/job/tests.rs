@@ -87,6 +87,7 @@ async fn untrusted_activity_keeps_its_order_and_stays_secret_safe_in_each_repres
                 message.id,
                 job.latest_seq(),
                 &job.snapshot().output,
+                false,
                 &mut hypergraft::StreamBudget::new(),
             )
             .unwrap()

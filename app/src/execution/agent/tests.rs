@@ -380,3 +380,372 @@ async fn unsafe_batches_do_not_dispatch_any_call() {
         assert!(!format!("{:?}", job.events_after(0)).contains("test-key"));
     }
 }
+
+fn granted_read_spec(
+    connection: crate::providers::ProviderConnection,
+    conversation: crate::conversations::ConversationId,
+    revision: u32,
+) -> super::AgentRunSpec {
+    use crate::agents::{
+        AccessMode, AgentId, AgentRecord, DirectoryGrant, DirectoryPolicy, ToolId,
+    };
+    use crate::execution::ToolLocation;
+    let policy = DirectoryPolicy::from_record_with_primary(
+        &AgentRecord {
+            id: AgentId::generate().expect("id"),
+            revision: 1,
+            name: "Agent".to_owned(),
+            instructions: String::new(),
+            selection: None,
+            tools: vec![ToolId::Read],
+            network: crate::agents::NetworkAccess::None,
+            directories: vec![DirectoryGrant {
+                alias: "project".to_owned(),
+                host_path: "/tmp/project".into(),
+                access: AccessMode::ReadWrite,
+            }],
+            primary_directory: "project".to_owned(),
+        },
+        "project",
+    );
+    let mut spec = read_spec(connection, conversation, revision);
+    spec.policy = policy;
+    spec.location = ToolLocation::Sandbox;
+    spec
+}
+
+fn tool_finished_count(job: &Job) -> usize {
+    job.events_after(0)
+        .iter()
+        .filter(|event| matches!(event.kind, JobEventKind::ToolFinished { .. }))
+        .count()
+}
+
+#[tokio::test]
+async fn ordinary_read_error_then_a_corrected_call() {
+    use crate::config::RuntimeConfig;
+    use crate::providers::{
+        ChatBackend, ChatTurn, CompletionReason, ModelEvent, ProviderConnection, ProviderKind,
+    };
+    let mut state = crate::tests::test_state(RuntimeConfig::development());
+    let backend = crate::tests::ScriptedBackend::rounds(vec![
+        vec![
+            Ok(ModelEvent::ToolCall {
+                id: "call-1".to_owned(),
+                name: "read".to_owned(),
+                arguments: serde_json::json!({"path": ""}),
+            }),
+            Ok(ModelEvent::Complete {
+                reason: CompletionReason::ToolCalls,
+            }),
+        ],
+        vec![
+            Ok(ModelEvent::ToolCall {
+                id: "call-2".to_owned(),
+                name: "read".to_owned(),
+                arguments: serde_json::json!({"path": "src/main.rs"}),
+            }),
+            Ok(ModelEvent::Complete {
+                reason: CompletionReason::ToolCalls,
+            }),
+        ],
+        vec![
+            Ok(ModelEvent::Text("Read the later path.".to_owned())),
+            Ok(ModelEvent::Complete {
+                reason: CompletionReason::Stop,
+            }),
+        ],
+    ]);
+    state.chat = std::sync::Arc::new(ChatBackend::Scripted(backend));
+    let connection = ProviderConnection::with_key(ProviderKind::Xai, "test-key", "grok-4.6");
+    state.vault.put(connection.clone()).expect("provider");
+    let (record, job) = conversation_job(&state);
+    let ended = super::run_agent_action(
+        &state,
+        granted_read_spec(connection, record.id, record.revision),
+        vec![ChatTurn::user("Read the file".to_owned())],
+        job.clone(),
+    )
+    .await;
+    assert_eq!(ended.outcome, super::AgentOutcome::Completed);
+    assert_eq!(ended.reply.tools.len(), 2);
+    assert!(
+        ended.reply.tools[0]
+            .output
+            .contains("Choose a file to read.")
+    );
+    assert_eq!(tool_finished_count(&job), 2);
+}
+
+#[tokio::test]
+async fn path_escape_stops_without_dispatching_the_rest() {
+    use crate::config::RuntimeConfig;
+    use crate::providers::{
+        ChatBackend, ChatTurn, CompletionReason, ModelEvent, ProviderConnection, ProviderKind,
+    };
+    let mut state = crate::tests::test_state(RuntimeConfig::development());
+    let backend = crate::tests::ScriptedBackend::events(vec![
+        Ok(ModelEvent::ToolCall {
+            id: "call-1".to_owned(),
+            name: "read".to_owned(),
+            arguments: serde_json::json!({"path": ".."}),
+        }),
+        Ok(ModelEvent::ToolCall {
+            id: "call-2".to_owned(),
+            name: "read".to_owned(),
+            arguments: serde_json::json!({"path": "src/main.rs"}),
+        }),
+        Ok(ModelEvent::Complete {
+            reason: CompletionReason::ToolCalls,
+        }),
+    ]);
+    state.chat = std::sync::Arc::new(ChatBackend::Scripted(backend));
+    let connection = ProviderConnection::with_key(ProviderKind::Xai, "test-key", "grok-4.6");
+    state.vault.put(connection.clone()).expect("provider");
+    let (record, job) = conversation_job(&state);
+    let ended = super::run_agent_action(
+        &state,
+        granted_read_spec(connection, record.id, record.revision),
+        vec![ChatTurn::user("Read the file".to_owned())],
+        job.clone(),
+    )
+    .await;
+    assert_eq!(ended.outcome, super::AgentOutcome::AuthorityFailure);
+    assert_eq!(ended.reply.tools.len(), 2);
+    assert!(
+        ended.reply.tools[0]
+            .output
+            .contains("Stay inside a granted directory.")
+    );
+    assert_eq!(ended.reply.tools[1].output, "This tool did not run.");
+    assert_eq!(
+        ended.reply.tools[1]
+            .command
+            .as_ref()
+            .map(|command| command.termination),
+        Some(crate::execution::CommandTermination::NotDispatched)
+    );
+}
+
+#[tokio::test]
+async fn not_dispatched_command_returns_as_an_ordinary_result() {
+    use crate::config::RuntimeConfig;
+    use crate::providers::{
+        ChatBackend, ChatTurn, CompletionReason, ModelEvent, ProviderConnection, ProviderKind,
+    };
+    let mut state = crate::tests::test_state(RuntimeConfig::development());
+    let backend = crate::tests::ScriptedBackend::rounds(vec![
+        vec![
+            Ok(ModelEvent::ToolCall {
+                id: "call-1".to_owned(),
+                name: "run".to_owned(),
+                arguments: serde_json::json!({"command": "true"}),
+            }),
+            Ok(ModelEvent::Complete {
+                reason: CompletionReason::ToolCalls,
+            }),
+        ],
+        vec![
+            Ok(ModelEvent::Text("No guest ran.".to_owned())),
+            Ok(ModelEvent::Complete {
+                reason: CompletionReason::Stop,
+            }),
+        ],
+    ]);
+    state.chat = std::sync::Arc::new(ChatBackend::Scripted(backend));
+    let connection = ProviderConnection::with_key(ProviderKind::Xai, "test-key", "grok-4.6");
+    state.vault.put(connection.clone()).expect("provider");
+    let (record, job) = conversation_job(&state);
+    let mut spec = granted_read_spec(connection, record.id, record.revision);
+    spec.tool_ids = vec![crate::agents::ToolId::Run];
+    spec.tools = crate::tools::definitions_for(
+        &[crate::agents::ToolId::Run],
+        crate::execution::ToolLocation::Sandbox,
+    );
+    let ended = super::run_agent_action(
+        &state,
+        spec,
+        vec![ChatTurn::user("Run a command".to_owned())],
+        job.clone(),
+    )
+    .await;
+    assert_eq!(ended.outcome, super::AgentOutcome::Completed);
+    assert_eq!(ended.reply.tools.len(), 1);
+    assert_eq!(
+        ended.reply.tools[0]
+            .command
+            .as_ref()
+            .map(|command| command.termination),
+        Some(crate::execution::CommandTermination::NotDispatched)
+    );
+    assert_eq!(ended.reply.text, "No guest ran.");
+}
+
+#[tokio::test]
+async fn rate_limit_before_and_after_a_tool_runs_the_call_once() {
+    use crate::config::RuntimeConfig;
+    use crate::providers::{
+        ChatBackend, ChatTurn, CompletionReason, ModelEvent, ProviderConnection, ProviderError,
+        ProviderKind,
+    };
+    let mut state = crate::tests::test_state(RuntimeConfig::development());
+    let backend = crate::tests::ScriptedBackend::turn_results(vec![
+        Err(ProviderError::RateLimited { retry_after: None }),
+        Ok(vec![
+            Ok(ModelEvent::ToolCall {
+                id: "call-1".to_owned(),
+                name: "run".to_owned(),
+                arguments: serde_json::json!({"command": "printf x >> effects", "explanation": "Record one effect"}),
+            }),
+            Ok(ModelEvent::Complete {
+                reason: CompletionReason::ToolCalls,
+            }),
+        ]),
+        Ok(vec![
+            Ok(ModelEvent::Text("Discard this partial reply.".to_owned())),
+            Err(ProviderError::RateLimited { retry_after: None }),
+        ]),
+        Ok(vec![
+            Ok(ModelEvent::Text("Done.".to_owned())),
+            Ok(ModelEvent::Complete {
+                reason: CompletionReason::Stop,
+            }),
+        ]),
+    ]);
+    state.chat = std::sync::Arc::new(ChatBackend::Scripted(backend.clone()));
+    let connection = ProviderConnection::with_key(ProviderKind::Xai, "test-key", "grok-4.6");
+    state.vault.put(connection.clone()).expect("provider");
+    let directory = tempfile::tempdir().expect("directory");
+    let records = tempfile::tempdir().expect("records");
+    state.conversations = std::sync::Arc::new(
+        crate::conversations::ConversationStore::open(records.path().to_owned()).unwrap(),
+    );
+    let token = crate::sessions::generate_session_token().expect("session");
+    let session = token.id();
+    state.sessions.insert(session);
+    let record = state.conversations.create("Host".to_owned()).unwrap();
+    let settings = crate::execution::ExecutionSettings::new(
+        crate::providers::ModelSelection::new(ProviderKind::Xai, "grok-4.6".to_owned(), None)
+            .unwrap(),
+        String::new(),
+        vec![crate::agents::ToolId::Run],
+        crate::tests::test_environment_id(),
+    )
+    .unwrap()
+    .with_location(crate::execution::ToolLocation::Host)
+    .with_host_approval(crate::execution::HostApprovalPolicy::Automatic);
+    let record = state
+        .conversations
+        .update_execution_settings(&record.id, record.revision, settings.clone())
+        .unwrap();
+    state
+        .access_consent
+        .approve_host_conversation(
+            &state
+                .access_consent
+                .request_host_conversation(session, record.id, &settings)
+                .unwrap(),
+            session,
+            record.id,
+            &settings,
+        )
+        .unwrap();
+    let job = state
+        .sessions
+        .begin_conversation_job(&session, record.id)
+        .unwrap();
+    let record = state
+        .conversations
+        .begin_message_with_model(
+            &record.id,
+            record.revision,
+            None,
+            job.id(),
+            "Run once".to_owned(),
+        )
+        .unwrap();
+    let mut spec = read_spec(connection, record.id, record.revision);
+    spec.location = crate::execution::ToolLocation::Host;
+    spec.tool_ids = vec![crate::agents::ToolId::Run];
+    spec.tools = crate::tools::definitions_for(&spec.tool_ids, spec.location);
+    spec.host = Some(crate::tools::HostRunSpec {
+        session,
+        conversation: record.id,
+        execution_revision: record.revision,
+        directory: directory.path().to_owned(),
+        settings,
+        run: None,
+        step: None,
+        attempt: None,
+    });
+    let ended = super::run_agent_action(
+        &state,
+        spec,
+        vec![ChatTurn::user("Run once".to_owned())],
+        job.clone(),
+    )
+    .await;
+    assert_eq!(
+        ended.outcome,
+        super::AgentOutcome::Completed,
+        "{:?}",
+        ended.error
+    );
+    assert_eq!(
+        std::fs::read(directory.path().join("effects")).unwrap(),
+        b"x"
+    );
+    state
+        .conversations
+        .settle_message(
+            &record.id,
+            job.id(),
+            ended.reply.clone(),
+            crate::conversations::MessageStatus::Complete,
+            None,
+        )
+        .unwrap();
+    let reopened =
+        crate::conversations::ConversationStore::open(records.path().to_owned()).unwrap();
+    let stored = reopened.get(&record.id).unwrap();
+    assert!(stored.messages.iter().any(|message| message.status
+        == crate::conversations::MessageStatus::Failed
+        && message.text == "Discard this partial reply."));
+    let history = crate::conversations::history::project(&stored.messages, None).unwrap();
+    assert!(!format!("{history:?}").contains("Discard this partial reply."));
+    assert_eq!(history.iter().flat_map(|turn| &turn.calls).count(), 1);
+    assert!(backend.last_extra_len() >= 2);
+    assert_eq!(backend.turn_count(), 4);
+    assert_eq!(ended.reply.text, "Done.");
+}
+
+#[tokio::test]
+async fn cancellation_interrupts_a_retry_wait() {
+    use crate::config::RuntimeConfig;
+    use crate::providers::{
+        ChatBackend, ChatTurn, ProviderConnection, ProviderError, ProviderKind,
+    };
+    let mut state = crate::tests::test_state(RuntimeConfig::development());
+    let backend =
+        crate::tests::ScriptedBackend::turn_results(vec![Err(ProviderError::RateLimited {
+            retry_after: hypergraft::RetryAfter::seconds(15),
+        })]);
+    state.chat = std::sync::Arc::new(ChatBackend::Scripted(backend.clone()));
+    let connection = ProviderConnection::with_key(ProviderKind::Xai, "test-key", "grok-4.6");
+    state.vault.put(connection.clone()).expect("provider");
+    let (record, job) = conversation_job(&state);
+    let cancel = job.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        cancel.request_cancel();
+    });
+    let ended = super::run_agent_action(
+        &state,
+        granted_read_spec(connection, record.id, record.revision),
+        vec![ChatTurn::user("Hello".to_owned())],
+        job.clone(),
+    )
+    .await;
+    assert_eq!(ended.outcome, super::AgentOutcome::Cancelled);
+    assert_eq!(backend.turn_count(), 1);
+}

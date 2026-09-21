@@ -237,7 +237,7 @@ async fn xai_plan_token(connection: &ProviderConnection) -> Result<String, Provi
     xai_plan::access_token(path).await
 }
 
-fn classify_completion_for(error: CompletionError, auth: AuthMethod) -> ProviderError {
+pub(super) fn classify_completion_for(error: CompletionError, auth: AuthMethod) -> ProviderError {
     let classified = match error
         .provider_response_status()
         .map(|status| status.as_u16())
@@ -246,13 +246,26 @@ fn classify_completion_for(error: CompletionError, auth: AuthMethod) -> Provider
         None => {
             if auth == AuthMethod::Plan && is_invalid_grant(&error) {
                 ProviderError::Reauthenticate
-            } else {
+            } else if transient_transport_error(&error) {
                 ProviderError::Unreachable
+            } else {
+                // Untyped provider errors can include refusals and malformed context.
+                ProviderError::Incomplete
             }
         }
     };
     let json = error.provider_response_json().ok().flatten();
     with_json_detail(classified, json.as_ref())
+}
+
+fn transient_transport_error(error: &CompletionError) -> bool {
+    match error {
+        CompletionError::HttpError(rig_core::http_client::Error::StreamEnded) => true,
+        CompletionError::HttpError(rig_core::http_client::Error::Instance(error)) => error
+            .downcast_ref::<reqwest::Error>()
+            .is_some_and(|error| error.is_connect() || error.is_timeout() || error.is_body()),
+        _ => false,
+    }
 }
 
 fn is_invalid_grant(error: &CompletionError) -> bool {

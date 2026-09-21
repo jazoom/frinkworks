@@ -237,8 +237,36 @@ pub(crate) struct AgentToolContext<'a> {
 pub(crate) struct ToolTrace {
     pub(crate) label: String,
     pub(crate) output: String,
-    pub(crate) failed: bool,
+    pub(crate) failure: Option<ToolFailureKind>,
     pub(crate) command: Option<crate::execution::CommandResult>,
+}
+
+/// Ordinary errors and explicit rejections have no unsettled effects.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ToolFailureKind {
+    Ordinary,
+    Rejected,
+    Authority,
+    Persistence,
+    Cancellation,
+    Uncertain,
+}
+
+impl ToolFailureKind {
+    pub(crate) fn stops_loop(self) -> bool {
+        !matches!(self, Self::Ordinary | Self::Rejected)
+    }
+
+    pub(crate) fn from_termination(termination: CommandTermination) -> Self {
+        match termination {
+            CommandTermination::Exited(_) | CommandTermination::NotDispatched => Self::Ordinary,
+            CommandTermination::Cancelled => Self::Cancellation,
+            CommandTermination::StorageFailure => Self::Persistence,
+            CommandTermination::TimedOut
+            | CommandTermination::ResourceLimit
+            | CommandTermination::Unknown => Self::Uncertain,
+        }
+    }
 }
 
 struct ToolRun {
@@ -258,11 +286,47 @@ impl ToolRun {
 }
 
 enum ToolFailure {
-    Message(&'static str),
+    Ordinary(&'static str),
+    Authority(&'static str),
+    Persistence(&'static str),
+    Cancellation,
+    Rejected {
+        label: String,
+    },
     Command {
         label: String,
         failure: crate::execution::CommandFailure,
     },
+}
+
+impl ToolTrace {
+    fn success(label: String, output: String, command: Option<CommandResult>) -> Self {
+        let failure = command.as_ref().and_then(|command| {
+            command
+                .is_error()
+                .then(|| ToolFailureKind::from_termination(command.termination))
+        });
+        Self {
+            label,
+            output,
+            failure,
+            command,
+        }
+    }
+
+    fn fail(
+        label: String,
+        output: String,
+        failure: ToolFailureKind,
+        command: Option<CommandResult>,
+    ) -> Self {
+        Self {
+            label,
+            output,
+            failure: Some(failure),
+            command,
+        }
+    }
 }
 
 pub(crate) async fn invoke(
@@ -272,12 +336,12 @@ pub(crate) async fn invoke(
     arguments: &serde_json::Value,
 ) -> ToolTrace {
     if context.job.cancel_requested() {
-        return ToolTrace {
-            label: name.to_owned(),
-            output: "Stopped.".to_owned(),
-            failed: true,
-            command: None,
-        };
+        return ToolTrace::fail(
+            name.to_owned(),
+            "Stopped.".to_owned(),
+            ToolFailureKind::Cancellation,
+            None,
+        );
     }
     if name == SUBMIT_WORKFLOW_OUTPUT {
         return submit_output(context, arguments);
@@ -286,32 +350,51 @@ pub(crate) async fn invoke(
         return read_output(context, arguments);
     }
     let Some(kind) = authorised_tool(context.tools, name, context.location) else {
-        return ToolTrace {
-            label: name.to_owned(),
-            output: "That tool is not available.".to_owned(),
-            failed: true,
-            command: None,
-        };
+        return ToolTrace::fail(
+            name.to_owned(),
+            "That tool is not available.".to_owned(),
+            ToolFailureKind::Authority,
+            None,
+        );
     };
     match dispatch(context, call_id, kind, arguments).await {
-        Ok(run) => ToolTrace {
-            label: run.label,
-            output: run.output,
-            failed: run.command.as_ref().is_some_and(CommandResult::is_error),
-            command: run.command,
-        },
-        Err(ToolFailure::Message(message)) => ToolTrace {
-            label: kind.as_str().to_owned(),
-            output: message.to_owned(),
-            failed: true,
-            command: None,
-        },
-        Err(ToolFailure::Command { label, failure }) => ToolTrace {
+        Ok(run) => ToolTrace::success(run.label, run.output, run.command),
+        Err(ToolFailure::Ordinary(message)) => ToolTrace::fail(
+            kind.as_str().to_owned(),
+            message.to_owned(),
+            ToolFailureKind::Ordinary,
+            None,
+        ),
+        Err(ToolFailure::Authority(message)) => ToolTrace::fail(
+            kind.as_str().to_owned(),
+            message.to_owned(),
+            ToolFailureKind::Authority,
+            None,
+        ),
+        Err(ToolFailure::Persistence(message)) => ToolTrace::fail(
+            kind.as_str().to_owned(),
+            message.to_owned(),
+            ToolFailureKind::Persistence,
+            None,
+        ),
+        Err(ToolFailure::Cancellation) => ToolTrace::fail(
+            kind.as_str().to_owned(),
+            "Stopped.".to_owned(),
+            ToolFailureKind::Cancellation,
+            None,
+        ),
+        Err(ToolFailure::Rejected { label }) => ToolTrace::fail(
             label,
-            output: failure.report(),
-            failed: true,
-            command: Some(failure.result),
-        },
+            "The user rejected this command.".to_owned(),
+            ToolFailureKind::Rejected,
+            None,
+        ),
+        Err(ToolFailure::Command { label, failure }) => ToolTrace::fail(
+            label,
+            failure.report(),
+            ToolFailureKind::from_termination(failure.result.termination),
+            Some(failure.result),
+        ),
     }
 }
 
@@ -321,23 +404,41 @@ fn authorised_tool(selected: &[ToolId], name: &str, location: ToolLocation) -> O
 
 fn read_output(context: &AgentToolContext<'_>, arguments: &serde_json::Value) -> ToolTrace {
     let Some(outputs) = context.outputs else {
-        return plain_failure(READ_OUTPUT, "That command output is not available.");
+        return plain_failure(
+            READ_OUTPUT,
+            "That command output is not available.",
+            ToolFailureKind::Ordinary,
+        );
     };
     let Some(scope) = context.output_scope.clone() else {
-        return plain_failure(READ_OUTPUT, "That command output is not available.");
+        return plain_failure(
+            READ_OUTPUT,
+            "That command output is not available.",
+            ToolFailureKind::Ordinary,
+        );
     };
     let reference = arguments
         .get("reference")
         .and_then(|value| value.as_str())
         .unwrap_or("");
     if !valid_output_reference(reference) {
-        return plain_failure(READ_OUTPUT, "That command output reference is not valid.");
+        return plain_failure(
+            READ_OUTPUT,
+            "That command output reference is not valid.",
+            ToolFailureKind::Ordinary,
+        );
     }
     let cursor = match arguments.get("cursor") {
         None | Some(serde_json::Value::Null) => 0,
         Some(value) => match value.as_u64() {
             Some(value) => value as usize,
-            None => return plain_failure(READ_OUTPUT, "That output cursor is not valid."),
+            None => {
+                return plain_failure(
+                    READ_OUTPUT,
+                    "That output cursor is not valid.",
+                    ToolFailureKind::Ordinary,
+                );
+            }
         },
     };
     match outputs.page(reference, &scope, cursor) {
@@ -368,24 +469,14 @@ fn read_output(context: &AgentToolContext<'_>, arguments: &serde_json::Value) ->
             if output.is_empty() {
                 output.push_str("(no output)");
             }
-            ToolTrace {
-                label: format!("read_output `{reference}`"),
-                output,
-                failed: false,
-                command: None,
-            }
+            ToolTrace::success(format!("read_output `{reference}`"), output, None)
         }
-        Err(error) => plain_failure(READ_OUTPUT, error.message()),
+        Err(error) => plain_failure(READ_OUTPUT, error.message(), ToolFailureKind::Ordinary),
     }
 }
 
-fn plain_failure(label: &str, message: &'static str) -> ToolTrace {
-    ToolTrace {
-        label: label.to_owned(),
-        output: message.to_owned(),
-        failed: true,
-        command: None,
-    }
+fn plain_failure(label: &str, message: &'static str, kind: ToolFailureKind) -> ToolTrace {
+    ToolTrace::fail(label.to_owned(), message.to_owned(), kind, None)
 }
 
 /// A reference is server-generated lowercase hexadecimal. A model-supplied path
@@ -396,12 +487,12 @@ pub(crate) fn valid_output_reference(reference: &str) -> bool {
 
 fn submit_output(context: &AgentToolContext<'_>, arguments: &serde_json::Value) -> ToolTrace {
     let Some(drafts) = context.output_drafts else {
-        return ToolTrace {
-            label: SUBMIT_WORKFLOW_OUTPUT.to_owned(),
-            output: "That tool is not available.".to_owned(),
-            failed: true,
-            command: None,
-        };
+        return ToolTrace::fail(
+            SUBMIT_WORKFLOW_OUTPUT.to_owned(),
+            "That tool is not available.".to_owned(),
+            ToolFailureKind::Ordinary,
+            None,
+        );
     };
     let key = arguments
         .get("key")
@@ -412,14 +503,14 @@ fn submit_output(context: &AgentToolContext<'_>, arguments: &serde_json::Value) 
         .and_then(|value| value.as_str())
         .and_then(crate::workflows::definition::OutputKind::parse);
     let Some(kind) = kind else {
-        return ToolTrace {
-            label: SUBMIT_WORKFLOW_OUTPUT.to_owned(),
-            output: crate::workflows::artefacts::output::OutputDraftError::Kind
+        return ToolTrace::fail(
+            SUBMIT_WORKFLOW_OUTPUT.to_owned(),
+            crate::workflows::artefacts::output::OutputDraftError::Kind
                 .message()
                 .to_owned(),
-            failed: true,
-            command: None,
-        };
+            ToolFailureKind::Ordinary,
+            None,
+        );
     };
     let markdown = arguments
         .get("markdown")
@@ -442,24 +533,13 @@ fn submit_output(context: &AgentToolContext<'_>, arguments: &serde_json::Value) 
         candidate,
         human,
     ) {
-        Ok(()) => ToolTrace {
-            label: format!("submit `{key}`"),
-            output: "Stored.".to_owned(),
-            failed: false,
-            command: None,
-        },
-        Err(error) => ToolTrace {
-            label: SUBMIT_WORKFLOW_OUTPUT.to_owned(),
-            output: error.message().to_owned(),
-            failed: true,
-            command: None,
-        },
-    }
-}
-
-impl From<&'static str> for ToolFailure {
-    fn from(message: &'static str) -> Self {
-        Self::Message(message)
+        Ok(()) => ToolTrace::success(format!("submit `{key}`"), "Stored.".to_owned(), None),
+        Err(error) => ToolTrace::fail(
+            SUBMIT_WORKFLOW_OUTPUT.to_owned(),
+            error.message().to_owned(),
+            ToolFailureKind::Ordinary,
+            None,
+        ),
     }
 }
 
@@ -470,15 +550,19 @@ async fn dispatch(
     arguments: &serde_json::Value,
 ) -> Result<ToolRun, ToolFailure> {
     if context.location == ToolLocation::Host && kind != ToolId::Run {
-        return Err(ToolFailure::Message(
+        return Err(ToolFailure::Authority(
             "That tool is not available on this computer.",
         ));
     }
     match kind {
         ToolId::List => {
-            let args: PathArgs = parse_args(arguments)?;
-            let (path, _) = context.policy.resolve(&args.path)?;
+            let args: PathArgs = parse_args(arguments).map_err(ToolFailure::Ordinary)?;
+            let (path, _) = context
+                .policy
+                .resolve(&args.path)
+                .map_err(ToolFailure::Authority)?;
             let output = plain_capture(
+                format!("list `{path}`"),
                 capture(
                     context,
                     call_id,
@@ -489,8 +573,11 @@ async fn dispatch(
             Ok(ToolRun::plain(format!("list `{path}`"), output))
         }
         ToolId::Read => {
-            let args: PathArgs = parse_args(arguments)?;
-            let (path, _) = context.policy.resolve(&args.path)?;
+            let args: PathArgs = parse_args(arguments).map_err(ToolFailure::Ordinary)?;
+            let (path, _) = context
+                .policy
+                .resolve(&args.path)
+                .map_err(ToolFailure::Authority)?;
             if path == context.policy.primary_guest()
                 || context
                     .policy
@@ -498,10 +585,11 @@ async fn dispatch(
                     .iter()
                     .any(|grant| grant.guest_path == path)
             {
-                return Err(ToolFailure::Message("Choose a file to read."));
+                return Err(ToolFailure::Ordinary("Choose a file to read."));
             }
             let maximum = MAXIMUM_TOOL_BYTES.to_string();
             let output = plain_capture(
+                format!("read `{path}`"),
                 capture(
                     context,
                     call_id,
@@ -517,10 +605,13 @@ async fn dispatch(
             Ok(ToolRun::plain(format!("read `{path}`"), output))
         }
         ToolId::Write => {
-            let args: WriteArgs = parse_args(arguments)?;
-            let (path, access) = context.policy.resolve(&args.path)?;
+            let args: WriteArgs = parse_args(arguments).map_err(ToolFailure::Ordinary)?;
+            let (path, access) = context
+                .policy
+                .resolve(&args.path)
+                .map_err(ToolFailure::Authority)?;
             if !access.is_writable() {
-                return Err(ToolFailure::Message("That path is read-only."));
+                return Err(ToolFailure::Authority("That path is read-only."));
             }
             if path == context.policy.primary_guest()
                 || context
@@ -529,12 +620,13 @@ async fn dispatch(
                     .iter()
                     .any(|grant| grant.guest_path == path)
             {
-                return Err(ToolFailure::Message("Choose a file to write."));
+                return Err(ToolFailure::Ordinary("Choose a file to write."));
             }
             if args.contents.len() > MAXIMUM_WRITE_BYTES {
-                return Err(ToolFailure::Message("That file is too large to write."));
+                return Err(ToolFailure::Ordinary("That file is too large to write."));
             }
             let output = plain_capture(
+                format!("write `{path}`"),
                 capture(
                     context,
                     call_id,
@@ -551,17 +643,17 @@ async fn dispatch(
             Ok(ToolRun::plain(format!("write `{path}`"), body))
         }
         ToolId::Run => {
-            let args: RunArgs = parse_args(arguments)?;
+            let args: RunArgs = parse_args(arguments).map_err(ToolFailure::Ordinary)?;
             let command = args.command.trim();
             if command.is_empty() {
-                return Err(ToolFailure::Message("Enter a command."));
+                return Err(ToolFailure::Ordinary("Enter a command."));
             }
             if command.len() > MAXIMUM_COMMAND_BYTES {
-                return Err(ToolFailure::Message("That command is too long."));
+                return Err(ToolFailure::Ordinary("That command is too long."));
             }
             if context.location == ToolLocation::Host {
                 if args.explanation.trim().is_empty() {
-                    return Err(ToolFailure::Message(
+                    return Err(ToolFailure::Ordinary(
                         "Explain why this command is necessary.",
                     ));
                 }
@@ -589,7 +681,10 @@ async fn dispatch(
     }
 }
 
-fn plain_capture(result: Result<CommandResult, CommandFailure>) -> Result<String, ToolFailure> {
+fn plain_capture(
+    label: String,
+    result: Result<CommandResult, CommandFailure>,
+) -> Result<String, ToolFailure> {
     match result {
         Ok(result) if result.is_success() => Ok(result
             .chunks
@@ -597,8 +692,11 @@ fn plain_capture(result: Result<CommandResult, CommandFailure>) -> Result<String
             .filter(|chunk| chunk.stream == crate::execution::CommandStream::Stdout)
             .map(|chunk| chunk.text.as_str())
             .collect()),
-        Ok(_) => Err(ToolFailure::Message("The file tool command failed.")),
-        Err(failure) => Err(ToolFailure::Message(failure.message)),
+        Ok(result) => Err(ToolFailure::Command {
+            label,
+            failure: CommandFailure::new(result, "The file tool command failed."),
+        }),
+        Err(failure) => Err(ToolFailure::Command { label, failure }),
     }
 }
 
@@ -612,8 +710,8 @@ async fn host_run(
     let host = context
         .host
         .as_ref()
-        .ok_or(ToolFailure::Message("Host execution is not available."))?;
-    validate_host_dispatch(host, context.job)?;
+        .ok_or(ToolFailure::Authority("Host execution is not available."))?;
+    validate_host_dispatch(host, context.job).map_err(ToolFailure::Authority)?;
     let mut request = crate::execution::HostCommandRequest {
         token: String::new(),
         session: host.session,
@@ -629,21 +727,21 @@ async fn host_run(
     };
     if host.settings.automatic_host_commands() {
         request.token = crate::execution::command_token()
-            .map_err(|error| ToolFailure::Message(error.message()))?;
+            .map_err(|error| ToolFailure::Ordinary(error.message()))?;
         return dispatch_host_command(host, context.job, call_id, label, &request).await;
     }
     let approvals = &host.state.host_approvals;
     let token = approvals
         .submit(request.clone())
-        .map_err(|error| ToolFailure::Message(error.message()))?;
+        .map_err(|error| ToolFailure::Authority(error.message()))?;
     request.token = token.clone();
     if let Err(error) = record_host_evidence(host, &request, "awaiting_approval", "", None) {
         approvals.invalidate_job(context.job.id());
-        return Err(ToolFailure::Message(error));
+        return Err(ToolFailure::Persistence(error));
     }
     if context.job.set_awaiting_decision().is_none() && context.job.cancel_requested() {
         approvals.invalidate_job(context.job.id());
-        return Err(ToolFailure::Message("Stopped."));
+        return Err(ToolFailure::Cancellation);
     }
     let decision = approvals.wait(&token, context.job).await;
     let _ = context.job.resume();
@@ -658,15 +756,18 @@ async fn host_run(
                 "rejected",
                 "The user rejected this command.",
                 None,
-            )?;
-            Ok(ToolRun::plain(
-                label,
-                "The user rejected this command.".to_owned(),
-            ))
+            )
+            .map_err(ToolFailure::Persistence)?;
+            Err(ToolFailure::Rejected { label })
         }
         Err(error) => {
-            record_host_evidence(host, &request, "invalidated", error.message(), None)?;
-            Err(ToolFailure::Message(error.message()))
+            record_host_evidence(host, &request, "invalidated", error.message(), None)
+                .map_err(ToolFailure::Persistence)?;
+            if context.job.cancel_requested() {
+                Err(ToolFailure::Cancellation)
+            } else {
+                Err(ToolFailure::Authority(error.message()))
+            }
         }
     }
 }
@@ -691,8 +792,9 @@ async fn dispatch_host_command(
     label: String,
     request: &crate::execution::HostCommandRequest,
 ) -> Result<ToolRun, ToolFailure> {
-    validate_host_dispatch(host, job)?;
-    record_host_evidence(host, request, "dispatching", "", None)?;
+    validate_host_dispatch(host, job).map_err(ToolFailure::Authority)?;
+    record_host_evidence(host, request, "dispatching", "", None)
+        .map_err(ToolFailure::Persistence)?;
     let visible_call_id = redact(call_id, host.secret);
     let reporter = crate::execution::CommandReporter {
         tool_call: &visible_call_id,
@@ -720,12 +822,15 @@ async fn dispatch_host_command(
             let command = command.redacted(host.secret);
             let command = retain_command(host.state, scope, job.id(), call_id, command);
             let output = command.report();
-            if let Err(message) =
-                record_host_evidence(host, request, "finished", &output, Some(&command))
-            {
+            if record_host_evidence(host, request, "finished", &output, Some(&command)).is_err() {
+                let mut command = command;
+                command.termination = CommandTermination::StorageFailure;
                 return Err(ToolFailure::Command {
                     label,
-                    failure: crate::execution::CommandFailure::new(command, message),
+                    failure: crate::execution::CommandFailure::new(
+                        command,
+                        "Power Plant could not store command output. Command effects can remain incomplete.",
+                    ),
                 });
             }
             Ok(ToolRun {
@@ -742,6 +847,7 @@ async fn dispatch_host_command(
                 record_host_evidence(host, request, "failed", &output, Some(&failure.result))
             {
                 failure.message = message;
+                failure.result.termination = CommandTermination::StorageFailure;
             }
             Err(ToolFailure::Command { label, failure })
         }

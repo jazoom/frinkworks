@@ -857,6 +857,48 @@ impl ConversationStore {
         self.update_output(id, request, reply, true)
     }
 
+    pub(crate) fn record_provider_failure(
+        &self,
+        id: &ConversationId,
+        request: JobId,
+        failed: crate::providers::AssistantReply,
+        committed: &crate::providers::AssistantReply,
+        error: String,
+    ) -> Result<(), ConversationError> {
+        validate_reply(&failed)?;
+        validate_reply(committed)?;
+        if !valid_message_error(MessageStatus::Failed, Some(&error)) {
+            return Err(ConversationError::Message);
+        }
+        self.update(id, 0, false, |record| {
+            if record.messages.len() >= MAXIMUM_MESSAGES {
+                return Err(ConversationError::Full);
+            }
+            let active = active_assistant(record, request)?;
+            active.text = committed.text.clone();
+            active.activity = committed.activity.clone();
+            active.continuation = committed.continuation.clone();
+            active.completion = committed.completion;
+            let failed = ConversationMessage {
+                id: MessageId::generate().map_err(|_| ConversationError::Random)?,
+                role: MessageRole::Assistant,
+                text: failed.text,
+                activity: failed.activity,
+                continuation: Vec::new(),
+                status: MessageStatus::Failed,
+                error: Some(error),
+                request: Some(JobId::generate().map_err(|_| ConversationError::Random)?),
+                completion: Some(crate::providers::CompletionReason::Unknown),
+            };
+            // Failed attempts stay local and never split a completed tool exchange.
+            record.messages.insert(record.messages.len() - 1, failed);
+            super::history::validate_exchange(&record.messages)
+                .map_err(|_| ConversationError::Message)?;
+            Ok(())
+        })
+        .map(|_| ())
+    }
+
     fn update_output(
         &self,
         id: &ConversationId,

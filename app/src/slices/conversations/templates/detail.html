@@ -624,7 +624,7 @@
                   >
                 </section>
               {% endfor %}
-              {% if saved.pending_gate.is_none() && pending_host_command.is_none() %}
+              {% if saved.pending_gate.is_none() && pending_host_command.is_none() && retry.is_none() %}
                 {% if job_active %}
                   <p class="text-quiet p-5 text-sm">
                     The model response is in progress.

@@ -62,6 +62,9 @@ pub(crate) enum AgentOutcome {
     Completed,
     ProviderFailure,
     ToolFailure,
+    AuthorityFailure,
+    PersistenceFailure,
+    UncertainEffect,
     Cancelled,
 }
 
@@ -105,11 +108,6 @@ pub(crate) async fn run_agent_action(
         if let Err(error) = persist_output(state, spec.conversation, &job, &reply, false) {
             return store_failure(&reply, error);
         }
-        reply.completion = Some(CompletionReason::Unknown);
-        thinking_progress.begin_phase();
-        if job.cancel_requested() {
-            return cancel_action(&job, &reply);
-        }
         let mut request_tools = spec.tools.clone();
         if spec
             .output_scope
@@ -118,112 +116,81 @@ pub(crate) async fn run_agent_action(
         {
             request_tools.push(tools::read_output_definition());
         }
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(600);
-        let mut events = tokio::select! {
-            biased;
-            _ = job.cancelled() => {
+        let committed_reply = reply.clone();
+        let committed_response = published_response;
+        let committed_thinking = thinking_progress.published;
+        let committed_model_bytes = model_reply_bytes;
+        let committed_thinking_bytes = thinking_bytes;
+        let committed_visible_tool_bytes = visible_tool_bytes;
+        let mut retry_attempts = 0u32;
+        let mut retry_waited = Duration::ZERO;
+        let mut text;
+        let mut calls;
+        let mut completion;
+        'provider: loop {
+            reply.completion = Some(CompletionReason::Unknown);
+            thinking_progress.begin_phase();
+            if job.cancel_requested() {
                 return cancel_action(&job, &reply);
             }
-            _ = tokio::time::sleep_until(deadline) => {
-                return AgentActionEnd {
-                    outcome: AgentOutcome::ProviderFailure,
-                    error: Some(ProviderError::Unreachable.message().to_owned()),
-                    reply,
-                };
-            }
-            result = state.chat.stream_turn(
-                &spec.connection,
-                &turns,
-                &extra,
-                &request_tools,
-                &spec.preamble,
-            ) => match result {
-                Ok(stream) => stream,
-                Err(error) => {
-                    thinking_progress.flush(&job, &reply.thinking);
-                    publish_reply_remaining(
-                        &job,
-                        &reply,
-                        published_response,
-                        thinking_progress.published,
-                    );
-                    return AgentActionEnd {
-                        outcome: AgentOutcome::ProviderFailure,
-                        error: Some(error.message().to_owned()),
-                        reply: reply.clone(),
-                    };
-                }
-            },
-        };
-
-        let mut text = String::new();
-        let mut calls = Vec::new();
-        let mut completion = None;
-        loop {
-            if let Err(error) = persist_output(state, spec.conversation, &job, &reply, false) {
-                return store_failure(&reply, error);
-            }
-            let thinking_deadline = thinking_progress.deadline(&reply.thinking);
-            let wait_for_thinking = async {
-                match thinking_deadline {
-                    Some(deadline) => tokio::time::sleep_until(deadline.into()).await,
-                    None => std::future::pending().await,
-                }
-            };
-            let chunk = tokio::select! {
+            job.clear_retry();
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(600);
+            let mut events = tokio::select! {
                 biased;
                 _ = job.cancelled() => {
                     return cancel_action(&job, &reply);
                 }
                 _ = tokio::time::sleep_until(deadline) => {
-                    reply.completion = Some(CompletionReason::Unknown);
                     return AgentActionEnd {
                         outcome: AgentOutcome::ProviderFailure,
                         error: Some(ProviderError::Unreachable.message().to_owned()),
                         reply,
                     };
                 }
-                _ = wait_for_thinking => {
-                    thinking_progress.publish_due(&job, &reply.thinking, Instant::now());
-                    continue;
-                }
-                chunk = events.next() => chunk,
-            };
-            let Some(chunk) = chunk else {
-                break;
-            };
-            event_count += 1;
-            if event_count > 4096
-                || reply.activity.len() >= 256
-                || matches!(&chunk, Ok(ModelEvent::Text(text) | ModelEvent::Thinking(text)) if text.contains('\0'))
-            {
-                return AgentActionEnd {
-                    outcome: AgentOutcome::ProviderFailure,
-                    error: Some(ProviderError::ReplyTooLong.message().to_owned()),
-                    reply,
-                };
-            }
-            match chunk {
-                Ok(ModelEvent::Text(piece)) => {
-                    let tail = thinking_redactor.finish_boundary();
-                    append_thinking_piece(&mut reply, &tail, &mut thinking_bytes);
-                    thinking_progress.flush(&job, &reply.thinking);
-                    let piece = response_redactor.push(&piece);
-                    if let Some(evidence) = &spec.evidence {
-                        evidence.response(&piece, secret);
-                    }
-                    text.push_str(&piece);
-                    let truncated = append_model_piece(&mut reply, &piece, &mut model_reply_bytes);
-                    publish_progress(
-                        &job,
-                        &reply.text,
-                        &mut published_response,
-                        OutputChannel::Response,
-                        &mut last_emit,
-                        &mut output_visible,
-                    );
-                    if truncated {
-                        reply.completion = Some(CompletionReason::Length);
+                result = state.chat.stream_turn(
+                    &spec.connection,
+                    &turns,
+                    &extra,
+                    &request_tools,
+                    &spec.preamble,
+                ) => match result {
+                    Ok(stream) => stream,
+                    Err(error) => {
+                        if let Some(delay) = take_retry(&error, &mut retry_attempts, &mut retry_waited) {
+                            if let Err(error) = record_failed_attempt(state, &spec, &job, &reply, &committed_reply, &error) {
+                                return store_failure(&reply, error);
+                            }
+                            restore_request(
+                                &mut reply,
+                                &committed_reply,
+                                &mut published_response,
+                                committed_response,
+                                &mut thinking_progress,
+                                committed_thinking,
+                                &mut model_reply_bytes,
+                                committed_model_bytes,
+                                &mut thinking_bytes,
+                                committed_thinking_bytes,
+                                &mut visible_tool_bytes,
+                                committed_visible_tool_bytes,
+                                &mut response_redactor,
+                                &mut thinking_redactor,
+                                &mut event_count,
+                                secret,
+                                &job,
+                            );
+                            if let Err(error) =
+                                persist_output(state, spec.conversation, &job, &reply, false)
+                            {
+                                return store_failure(&reply, error);
+                            }
+                            job.set_retry(retry_attempts, delay, error.message());
+                            if wait_retry(&job, delay).await {
+                                return cancel_action(&job, &reply);
+                            }
+                            continue 'provider;
+                        }
+                        thinking_progress.flush(&job, &reply.thinking);
                         publish_reply_remaining(
                             &job,
                             &reply,
@@ -232,216 +199,397 @@ pub(crate) async fn run_agent_action(
                         );
                         return AgentActionEnd {
                             outcome: AgentOutcome::ProviderFailure,
-                            error: Some(ProviderError::ReplyTooLong.message().to_owned()),
+                            error: Some(error.message().to_owned()),
+                            reply: reply.clone(),
+                        };
+                    }
+                },
+            };
+            text = String::new();
+            calls = Vec::new();
+            completion = None;
+            loop {
+                if let Err(error) = persist_output(state, spec.conversation, &job, &reply, false) {
+                    return store_failure(&reply, error);
+                }
+                let thinking_deadline = thinking_progress.deadline(&reply.thinking);
+                let wait_for_thinking = async {
+                    match thinking_deadline {
+                        Some(deadline) => tokio::time::sleep_until(deadline.into()).await,
+                        None => std::future::pending().await,
+                    }
+                };
+                let chunk = tokio::select! {
+                    biased;
+                    _ = job.cancelled() => {
+                        return cancel_action(&job, &reply);
+                    }
+                    _ = tokio::time::sleep_until(deadline) => {
+                        reply.completion = Some(CompletionReason::Unknown);
+                        return AgentActionEnd {
+                            outcome: AgentOutcome::ProviderFailure,
+                            error: Some(ProviderError::Unreachable.message().to_owned()),
+                            reply,
+                        };
+                    }
+                    _ = wait_for_thinking => {
+                        thinking_progress.publish_due(&job, &reply.thinking, Instant::now());
+                        continue;
+                    }
+                    chunk = events.next() => chunk,
+                };
+                let Some(chunk) = chunk else {
+                    break;
+                };
+                event_count += 1;
+                if event_count > 4096
+                    || reply.activity.len() >= 256
+                    || matches!(&chunk, Ok(ModelEvent::Text(text) | ModelEvent::Thinking(text)) if text.contains('\0'))
+                {
+                    return AgentActionEnd {
+                        outcome: AgentOutcome::ProviderFailure,
+                        error: Some(ProviderError::ReplyTooLong.message().to_owned()),
+                        reply,
+                    };
+                }
+                match chunk {
+                    Ok(ModelEvent::Text(piece)) => {
+                        let tail = thinking_redactor.finish_boundary();
+                        append_thinking_piece(&mut reply, &tail, &mut thinking_bytes);
+                        thinking_progress.flush(&job, &reply.thinking);
+                        let piece = response_redactor.push(&piece);
+                        if let Some(evidence) = &spec.evidence {
+                            evidence.response(&piece, secret);
+                        }
+                        text.push_str(&piece);
+                        let truncated =
+                            append_model_piece(&mut reply, &piece, &mut model_reply_bytes);
+                        publish_progress(
+                            &job,
+                            &reply.text,
+                            &mut published_response,
+                            OutputChannel::Response,
+                            &mut last_emit,
+                            &mut output_visible,
+                        );
+                        if truncated {
+                            reply.completion = Some(CompletionReason::Length);
+                            publish_reply_remaining(
+                                &job,
+                                &reply,
+                                published_response,
+                                thinking_progress.published,
+                            );
+                            return AgentActionEnd {
+                                outcome: AgentOutcome::ProviderFailure,
+                                error: Some(ProviderError::ReplyTooLong.message().to_owned()),
+                                reply: reply.clone(),
+                            };
+                        }
+                    }
+                    Ok(ModelEvent::Thinking(piece)) => {
+                        let tail = response_redactor.finish_boundary();
+                        text.push_str(&tail);
+                        append_model_piece(&mut reply, &tail, &mut model_reply_bytes);
+                        publish_remaining(
+                            &job,
+                            &reply.text,
+                            published_response,
+                            OutputChannel::Response,
+                        );
+                        published_response = reply.text.len();
+                        if !matches!(reply.activity.last(), Some(AssistantActivity::Thinking(_))) {
+                            reply.push_thinking("");
+                            job.push_thinking(String::new());
+                        }
+                        let piece = thinking_redactor.push(&piece);
+                        if let Some(evidence) = &spec.evidence {
+                            evidence.thinking(&piece, secret);
+                        }
+                        append_thinking_piece(&mut reply, &piece, &mut thinking_bytes);
+                        thinking_progress.note_pending(&reply.thinking, Instant::now());
+                    }
+                    Ok(ModelEvent::ToolCall {
+                        id,
+                        name,
+                        arguments,
+                    }) => {
+                        let tail = response_redactor.finish_boundary();
+                        text.push_str(&tail);
+                        append_model_piece(&mut reply, &tail, &mut model_reply_bytes);
+                        let tail = thinking_redactor.finish_boundary();
+                        append_thinking_piece(&mut reply, &tail, &mut thinking_bytes);
+                        publish_reply_before_tools(
+                            &job,
+                            &reply,
+                            &mut published_response,
+                            &mut thinking_progress,
+                        );
+                        if id.len() > 512
+                            || name.len() > 512
+                            || id.contains('\0')
+                            || name.contains('\0')
+                        {
+                            return AgentActionEnd {
+                                outcome: AgentOutcome::ProviderFailure,
+                                error: Some(ProviderError::Refused.message().to_owned()),
+                                reply,
+                            };
+                        }
+                        let visible_id = tools::redact(&id, secret);
+                        let visible_name = tools::redact(&name, secret);
+                        visible_tool_bytes += visible_id.len() + visible_name.len();
+                        if visible_id.len() > 512
+                            || visible_name.len() > 512
+                            || visible_tool_bytes > MAXIMUM_VISIBLE_TOOL_BYTES
+                        {
+                            return AgentActionEnd {
+                                outcome: AgentOutcome::ProviderFailure,
+                                error: Some(ProviderError::ReplyTooLong.message().to_owned()),
+                                reply,
+                            };
+                        }
+                        if !arguments.is_object() {
+                            return AgentActionEnd {
+                                outcome: AgentOutcome::ProviderFailure,
+                                error: Some(ProviderError::Refused.message().to_owned()),
+                                reply,
+                            };
+                        }
+                        if crate::conversations::history::contains_credential(
+                            &(&id, &name, &arguments),
+                            secret,
+                        ) || serde_json::to_vec(&arguments)
+                            .map_or(true, |bytes| bytes.len() > 64 * 1024)
+                        {
+                            return AgentActionEnd {
+                                outcome: AgentOutcome::ProviderFailure,
+                                error: Some(ProviderError::Refused.message().to_owned()),
+                                reply,
+                            };
+                        }
+                        job.start_tool(visible_id.clone(), visible_name.clone(), arguments.clone());
+                        reply.start_tool(visible_id, visible_name, arguments.clone());
+                        calls.push((id, name, arguments));
+                    }
+                    Ok(ModelEvent::Usage { input_tokens }) => {
+                        let usage = ModelUsage {
+                            provider: spec.connection.kind,
+                            model: spec.connection.model.clone(),
+                            input_tokens,
+                        };
+                        reply.usage = Some(usage.clone());
+                        if let Some(evidence) = &spec.evidence {
+                            evidence.usage(&usage);
+                        }
+                        job.push_usage(usage);
+                    }
+                    Ok(ModelEvent::Continuation(metadata)) => {
+                        reply.continuation.push(metadata);
+                        if !crate::conversations::history::valid_continuation(&reply.continuation)
+                            || crate::conversations::history::contains_credential(
+                                &reply.continuation,
+                                secret,
+                            )
+                        {
+                            reply.continuation.pop();
+                            return AgentActionEnd {
+                                outcome: AgentOutcome::ProviderFailure,
+                                error: Some(
+                                    crate::conversations::history::HistoryError::Continuation
+                                        .message()
+                                        .to_owned(),
+                                ),
+                                reply,
+                            };
+                        }
+                    }
+                    Ok(ModelEvent::Complete { reason }) => {
+                        completion = match completion {
+                            Some(previous) if previous != reason => Some(CompletionReason::Unknown),
+                            Some(previous) => Some(previous),
+                            None => Some(reason),
+                        };
+                        reply.completion = completion;
+                    }
+                    Err(error) => {
+                        if let Some(delay) =
+                            take_retry(&error, &mut retry_attempts, &mut retry_waited)
+                        {
+                            let tail = response_redactor.finish_boundary();
+                            append_model_piece(&mut reply, &tail, &mut model_reply_bytes);
+                            let tail = thinking_redactor.finish_boundary();
+                            append_thinking_piece(&mut reply, &tail, &mut thinking_bytes);
+                            if let Err(error) = record_failed_attempt(
+                                state,
+                                &spec,
+                                &job,
+                                &reply,
+                                &committed_reply,
+                                &error,
+                            ) {
+                                return store_failure(&reply, error);
+                            }
+                            restore_request(
+                                &mut reply,
+                                &committed_reply,
+                                &mut published_response,
+                                committed_response,
+                                &mut thinking_progress,
+                                committed_thinking,
+                                &mut model_reply_bytes,
+                                committed_model_bytes,
+                                &mut thinking_bytes,
+                                committed_thinking_bytes,
+                                &mut visible_tool_bytes,
+                                committed_visible_tool_bytes,
+                                &mut response_redactor,
+                                &mut thinking_redactor,
+                                &mut event_count,
+                                secret,
+                                &job,
+                            );
+                            if let Err(error) =
+                                persist_output(state, spec.conversation, &job, &reply, false)
+                            {
+                                return store_failure(&reply, error);
+                            }
+                            job.set_retry(retry_attempts, delay, error.message());
+                            if wait_retry(&job, delay).await {
+                                return cancel_action(&job, &reply);
+                            }
+                            continue 'provider;
+                        }
+                        reply.completion = Some(CompletionReason::Unknown);
+                        thinking_progress.flush(&job, &reply.thinking);
+                        publish_reply_remaining(
+                            &job,
+                            &reply,
+                            published_response,
+                            thinking_progress.published,
+                        );
+                        return AgentActionEnd {
+                            outcome: AgentOutcome::ProviderFailure,
+                            error: Some(error.message().to_owned()),
                             reply: reply.clone(),
                         };
                     }
                 }
-                Ok(ModelEvent::Thinking(piece)) => {
-                    let tail = response_redactor.finish_boundary();
-                    text.push_str(&tail);
-                    append_model_piece(&mut reply, &tail, &mut model_reply_bytes);
-                    publish_remaining(
-                        &job,
-                        &reply.text,
-                        published_response,
-                        OutputChannel::Response,
-                    );
-                    published_response = reply.text.len();
-                    if !matches!(reply.activity.last(), Some(AssistantActivity::Thinking(_))) {
-                        reply.push_thinking("");
-                        job.push_thinking(String::new());
-                    }
-                    let piece = thinking_redactor.push(&piece);
-                    if let Some(evidence) = &spec.evidence {
-                        evidence.thinking(&piece, secret);
-                    }
-                    append_thinking_piece(&mut reply, &piece, &mut thinking_bytes);
-                    thinking_progress.note_pending(&reply.thinking, Instant::now());
+            }
+
+            if job.cancel_requested() {
+                return cancel_action(&job, &reply);
+            }
+            reply.completion = Some(completion.unwrap_or(CompletionReason::Unknown));
+
+            if calls.is_empty() {
+                let response_tail = response_redactor.finish();
+                if let Some(evidence) = &spec.evidence {
+                    evidence.response(&response_tail, secret);
                 }
-                Ok(ModelEvent::ToolCall {
-                    id,
-                    name,
-                    arguments,
-                }) => {
-                    let tail = response_redactor.finish_boundary();
-                    text.push_str(&tail);
-                    append_model_piece(&mut reply, &tail, &mut model_reply_bytes);
-                    let tail = thinking_redactor.finish_boundary();
-                    append_thinking_piece(&mut reply, &tail, &mut thinking_bytes);
-                    publish_reply_before_tools(
-                        &job,
-                        &reply,
-                        &mut published_response,
-                        &mut thinking_progress,
-                    );
-                    if id.len() > 512
-                        || name.len() > 512
-                        || id.contains('\0')
-                        || name.contains('\0')
-                    {
-                        return AgentActionEnd {
-                            outcome: AgentOutcome::ProviderFailure,
-                            error: Some(ProviderError::Refused.message().to_owned()),
-                            reply,
-                        };
-                    }
-                    let visible_id = tools::redact(&id, secret);
-                    let visible_name = tools::redact(&name, secret);
-                    visible_tool_bytes += visible_id.len() + visible_name.len();
-                    if visible_id.len() > 512
-                        || visible_name.len() > 512
-                        || visible_tool_bytes > MAXIMUM_VISIBLE_TOOL_BYTES
-                    {
-                        return AgentActionEnd {
-                            outcome: AgentOutcome::ProviderFailure,
-                            error: Some(ProviderError::ReplyTooLong.message().to_owned()),
-                            reply,
-                        };
-                    }
-                    if !arguments.is_object() {
-                        return AgentActionEnd {
-                            outcome: AgentOutcome::ProviderFailure,
-                            error: Some(ProviderError::Refused.message().to_owned()),
-                            reply,
-                        };
-                    }
-                    if crate::conversations::history::contains_credential(
-                        &(&id, &name, &arguments),
-                        secret,
-                    ) || serde_json::to_vec(&arguments)
-                        .map_or(true, |bytes| bytes.len() > 64 * 1024)
-                    {
-                        return AgentActionEnd {
-                            outcome: AgentOutcome::ProviderFailure,
-                            error: Some(ProviderError::Refused.message().to_owned()),
-                            reply,
-                        };
-                    }
-                    job.start_tool(visible_id.clone(), visible_name.clone(), arguments.clone());
-                    reply.start_tool(visible_id, visible_name, arguments.clone());
-                    calls.push((id, name, arguments));
+                let thinking_tail = thinking_redactor.finish();
+                if let Some(evidence) = &spec.evidence {
+                    evidence.thinking(&thinking_tail, secret);
                 }
-                Ok(ModelEvent::Usage { input_tokens }) => {
-                    let usage = ModelUsage {
-                        provider: spec.connection.kind,
-                        model: spec.connection.model.clone(),
-                        input_tokens,
-                    };
-                    reply.usage = Some(usage.clone());
-                    if let Some(evidence) = &spec.evidence {
-                        evidence.usage(&usage);
-                    }
-                    job.push_usage(usage);
-                }
-                Ok(ModelEvent::Continuation(metadata)) => {
-                    reply.continuation.push(metadata);
-                    if !crate::conversations::history::valid_continuation(&reply.continuation)
-                        || crate::conversations::history::contains_credential(
-                            &reply.continuation,
-                            secret,
-                        )
-                    {
-                        reply.continuation.pop();
-                        return AgentActionEnd {
-                            outcome: AgentOutcome::ProviderFailure,
-                            error: Some(
-                                crate::conversations::history::HistoryError::Continuation
-                                    .message()
-                                    .to_owned(),
-                            ),
-                            reply,
-                        };
-                    }
-                }
-                Ok(ModelEvent::Complete { reason }) => {
-                    completion = match completion {
-                        Some(previous) if previous != reason => Some(CompletionReason::Unknown),
-                        Some(previous) => Some(previous),
-                        None => Some(reason),
-                    };
-                    reply.completion = completion;
-                }
-                Err(error) => {
-                    reply.completion = Some(CompletionReason::Unknown);
-                    thinking_progress.flush(&job, &reply.thinking);
-                    publish_reply_remaining(
-                        &job,
-                        &reply,
-                        published_response,
-                        thinking_progress.published,
-                    );
+                let truncated =
+                    append_model_piece(&mut reply, &response_tail, &mut model_reply_bytes);
+                append_thinking_piece(&mut reply, &thinking_tail, &mut thinking_bytes);
+                thinking_progress.flush(&job, &reply.thinking);
+                publish_reply_remaining(
+                    &job,
+                    &reply,
+                    published_response,
+                    thinking_progress.published,
+                );
+                if truncated {
+                    reply.completion = Some(CompletionReason::Length);
                     return AgentActionEnd {
                         outcome: AgentOutcome::ProviderFailure,
-                        error: Some(error.message().to_owned()),
+                        error: Some(ProviderError::ReplyTooLong.message().to_owned()),
                         reply: reply.clone(),
                     };
                 }
+                if matches!(completion, Some(CompletionReason::Stop) | None)
+                    && reply.text.trim().is_empty()
+                    && let Some(delay) = take_retry(
+                        &ProviderError::EmptyReply,
+                        &mut retry_attempts,
+                        &mut retry_waited,
+                    )
+                {
+                    if let Err(error) = record_failed_attempt(
+                        state,
+                        &spec,
+                        &job,
+                        &reply,
+                        &committed_reply,
+                        &ProviderError::EmptyReply,
+                    ) {
+                        return store_failure(&reply, error);
+                    }
+                    restore_request(
+                        &mut reply,
+                        &committed_reply,
+                        &mut published_response,
+                        committed_response,
+                        &mut thinking_progress,
+                        committed_thinking,
+                        &mut model_reply_bytes,
+                        committed_model_bytes,
+                        &mut thinking_bytes,
+                        committed_thinking_bytes,
+                        &mut visible_tool_bytes,
+                        committed_visible_tool_bytes,
+                        &mut response_redactor,
+                        &mut thinking_redactor,
+                        &mut event_count,
+                        secret,
+                        &job,
+                    );
+                    if let Err(error) =
+                        persist_output(state, spec.conversation, &job, &reply, false)
+                    {
+                        return store_failure(&reply, error);
+                    }
+                    job.set_retry(retry_attempts, delay, ProviderError::EmptyReply.message());
+                    if wait_retry(&job, delay).await {
+                        return cancel_action(&job, &reply);
+                    }
+                    continue 'provider;
+                }
+                return finish_without_tools(&reply, completion);
             }
-        }
-
-        if job.cancel_requested() {
-            return cancel_action(&job, &reply);
-        }
-        reply.completion = Some(completion.unwrap_or(CompletionReason::Unknown));
-
-        if calls.is_empty() {
-            let response_tail = response_redactor.finish();
-            if let Some(evidence) = &spec.evidence {
-                evidence.response(&response_tail, secret);
-            }
-            let thinking_tail = thinking_redactor.finish();
-            if let Some(evidence) = &spec.evidence {
-                evidence.thinking(&thinking_tail, secret);
-            }
-            let truncated = append_model_piece(&mut reply, &response_tail, &mut model_reply_bytes);
-            append_thinking_piece(&mut reply, &thinking_tail, &mut thinking_bytes);
-            thinking_progress.flush(&job, &reply.thinking);
-            publish_reply_remaining(
-                &job,
-                &reply,
-                published_response,
-                thinking_progress.published,
-            );
-            if truncated {
-                reply.completion = Some(CompletionReason::Length);
+            let _ = response_redactor.finish_boundary();
+            let _ = thinking_redactor.finish_boundary();
+            if !completion.is_some_and(CompletionReason::allows_tool_dispatch) {
+                thinking_progress.flush(&job, &reply.thinking);
+                publish_reply_remaining(
+                    &job,
+                    &reply,
+                    published_response,
+                    thinking_progress.published,
+                );
                 return AgentActionEnd {
                     outcome: AgentOutcome::ProviderFailure,
-                    error: Some(ProviderError::ReplyTooLong.message().to_owned()),
+                    error: Some(ProviderError::Incomplete.message().to_owned()),
                     reply: reply.clone(),
                 };
             }
-            return finish_without_tools(&reply, completion);
-        }
-        let _ = response_redactor.finish_boundary();
-        let _ = thinking_redactor.finish_boundary();
-        if !completion.is_some_and(CompletionReason::allows_tool_dispatch) {
-            thinking_progress.flush(&job, &reply.thinking);
-            publish_reply_remaining(
-                &job,
-                &reply,
-                published_response,
-                thinking_progress.published,
-            );
-            return AgentActionEnd {
-                outcome: AgentOutcome::ProviderFailure,
-                error: Some(ProviderError::Incomplete.message().to_owned()),
-                reply: reply.clone(),
-            };
-        }
-        if let Err(error) = validate_tool_batch(&calls, &request_tools) {
-            thinking_progress.flush(&job, &reply.thinking);
-            publish_reply_remaining(
-                &job,
-                &reply,
-                published_response,
-                thinking_progress.published,
-            );
-            return AgentActionEnd {
-                outcome: AgentOutcome::ProviderFailure,
-                error: Some(error.message().to_owned()),
-                reply: reply.clone(),
-            };
+            if let Err(error) = validate_tool_batch(&calls, &request_tools) {
+                thinking_progress.flush(&job, &reply.thinking);
+                publish_reply_remaining(
+                    &job,
+                    &reply,
+                    published_response,
+                    thinking_progress.published,
+                );
+                return AgentActionEnd {
+                    outcome: AgentOutcome::ProviderFailure,
+                    error: Some(error.message().to_owned()),
+                    reply: reply.clone(),
+                };
+            }
+            break 'provider;
         }
 
         publish_reply_before_tools(
@@ -485,7 +633,8 @@ pub(crate) async fn run_agent_action(
             return store_failure(&reply, error);
         }
         let mut resolved_calls: Vec<crate::providers::ChatToolCall> = Vec::new();
-        for (id, name, arguments) in calls {
+        let mut pending = calls.into_iter();
+        while let Some((id, name, arguments)) = pending.next() {
             let trace = tools::invoke(&context, &id, &name, &arguments).await;
             let output = tools::redact(&trace.output, secret);
 
@@ -495,18 +644,12 @@ pub(crate) async fn run_agent_action(
                 Some(scope) => tools::retain_command(state, scope.clone(), job.id(), &id, command),
                 None => command,
             });
-            let failed = trace.failed
-                || command
-                    .as_ref()
-                    .is_some_and(crate::execution::CommandResult::is_error);
-            let blocked = command.as_ref().is_some_and(|command| {
-                matches!(
-                    command.termination,
-                    crate::execution::CommandTermination::StorageFailure
-                        | crate::execution::CommandTermination::ResourceLimit
-                        | crate::execution::CommandTermination::Unknown
-                )
-            });
+            let mut failure = trace.failure;
+            if command.as_ref().is_some_and(|command| {
+                command.termination == crate::execution::CommandTermination::StorageFailure
+            }) {
+                failure = Some(tools::ToolFailureKind::Persistence);
+            }
             let footer = command.as_ref().map(|command| {
                 let mut footer = format!("\nCommand outcome: {}.", command.status_text());
                 if let Some(retained) = &command.retained {
@@ -562,17 +705,41 @@ pub(crate) async fn run_agent_action(
                 job.finish_tool(visible_id, visible);
                 output_visible = true;
             }
+            extra.push(Message::tool_result(id, name, output.clone()));
             if job.cancel_requested() {
+                record_not_dispatched(
+                    pending,
+                    secret,
+                    &mut reply,
+                    &mut resolved_calls,
+                    &mut extra,
+                    &job,
+                    &mut visible_tool_bytes,
+                );
+                if let Err(error) = persist_output(state, spec.conversation, &job, &reply, true) {
+                    return store_failure(&reply, error);
+                }
                 return cancel_action(&job, &reply);
             }
-            if blocked || (failed && spec.host.as_ref().is_some_and(|host| host.run.is_some())) {
+            if let Some(kind) = failure.filter(|kind| kind.stops_loop()) {
+                record_not_dispatched(
+                    pending,
+                    secret,
+                    &mut reply,
+                    &mut resolved_calls,
+                    &mut extra,
+                    &job,
+                    &mut visible_tool_bytes,
+                );
+                if let Err(error) = persist_output(state, spec.conversation, &job, &reply, true) {
+                    return store_failure(&reply, error);
+                }
                 return AgentActionEnd {
-                    outcome: AgentOutcome::ToolFailure,
+                    outcome: outcome_for_tool(kind),
                     error: Some(output),
                     reply: reply.clone(),
                 };
             }
-            extra.push(Message::tool_result(id, name, output));
         }
         if let Some(evidence) = &spec.evidence
             && !resolved_calls.is_empty()
@@ -588,7 +755,7 @@ pub(crate) async fn run_agent_action(
             })
         {
             return AgentActionEnd {
-                outcome: AgentOutcome::ProviderFailure,
+                outcome: AgentOutcome::PersistenceFailure,
                 error: Some(error.message().to_owned()),
                 reply,
             };
@@ -1037,9 +1204,148 @@ fn store_failure(
     error: crate::conversations::ConversationError,
 ) -> AgentActionEnd {
     AgentActionEnd {
-        outcome: AgentOutcome::ProviderFailure,
+        outcome: AgentOutcome::PersistenceFailure,
         error: Some(error.message().to_owned()),
         reply: reply.clone(),
+    }
+}
+
+fn record_failed_attempt(
+    state: &AppState,
+    spec: &AgentRunSpec,
+    job: &Job,
+    reply: &AssistantReply,
+    committed: &AssistantReply,
+    error: &ProviderError,
+) -> Result<(), crate::conversations::ConversationError> {
+    let Some(conversation) = spec.conversation else {
+        return Ok(());
+    };
+    let mut failed = AssistantReply::default();
+    failed.push_response(reply.text.strip_prefix(&committed.text).unwrap_or_default());
+    failed.push_thinking(
+        reply
+            .thinking
+            .strip_prefix(&committed.thinking)
+            .unwrap_or_default(),
+    );
+    state.conversations.record_provider_failure(
+        &conversation,
+        job.id(),
+        failed,
+        committed,
+        error.message().to_owned(),
+    )
+}
+
+fn take_retry(
+    error: &ProviderError,
+    attempts: &mut u32,
+    waited: &mut Duration,
+) -> Option<Duration> {
+    if *attempts >= crate::providers::MAXIMUM_PROVIDER_RETRY_ATTEMPTS {
+        return None;
+    }
+    let delay = error.bounded_retry_delay(*waited)?;
+    *attempts += 1;
+    *waited = waited.saturating_add(delay);
+    Some(delay)
+}
+
+async fn wait_retry(job: &Job, delay: Duration) -> bool {
+    if delay.is_zero() {
+        return job.cancel_requested();
+    }
+    tokio::select! {
+        biased;
+        _ = job.cancelled() => true,
+        _ = tokio::time::sleep(delay) => job.cancel_requested(),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn restore_request(
+    reply: &mut AssistantReply,
+    committed: &AssistantReply,
+    published_response: &mut usize,
+    committed_response: usize,
+    thinking_progress: &mut ThinkingProgress,
+    committed_thinking: usize,
+    model_reply_bytes: &mut usize,
+    committed_model_bytes: usize,
+    thinking_bytes: &mut usize,
+    committed_thinking_bytes: usize,
+    visible_tool_bytes: &mut usize,
+    committed_visible_tool_bytes: usize,
+    response_redactor: &mut StreamRedactor<'_>,
+    thinking_redactor: &mut StreamRedactor<'_>,
+    event_count: &mut usize,
+    _secret: Option<&str>,
+    job: &Job,
+) {
+    *reply = committed.clone();
+    *published_response = committed_response;
+    *thinking_progress = ThinkingProgress {
+        published: committed_thinking,
+        ..ThinkingProgress::default()
+    };
+    *model_reply_bytes = committed_model_bytes;
+    *thinking_bytes = committed_thinking_bytes;
+    *visible_tool_bytes = committed_visible_tool_bytes;
+    let _ = response_redactor.finish();
+    let _ = thinking_redactor.finish();
+    *event_count = 0;
+    job.restore_output(committed.clone());
+}
+
+fn outcome_for_tool(kind: tools::ToolFailureKind) -> AgentOutcome {
+    match kind {
+        tools::ToolFailureKind::Ordinary | tools::ToolFailureKind::Rejected => {
+            AgentOutcome::ToolFailure
+        }
+        tools::ToolFailureKind::Authority => AgentOutcome::AuthorityFailure,
+        tools::ToolFailureKind::Persistence => AgentOutcome::PersistenceFailure,
+        tools::ToolFailureKind::Cancellation => AgentOutcome::Cancelled,
+        tools::ToolFailureKind::Uncertain => AgentOutcome::UncertainEffect,
+    }
+}
+
+fn record_not_dispatched(
+    remaining: impl Iterator<Item = (String, String, serde_json::Value)>,
+    secret: Option<&str>,
+    reply: &mut AssistantReply,
+    resolved_calls: &mut Vec<crate::providers::ChatToolCall>,
+    extra: &mut Vec<Message>,
+    job: &Job,
+    visible_tool_bytes: &mut usize,
+) {
+    let command = crate::execution::CommandResult::new(
+        Vec::new(),
+        crate::execution::CommandTermination::NotDispatched,
+    );
+    let output = ToolOutput {
+        label: "not dispatched".to_owned(),
+        output: "This tool did not run.".to_owned(),
+        command: Some(command),
+    };
+    for (id, name, arguments) in remaining {
+        let visible_id = tools::redact(&id, secret);
+        resolved_calls.push(crate::providers::ChatToolCall {
+            id: id.clone(),
+            name: name.clone(),
+            arguments,
+            result: Some(output.clone()),
+        });
+        reply.finish_tool(&visible_id, output.clone());
+        extra.push(Message::tool_result(id, name, output.output.clone()));
+        if let Some(visible) = visible_tool_output(
+            output.label.clone(),
+            &output.output,
+            output.command.clone(),
+            visible_tool_bytes,
+        ) {
+            job.finish_tool(visible_id, visible);
+        }
     }
 }
 

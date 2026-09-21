@@ -44,6 +44,24 @@ fn output_events_are_monotonic_and_reconstructable() {
 }
 
 #[test]
+fn retry_resynchronisation_excludes_failed_output_for_old_cursors() {
+    let job = job();
+    job.push_response("Committed.".to_owned());
+    let committed = job.snapshot().output;
+    let old_cursor = job.push_response("Failed attempt.".to_owned()).unwrap();
+    job.restore_output(committed);
+    job.set_retry(1, std::time::Duration::from_secs(1), "Unavailable");
+    assert_eq!(job.output_up_to(old_cursor).text, "Committed.");
+    job.clear_retry();
+    let cursor = job.push_response("Recovered.".to_owned()).unwrap();
+    assert_eq!(job.output_up_to(cursor).text, "Committed.Recovered.");
+    assert!(!format!("{:?}", job.events_after(0)).contains("Failed attempt."));
+    job.set_retry(2, std::time::Duration::from_secs(1), "Unavailable");
+    job.finish(JobStatus::Cancelled, None);
+    assert!(job.snapshot().retry.is_none());
+}
+
+#[test]
 fn thinking_after_a_tool_starts_a_new_activity_phase() {
     let job = job();
     job.push_thinking("Inspect".to_owned());

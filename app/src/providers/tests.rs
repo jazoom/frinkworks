@@ -149,6 +149,78 @@ fn verify_status_treats_rate_limits_as_rate_limited() {
 }
 
 #[test]
+fn retry_eligibility_excludes_auth_refusal_and_malformed_context() {
+    use super::{
+        DEFAULT_PROVIDER_RETRY_DELAY, MAXIMUM_PROVIDER_RETRY_WAIT, classify_failure_status,
+    };
+    assert!(ProviderError::RateLimited { retry_after: None }.retry_eligible());
+    assert!(ProviderError::Unreachable.retry_eligible());
+    assert!(ProviderError::EmptyReply.retry_eligible());
+    for error in [
+        ProviderError::Rejected,
+        ProviderError::Reauthenticate,
+        ProviderError::AccountInactive,
+        ProviderError::Refused,
+        ProviderError::Incomplete,
+        ProviderError::ReplyTooLong,
+        classify_failure_status(401, None),
+        classify_failure_status(403, None),
+        classify_failure_status(400, None),
+    ] {
+        assert!(!error.retry_eligible(), "{error:?}");
+        assert_eq!(error.bounded_retry_delay(Duration::ZERO), None);
+    }
+    let limited = classify_failure_status(429, Some("15"));
+    assert!(limited.retry_eligible());
+    assert_eq!(limited.retry_delay(), Some(Duration::from_secs(15)));
+    assert_eq!(
+        limited.bounded_retry_delay(Duration::ZERO),
+        Some(Duration::from_secs(15))
+    );
+    assert_eq!(
+        limited.bounded_retry_delay(MAXIMUM_PROVIDER_RETRY_WAIT),
+        None
+    );
+    assert_eq!(
+        limited.bounded_retry_delay(MAXIMUM_PROVIDER_RETRY_WAIT - Duration::from_secs(14)),
+        None
+    );
+    assert_eq!(
+        classify_failure_status(429, Some("120")).bounded_retry_delay(Duration::ZERO),
+        None
+    );
+    assert!(
+        super::rig::classify_completion_for(
+            rig_core::completion::CompletionError::HttpError(
+                rig_core::http_client::Error::StreamEnded
+            ),
+            super::AuthMethod::ApiKey,
+        )
+        .retry_eligible()
+    );
+    for error in [
+        rig_core::completion::CompletionError::HttpError(rig_core::http_client::Error::NoHeaders),
+        rig_core::completion::CompletionError::RequestError(
+            std::io::Error::other("invalid context").into(),
+        ),
+        rig_core::completion::CompletionError::ResponseError("invalid response".to_owned()),
+        rig_core::completion::CompletionError::ProviderError("refusal".to_owned()),
+    ] {
+        assert!(
+            !super::rig::classify_completion_for(error, super::AuthMethod::ApiKey).retry_eligible()
+        );
+    }
+    assert_eq!(
+        ProviderError::RateLimited { retry_after: None }.retry_delay(),
+        Some(DEFAULT_PROVIDER_RETRY_DELAY)
+    );
+    assert_eq!(
+        classify_failure_status(503, None).bounded_retry_delay(Duration::ZERO),
+        Some(DEFAULT_PROVIDER_RETRY_DELAY.min(MAXIMUM_PROVIDER_RETRY_WAIT))
+    );
+}
+
+#[test]
 fn verify_status_treats_transport_and_server_errors_as_unavailability() {
     assert_eq!(
         classify_verify_status(500, None),
@@ -290,7 +362,7 @@ fn a_provider_json_message_replaces_an_outage_label() {
     );
     assert_eq!(
         with_provider_detail(ProviderError::Unreachable, Some(body.as_bytes())),
-        ProviderError::Detail("You have insufficient credits".to_owned())
+        ProviderError::Unreachable
     );
     assert_eq!(
         with_provider_detail(ProviderError::Rejected, Some(body.as_bytes())),
@@ -441,6 +513,7 @@ mod scripted_fixture {
     enum Script {
         Chunks(Vec<Result<String, ProviderError>>),
         Rounds(Vec<Vec<Result<ModelEvent, ProviderError>>>),
+        TurnResults(Vec<Result<Vec<Result<ModelEvent, ProviderError>>, ProviderError>>),
         Hang {
             started: Option<Arc<AtomicBool>>,
             dropped: Option<Arc<AtomicBool>>,
@@ -458,6 +531,7 @@ mod scripted_fixture {
         last_tools: Arc<Mutex<Vec<String>>>,
         last_history: Arc<Mutex<Vec<ChatTurn>>>,
         last_connection: Arc<Mutex<Option<CapturedConnection>>>,
+        last_extra_len: Arc<AtomicUsize>,
     }
 
     impl ScriptedBackend {
@@ -475,6 +549,7 @@ mod scripted_fixture {
                 last_tools: Arc::new(Mutex::new(Vec::new())),
                 last_history: Arc::new(Mutex::new(Vec::new())),
                 last_connection: Arc::new(Mutex::new(None)),
+                last_extra_len: Arc::new(AtomicUsize::new(0)),
             }
         }
 
@@ -490,6 +565,7 @@ mod scripted_fixture {
                 last_tools: Arc::new(Mutex::new(Vec::new())),
                 last_history: Arc::new(Mutex::new(Vec::new())),
                 last_connection: Arc::new(Mutex::new(None)),
+                last_extra_len: Arc::new(AtomicUsize::new(0)),
             }
         }
 
@@ -500,6 +576,14 @@ mod scripted_fixture {
         pub(crate) fn rounds(rounds: Vec<Vec<Result<ModelEvent, ProviderError>>>) -> Self {
             let mut backend = Self::accept();
             backend.script = Ok(Script::Rounds(rounds));
+            backend
+        }
+
+        pub(crate) fn turn_results(
+            results: Vec<Result<Vec<Result<ModelEvent, ProviderError>>, ProviderError>>,
+        ) -> Self {
+            let mut backend = Self::accept();
+            backend.script = Ok(Script::TurnResults(results));
             backend
         }
 
@@ -533,6 +617,7 @@ mod scripted_fixture {
                 last_tools: Arc::new(Mutex::new(Vec::new())),
                 last_history: Arc::new(Mutex::new(Vec::new())),
                 last_connection: Arc::new(Mutex::new(None)),
+                last_extra_len: Arc::new(AtomicUsize::new(0)),
             }
         }
 
@@ -548,6 +633,7 @@ mod scripted_fixture {
                 last_tools: Arc::new(Mutex::new(Vec::new())),
                 last_history: Arc::new(Mutex::new(Vec::new())),
                 last_connection: Arc::new(Mutex::new(None)),
+                last_extra_len: Arc::new(AtomicUsize::new(0)),
             }
         }
 
@@ -585,11 +671,19 @@ mod scripted_fixture {
             self.verify_result.clone()
         }
 
+        pub(crate) fn last_extra_len(&self) -> usize {
+            self.last_extra_len.load(Ordering::SeqCst)
+        }
+
+        pub(crate) fn turn_count(&self) -> usize {
+            self.round.load(Ordering::SeqCst)
+        }
+
         pub(crate) fn stream_turn(
             &self,
             connection: &ProviderConnection,
             history: &[ChatTurn],
-            _extra: &[Message],
+            extra: &[Message],
             tools: &[ToolDefinition],
             preamble: &str,
         ) -> Result<ModelStream, ProviderError> {
@@ -614,6 +708,7 @@ mod scripted_fixture {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner()) =
                 tools.iter().map(|tool| tool.name.clone()).collect();
+            self.last_extra_len.store(extra.len(), Ordering::SeqCst);
             match self.script.clone() {
                 Ok(Script::Chunks(items)) => {
                     let failed = items.iter().any(Result::is_err);
@@ -632,6 +727,17 @@ mod scripted_fixture {
                     let index = self.round.fetch_add(1, Ordering::SeqCst);
                     let items = rounds.into_iter().nth(index).unwrap_or_default();
                     Ok(Box::pin(futures_util::stream::iter(items)))
+                }
+                Ok(Script::TurnResults(results)) => {
+                    let index = self.round.fetch_add(1, Ordering::SeqCst);
+                    match results
+                        .into_iter()
+                        .nth(index)
+                        .unwrap_or_else(|| Ok(Vec::new()))
+                    {
+                        Ok(items) => Ok(Box::pin(futures_util::stream::iter(items))),
+                        Err(error) => Err(error),
+                    }
                 }
                 Ok(Script::Hang { started, dropped }) => {
                     Ok(Box::pin(ModelHangStream { started, dropped }))

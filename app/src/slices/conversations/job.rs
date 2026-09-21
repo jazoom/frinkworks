@@ -68,9 +68,11 @@ pub(super) async fn run(
     let (status, message_status) = match outcome {
         AgentOutcome::Completed => (JobStatus::Completed, MessageStatus::Complete),
         AgentOutcome::Cancelled => (JobStatus::Cancelled, MessageStatus::Interrupted),
-        AgentOutcome::ProviderFailure | AgentOutcome::ToolFailure => {
-            (JobStatus::Failed, MessageStatus::Failed)
-        }
+        AgentOutcome::ProviderFailure
+        | AgentOutcome::ToolFailure
+        | AgentOutcome::AuthorityFailure
+        | AgentOutcome::PersistenceFailure
+        | AgentOutcome::UncertainEffect => (JobStatus::Failed, MessageStatus::Failed),
     };
     let error = error
         .and_then(|text| crate::providers::sanitise_detail(&crate::tools::redact(&text, secret)));
@@ -261,7 +263,7 @@ async fn observe_segment(
     while job.latest_seq() > cursor {
         let snapshot = job.snapshot();
         let output = job.output_up_to(snapshot.latest_seq);
-        if !output.is_empty()
+        if (!output.is_empty() || snapshot.retry.is_some())
             && let Some(message) = assistant
             && let Some(frame) = progress_frame(
                 &conversation,
@@ -269,6 +271,7 @@ async fn observe_segment(
                 message,
                 snapshot.latest_seq,
                 &output,
+                snapshot.retry.is_some(),
                 &mut budget,
             )
             && tx.send(frame).await.is_err()
@@ -306,9 +309,13 @@ fn progress_frame(
     message: crate::conversations::MessageId,
     cursor: u64,
     reply: &AssistantReply,
+    retrying: bool,
     budget: &mut hypergraft::StreamBudget,
 ) -> Option<hypergraft::StreamFrame> {
-    let message = super::page::reply_view(conversation, message, reply, true);
+    let mut message = super::page::reply_view(conversation, message, reply, true);
+    if retrying {
+        message.status = "Retrying the provider";
+    }
     let mut patches = PatchSet::new();
     patches
         .children(&message.id, &MessageBody { message: &message })

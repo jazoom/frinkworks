@@ -107,6 +107,11 @@ pub(crate) enum JobEventKind {
     Usage {
         usage: ModelUsage,
     },
+    Retrying {
+        attempt: u32,
+        delay: Duration,
+        reason: String,
+    },
     Completed,
     Failed,
     Cancelled,
@@ -118,6 +123,13 @@ pub(crate) struct JobEvent {
     pub(crate) kind: JobEventKind,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct JobRetry {
+    pub(crate) attempt: u32,
+    pub(crate) delay: Duration,
+    pub(crate) reason: String,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct JobSnapshot {
     pub(crate) id: JobId,
@@ -125,6 +137,7 @@ pub(crate) struct JobSnapshot {
     pub(crate) status: JobStatus,
     pub(crate) output: AssistantReply,
     pub(crate) latest_seq: u64,
+    pub(crate) retry: Option<JobRetry>,
 }
 
 pub(crate) struct Job {
@@ -140,11 +153,13 @@ struct JobInner {
     status: JobStatus,
     events: Vec<JobEvent>,
     output: AssistantReply,
+    output_base: AssistantReply,
     latest_seq: u64,
     error: Option<String>,
     progress_events: usize,
     progress_bytes: usize,
     progress_truncated: bool,
+    retry: Option<JobRetry>,
 }
 
 impl Job {
@@ -160,11 +175,13 @@ impl Job {
                 status: JobStatus::Running,
                 events: Vec::new(),
                 output: AssistantReply::default(),
+                output_base: AssistantReply::default(),
                 latest_seq: 0,
                 error: None,
                 progress_events: 0,
                 progress_bytes: 0,
                 progress_truncated: false,
+                retry: None,
             }),
             notify: Notify::new(),
             cancel: AtomicBool::new(false),
@@ -243,6 +260,7 @@ impl Job {
             status: inner.status,
             output: inner.output.clone(),
             latest_seq: inner.latest_seq,
+            retry: inner.retry.clone(),
         }
     }
 
@@ -252,7 +270,10 @@ impl Job {
 
     pub(crate) fn output_up_to(&self, cursor: u64) -> AssistantReply {
         let inner = self.lock();
-        let mut output = AssistantReply::default();
+        if cursor >= inner.latest_seq {
+            return inner.output.clone();
+        }
+        let mut output = inner.output_base.clone();
         for event in &inner.events {
             if event.seq > cursor {
                 break;
@@ -324,6 +345,43 @@ impl Job {
         self.push_output_event(JobEventKind::Usage { usage })
     }
 
+    pub(crate) fn restore_output(&self, output: AssistantReply) {
+        let mut inner = self.lock();
+        if inner.status != JobStatus::Running {
+            return;
+        }
+        let output = if self.output_visible.load(Ordering::SeqCst) {
+            output
+        } else {
+            AssistantReply::default()
+        };
+        // Old cursors must not reconstruct a failed attempt as successful output.
+        inner.output_base = output.clone();
+        inner.output = output;
+        inner.events.clear();
+        inner.latest_seq += 1;
+        inner.retry = None;
+        drop(inner);
+        self.notify.notify_waiters();
+    }
+
+    pub(crate) fn set_retry(&self, attempt: u32, delay: Duration, reason: &str) -> Option<u64> {
+        self.push_output_event(JobEventKind::Retrying {
+            attempt,
+            delay,
+            reason: reason.to_owned(),
+        })
+    }
+
+    pub(crate) fn clear_retry(&self) {
+        let mut inner = self.lock();
+        if inner.retry.take().is_some() {
+            inner.latest_seq += 1;
+            drop(inner);
+            self.notify.notify_waiters();
+        }
+    }
+
     fn push_output_event(&self, kind: JobEventKind) -> Option<u64> {
         let empty = match &kind {
             JobEventKind::Response { delta } => delta.is_empty(),
@@ -331,10 +389,14 @@ impl Job {
             | JobEventKind::ToolStarted { .. }
             | JobEventKind::ToolProgress { .. }
             | JobEventKind::ToolFinished { .. }
-            | JobEventKind::Usage { .. } => false,
+            | JobEventKind::Usage { .. }
+            | JobEventKind::Retrying { .. } => false,
             JobEventKind::Completed | JobEventKind::Failed | JobEventKind::Cancelled => true,
         };
-        if empty || !self.output_visible.load(Ordering::SeqCst) {
+        if empty
+            || (!self.output_visible.load(Ordering::SeqCst)
+                && !matches!(kind, JobEventKind::Retrying { .. }))
+        {
             return None;
         }
         let mut inner = self.lock();
@@ -343,6 +405,18 @@ impl Job {
         }
         inner.latest_seq += 1;
         let seq = inner.latest_seq;
+        if let JobEventKind::Retrying {
+            attempt,
+            delay,
+            reason,
+        } = &kind
+        {
+            inner.retry = Some(JobRetry {
+                attempt: *attempt,
+                delay: *delay,
+                reason: reason.clone(),
+            });
+        }
         apply_output_event(&mut inner.output, &kind);
         inner.events.push(JobEvent { seq, kind });
         drop(inner);
@@ -365,6 +439,7 @@ impl Job {
             return None;
         }
         inner.status = status;
+        inner.retry = None;
         inner.error = error.map(str::to_owned);
         inner.latest_seq += 1;
         let seq = inner.latest_seq;
@@ -454,6 +529,9 @@ fn apply_output_event(output: &mut AssistantReply, event: &JobEventKind) {
         }
         JobEventKind::ToolFinished { id, output: tool } => output.finish_tool(id, tool.clone()),
         JobEventKind::Usage { usage } => output.usage = Some(usage.clone()),
-        JobEventKind::Completed | JobEventKind::Failed | JobEventKind::Cancelled => {}
+        JobEventKind::Retrying { .. }
+        | JobEventKind::Completed
+        | JobEventKind::Failed
+        | JobEventKind::Cancelled => {}
     }
 }

@@ -117,6 +117,43 @@ fn incomplete_tool_outcomes_block_continuation() {
 }
 
 #[test]
+fn failed_command_results_stay_on_the_call() {
+    use crate::execution::command::{CommandResult, CommandTermination};
+    let command = CommandResult::new(
+        vec![crate::execution::command::CommandChunk {
+            stream: crate::execution::CommandStream::Stderr,
+            text: "partial failure output".to_owned(),
+        }],
+        CommandTermination::Exited(1),
+    );
+    let result = ToolOutput {
+        label: "run".to_owned(),
+        output: "exit 1".to_owned(),
+        command: Some(command),
+    };
+    let mut message = assistant(vec![tool_call("call-1", Some(result.clone()))]);
+    message.status = MessageStatus::Failed;
+    let history = project(&[message], None).expect("partial command remains");
+    assert_eq!(history.len(), 1);
+    assert_eq!(history[0].calls[0].result.as_ref(), Some(&result));
+    assert!(history[0].text.is_empty());
+}
+
+#[test]
+fn unknown_command_results_block_continuation() {
+    use crate::execution::command::{CommandResult, CommandTermination};
+    let command = CommandResult::new(Vec::new(), CommandTermination::Unknown);
+    let result = ToolOutput {
+        label: "run".to_owned(),
+        output: "unknown".to_owned(),
+        command: Some(command),
+    };
+    let mut message = assistant(vec![tool_call("call-1", Some(result))]);
+    message.status = MessageStatus::Failed;
+    assert_eq!(project(&[message], None), Err(HistoryError::Unsettled));
+}
+
+#[test]
 fn failed_prose_stays_local() {
     let mut message = assistant(Vec::new());
     message.text = "Incomplete answer".to_owned();

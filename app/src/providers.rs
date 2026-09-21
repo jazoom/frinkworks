@@ -4,6 +4,7 @@ mod xai_plan;
 
 use std::fmt;
 use std::pin::Pin;
+use std::time::Duration;
 
 use futures_util::Stream;
 use rig_core::completion::{Message, ToolDefinition};
@@ -17,6 +18,12 @@ pub(crate) const MAXIMUM_API_KEY_BYTES: usize = 4_096;
 pub(crate) const MAXIMUM_MODEL_BYTES: usize = 256;
 pub(crate) const MAXIMUM_FAVOURITES: usize = 50;
 pub(crate) const MAXIMUM_PROVIDER_DETAIL_BYTES: usize = 400;
+
+/// Retry count for one provider request. It is separate from tool-round limits.
+pub(crate) const MAXIMUM_PROVIDER_RETRY_ATTEMPTS: u32 = 3;
+/// Cap on total wait across retries of one provider request.
+pub(crate) const MAXIMUM_PROVIDER_RETRY_WAIT: Duration = Duration::from_secs(60);
+pub(crate) const DEFAULT_PROVIDER_RETRY_DELAY: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -567,6 +574,37 @@ impl ProviderError {
             | Self::Detail(_) => hypergraft::PatchStatus::UnprocessableEntity,
         }
     }
+
+    pub(crate) fn retry_eligible(&self) -> bool {
+        matches!(
+            self,
+            Self::RateLimited { .. } | Self::Unreachable | Self::EmptyReply
+        )
+    }
+
+    pub(crate) fn retry_delay(&self) -> Option<Duration> {
+        if !self.retry_eligible() {
+            return None;
+        }
+        match self {
+            Self::RateLimited { retry_after } => Some(
+                retry_after
+                    .map(|delay| Duration::from_secs(delay.as_seconds()))
+                    .unwrap_or(DEFAULT_PROVIDER_RETRY_DELAY),
+            ),
+            Self::Unreachable | Self::EmptyReply => Some(DEFAULT_PROVIDER_RETRY_DELAY),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn bounded_retry_delay(&self, waited: Duration) -> Option<Duration> {
+        if waited >= MAXIMUM_PROVIDER_RETRY_WAIT {
+            return None;
+        }
+        let delay = self.retry_delay()?;
+        // Do not retry before the provider's requested delay.
+        (delay <= MAXIMUM_PROVIDER_RETRY_WAIT - waited).then_some(delay)
+    }
 }
 
 fn default_retry_after() -> hypergraft::RetryAfter {
@@ -627,7 +665,8 @@ fn with_extracted_detail(error: ProviderError, detail: Option<String>) -> Provid
     match error {
         ProviderError::Rejected
         | ProviderError::Reauthenticate
-        | ProviderError::RateLimited { .. } => error,
+        | ProviderError::RateLimited { .. }
+        | ProviderError::Unreachable => error,
         other => detail.map(ProviderError::Detail).unwrap_or(other),
     }
 }

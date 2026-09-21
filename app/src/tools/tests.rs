@@ -1,9 +1,11 @@
 use super::{
-    MAXIMUM_TOOL_BYTES, advertised, authorised_tool, definitions_for, mark_truncated, redact,
-    valid_output_reference,
+    AgentToolContext, MAXIMUM_TOOL_BYTES, ToolFailureKind, advertised, authorised_tool,
+    definitions_for, mark_truncated, redact, valid_output_reference,
 };
 use crate::agents::{AccessMode, AgentId, AgentRecord, DirectoryGrant, DirectoryPolicy, ToolId};
+use crate::conversations::ConversationId;
 use crate::execution::ToolLocation;
+use crate::sessions::{Job, JobId};
 
 fn policy() -> DirectoryPolicy {
     DirectoryPolicy::from_record_with_primary(
@@ -149,10 +151,13 @@ fn file_tools_require_success_and_exclude_stderr_from_content() {
         },
     ];
     assert_eq!(
-        super::plain_capture(Ok(CommandResult::new(
-            chunks.clone(),
-            CommandTermination::Exited(0)
-        )))
+        super::plain_capture(
+            "read".to_owned(),
+            Ok(CommandResult::new(
+                chunks.clone(),
+                CommandTermination::Exited(0)
+            ))
+        )
         .ok(),
         Some("file contents".to_owned()),
     );
@@ -161,7 +166,13 @@ fn file_tools_require_success_and_exclude_stderr_from_content() {
         CommandTermination::Unknown,
         CommandTermination::ResourceLimit,
     ] {
-        assert!(super::plain_capture(Ok(CommandResult::new(chunks.clone(), termination))).is_err());
+        assert!(
+            super::plain_capture(
+                "read".to_owned(),
+                Ok(CommandResult::new(chunks.clone(), termination))
+            )
+            .is_err()
+        );
     }
 }
 
@@ -173,4 +184,95 @@ fn only_server_generated_references_resolve_retained_output() {
     assert!(!valid_output_reference(&"a".repeat(31)));
     assert!(!valid_output_reference(&"z".repeat(32)));
     assert!(!valid_output_reference("/tmp/output"));
+}
+
+fn tool_job() -> std::sync::Arc<Job> {
+    Job::for_conversation(
+        JobId::generate().expect("job id"),
+        ConversationId::generate().expect("conversation"),
+    )
+}
+
+fn sandbox_context<'a>(
+    policy: &'a DirectoryPolicy,
+    job: &'a Job,
+    tools: &'a [ToolId],
+) -> AgentToolContext<'a> {
+    AgentToolContext {
+        sandbox: None,
+        policy,
+        job,
+        tools,
+        location: ToolLocation::Sandbox,
+        host: None,
+        secret: None,
+        outputs: None,
+        output_scope: None,
+        output_drafts: None,
+        required_outputs: &[],
+    }
+}
+
+#[tokio::test]
+async fn path_escape_is_an_authority_failure() {
+    let policy = policy();
+    let job = tool_job();
+    let tools = [ToolId::Read];
+    let context = sandbox_context(&policy, &job, &tools);
+    let trace = super::invoke(
+        &context,
+        "call-1",
+        "read",
+        &serde_json::json!({"path": ".."}),
+    )
+    .await;
+    assert_eq!(trace.failure, Some(ToolFailureKind::Authority));
+    assert!(trace.command.is_none());
+}
+
+#[tokio::test]
+async fn read_only_write_is_an_authority_failure() {
+    let policy = policy();
+    let job = tool_job();
+    let tools = [ToolId::Write];
+    let context = sandbox_context(&policy, &job, &tools);
+    let trace = super::invoke(
+        &context,
+        "call-1",
+        "write",
+        &serde_json::json!({"path": "/access/docs/readme", "contents": "x"}),
+    )
+    .await;
+    assert_eq!(trace.failure, Some(ToolFailureKind::Authority));
+    assert!(trace.command.is_none());
+}
+
+#[tokio::test]
+async fn recoverable_read_error_is_ordinary() {
+    let policy = policy();
+    let job = tool_job();
+    let tools = [ToolId::Read];
+    let context = sandbox_context(&policy, &job, &tools);
+    let trace = super::invoke(&context, "call-1", "read", &serde_json::json!({"path": ""})).await;
+    assert_eq!(trace.failure, Some(ToolFailureKind::Ordinary));
+    assert_eq!(trace.output, "Choose a file to read.");
+    assert!(trace.command.is_none());
+}
+
+#[tokio::test]
+async fn host_run_without_host_context_is_an_authority_failure() {
+    let policy = policy();
+    let job = tool_job();
+    let tools = [ToolId::Run];
+    let mut context = sandbox_context(&policy, &job, &tools);
+    context.location = ToolLocation::Host;
+    let trace = super::invoke(
+        &context,
+        "call-1",
+        "run",
+        &serde_json::json!({"command": "echo hi", "explanation": "probe"}),
+    )
+    .await;
+    assert_eq!(trace.failure, Some(ToolFailureKind::Authority));
+    assert!(trace.command.is_none());
 }

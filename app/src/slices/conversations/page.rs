@@ -452,6 +452,11 @@ pub(super) struct ConversationDetailView {
     pub(super) directories_open: bool,
     pub(super) model_available: bool,
     pub(super) job_active: bool,
+    pub(super) retry: Option<RetryView>,
+}
+
+pub(super) struct RetryView {
+    pub(super) message: String,
 }
 
 pub(super) struct SavedConversationState {
@@ -638,6 +643,7 @@ impl ConversationDetailView {
             directories_open: false,
             model_available: !form.model.is_empty(),
             job_active: false,
+            retry: None,
         }
     }
 
@@ -830,6 +836,11 @@ impl ConversationDetailView {
             }
             _ => (String::new(), 0, false, false),
         };
+        let retry = job.and_then(|job| {
+            job.retry.as_ref().map(|retry| RetryView {
+                message: retry_status_message(retry.attempt, retry.delay),
+            })
+        });
         let location_host = configuration
             .is_some_and(|model| model.settings.location == crate::execution::ToolLocation::Host);
         let host_approval_automatic =
@@ -862,6 +873,11 @@ impl ConversationDetailView {
             for message in messages.iter_mut().filter(|message| message.streaming) {
                 message.status = "Awaiting your decision";
                 message.streaming = false;
+            }
+        }
+        if retry.is_some() {
+            for message in messages.iter_mut().filter(|message| message.streaming) {
+                message.status = "Retrying the provider";
             }
         }
         let omitted_messages = record.messages.len() - messages.len();
@@ -965,6 +981,7 @@ impl ConversationDetailView {
             settings_open: false,
             directories_open: false,
             job_active,
+            retry,
             state: ConversationPageState::Saved(Box::new(SavedConversationState {
                 id: record.id.as_hex(),
                 revision: record.revision.to_string(),
@@ -1810,6 +1827,15 @@ pub(super) fn reply_view(
         },
         error: String::new(),
         streaming,
+    }
+}
+
+fn retry_status_message(attempt: u32, delay: std::time::Duration) -> String {
+    let wait = delay.as_secs();
+    if wait == 0 {
+        format!("Retrying the provider (attempt {attempt}). Stop remains available.")
+    } else {
+        format!("Retrying the provider in {wait}s (attempt {attempt}). Stop remains available.")
     }
 }
 

@@ -2545,9 +2545,11 @@ async fn run_agent_step(
     let ended = crate::execution::run_agent_action(state, spec, turns, job.job.clone()).await;
     let terminal_state = match ended.outcome {
         AgentOutcome::Completed => crate::workflows::evidence::TerminalState::Completed,
-        AgentOutcome::ProviderFailure | AgentOutcome::ToolFailure => {
-            crate::workflows::evidence::TerminalState::Failed
-        }
+        AgentOutcome::ProviderFailure
+        | AgentOutcome::ToolFailure
+        | AgentOutcome::AuthorityFailure
+        | AgentOutcome::PersistenceFailure
+        | AgentOutcome::UncertainEffect => crate::workflows::evidence::TerminalState::Failed,
         AgentOutcome::Cancelled => crate::workflows::evidence::TerminalState::Cancelled,
     };
     evidence.terminal(terminal_state, &ended.reply, ended.error.as_deref(), secret);
@@ -2564,6 +2566,18 @@ async fn run_agent_step(
         },
         AgentOutcome::ToolFailure => StepOutcome::Failed {
             category: FailureCategory::Tool,
+            error: ended.error,
+        },
+        AgentOutcome::AuthorityFailure => StepOutcome::Failed {
+            category: FailureCategory::Authority,
+            error: ended.error,
+        },
+        AgentOutcome::PersistenceFailure => StepOutcome::Failed {
+            category: FailureCategory::Operational,
+            error: ended.error,
+        },
+        AgentOutcome::UncertainEffect => StepOutcome::Failed {
+            category: FailureCategory::Command,
             error: ended.error,
         },
         AgentOutcome::Cancelled => StepOutcome::Cancelled,

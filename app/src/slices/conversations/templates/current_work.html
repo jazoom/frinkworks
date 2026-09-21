@@ -1,4 +1,18 @@
 {% if let Some(saved) = self.saved() %}
+  {% if let Some(retry) = retry %}
+    <section
+      id="conversation-retry"
+      class="space-y-4 p-5"
+      aria-labelledby="conversation-retry-heading"
+    >
+      <div class="space-y-2">
+        <h3 id="conversation-retry-heading" class="text-lg font-semibold">
+          Retrying the provider
+        </h3>
+        <p class="text-quiet text-sm">{{ retry.message }}</p>
+      </div>
+    </section>
+  {% endif %}
   {% if let Some(command) = pending_host_command %}
     <section
       id="conversation-host-command"
