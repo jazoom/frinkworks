@@ -75,6 +75,8 @@ pub(crate) struct ConversationRecord {
     pub(crate) source_candidate_review: Option<CandidateReviewLink>,
     pub(crate) candidate_reviews: Vec<CandidateReviewLink>,
     pub(crate) candidate_review_context: Option<CandidateReviewContext>,
+    /// A fork records its source boundary. It holds no mutable alias.
+    pub(crate) forked_from: Option<super::forks::ForkProvenance>,
     pub(crate) messages: Vec<ConversationMessage>,
     pub(crate) active_job: Option<JobId>,
     pub(crate) continuation: Option<super::history::ContinuationCheckpoint>,
@@ -265,6 +267,8 @@ struct ConversationFile {
     candidate_reviews: Vec<CandidateReviewLinkFile>,
     #[serde(deserialize_with = "crate::storage::required_option")]
     candidate_review_context: Option<CandidateReviewContextFile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    forked_from: Option<ForkProvenanceFile>,
     messages: Vec<MessageFile>,
     #[serde(deserialize_with = "crate::storage::required_option")]
     active_job: Option<String>,
@@ -406,6 +410,16 @@ struct CandidateReviewContextFile {
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
+struct ForkProvenanceFile {
+    source: String,
+    source_revision: u32,
+    boundary: String,
+    #[serde(default)]
+    candidate_review: bool,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
 struct ArtefactRefFile {
     id: String,
     kind: String,
@@ -465,21 +479,7 @@ impl ConversationStore {
         model: Option<ConversationModelConfiguration>,
         directory_approvals: Vec<DirectoryApproval>,
     ) -> Result<ConversationRecord, ConversationError> {
-        if directory_approvals.len() > crate::execution::MAXIMUM_DIRECTORY_GRANTS
-            || directory_approvals
-                .iter()
-                .enumerate()
-                .any(|(index, approval)| {
-                    directory_approvals[..index].contains(approval)
-                        || !model.as_ref().is_some_and(|model| {
-                            model
-                                .settings
-                                .directories
-                                .iter()
-                                .any(|grant| approval.matches(&model.settings, grant))
-                        })
-                })
-        {
+        if !valid_directory_approvals(&model, &directory_approvals) {
             return Err(ConversationError::Directories);
         }
         let title_pending = title.is_none();
@@ -509,8 +509,83 @@ impl ConversationStore {
             source_candidate_review: None,
             candidate_reviews: Vec::new(),
             candidate_review_context: None,
+            forked_from: None,
             summary_requests: Vec::new(),
             messages: Vec::new(),
+            active_job: None,
+            continuation: None,
+            compaction: None,
+            queue: super::queue::ConversationQueue::default(),
+            created_at_ms: now,
+            updated_at_ms: now,
+        };
+        conversations.insert(id, record.clone());
+        if let Err(error) = self.persist_one(&record) {
+            if error != ConversationError::Unsettled {
+                conversations.remove(&id);
+            }
+            return Err(error);
+        }
+        Ok(record)
+    }
+
+    /// Create the destination conversation for a fork on its first send. The
+    /// caller supplies copied entries with source identities and destination
+    /// output references. No directory approval or runtime consent is copied.
+    pub(crate) fn create_fork(
+        &self,
+        id: ConversationId,
+        title: Option<String>,
+        model: Option<ConversationModelConfiguration>,
+        directory_approvals: Vec<DirectoryApproval>,
+        messages: Vec<ConversationMessage>,
+        snapshot: &super::forks::ForkSnapshot,
+    ) -> Result<ConversationRecord, ConversationError> {
+        if !valid_directory_approvals(&model, &directory_approvals) {
+            return Err(ConversationError::Directories);
+        }
+        let title_pending = title.is_none();
+        let title = match title {
+            Some(title) => normalise_title(&title)?,
+            None => "New conversation".to_owned(),
+        };
+        if messages.len() > MAXIMUM_MESSAGES.saturating_sub(2) {
+            return Err(ConversationError::Full);
+        }
+        super::history::validate_exchange(&messages).map_err(|_| ConversationError::Corrupt)?;
+        let network = model
+            .as_ref()
+            .map(|model| model.settings.network.clone())
+            .unwrap_or_default();
+        let mut conversations = self.lock();
+        check_capacity(&conversations)?;
+        if conversations.contains_key(&id) {
+            return Err(ConversationError::Conflict);
+        }
+        let now = now_ms();
+        let record = ConversationRecord {
+            id,
+            revision: 1,
+            title,
+            title_pending,
+            network,
+            model,
+            directory_approvals,
+
+            source_candidate_review: snapshot
+                .review_context
+                .as_ref()
+                .map(|context| context.source.clone()),
+            candidate_reviews: Vec::new(),
+            candidate_review_context: snapshot.review_context.clone(),
+            forked_from: Some(super::forks::ForkProvenance {
+                source: snapshot.source,
+                source_revision: snapshot.source_revision,
+                boundary: snapshot.boundary,
+                candidate_review: snapshot.candidate_review,
+            }),
+            summary_requests: Vec::new(),
+            messages,
             active_job: None,
             continuation: None,
             compaction: None,
@@ -600,6 +675,7 @@ impl ConversationStore {
                 source: source_link,
                 task_brief,
             }),
+            forked_from: None,
             summary_requests: Vec::new(),
             messages: Vec::new(),
             active_job: None,
@@ -1802,6 +1878,28 @@ fn interrupt_recovered_requests(
     changed
 }
 
+/// Approvals must name an exact grant in the submitted settings. This accepts
+/// fresh consent; it never copies source approvals.
+fn valid_directory_approvals(
+    model: &Option<ConversationModelConfiguration>,
+    directory_approvals: &[DirectoryApproval],
+) -> bool {
+    directory_approvals.len() <= crate::execution::MAXIMUM_DIRECTORY_GRANTS
+        && directory_approvals
+            .iter()
+            .enumerate()
+            .all(|(index, approval)| {
+                !directory_approvals[..index].contains(approval)
+                    && model.as_ref().is_some_and(|model| {
+                        model
+                            .settings
+                            .directories
+                            .iter()
+                            .any(|grant| approval.matches(&model.settings, grant))
+                    })
+            })
+}
+
 fn check_capacity(
     conversations: &BTreeMap<ConversationId, ConversationRecord>,
 ) -> Result<(), ConversationError> {
@@ -1972,6 +2070,10 @@ fn record_from_file(file: ConversationFile) -> Result<ConversationRecord, Conver
         return Err(ConversationError::Corrupt);
     }
     let queue = queue_from_file(file.queue_revision, file.queue)?;
+    let forked_from = file
+        .forked_from
+        .map(fork_provenance_from_file)
+        .transpose()?;
     Ok(ConversationRecord {
         id,
         revision: file.revision,
@@ -1984,6 +2086,7 @@ fn record_from_file(file: ConversationFile) -> Result<ConversationRecord, Conver
         source_candidate_review,
         candidate_reviews,
         candidate_review_context,
+        forked_from,
         messages: messages.clone(),
         active_job,
         continuation: file
@@ -2175,6 +2278,22 @@ fn candidate_review_context_to_file(
         source: candidate_review_link_to_file(&context.source),
         task_brief: context.task_brief.clone(),
     }
+}
+
+fn fork_provenance_from_file(
+    file: ForkProvenanceFile,
+) -> Result<super::forks::ForkProvenance, ConversationError> {
+    let source = ConversationId::parse(&file.source).ok_or(ConversationError::Corrupt)?;
+    let boundary = MessageId::parse(&file.boundary).ok_or(ConversationError::Corrupt)?;
+    if file.source_revision == 0 {
+        return Err(ConversationError::Corrupt);
+    }
+    Ok(super::forks::ForkProvenance {
+        source,
+        source_revision: file.source_revision,
+        boundary,
+        candidate_review: file.candidate_review,
+    })
 }
 
 fn message_from_file(file: MessageFile) -> Result<ConversationMessage, ConversationError> {
@@ -2384,6 +2503,15 @@ fn record_to_file(record: &ConversationRecord) -> ConversationFile {
             .candidate_review_context
             .as_ref()
             .map(candidate_review_context_to_file),
+        forked_from: record
+            .forked_from
+            .as_ref()
+            .map(|provenance| ForkProvenanceFile {
+                source: provenance.source.as_hex(),
+                source_revision: provenance.source_revision,
+                boundary: provenance.boundary.as_hex(),
+                candidate_review: provenance.candidate_review,
+            }),
         messages: record
             .messages
             .iter()

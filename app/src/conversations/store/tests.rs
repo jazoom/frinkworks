@@ -1248,3 +1248,78 @@ fn duplicate_message_identities_reject_the_record() {
     assert_eq!(std::fs::read(path).expect("unchanged"), bytes);
     let _ = record;
 }
+
+#[test]
+fn a_fork_record_survives_restart_with_its_provenance() {
+    let dir = tempfile::tempdir().expect("directory");
+    let store = ConversationStore::open(dir.path().to_path_buf()).expect("store");
+    let source = store.create("Source".to_owned()).expect("source");
+    let selection = ModelSelection::new(ProviderKind::Xai, "model".to_owned(), None).unwrap();
+    let job = JobId::generate().unwrap();
+    store
+        .begin_message(
+            &source.id,
+            source.revision,
+            selection,
+            job,
+            "Question".to_owned(),
+        )
+        .unwrap();
+    store
+        .settle_message(
+            &source.id,
+            job,
+            crate::providers::AssistantReply::from("Answer"),
+            MessageStatus::Complete,
+            None,
+        )
+        .unwrap();
+    let mut source = store.get(&source.id).unwrap();
+    let candidate = crate::workflows::artefacts::ArtefactReference {
+        id: crate::workflows::ArtefactId::generate().unwrap(),
+        kind: crate::workflows::definition::ArtefactKind::CandidateRevision,
+        artefact_hash: crate::workflows::artefacts::ArtefactHash::of(b"candidate", b"content"),
+    };
+    source.candidate_review_context = Some(super::CandidateReviewContext {
+        source: super::CandidateReviewLink {
+            conversation_id: Some(source.id),
+            run_id: crate::workflows::RunId::generate().unwrap(),
+            candidate: candidate.clone(),
+            diff_base: candidate,
+        },
+        task_brief: "Review immutable evidence".to_owned(),
+    });
+    let boundary = source.messages.last().unwrap().id;
+    let snapshot = crate::conversations::forks::snapshot(&source, boundary).expect("snapshot");
+    let outputs = crate::execution::OutputStore::ephemeral();
+    let destination = crate::conversations::ConversationId::generate().unwrap();
+    let messages = crate::conversations::forks::materialise(&snapshot, destination, &outputs)
+        .expect("materialise");
+    let forked = store
+        .create_fork(
+            destination,
+            Some("Fork".to_owned()),
+            None,
+            Vec::new(),
+            messages,
+            &snapshot,
+        )
+        .expect("fork");
+    assert_eq!(forked.messages.len(), 2);
+    drop(store);
+    let reopened = ConversationStore::open(dir.path().to_path_buf()).expect("reopened");
+    let loaded = reopened.get(&destination).expect("loaded");
+    assert_eq!(
+        loaded.forked_from.as_ref().map(|item| item.source),
+        Some(source.id)
+    );
+    assert_eq!(
+        loaded.forked_from.as_ref().map(|item| item.boundary),
+        Some(boundary)
+    );
+    assert!(loaded.forked_from.as_ref().unwrap().candidate_review);
+    assert_eq!(
+        loaded.candidate_review_context,
+        source.candidate_review_context
+    );
+}

@@ -214,6 +214,61 @@ impl OutputStore {
         })
     }
 
+    /// Copy one retained record into a new ownership scope. A fork uses this
+    /// to give the copied result destination provenance without a path from a
+    /// model. The source scope is checked, so a fork cannot read another
+    /// conversation's output.
+    pub(crate) fn rebind(
+        &self,
+        reference: &str,
+        source: &OutputScope,
+        destination: &OutputKey,
+    ) -> Result<RetainedOutput, OutputError> {
+        let mut inner = self.lock();
+        let record = inner
+            .records
+            .get(reference)
+            .cloned()
+            .ok_or(OutputError::Missing)?;
+        if !source.matches(&record) {
+            return Err(OutputError::Forbidden);
+        }
+        let (chunks, bounded) = bound_chunks(&record.chunks, MAXIMUM_RETAINED_BYTES);
+        let truncated = record.truncated || bounded;
+        let bytes = chunks.iter().map(|chunk| chunk.text.len()).sum::<usize>();
+        if !inner.records.is_empty()
+            && (inner.records.len() >= MAXIMUM_OUTPUT_REFERENCES
+                || inner.bytes.saturating_add(bytes) > MAXIMUM_OUTPUT_STORE_BYTES)
+        {
+            return Err(OutputError::Full);
+        }
+        let reference = loop {
+            let candidate = generate_reference()?;
+            if !inner.records.contains_key(&candidate) {
+                break candidate;
+            }
+        };
+        let copied = OutputRecord {
+            version: RETAINED_OUTPUT_VERSION,
+            reference: reference.clone(),
+            conversation: destination.scope.conversation.map(|id| id.to_string()),
+            run: destination.scope.run.map(|id| id.to_string()),
+            attempt: destination.scope.attempt.map(|id| id.to_string()),
+            job: destination.job.to_string(),
+            tool_call: destination.tool_call.clone(),
+            chunks,
+            truncated,
+        };
+        persist_record(self.dir.as_deref(), &copied)?;
+        inner.bytes = inner.bytes.saturating_add(bytes);
+        inner.records.insert(reference.clone(), copied);
+        Ok(RetainedOutput {
+            reference,
+            truncated,
+            bytes,
+        })
+    }
+
     pub(crate) fn checkpoint(
         &self,
         reference: &str,

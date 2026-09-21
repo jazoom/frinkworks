@@ -248,6 +248,8 @@ pub(super) struct MessageView {
     pub(super) status: &'static str,
     pub(super) error: String,
     pub(super) streaming: bool,
+    pub(super) forkable: bool,
+    pub(super) fork_href: String,
 }
 
 pub(super) struct CandidateReviewLinkView {
@@ -424,6 +426,7 @@ pub(super) struct ConversationDetailView {
     pub(super) consent_sensitive: bool,
     pub(super) draft_nonce: String,
     pub(super) prepared_run: String,
+    pub(super) fork_source: String,
     pub(super) handoff_settings: String,
     pub(super) handoff_approved: bool,
     pub(super) prepared_recovery: Option<super::handoff::recovery::RecoveryView>,
@@ -460,6 +463,15 @@ pub(super) struct ConversationDetailView {
     pub(super) compaction: Option<super::compaction::CompactionView>,
     summary_usage: Option<UsagePanelView>,
     pub(super) queue: super::queue::QueueView,
+    /// A new draft that continues copied context. It is a context alternative,
+    /// not a file rollback and not a permission transfer.
+    pub(super) fork: Option<ForkNotice>,
+}
+
+pub(super) struct ForkNotice {
+    pub(super) source_title: String,
+    pub(super) entries: usize,
+    pub(super) candidate_review: bool,
 }
 
 pub(super) struct ContextView {
@@ -491,6 +503,14 @@ impl ConversationDetailView {
         form: super::new::NewForm,
         error: &'static str,
     ) -> Self {
+        let fork = state
+            .forks
+            .get(session, &form.draft_nonce)
+            .map(|snapshot| ForkNotice {
+                source_title: snapshot.source_title,
+                entries: snapshot.messages.len(),
+                candidate_review: snapshot.candidate_review,
+            });
         let handoff_settings = super::handoff::transfer::draft_run(state, session, &form)
             .ok()
             .flatten()
@@ -621,6 +641,7 @@ impl ConversationDetailView {
             consent_reviewed,
             draft_nonce: form.draft_nonce,
             prepared_run: form.prepared_run,
+            fork_source: form.fork_source,
             handoff_settings,
             handoff_approved: form.handoff_approval == "continue-prepared",
             prepared_recovery: None,
@@ -668,6 +689,7 @@ impl ConversationDetailView {
                 false,
                 false,
             ),
+            fork,
         }
     }
 
@@ -991,6 +1013,7 @@ impl ConversationDetailView {
             consent_sensitive: false,
             draft_nonce: String::new(),
             prepared_run: String::new(),
+            fork_source: String::new(),
             handoff_settings: String::new(),
             handoff_approved: false,
             prepared_recovery: None,
@@ -1064,6 +1087,7 @@ impl ConversationDetailView {
                 job_active || pending_gate.is_some() || record.continuation.is_some(),
                 job.is_some_and(|job| job.status == JobStatus::Running),
             ),
+            fork: None,
             state: ConversationPageState::Saved(Box::new(SavedConversationState {
                 id: record.id.as_hex(),
                 revision: record.revision.to_string(),
@@ -1839,8 +1863,16 @@ fn candidate_file_name(path: &str) -> String {
 fn visible_messages(record: &ConversationRecord, byte_budget: usize) -> Vec<MessageView> {
     let mut messages = Vec::new();
     let mut bytes = 0;
-    for message in record.messages.iter().rev() {
-        let view = message_view(&record.id, message);
+    for (index, message) in record.messages.iter().enumerate().rev() {
+        let mut view = message_view(&record.id, message);
+        if crate::conversations::forks::forkable(&record.messages, index) {
+            view.forkable = true;
+            view.fork_href = format!(
+                "/conversations/{}/fork?message={}",
+                record.id.as_hex(),
+                message.id.as_hex()
+            );
+        }
         bytes += view.html.len() + 2048;
         if bytes > byte_budget || messages.len() >= 64 {
             break;
@@ -1902,6 +1934,8 @@ pub(super) fn message_view(
         },
         error: message_error(message),
         streaming: message.status == MessageStatus::Pending,
+        forkable: false,
+        fork_href: String::new(),
     }
 }
 
@@ -1937,6 +1971,8 @@ pub(super) fn reply_view(
         },
         error: String::new(),
         streaming,
+        forkable: false,
+        fork_href: String::new(),
     }
 }
 

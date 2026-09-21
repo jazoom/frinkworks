@@ -363,6 +363,29 @@
         data-show-thinking="{% if show_thinking %}true{% else %}false{% endif %}"
         aria-live="polite"
       >
+        {% if let Some(fork) = fork %}
+          <section
+            class="border-base-300 bg-base-200 mx-auto my-3 w-[calc(100%-2rem)] max-w-3xl shrink-0 rounded-sm border p-4 sm:w-[calc(100%-4rem)]"
+            aria-labelledby="conversation-fork-heading"
+          >
+            <h2 id="conversation-fork-heading" class="font-semibold">
+              Fork draft
+            </h2>
+            <p class="mt-1 text-sm">
+              This draft continues {{ fork.entries }}
+              {% if fork.entries == 1 %}entry{% else %}entries{% endif %}
+              from "{{ fork.source_title }}". It is a context alternative, not
+              filesystem rollback. Approvals, runtime consent, queued messages
+              and prepared changes stay with the original conversation.
+            </p>
+            {% if fork.candidate_review %}
+              <p class="text-quiet mt-2 text-sm">
+                The source is a candidate review, so this draft keeps read-only
+                evidence restrictions and receives no filesystem authority.
+              </p>
+            {% endif %}
+          </section>
+        {% endif %}
         {% if let Some(saved) = self.saved() %}
 
           {% if let Some(review) = saved.source_candidate_review %}
@@ -791,6 +814,11 @@
                 type="hidden"
                 name="prepared_run"
                 value="{{ prepared_run }}"
+              />
+              <input
+                type="hidden"
+                name="fork_source"
+                value="{{ fork_source }}"
               />
               {% if !prepared_run.is_empty() %}
                 <section

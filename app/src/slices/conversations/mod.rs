@@ -3,6 +3,7 @@ mod compaction;
 mod context;
 mod continuation;
 mod directories;
+mod forks;
 mod handoff;
 mod job;
 pub(crate) use job::history_with_review;
@@ -112,6 +113,10 @@ pub(super) fn router() -> Router<AppState> {
         .route(
             "/conversations/{conversation_id}/workflow",
             get(workflow::show).post(workflow::launch),
+        )
+        .route(
+            "/conversations/{conversation_id}/fork",
+            get(forks::show).post(forks::create),
         )
         .route(
             "/conversations/{conversation_id}/handoff",
@@ -1160,8 +1165,14 @@ async fn start_message_mode(
 ) -> Result<ConversationRecord, StartMessageError> {
     let persisted_model = model.clone();
     // Reject file access for immutable-evidence conversations before any runtime
-    // preflight, so the specific reason reaches the user first.
-    if record.candidate_review_context.is_some()
+    // preflight, so the specific reason reaches the user first. A fork of a
+    // candidate review keeps the same restriction without candidate ownership.
+    let immutable_review = record.candidate_review_context.is_some()
+        || record
+            .forked_from
+            .as_ref()
+            .is_some_and(|provenance| provenance.candidate_review);
+    if immutable_review
         && (!model.settings.tools.is_empty() || !model.settings.directories.is_empty())
     {
         return Err(StartMessageError::User(

@@ -92,6 +92,22 @@ The destination requires explicit run-only approval. Source consent never moves 
 
 Safe transfer requires completed cleanup and a captured source at a pending human decision. Uncertain or partially applied operations remain with their current owner.
 
+## Fork
+
+A fork copies context up to one settled assistant response. It opens an editable, unsent draft. It is a context alternative, not filesystem rollback.
+
+A fork accepts only a boundary between complete exchanges. It rejects a boundary that ends a user turn, that leaves a tool call without its result or that includes an uncertain command outcome.
+
+The destination records its source conversation, source revision and boundary. Copied messages retain their source identities for entry provenance. It holds no mutable alias to source history. It copies no queue, pending question, execution checkpoint, directory approval or runtime consent.
+
+The draft creates no conversation and starts no model call. The destination conversation exists only after the user sends the draft through the ordinary first-message path. An exclusive token claim prevents duplicate Send requests from creating multiple destinations.
+
+The fork copies requested settings only. It drops directory approvals and runtime consent. The user must give fresh consent for the destination. A fork of a candidate review retains immutable evidence references and receives no filesystem authority. Nested forks retain the same restrictions.
+
+Retained command output references move to the destination scope. The application reads the source record through its own scope and stores a new record under the destination conversation. An unavailable copy keeps the bounded preview without a full-output link.
+
+Prepared changes remain with the original run. A fork never transfers ownership. A later handoff remains the only explicit ownership transfer.
+
 ## Ownership and recovery
 
 The existing run record remains the sole ownership authority. Transfer never copies a run or recaptures its baseline.
@@ -133,8 +149,8 @@ Current file-operation recovery remains separate from historical compatibility. 
 
 The full suites pass:
 
-- 1,020 Rust unit tests.
-- One additional Rust test.
+- 1,111 Rust library tests.
+- One additional Rust binary test.
 - 81 browser-unit tests.
 
 `mise run clean` passes without warnings. Production and development asset builds pass.
@@ -143,6 +159,7 @@ The real browser checks use `http://localhost:4000` with synthetic persisted rec
 
 The checks cover these paths:
 
+- A fork after a completed tool exchange and its unsent draft.
 - Both handoff choices and an unsent draft.
 - Rejection of missing run-only approval.
 - Transfer without file writes.
@@ -154,6 +171,10 @@ The checks cover these paths:
 - Desktop and mobile presentation in Springfield and Sector 7-G.
 
 A supplied prompt entered the real preparation endpoint for transfer tests. The browser did not simulate a successful provider response.
+
+The fork browser check used a synthetic persisted conversation with one completed tool exchange. It followed the fork control to the confirmation page and opened the unsent draft. The draft created no second conversation and started no model call. The source revision and messages stayed unchanged. Console and page diagnostics were empty. The fork beside pending prepared changes is covered by the Rust router test, not the browser check.
+
+The review browser check used a separate local fixture. It opened the fork draft and exercised a rejected Send without a stored provider. No destination conversation appeared. Console and page diagnostics were empty. This check made no hosted-provider request.
 
 Successful hosted-model generation and hosted agent execution remain unverified. The placeholder credential exercised the generation error path only.
 

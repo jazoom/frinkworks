@@ -15,6 +15,14 @@
       {{ message.status }}
     </span>
   {% endif %}
+  {% if message.forkable %}
+    <a
+      class="btn btn-ghost btn-xs ml-auto min-h-11"
+      href="{{ message.fork_href }}"
+      data-graft
+      >Fork from here</a
+    >
+  {% endif %}
 </header>
 <div class="chat-turn-body">
   {% if message.user %}

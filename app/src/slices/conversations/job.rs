@@ -407,16 +407,29 @@ fn final_frame(
         patches = PatchSet::new();
     }
     if let Some(record) = record
-        && let Some(message) = record
+        && let Some(found) = record
             .messages
             .iter()
             .find(|message| message.request == Some(job.id()))
     {
-        let message = if snapshot.status == JobStatus::Running && !snapshot.output.is_empty() {
-            super::page::reply_view(conversation, message.id, &snapshot.output, true)
+        let mut message = if snapshot.status == JobStatus::Running && !snapshot.output.is_empty() {
+            super::page::reply_view(conversation, found.id, &snapshot.output, true)
         } else {
-            super::page::message_view(conversation, message)
+            super::page::message_view(conversation, found)
         };
+        if let Some(index) = record
+            .messages
+            .iter()
+            .position(|candidate| candidate.id == found.id)
+            && crate::conversations::forks::forkable(&record.messages, index)
+        {
+            message.forkable = true;
+            message.fork_href = format!(
+                "/conversations/{}/fork?message={}",
+                conversation.as_hex(),
+                found.id.as_hex()
+            );
+        }
         let _ = patches.children(&message.id, &MessageBody { message: &message });
     }
     let active = snapshot.status == JobStatus::Running;

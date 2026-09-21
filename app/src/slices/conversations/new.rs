@@ -30,6 +30,9 @@ pub(super) struct NewForm {
     pub(super) directory_7: String,
     pub(super) draft_nonce: String,
     pub(super) prepared_run: String,
+    /// Names the source conversation for a fork draft. It is set only by the
+    /// fork flow and lets a stale token fail instead of silently losing context.
+    pub(super) fork_source: String,
     pub(super) handoff_approval: String,
     pub(super) consent_reference: String,
     pub(super) pending_directory: String,
@@ -429,6 +432,27 @@ pub(super) async fn save(
             form,
         );
     }
+    // A fork draft carries copied context but no approval or execution state.
+    // A present marker with no binding is a stale or foreign draft, not a new
+    // conversation. Reject it so copied context cannot silently disappear.
+    let fork = state.forks.get(session.0, &form.draft_nonce);
+    if !form.fork_source.is_empty() && fork.is_none() {
+        return reject(
+            PatchStatus::Conflict,
+            "The fork draft expired. Open Fork again from the source conversation.",
+            form,
+        );
+    }
+    if let Some(snapshot) = &fork
+        && snapshot.candidate_review
+        && (!model.settings.tools.is_empty() || !model.settings.directories.is_empty())
+    {
+        return reject_settings(
+            PatchStatus::Conflict,
+            "Candidate reviews use immutable evidence only. Use a separate conversation for file access.",
+            form,
+        );
+    }
     let handoff_run = match super::handoff::transfer::preflight(&state, session.0, &form) {
         Ok(run) => run,
         Err(error) => return reject(PatchStatus::Conflict, error, form),
@@ -453,6 +477,18 @@ pub(super) async fn save(
             form,
         );
     };
+    let fork_claim = if fork.is_some() {
+        let Some(claim) = state.forks.claim(session.0, &form.draft_nonce) else {
+            return reject(
+                PatchStatus::Conflict,
+                "The fork draft is no longer available.",
+                form,
+            );
+        };
+        Some(claim)
+    } else {
+        None
+    };
     if (!consent_grants.is_empty() || model.settings.host_tools())
         && state
             .access_consent
@@ -476,15 +512,37 @@ pub(super) async fn save(
         .iter()
         .map(|grant| crate::conversations::DirectoryApproval::for_grant(&model.settings, grant))
         .collect();
-    let record = match state.conversations.create_saved(
-        id,
-        (!form.title.is_empty()).then(|| form.title.clone()),
-        Some(model.clone()),
-        approvals,
-    ) {
+    let created = match &fork {
+        Some(snapshot) => {
+            let messages =
+                crate::conversations::forks::materialise(snapshot, id, &state.outputs)
+                    .map_err(|error| AppError::new("prepare fork conversation entries", error))?;
+            state.conversations.create_fork(
+                id,
+                (!form.title.is_empty()).then(|| form.title.clone()),
+                Some(model.clone()),
+                approvals,
+                messages,
+                snapshot,
+            )
+        }
+        None => state.conversations.create_saved(
+            id,
+            (!form.title.is_empty()).then(|| form.title.clone()),
+            Some(model.clone()),
+            approvals,
+        ),
+    };
+    let record = match created {
         Ok(record) => record,
         Err(error) => {
             state.access_consent.invalidate_conversation(id);
+            if error == ConversationError::Unsettled {
+                if let Some(claim) = fork_claim {
+                    claim.commit();
+                }
+                return Err(AppError::new("settle fork creation", error));
+            }
             if matches!(
                 error,
                 ConversationError::Persist | ConversationError::Corrupt
@@ -497,6 +555,10 @@ pub(super) async fn save(
             return reject(status_for(error), error.message(), form);
         }
     };
+    // A durable destination consumes the token even if later startup fails.
+    if let Some(claim) = fork_claim {
+        claim.commit();
+    }
     let start = if let Some(run) = handoff_run {
         let result = super::handoff::transfer::finish(&state, session.0, record, &form, run);
         drop(permit);

@@ -1,0 +1,62 @@
+<div class="mx-auto flex w-full max-w-3xl flex-col gap-4 p-5">
+  <header class="flex flex-wrap items-center justify-between gap-2">
+    <h1 class="text-lg font-semibold break-words">{{ heading }}</h1>
+    <a class="btn btn-ghost btn-sm" href="{{ source_href }}" data-graft
+      >Back to conversation</a
+    >
+  </header>
+
+  <p class="text-quiet text-sm">
+    A fork copies context up to one settled message. It is a context
+    alternative, not filesystem rollback. Prepare changes stay with the original
+    conversation until you hand them off explicitly.
+  </p>
+
+  {% if !error.is_empty() %}
+    <div class="alert alert-warning" role="alert">{{ error }}</div>
+  {% endif %}
+
+  {% if can_fork %}
+    <section
+      class="border-base-300 bg-base-200 rounded-sm border p-4"
+      aria-labelledby="fork-boundary-heading"
+    >
+      <h2 id="fork-boundary-heading" class="font-semibold">
+        Fork from this message
+      </h2>
+      <p class="text-quiet mt-1 text-sm">
+        {{ entries }} retained
+        {% if entries == 1 %}entry{% else %}entries{% endif %} become the new
+        draft context. Approvals, runtime consent, queued messages, pending
+        questions and execution checkpoints are not copied.
+      </p>
+      <pre
+        tabindex="0"
+        class="bg-base-100 mt-3 max-h-48 overflow-auto p-3 text-xs break-words whitespace-pre-wrap"
+      ><code>{{ excerpt }}</code></pre>
+    </section>
+
+    {% if candidate_review %}
+      <div class="alert alert-warning" role="alert">
+        <p>
+          The source is a candidate review. The fork keeps read-only evidence
+          restrictions and cannot receive filesystem authority.
+        </p>
+      </div>
+    {% endif %}
+
+    <form
+      data-graft
+      method="post"
+      action="{{ source_href }}/fork"
+      class="flex flex-wrap gap-2"
+    >
+      <input type="hidden" name="revision" value="{{ revision }}" />
+      <input type="hidden" name="message" value="{{ message }}" />
+      <button class="btn btn-primary" type="submit">
+        Open unsent fork draft
+      </button>
+      <a class="btn btn-ghost" href="{{ source_href }}" data-graft>Cancel</a>
+    </form>
+  {% endif %}
+</div>

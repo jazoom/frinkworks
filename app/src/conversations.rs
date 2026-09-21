@@ -1,5 +1,6 @@
 mod access;
 pub(crate) mod compaction;
+pub(crate) mod forks;
 pub(crate) mod history;
 mod id;
 pub(crate) mod questions;
@@ -9,6 +10,7 @@ pub(crate) mod titles;
 
 pub(crate) use access::apply_settings_ceiling;
 pub(crate) use compaction::CompactionRecord;
+pub(crate) use forks::ForkDrafts;
 pub(crate) use history::{
     ContinuationBlock, ContinuationCheckpoint, ContinuationMetadata, ConversationMessage,
     MessageRole, MessageStatus, PausedOutputDraft, PriceProvenance, RequestUsage,
