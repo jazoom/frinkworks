@@ -76,6 +76,7 @@ pub(crate) struct ConversationRecord {
     pub(crate) candidate_review_context: Option<CandidateReviewContext>,
     pub(crate) messages: Vec<ConversationMessage>,
     pub(crate) active_job: Option<JobId>,
+    pub(crate) queue: super::queue::ConversationQueue,
     pub(crate) created_at_ms: u64,
     pub(crate) updated_at_ms: u64,
 }
@@ -262,8 +263,23 @@ struct ConversationFile {
     messages: Vec<MessageFile>,
     #[serde(deserialize_with = "crate::storage::required_option")]
     active_job: Option<String>,
+    #[serde(default)]
+    queue_revision: u32,
+    #[serde(default)]
+    queue: Vec<QueueItemFile>,
     created_at_ms: u64,
     updated_at_ms: u64,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+struct QueueItemFile {
+    id: String,
+    text: String,
+    delivery: String,
+    settings_digest: String,
+    #[serde(deserialize_with = "crate::storage::required_option")]
+    job: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -429,6 +445,7 @@ impl ConversationStore {
             candidate_review_context: None,
             messages: Vec::new(),
             active_job: None,
+            queue: super::queue::ConversationQueue::default(),
             created_at_ms: now,
             updated_at_ms: now,
         };
@@ -516,6 +533,7 @@ impl ConversationStore {
             }),
             messages: Vec::new(),
             active_job: None,
+            queue: super::queue::ConversationQueue::default(),
             created_at_ms: now,
             updated_at_ms: now,
         };
@@ -994,6 +1012,236 @@ impl ConversationStore {
         .map(|_| ())
     }
 
+    pub(crate) fn enqueue(
+        &self,
+        id: &ConversationId,
+        expected_queue_revision: u32,
+        text: String,
+        delivery: super::queue::QueueDelivery,
+        job: Option<JobId>,
+    ) -> Result<ConversationRecord, ConversationError> {
+        let text = normalise_message(&text)?;
+        let item_id =
+            super::queue::QueueItemId::generate().map_err(|_| ConversationError::Random)?;
+        self.update(id, 0, false, |current| {
+            if current.queue.revision != expected_queue_revision {
+                return Err(ConversationError::Conflict);
+            }
+            if current.queue.items.len() >= super::queue::MAXIMUM_QUEUE_ITEMS {
+                return Err(ConversationError::Full);
+            }
+            let aggregate = current
+                .queue
+                .items
+                .iter()
+                .map(|item| item.text.len())
+                .fold(0usize, usize::saturating_add);
+            if aggregate.saturating_add(text.len()) > super::queue::MAXIMUM_QUEUE_BYTES {
+                return Err(ConversationError::Full);
+            }
+            let settings_digest = current
+                .model
+                .as_ref()
+                .map(|model| super::queue::launch_digest(&model.settings))
+                .ok_or(ConversationError::Selection)?;
+            if delivery == super::queue::QueueDelivery::Steering
+                && (job.is_none() || job != current.active_job)
+            {
+                return Err(ConversationError::Conflict);
+            }
+            current.queue.items.push(super::queue::QueueItem {
+                id: item_id,
+                text,
+                delivery,
+                settings_digest,
+                job,
+            });
+            current.queue.revision = current
+                .queue
+                .revision
+                .checked_add(1)
+                .ok_or(ConversationError::Revision)?;
+            if !super::queue::valid_queue(&current.queue) {
+                return Err(ConversationError::Message);
+            }
+            Ok(())
+        })
+    }
+
+    pub(crate) fn remove_queue_item(
+        &self,
+        id: &ConversationId,
+        expected_queue_revision: u32,
+        item_id: super::queue::QueueItemId,
+    ) -> Result<(ConversationRecord, super::queue::QueueItem), ConversationError> {
+        let mut removed = None;
+        let record = self.update(id, 0, false, |current| {
+            if current.queue.revision != expected_queue_revision {
+                return Err(ConversationError::Conflict);
+            }
+            let index = current
+                .queue
+                .items
+                .iter()
+                .position(|item| item.id == item_id)
+                .ok_or(ConversationError::Conflict)?;
+            removed = Some(current.queue.items.remove(index));
+            current.queue.revision = current
+                .queue
+                .revision
+                .checked_add(1)
+                .ok_or(ConversationError::Revision)?;
+            Ok(())
+        })?;
+        Ok((record, removed.expect("removed queued item")))
+    }
+
+    pub(crate) fn begin_follow_up(
+        &self,
+        id: &ConversationId,
+        expected_revision: u32,
+        expected_queue_revision: u32,
+        item_id: super::queue::QueueItemId,
+        request: JobId,
+        model: Option<ConversationModelConfiguration>,
+    ) -> Result<ConversationRecord, ConversationError> {
+        let user_id = MessageId::generate().map_err(|_| ConversationError::Random)?;
+        let assistant_id = MessageId::generate().map_err(|_| ConversationError::Random)?;
+        self.replace(id, expected_revision, |current| {
+            if current.active_job.is_some() {
+                return Err(ConversationError::Active);
+            }
+            if current.queue.revision != expected_queue_revision {
+                return Err(ConversationError::Conflict);
+            }
+            if current.messages.len() > MAXIMUM_MESSAGES.saturating_sub(2) {
+                return Err(ConversationError::Full);
+            }
+            let index = current
+                .queue
+                .items
+                .iter()
+                .position(|item| {
+                    item.id == item_id && item.delivery == super::queue::QueueDelivery::FollowUp
+                })
+                .ok_or(ConversationError::Conflict)?;
+            if model.as_ref() != current.model.as_ref() {
+                return Err(ConversationError::Conflict);
+            }
+            let settings_digest = current
+                .model
+                .as_ref()
+                .map(|model| super::queue::launch_digest(&model.settings))
+                .ok_or(ConversationError::Selection)?;
+            if current.queue.items[index].settings_digest != settings_digest {
+                return Err(ConversationError::Conflict);
+            }
+            let item = current.queue.items.remove(index);
+            current.queue.revision = current
+                .queue
+                .revision
+                .checked_add(1)
+                .ok_or(ConversationError::Revision)?;
+            current.messages.push(ConversationMessage {
+                id: user_id,
+                role: MessageRole::User,
+                text: item.text,
+                activity: Vec::new(),
+                continuation: Vec::new(),
+                status: MessageStatus::Complete,
+                error: None,
+                request: None,
+                completion: None,
+            });
+            current.messages.push(ConversationMessage {
+                id: assistant_id,
+                role: MessageRole::Assistant,
+                text: String::new(),
+                activity: Vec::new(),
+                continuation: Vec::new(),
+                status: MessageStatus::Pending,
+                error: None,
+                request: Some(request),
+                completion: None,
+            });
+            current.active_job = Some(request);
+            Ok(())
+        })
+    }
+
+    pub(crate) fn deliver_steering(
+        &self,
+        id: &ConversationId,
+        request: JobId,
+        item_id: super::queue::QueueItemId,
+        reply: crate::providers::AssistantReply,
+    ) -> Result<String, ConversationError> {
+        validate_reply(&reply)?;
+        let user_id = MessageId::generate().map_err(|_| ConversationError::Random)?;
+        let assistant_id = MessageId::generate().map_err(|_| ConversationError::Random)?;
+        let mut delivered = None;
+        self.update(id, 0, false, |current| {
+            if current.messages.len() > MAXIMUM_MESSAGES.saturating_sub(2) {
+                return Err(ConversationError::Full);
+            }
+            let index = current
+                .queue
+                .items
+                .iter()
+                .position(|item| {
+                    item.id == item_id
+                        && item.delivery == super::queue::QueueDelivery::Steering
+                        && item.job == Some(request)
+                })
+                .ok_or(ConversationError::Conflict)?;
+            {
+                let message = active_assistant(current, request)?;
+                message.text = reply.text.clone();
+                message.activity = reply.activity.clone();
+                message.continuation = reply.continuation.clone();
+                message.completion = reply.completion;
+                message.status = MessageStatus::Complete;
+                message.error = None;
+            }
+            let item = current.queue.items.remove(index);
+            current.queue.revision = current
+                .queue
+                .revision
+                .checked_add(1)
+                .ok_or(ConversationError::Revision)?;
+            current.messages.push(ConversationMessage {
+                id: user_id,
+                role: MessageRole::User,
+                text: item.text.clone(),
+                activity: Vec::new(),
+                continuation: Vec::new(),
+                status: MessageStatus::Complete,
+                error: None,
+                request: None,
+                completion: None,
+            });
+            current.messages.push(ConversationMessage {
+                id: assistant_id,
+                role: MessageRole::Assistant,
+                text: String::new(),
+                activity: Vec::new(),
+                continuation: Vec::new(),
+                status: MessageStatus::Pending,
+                error: None,
+                request: Some(request),
+                completion: None,
+            });
+            super::history::validate_exchange(&current.messages)
+                .map_err(|_| ConversationError::Message)?;
+            if !super::queue::valid_queue(&current.queue) {
+                return Err(ConversationError::Message);
+            }
+            delivered = Some(item.text);
+            Ok(())
+        })?;
+        Ok(delivered.expect("delivered steering text"))
+    }
+
     pub(crate) fn delete(
         &self,
         id: &ConversationId,
@@ -1348,6 +1596,7 @@ fn record_from_file(file: ConversationFile) -> Result<ConversationRecord, Conver
     } {
         return Err(ConversationError::Corrupt);
     }
+    let queue = queue_from_file(file.queue_revision, file.queue)?;
     Ok(ConversationRecord {
         id,
         revision: file.revision,
@@ -1362,6 +1611,7 @@ fn record_from_file(file: ConversationFile) -> Result<ConversationRecord, Conver
         candidate_review_context,
         messages,
         active_job,
+        queue,
         created_at_ms: file.created_at_ms,
         updated_at_ms: file.updated_at_ms,
     })
@@ -1742,8 +1992,57 @@ fn record_to_file(record: &ConversationRecord) -> ConversationFile {
             })
             .collect(),
         active_job: record.active_job.map(|request| request.as_hex()),
+        queue_revision: record.queue.revision,
+        queue: record.queue.items.iter().map(queue_item_to_file).collect(),
         created_at_ms: record.created_at_ms,
         updated_at_ms: record.updated_at_ms,
+    }
+}
+
+fn queue_from_file(
+    revision: u32,
+    items: Vec<QueueItemFile>,
+) -> Result<super::queue::ConversationQueue, ConversationError> {
+    let revision = match (revision, items.is_empty()) {
+        (0, true) => 1,
+        (0, false) => return Err(ConversationError::Corrupt),
+        (revision, _) => revision,
+    };
+    let mut queue = super::queue::ConversationQueue {
+        revision,
+        items: Vec::with_capacity(items.len()),
+    };
+    for item in items {
+        let id = super::queue::QueueItemId::parse(&item.id).ok_or(ConversationError::Corrupt)?;
+        let delivery =
+            super::queue::QueueDelivery::parse(&item.delivery).ok_or(ConversationError::Corrupt)?;
+        let settings_digest: [u8; 32] =
+            crate::hex::decode(&item.settings_digest).ok_or(ConversationError::Corrupt)?;
+        let job = match item.job.as_deref() {
+            None => None,
+            Some(value) => Some(JobId::parse(value).ok_or(ConversationError::Corrupt)?),
+        };
+        queue.items.push(super::queue::QueueItem {
+            id,
+            text: item.text,
+            delivery,
+            settings_digest,
+            job,
+        });
+    }
+    if !super::queue::valid_queue(&queue) {
+        return Err(ConversationError::Corrupt);
+    }
+    Ok(queue)
+}
+
+fn queue_item_to_file(item: &super::queue::QueueItem) -> QueueItemFile {
+    QueueItemFile {
+        id: item.id.as_hex(),
+        text: item.text.clone(),
+        delivery: item.delivery.as_str().to_owned(),
+        settings_digest: crate::hex::encode(&item.settings_digest),
+        job: item.job.map(|job| job.as_hex()),
     }
 }
 

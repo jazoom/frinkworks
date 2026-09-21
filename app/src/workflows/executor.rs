@@ -2380,6 +2380,7 @@ async fn run_ordinary_file_agent(
         evidence: None,
         output_scope: Some(crate::execution::OutputScope::conversation(conversation)),
         conversation: Some(conversation),
+        steering_session: Some(job.session_id),
     };
     let ended = crate::execution::run_agent_action(state, spec, turns, job.job.clone()).await;
     if ended.outcome == AgentOutcome::Completed {
@@ -2846,6 +2847,7 @@ async fn run_agent_step(
             },
         }),
         conversation: job.conversation_id,
+        steering_session: None,
     };
     // Conversation workflow output belongs to attempt evidence, not the conversation reply.
     if job.conversation_id.is_some() && run.kind == super::run::RunKind::Configured {

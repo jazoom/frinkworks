@@ -418,6 +418,7 @@ async fn prepare(
             evidence: None,
             output_scope: Some(OutputScope::conversation(work.record.id)),
             conversation: Some(work.record.id),
+            steering_session: Some(work.session),
         },
         turns: work.turns.clone(),
         guest,

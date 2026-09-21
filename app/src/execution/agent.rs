@@ -39,6 +39,7 @@ pub(crate) struct AgentRunSpec {
     pub(crate) evidence: Option<crate::workflows::AttemptEvidenceContext>,
     pub(crate) output_scope: Option<crate::execution::OutputScope>,
     pub(crate) conversation: Option<ConversationId>,
+    pub(crate) steering_session: Option<crate::sessions::SessionId>,
 }
 
 pub(super) const MIN_PROGRESS_INTERVAL: Duration = if cfg!(test) {
@@ -104,7 +105,7 @@ pub(crate) async fn run_agent_action(
     let mut thinking_redactor = StreamRedactor::new(secret);
     let mut event_count = 0usize;
 
-    for _ in 0..MAXIMUM_TOOL_ROUNDS {
+    'round: for _ in 0..MAXIMUM_TOOL_ROUNDS {
         if let Err(error) = persist_output(state, spec.conversation, &job, &reply, false) {
             return store_failure(&reply, error);
         }
@@ -557,7 +558,31 @@ pub(crate) async fn run_agent_action(
                     }
                     continue 'provider;
                 }
-                return finish_without_tools(&reply, completion);
+                let end = finish_without_tools(&reply, completion);
+                if end.outcome != AgentOutcome::Completed {
+                    return end;
+                }
+                match take_steering(state, &spec, &job, &reply) {
+                    Ok(Some(steering)) => {
+                        text.push_str(&response_tail);
+                        extra.push(Message::assistant(text));
+                        extra.push(Message::user(steering));
+                        let _ = response_redactor.finish_boundary();
+                        let _ = thinking_redactor.finish_boundary();
+                        reset_round(
+                            &mut reply,
+                            &mut model_reply_bytes,
+                            &mut thinking_bytes,
+                            &mut visible_tool_bytes,
+                            &mut published_response,
+                            &mut thinking_progress,
+                            &mut output_visible,
+                        );
+                        continue 'round;
+                    }
+                    Ok(None) => return end,
+                    Err(error) => return store_failure(&reply, error),
+                }
             }
             let _ = response_redactor.finish_boundary();
             let _ = thinking_redactor.finish_boundary();
@@ -759,6 +784,24 @@ pub(crate) async fn run_agent_action(
                 error: Some(error.message().to_owned()),
                 reply,
             };
+        }
+        match take_steering(state, &spec, &job, &reply) {
+            Ok(Some(text)) => {
+                extra.push(Message::user(text));
+                let _ = response_redactor.finish_boundary();
+                let _ = thinking_redactor.finish_boundary();
+                reset_round(
+                    &mut reply,
+                    &mut model_reply_bytes,
+                    &mut thinking_bytes,
+                    &mut visible_tool_bytes,
+                    &mut published_response,
+                    &mut thinking_progress,
+                    &mut output_visible,
+                );
+            }
+            Ok(None) => {}
+            Err(error) => return store_failure(&reply, error),
         }
     }
 
@@ -1197,6 +1240,62 @@ fn persist_output(
             .conversations
             .append_output(&conversation, job.id(), reply.clone())
     }
+}
+
+fn take_steering(
+    state: &AppState,
+    spec: &AgentRunSpec,
+    job: &Job,
+    reply: &AssistantReply,
+) -> Result<Option<String>, crate::conversations::ConversationError> {
+    let Some(session) = spec.steering_session else {
+        return Ok(None);
+    };
+    if !state.sessions.contains_live(&session) || job.cancel_requested() {
+        return Ok(None);
+    }
+    if job.snapshot().status != crate::sessions::JobStatus::Running {
+        return Ok(None);
+    }
+    let Some(conversation) = spec.conversation else {
+        return Ok(None);
+    };
+    if !state
+        .sessions
+        .owns_conversation_job(&session, conversation, job.id())
+    {
+        return Ok(None);
+    }
+    let Some(record) = state.conversations.get(&conversation) else {
+        return Ok(None);
+    };
+    let Some(item) = record.queue.next_steering(job.id()).cloned() else {
+        return Ok(None);
+    };
+    let text =
+        state
+            .conversations
+            .deliver_steering(&conversation, job.id(), item.id, reply.clone())?;
+    job.restore_output(AssistantReply::default());
+    Ok(Some(text))
+}
+
+fn reset_round(
+    reply: &mut AssistantReply,
+    model_reply_bytes: &mut usize,
+    thinking_bytes: &mut usize,
+    visible_tool_bytes: &mut usize,
+    published_response: &mut usize,
+    thinking_progress: &mut ThinkingProgress,
+    output_visible: &mut bool,
+) {
+    *reply = AssistantReply::default();
+    *model_reply_bytes = 0;
+    *thinking_bytes = 0;
+    *visible_tool_bytes = 0;
+    *published_response = 0;
+    *thinking_progress = ThinkingProgress::default();
+    *output_visible = false;
 }
 
 fn store_failure(

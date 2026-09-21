@@ -463,6 +463,7 @@ fn pending_assistant_output_stays_out_of_the_next_request_history() {
             },
         ],
         active_job: Some(request),
+        queue: crate::conversations::ConversationQueue::default(),
         created_at_ms: 0,
         updated_at_ms: 0,
     };

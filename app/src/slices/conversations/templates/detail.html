@@ -728,6 +728,7 @@
           </button>
         </div>
         <div class="mx-auto w-full max-w-3xl">
+          {% include "conversations/queue/templates/index.html" %}
           <form
             id="conversation-composer"
             data-island="composer"
@@ -741,6 +742,11 @@
                 type="hidden"
                 name="revision"
                 value="{{ saved.revision }}"
+              />
+              <input
+                type="hidden"
+                name="queue_revision"
+                value="{{ self.queue.revision }}"
               />
             {% else %}
               {% for directory in directories %}
@@ -843,6 +849,30 @@
             >
 {{ self.draft_message() }}</textarea>
             {% include "conversations/templates/model_picker.html" %}
+            {% if self.queue.follow_up && self.queue.steering %}
+              <fieldset class="col-span-2 flex flex-wrap gap-3 text-sm">
+                <legend class="sr-only">Queue delivery</legend>
+                <label class="flex min-h-11 items-center gap-2">
+                  <input
+                    type="radio"
+                    name="delivery"
+                    value="follow-up"
+                    class="radio"
+                    checked
+                  />
+                  After this work
+                </label>
+                <label class="flex min-h-11 items-center gap-2">
+                  <input
+                    type="radio"
+                    name="delivery"
+                    value="steering"
+                    class="radio"
+                  />
+                  Correct current work
+                </label>
+              </fieldset>
+            {% endif %}
 
             <div class="flex flex-col gap-2">
               {# Explicit ARIA values replace the transport overlay on a retained submitter. #}
@@ -859,25 +889,27 @@
                     </svg>
                   </button>
                 {% endif %}
-              {% else %}
-                <button
-                  class="btn btn-primary min-h-11 min-w-20"
-                  type="submit"
-                  name="action"
-                  value="send"
-                  aria-label="Send message"
-                  aria-disabled="{{ self.composer_disabled() }}"
-                  {% if self.composer_disabled() %}disabled{% endif %}
-                >
-                  Send<svg class="workspace-icon" aria-hidden="true">
-                    <use href="/static/images/workspace-icons.svg#up" />
-                  </svg>
-                </button>
-                <span
-                  data-island="shortcut-hint"
-                  class="shortcut-hint text-quiet text-center text-xs"
-                ></span>
               {% endif %}
+              <button
+                class="btn btn-primary min-h-11 min-w-20"
+                type="submit"
+                name="action"
+                value="{{ self.follow_up_submit_value() }}"
+                aria-label="{{ self.follow_up_submit_label() }}"
+                aria-disabled="{{ self.composer_disabled() }}"
+                {% if self.composer_disabled() %}disabled{% endif %}
+              >
+                {% if self.queue.follow_up %}Queue{% else %}Send{% endif %}<svg
+                  class="workspace-icon"
+                  aria-hidden="true"
+                >
+                  <use href="/static/images/workspace-icons.svg#up" />
+                </svg>
+              </button>
+              <span
+                data-island="shortcut-hint"
+                class="shortcut-hint text-quiet text-center text-xs"
+              ></span>
             </div>
             {% if !model_available %}
               <p class="text-quiet col-span-2 text-sm">

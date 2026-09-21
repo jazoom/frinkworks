@@ -274,6 +274,7 @@ fn read_spec(
         evidence: None,
         output_scope: None,
         conversation: Some(conversation),
+        steering_session: None,
     }
 }
 
@@ -748,4 +749,216 @@ async fn cancellation_interrupts_a_retry_wait() {
     .await;
     assert_eq!(ended.outcome, super::AgentOutcome::Cancelled);
     assert_eq!(backend.turn_count(), 1);
+}
+
+#[tokio::test]
+async fn steering_arrives_after_the_current_batch_and_continues_the_loop() {
+    use crate::config::RuntimeConfig;
+    use crate::conversations::QueueDelivery;
+    use crate::providers::{
+        ChatBackend, ChatTurn, CompletionReason, ModelEvent, ProviderConnection, ProviderKind,
+    };
+    let mut state = crate::tests::test_state(RuntimeConfig::development());
+    let backend = crate::tests::ScriptedBackend::rounds(vec![
+        vec![
+            Ok(ModelEvent::ToolCall {
+                id: "call-1".to_owned(),
+                name: "read".to_owned(),
+                arguments: serde_json::json!({"path": "missing-a.rs"}),
+            }),
+            Ok(ModelEvent::ToolCall {
+                id: "call-2".to_owned(),
+                name: "read".to_owned(),
+                arguments: serde_json::json!({"path": "missing-b.rs"}),
+            }),
+            Ok(ModelEvent::Complete {
+                reason: CompletionReason::ToolCalls,
+            }),
+        ],
+        {
+            let mut items: Vec<_> = ["Adjusted after both tools"]
+                .into_iter()
+                .map(|text| Ok(ModelEvent::Text(text.to_owned())))
+                .collect();
+            items.push(Ok(ModelEvent::Complete {
+                reason: CompletionReason::Stop,
+            }));
+            items
+        },
+    ]);
+    state.chat = std::sync::Arc::new(ChatBackend::Scripted(backend.clone()));
+    let connection = ProviderConnection::with_key(ProviderKind::Xai, "test-key", "grok-4.6");
+    state.vault.put(connection.clone()).expect("provider");
+    let settings = crate::execution::ExecutionSettings::new(
+        crate::providers::ModelSelection::new(ProviderKind::Xai, "grok-4.6".to_owned(), None)
+            .unwrap(),
+        String::new(),
+        vec![crate::agents::ToolId::Read],
+        crate::tests::test_environment_id(),
+    )
+    .unwrap();
+    let token = crate::sessions::generate_session_token().expect("session");
+    state.sessions.insert(token.id());
+    let record = state
+        .conversations
+        .create("Discussion".to_owned())
+        .expect("conversation");
+    let record = state
+        .conversations
+        .update_execution_settings(&record.id, record.revision, settings)
+        .expect("settings");
+    let job = state
+        .sessions
+        .begin_conversation_job(&token.id(), record.id)
+        .expect("job");
+    let record = state
+        .conversations
+        .begin_message_with_model(
+            &record.id,
+            record.revision,
+            record.model.clone(),
+            job.id(),
+            "Read the file".to_owned(),
+        )
+        .expect("message");
+    state
+        .conversations
+        .enqueue(
+            &record.id,
+            record.queue.revision,
+            "Read the other file".to_owned(),
+            QueueDelivery::Steering,
+            Some(job.id()),
+        )
+        .expect("enqueue");
+    let mut spec = granted_read_spec(connection, record.id, record.revision);
+    spec.steering_session = Some(token.id());
+    let ended = super::run_agent_action(
+        &state,
+        spec,
+        vec![ChatTurn::user("Read the file".to_owned())],
+        job.clone(),
+    )
+    .await;
+    assert_eq!(ended.outcome, super::AgentOutcome::Completed);
+    assert_eq!(backend.turn_count(), 2);
+    assert_eq!(backend.last_extra_len(), 4);
+    assert_eq!(job.snapshot().output.text, "Adjusted after both tools");
+    let stored = state.conversations.get(&record.id).expect("stored");
+    assert!(stored.queue.items.is_empty());
+    assert!(stored.messages.iter().any(|message| {
+        message.role == crate::conversations::MessageRole::User
+            && message.text == "Read the other file"
+    }));
+    let tools = stored
+        .messages
+        .iter()
+        .filter(|message| message.role == crate::conversations::MessageRole::Assistant)
+        .flat_map(|message| message.activity.iter())
+        .filter(|activity| {
+            matches!(
+                activity,
+                crate::providers::AssistantActivity::ToolCall {
+                    result: Some(_),
+                    ..
+                }
+            )
+        })
+        .count();
+    assert_eq!(tools, 2);
+}
+
+#[tokio::test]
+async fn steering_requires_a_complete_response_and_live_owner() {
+    use crate::conversations::QueueDelivery;
+    use crate::providers::{
+        ChatBackend, ChatTurn, CompletionReason, ModelEvent, ProviderConnection, ProviderKind,
+    };
+    for (reason, live) in [
+        (CompletionReason::Stop, true),
+        (CompletionReason::Length, true),
+        (CompletionReason::Refusal, true),
+        (CompletionReason::Unknown, true),
+        (CompletionReason::Stop, false),
+    ] {
+        let mut state = crate::tests::test_state(crate::config::RuntimeConfig::development());
+        let backend = crate::tests::ScriptedBackend::rounds(vec![
+            vec![
+                Ok(ModelEvent::Text("First answer".to_owned())),
+                Ok(ModelEvent::Complete { reason }),
+            ],
+            vec![
+                Ok(ModelEvent::Text("After correction".to_owned())),
+                Ok(ModelEvent::Complete {
+                    reason: CompletionReason::Stop,
+                }),
+            ],
+        ]);
+        state.chat = std::sync::Arc::new(ChatBackend::Scripted(backend.clone()));
+        let connection = ProviderConnection::with_key(ProviderKind::Xai, "test-key", "grok-4.6");
+        let token = crate::sessions::generate_session_token().unwrap();
+        state.sessions.insert(token.id());
+        let record = state.conversations.create("Steering".to_owned()).unwrap();
+        let settings = crate::execution::ExecutionSettings::new(
+            crate::providers::ModelSelection::new(ProviderKind::Xai, "grok-4.6".to_owned(), None)
+                .unwrap(),
+            String::new(),
+            Vec::new(),
+            crate::tests::test_environment_id(),
+        )
+        .unwrap();
+        let record = state
+            .conversations
+            .update_execution_settings(&record.id, record.revision, settings)
+            .unwrap();
+        let job = state
+            .sessions
+            .begin_conversation_job(&token.id(), record.id)
+            .unwrap();
+        let record = state
+            .conversations
+            .begin_message_with_model(
+                &record.id,
+                record.revision,
+                record.model.clone(),
+                job.id(),
+                "Hello".to_owned(),
+            )
+            .unwrap();
+        state
+            .conversations
+            .enqueue(
+                &record.id,
+                record.queue.revision,
+                "Correction".to_owned(),
+                QueueDelivery::Steering,
+                Some(job.id()),
+            )
+            .unwrap();
+        let mut spec = granted_read_spec(connection, record.id, record.revision);
+        spec.steering_session = Some(if live {
+            token.id()
+        } else {
+            crate::sessions::generate_session_token().unwrap().id()
+        });
+        let ended = super::run_agent_action(
+            &state,
+            spec,
+            vec![ChatTurn::user("Hello".to_owned())],
+            job.clone(),
+        )
+        .await;
+        let delivered = reason == CompletionReason::Stop && live;
+        let stored = state.conversations.get(&record.id).unwrap();
+        assert_eq!(stored.queue.items.is_empty(), delivered);
+        assert_eq!(backend.turn_count(), if delivered { 2 } else { 1 });
+        if delivered {
+            assert_eq!(backend.last_extra_len(), 2);
+            assert_eq!(stored.messages[1].text, "First answer");
+            assert_eq!(job.snapshot().output.text, "After correction");
+            assert_eq!(ended.reply.text, "After correction");
+        } else if reason != CompletionReason::Stop {
+            assert_eq!(ended.outcome, super::AgentOutcome::ProviderFailure);
+        }
+    }
 }

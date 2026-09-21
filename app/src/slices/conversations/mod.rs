@@ -5,6 +5,7 @@ mod job;
 mod model_favourites;
 mod new;
 mod output;
+mod queue;
 
 pub(crate) mod recent;
 mod title;
@@ -126,6 +127,18 @@ pub(super) fn router() -> Router<AppState> {
         .route(
             "/conversations/{conversation_id}/messages",
             post(send_message),
+        )
+        .route(
+            "/conversations/{conversation_id}/queue",
+            post(queue::enqueue),
+        )
+        .route(
+            "/conversations/{conversation_id}/queue/{item_id}/remove",
+            post(queue::remove),
+        )
+        .route(
+            "/conversations/{conversation_id}/queue/{item_id}/editor",
+            post(queue::return_to_editor),
         )
         .route(
             "/conversations/{conversation_id}/cancel",
@@ -1104,7 +1117,7 @@ pub(super) async fn start_message(
     model: ConversationModelConfiguration,
     text: String,
 ) -> Result<ConversationRecord, StartMessageError> {
-    start_message_mode(state, session, record, revision, model, text).await
+    start_message_mode(state, session, record, revision, model, text, None).await
 }
 
 async fn start_message_mode(
@@ -1114,6 +1127,7 @@ async fn start_message_mode(
     revision: u32,
     model: ConversationModelConfiguration,
     text: String,
+    follow_up: Option<(crate::conversations::QueueItemId, u32)>,
 ) -> Result<ConversationRecord, StartMessageError> {
     let persisted_model = model.clone();
     // Reject file access for immutable-evidence conversations before any runtime
@@ -1194,13 +1208,24 @@ async fn start_message_mode(
         })?;
     let launch_brief = text.trim().to_owned();
     let phase_model = model.clone();
-    let started = match state.conversations.begin_message_with_model(
-        &record.id,
-        revision,
-        Some(persisted_model),
-        job.id(),
-        text,
-    ) {
+    let started = match follow_up {
+        Some((item_id, queue_revision)) => state.conversations.begin_follow_up(
+            &record.id,
+            revision,
+            queue_revision,
+            item_id,
+            job.id(),
+            Some(persisted_model),
+        ),
+        None => state.conversations.begin_message_with_model(
+            &record.id,
+            revision,
+            Some(persisted_model),
+            job.id(),
+            text,
+        ),
+    };
+    let started = match started {
         Ok(started) => started,
         Err(error) => {
             state
@@ -1278,22 +1303,27 @@ async fn start_message_mode(
                 error,
             )));
         }
-        tokio::spawn(crate::execution::conversation::run(
+        spawn_conversation_work(
             state.clone(),
-            crate::execution::conversation::OrdinaryRun {
-                session,
-                record: started,
-                connection,
-                job,
-                execution,
-                kind: crate::execution::OrdinaryKind::FileChange,
-                turns,
-                file: Some(crate::execution::conversation::FileChangeWork {
-                    run_id,
-                    project_free,
-                }),
-            },
-        ));
+            session,
+            started.id,
+            crate::execution::conversation::run(
+                state.clone(),
+                crate::execution::conversation::OrdinaryRun {
+                    session,
+                    record: started,
+                    connection,
+                    job,
+                    execution,
+                    kind: crate::execution::OrdinaryKind::FileChange,
+                    turns,
+                    file: Some(crate::execution::conversation::FileChangeWork {
+                        run_id,
+                        project_free,
+                    }),
+                },
+            ),
+        );
     } else if let Some(kind) = ordinary {
         let secret = match connection.auth {
             crate::providers::AuthMethod::ApiKey => Some(connection.api_key.expose()),
@@ -1319,30 +1349,100 @@ async fn start_message_mode(
             }
         };
         let execution = ordinary_execution.expect("ordinary work holds reset protection");
-        tokio::spawn(crate::execution::conversation::run(
-            state.clone(),
-            crate::execution::conversation::OrdinaryRun {
-                session,
-                record: started,
-                connection,
-                job,
-                execution,
-                kind,
-                turns,
-                file: None,
-            },
-        ));
-    } else {
-        tokio::spawn(job::run(
+        spawn_conversation_work(
             state.clone(),
             session,
             started.id,
-            started,
-            connection,
-            job,
-        ));
+            crate::execution::conversation::run(
+                state.clone(),
+                crate::execution::conversation::OrdinaryRun {
+                    session,
+                    record: started,
+                    connection,
+                    job,
+                    execution,
+                    kind,
+                    turns,
+                    file: None,
+                },
+            ),
+        );
+    } else {
+        spawn_conversation_work(
+            state.clone(),
+            session,
+            started.id,
+            job::run(state.clone(), session, started.id, started, connection, job),
+        );
     }
     Ok(state.conversations.get(&record.id).unwrap_or(record))
+}
+
+fn spawn_conversation_work<F>(
+    state: AppState,
+    session: crate::sessions::SessionId,
+    conversation: ConversationId,
+    work: F,
+) where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    tokio::spawn(async move {
+        work.await;
+        continue_follow_ups(state, session, conversation).await;
+    });
+}
+
+pub(crate) async fn continue_follow_ups(
+    state: AppState,
+    session: crate::sessions::SessionId,
+    conversation: ConversationId,
+) {
+    if !state.sessions.contains_live(&session) {
+        return;
+    }
+    let Some(record) = state.conversations.get(&conversation) else {
+        return;
+    };
+    if record.active_job.is_some() || state.sessions.conversation_reserved(conversation) {
+        return;
+    }
+    if has_pending_review(&state, conversation)
+        || state.conversation_runtime.unsettled(conversation)
+        || has_uncertain_application(&state, conversation)
+    {
+        return;
+    }
+    let last_assistant = record
+        .messages
+        .iter()
+        .rev()
+        .find(|message| message.role == crate::conversations::MessageRole::Assistant);
+    if !last_assistant
+        .is_some_and(|message| message.status == crate::conversations::MessageStatus::Complete)
+    {
+        return;
+    }
+    let Some(item) = record.queue.next_follow_up().cloned() else {
+        return;
+    };
+    let Some(model) = record.model.clone() else {
+        return;
+    };
+    if item.settings_digest != crate::conversations::queue::launch_digest(&model.settings) {
+        return;
+    }
+    let revision = record.revision;
+    let queue_revision = record.queue.revision;
+    let _ = start_message_mode(
+        &state,
+        session,
+        record,
+        revision,
+        model,
+        item.text,
+        Some((item.id, queue_revision)),
+    )
+    .await;
 }
 
 async fn cancel_message(

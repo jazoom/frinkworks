@@ -1,0 +1,77 @@
+{% if let Some(saved) = self.saved() %}
+  {% if !self.queue.items.is_empty() || self.queue.follow_up %}
+    <section
+      id="conversation-queue"
+      class="border-base-300 mb-3 flex flex-col gap-2 border-b pb-3"
+      aria-label="Queued messages"
+    >
+      {% if self.queue.follow_up %}
+        <p class="text-quiet text-sm" role="status">
+          New messages wait until the current work finishes.
+        </p>
+      {% endif %}
+      {% if !self.queue.return_message.is_empty() %}
+        <p class="text-warning text-sm" role="alert">
+          {{ self.queue.return_message }}
+        </p>
+      {% endif %}
+      {% for item in self.queue.items %}
+        <article
+          class="border-base-300 rounded-box flex flex-col gap-2 border p-3"
+          data-queue-item="{{ item.id }}"
+        >
+          <p class="text-quiet text-xs tracking-wide uppercase">
+            {{ item.delivery }}
+          </p>
+          <pre
+            class="max-h-32 overflow-auto text-sm break-words whitespace-pre-wrap"
+            tabindex="0"
+          >
+{{ item.text }}</pre>
+          <div class="flex flex-wrap gap-2">
+            <form
+              data-graft
+              data-queue-return
+              data-queue-text="{{ item.text }}"
+              method="post"
+              action="/conversations/{{ saved.id }}/queue/{{ item.id }}/editor"
+              class="contents"
+            >
+              <input
+                type="hidden"
+                name="queue_revision"
+                value="{{ self.queue.revision }}"
+              />
+              <input type="hidden" name="editor" value="" data-queue-editor />
+              {% if item.confirm_replace %}
+                <input type="hidden" name="replace" value="1" />
+                <button class="btn btn-outline btn-sm min-h-11" type="submit">
+                  Replace editor
+                </button>
+              {% else %}
+                <button class="btn btn-ghost btn-sm min-h-11" type="submit">
+                  Return to editor
+                </button>
+              {% endif %}
+            </form>
+            <form
+              data-graft
+              method="post"
+              action="/conversations/{{ saved.id }}/queue/{{ item.id }}/remove"
+              class="contents"
+            >
+              <input
+                type="hidden"
+                name="queue_revision"
+                value="{{ self.queue.revision }}"
+              />
+              <button class="btn btn-ghost btn-sm min-h-11" type="submit">
+                Remove
+              </button>
+            </form>
+          </div>
+        </article>
+      {% endfor %}
+    </section>
+  {% endif %}
+{% endif %}

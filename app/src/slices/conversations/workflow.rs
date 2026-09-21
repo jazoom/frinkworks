@@ -529,31 +529,37 @@ pub(super) async fn launch(
             .finish_conversation_job(&session.0, started.id, job.id());
         return Err(AppError::new("store workflow run", error));
     }
-    tokio::spawn(workflows::execute_run(
-        state.clone(),
-        WorkflowJob {
-            run_id,
-            session_id: session.0,
-            agent_id: run.agent_id,
-            agent_revision: current.revision,
-            conversation_id: Some(started.id),
-            authority: None,
-            project_free_authority: Some(project_free.clone()),
-            grant_alias: String::new(),
-            connection,
-            phase_providers: phase_models
-                .iter()
-                .map(|phase| phase.selection.provider)
-                .collect(),
-            active_connection: std::sync::Arc::new(std::sync::Mutex::new(None)),
-            host_policy: project_free.policy.clone(),
-            turns: Vec::new(),
-            job: job.clone(),
-            eligible_reply: std::sync::Arc::new(std::sync::Mutex::new(String::new())),
-        },
-        None,
-        execution,
-    ));
+    let follow_session = session.0;
+    let follow_conversation = started.id;
+    tokio::spawn(async move {
+        workflows::execute_run(
+            state.clone(),
+            WorkflowJob {
+                run_id,
+                session_id: follow_session,
+                agent_id: run.agent_id,
+                agent_revision: current.revision,
+                conversation_id: Some(follow_conversation),
+                authority: None,
+                project_free_authority: Some(project_free.clone()),
+                grant_alias: String::new(),
+                connection,
+                phase_providers: phase_models
+                    .iter()
+                    .map(|phase| phase.selection.provider)
+                    .collect(),
+                active_connection: std::sync::Arc::new(std::sync::Mutex::new(None)),
+                host_policy: project_free.policy.clone(),
+                turns: Vec::new(),
+                job: job.clone(),
+                eligible_reply: std::sync::Arc::new(std::sync::Mutex::new(String::new())),
+            },
+            None,
+            execution,
+        )
+        .await;
+        super::continue_follow_ups(state, follow_session, follow_conversation).await;
+    });
     Ok(responses::command_navigation(&format!(
         "/conversations/{}",
         started.id.as_hex()

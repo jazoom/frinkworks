@@ -887,12 +887,20 @@ async fn decide(
                 crate::workflows::settle_terminal_job(&state, &continuation, &changed);
             } else {
                 continuation.job.resume();
-                tokio::spawn(crate::workflows::execute_run(
-                    state.clone(),
-                    continuation,
-                    agent,
-                    execution,
-                ));
+                let follow_session = continuation.session_id;
+                let follow_conversation = continuation.conversation_id;
+                tokio::spawn(async move {
+                    crate::workflows::execute_run(state.clone(), continuation, agent, execution)
+                        .await;
+                    if let Some(conversation) = follow_conversation {
+                        crate::slices::conversations::continue_follow_ups(
+                            state,
+                            follow_session,
+                            conversation,
+                        )
+                        .await;
+                    }
+                });
             }
         }
         return Ok(responses::command_navigation(&destination));
@@ -1016,12 +1024,19 @@ async fn decide(
             crate::workflows::settle_terminal_job(&state, &continuation, &changed);
         } else {
             continuation.job.resume();
-            tokio::spawn(crate::workflows::execute_run(
-                state.clone(),
-                continuation,
-                agent,
-                execution,
-            ));
+            let follow_session = continuation.session_id;
+            let follow_conversation = continuation.conversation_id;
+            tokio::spawn(async move {
+                crate::workflows::execute_run(state.clone(), continuation, agent, execution).await;
+                if let Some(conversation) = follow_conversation {
+                    crate::slices::conversations::continue_follow_ups(
+                        state,
+                        follow_session,
+                        conversation,
+                    )
+                    .await;
+                }
+            });
         }
     }
     Ok(responses::command_navigation(&destination))

@@ -54,6 +54,7 @@ pub(super) async fn run(
                 evidence: None,
                 output_scope: None,
                 conversation: Some(conversation),
+                steering_session: Some(session),
             };
             let ended =
                 crate::execution::run_agent_action(&state, spec, history, job.clone()).await;

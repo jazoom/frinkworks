@@ -453,6 +453,7 @@ pub(super) struct ConversationDetailView {
     pub(super) model_available: bool,
     pub(super) job_active: bool,
     pub(super) retry: Option<RetryView>,
+    pub(super) queue: super::queue::QueueView,
 }
 
 pub(super) struct RetryView {
@@ -644,6 +645,11 @@ impl ConversationDetailView {
             model_available: !form.model.is_empty(),
             job_active: false,
             retry: None,
+            queue: super::queue::QueueView::from_queue(
+                &crate::conversations::ConversationQueue::default(),
+                false,
+                false,
+            ),
         }
     }
 
@@ -714,19 +720,38 @@ impl ConversationDetailView {
     fn composer_action(&self) -> String {
         self.saved().map_or_else(
             || "/conversations/new".to_owned(),
-            |saved| format!("/conversations/{}/messages", saved.id),
+            |saved| {
+                if self.queue.follow_up {
+                    format!("/conversations/{}/queue", saved.id)
+                } else {
+                    format!("/conversations/{}/messages", saved.id)
+                }
+            },
         )
     }
 
-    // The composer stays locked while this conversation has a running task or
-    // a candidate or host command awaits a decision. Other conversations do
-    // not lock it. The editor maxlength in the template is not the persisted
-    // message bound in the conversation store.
+    fn follow_up_submit_label(&self) -> &'static str {
+        if self.queue.follow_up {
+            "Queue"
+        } else {
+            "Send message"
+        }
+    }
+
+    fn follow_up_submit_value(&self) -> &'static str {
+        if self.queue.follow_up {
+            "queue"
+        } else {
+            "send"
+        }
+    }
+
+    // Queue entry does not grant authority to pass an execution gate.
     fn composer_disabled(&self) -> bool {
         if self.is_new() {
             return false;
         }
-        self.job_active || !self.model_available || self.needs_review()
+        !self.model_available
     }
 
     fn transcript_empty(&self) -> bool {
@@ -852,10 +877,9 @@ impl ConversationDetailView {
         let mut messages = visible_messages(record, message_budget);
         if let Some(job) = job
             && !job.output.is_empty()
-            && let Some(message) = record
-                .messages
-                .iter()
-                .find(|message| message.request == Some(job.id))
+            && let Some(message) = record.messages.iter().rev().find(|message| {
+                message.request == Some(job.id) && message.status == MessageStatus::Pending
+            })
             && let Some(view) = messages
                 .iter_mut()
                 .find(|view| view.id == message_id(&record.id, message))
@@ -982,6 +1006,11 @@ impl ConversationDetailView {
             directories_open: false,
             job_active,
             retry,
+            queue: super::queue::QueueView::from_queue(
+                &record.queue,
+                job_active || pending_gate.is_some(),
+                job.is_some_and(|job| job.status == JobStatus::Running),
+            ),
             state: ConversationPageState::Saved(Box::new(SavedConversationState {
                 id: record.id.as_hex(),
                 revision: record.revision.to_string(),
@@ -1279,6 +1308,15 @@ impl ConversationDetailView {
                 })
                 .collect();
         }
+        self
+    }
+
+    pub(super) fn with_queue_return(
+        mut self,
+        item: crate::conversations::QueueItemId,
+        message: &'static str,
+    ) -> Self {
+        self.queue = self.queue.with_return(item, message);
         self
     }
 

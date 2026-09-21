@@ -252,6 +252,32 @@ function saveComposerModel(focus: string) {
 
 document.addEventListener("submit", (event) => {
     if (
+        event.target instanceof HTMLFormElement &&
+        event.target.hasAttribute("data-queue-return")
+    ) {
+        const editor = event.target.querySelector<HTMLInputElement>(
+            "[data-queue-editor]",
+        );
+        const message =
+            document.querySelector<HTMLTextAreaElement>("#composer-message");
+        const text = event.target.dataset.queueText;
+        const replace =
+            event.target.querySelector<HTMLInputElement>(
+                'input[name="replace"]',
+            )?.value === "1";
+        if (!editor || !message || text === undefined) {
+            event.preventDefault();
+            return;
+        }
+        if (!message.value.trim() || replace) {
+            message.value = text;
+            message.dispatchEvent(new Event("input", { bubbles: true }));
+            message.focus();
+        }
+        editor.value = message.value;
+        return;
+    }
+    if (
         !(event.target instanceof HTMLFormElement) ||
         event.target.id !== "conversation-model-form"
     )
