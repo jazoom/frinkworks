@@ -117,6 +117,26 @@ fn incomplete_tool_outcomes_block_continuation() {
 }
 
 #[test]
+fn interrupted_questions_settle_without_empty_success() {
+    let call = AssistantActivity::ToolCall {
+        id: "call-1".to_owned(),
+        name: crate::conversations::questions::ASK_USER.to_owned(),
+        arguments: serde_json::json!({"question": "Which path?"}),
+        result: None,
+    };
+    let mut message = assistant(vec![call]);
+    message.status = MessageStatus::Interrupted;
+    super::settle_interrupted_questions(&mut message);
+    let history = project(&[message], None).expect("settled question");
+    let result = history[0].calls[0].result.as_ref().expect("result");
+    assert_eq!(
+        result.output,
+        crate::conversations::questions::INTERRUPTED_RESULT
+    );
+    assert_ne!(result.output, "");
+}
+
+#[test]
 fn failed_command_results_stay_on_the_call() {
     use crate::execution::command::{CommandResult, CommandTermination};
     let command = CommandResult::new(

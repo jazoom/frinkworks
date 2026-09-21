@@ -447,6 +447,7 @@ pub(super) struct ConversationDetailView {
     pub(super) host_pending_approval: bool,
     pub(super) host_consent_request: String,
     pub(super) pending_host_command: Option<HostCommandView>,
+    pub(super) pending_question: Option<super::questions::QuestionView>,
     pub(super) observe_active: bool,
     pub(super) settings_open: bool,
     pub(super) directories_open: bool,
@@ -639,6 +640,7 @@ impl ConversationDetailView {
             host_pending_approval,
             host_consent_request,
             pending_host_command: None,
+            pending_question: None,
             observe_active: false,
             settings_open: false,
             directories_open: false,
@@ -681,6 +683,7 @@ impl ConversationDetailView {
         self.saved().is_some_and(|saved| {
             self.job_active
                 || self.pending_host_command.is_some()
+                || self.pending_question.is_some()
                 || saved.pending_gate.is_some()
                 || saved.workflow_progress.is_some()
         })
@@ -856,7 +859,12 @@ impl ConversationDetailView {
             Some(job) if job.status == JobStatus::Running => {
                 (job.id.as_hex(), job.latest_seq, true, true)
             }
-            Some(job) if job.status == JobStatus::AwaitingDecision => {
+            Some(job)
+                if matches!(
+                    job.status,
+                    JobStatus::AwaitingDecision | JobStatus::AwaitingQuestion
+                ) =>
+            {
                 (job.id.as_hex(), job.latest_seq, true, false)
             }
             _ => (String::new(), 0, false, false),
@@ -891,7 +899,12 @@ impl ConversationDetailView {
                 job.status == JobStatus::Running,
             );
         }
-        if pending_gate.is_some()
+        if job.is_some_and(|job| job.status == JobStatus::AwaitingQuestion) {
+            for message in messages.iter_mut().filter(|message| message.streaming) {
+                message.status = "Awaiting your answer";
+                message.streaming = false;
+            }
+        } else if pending_gate.is_some()
             || job.is_some_and(|job| job.status == JobStatus::AwaitingDecision)
         {
             for message in messages.iter_mut().filter(|message| message.streaming) {
@@ -1001,6 +1014,7 @@ impl ConversationDetailView {
             host_pending_approval: false,
             host_consent_request: String::new(),
             pending_host_command: None,
+            pending_question: None,
             observe_active,
             settings_open: false,
             directories_open: false,
@@ -1106,6 +1120,14 @@ impl ConversationDetailView {
             },
             approval_policy: approval_policy.to_owned(),
         });
+        self
+    }
+
+    pub(super) fn with_pending_question(
+        mut self,
+        question: Option<crate::conversations::PendingQuestion>,
+    ) -> Self {
+        self.pending_question = question.map(super::questions::QuestionView::from_question);
         self
     }
 

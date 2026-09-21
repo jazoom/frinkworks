@@ -381,6 +381,9 @@ pub(super) async fn update(
             if access_changed {
                 state.access_consent.invalidate_conversation(record.id);
                 state.host_approvals.invalidate_conversation(record.id);
+                state
+                    .conversations
+                    .invalidate_questions_for_conversation(record.id);
             }
             render_detail_command(
                 graft,
@@ -521,6 +524,7 @@ pub(super) async fn stop_and_switch_environment(
         return switch_error(&state, session.0, graft, &record, REVISION_MESSAGE);
     }
     state.host_approvals.invalidate_job(job_id);
+    state.conversations.invalidate_questions_for_job(job_id);
     job.request_cancel();
     if !job.wait_for_terminal(CANCELLATION_WAIT).await {
         return switch_error(
@@ -748,6 +752,9 @@ async fn save_execution_mode(
         Ok(updated) => {
             state.access_consent.invalidate_conversation(record.id);
             state.host_approvals.invalidate_conversation(record.id);
+            state
+                .conversations
+                .invalidate_questions_for_conversation(record.id);
             render_detail_command(
                 graft,
                 PatchStatus::Ok,
@@ -924,6 +931,9 @@ pub(super) async fn apply_preset(
         Ok(updated) => {
             state.access_consent.invalidate_conversation(record.id);
             state.host_approvals.invalidate_conversation(record.id);
+            state
+                .conversations
+                .invalidate_questions_for_conversation(record.id);
             render_detail_command(
                 graft,
                 PatchStatus::Ok,

@@ -117,6 +117,13 @@ pub(crate) async fn run_agent_action(
         {
             request_tools.push(tools::read_output_definition());
         }
+        if spec.conversation.is_some()
+            && spec
+                .steering_session
+                .is_some_and(|session| state.sessions.contains_live(&session))
+        {
+            request_tools.push(tools::ask_user_definition());
+        }
         let committed_reply = reply.clone();
         let committed_response = published_response;
         let committed_thinking = thinking_progress.published;
@@ -653,6 +660,13 @@ pub(crate) async fn run_agent_action(
             output_scope: spec.output_scope.clone(),
             output_drafts: spec.output_drafts.as_deref(),
             required_outputs: &spec.required_outputs,
+            questions: spec.conversation.zip(spec.steering_session).map(
+                |(conversation, session)| tools::QuestionToolContext {
+                    state,
+                    session,
+                    conversation,
+                },
+            ),
         };
         if let Err(error) = persist_output(state, spec.conversation, &job, &reply, true) {
             return store_failure(&reply, error);
@@ -922,21 +936,48 @@ fn validate_tool_batch(
         }
         for (key, value) in arguments.as_object().ok_or(ProviderError::Refused)? {
             let property = &schema["properties"][key];
-            let valid_type = match property["type"].as_str() {
-                Some("string") => value.as_str().is_some_and(|text| !text.contains('\0')),
-                Some("integer") => value.as_u64().is_some(),
-                _ => false,
-            };
-            if !valid_type
-                || property["enum"]
-                    .as_array()
-                    .is_some_and(|values| !values.contains(value))
-            {
+            if !schema_value_matches(property, value) {
                 return Err(ProviderError::Refused);
             }
         }
     }
     Ok(())
+}
+
+fn schema_value_matches(schema: &serde_json::Value, value: &serde_json::Value) -> bool {
+    if schema["enum"]
+        .as_array()
+        .is_some_and(|values| !values.contains(value))
+    {
+        return false;
+    }
+    match schema["type"].as_str() {
+        Some("string") => value.as_str().is_some_and(|text| !text.contains('\0')),
+        Some("integer") => value.as_u64().is_some(),
+        Some("boolean") => value.as_bool().is_some(),
+        Some("array") => value.as_array().is_some_and(|items| {
+            items
+                .iter()
+                .all(|item| schema_value_matches(&schema["items"], item))
+        }),
+        Some("object") => {
+            let Some(object) = value.as_object() else {
+                return false;
+            };
+            if schema["required"].as_array().is_some_and(|required| {
+                required
+                    .iter()
+                    .any(|key| key.as_str().is_none_or(|key| !object.contains_key(key)))
+            }) {
+                return false;
+            }
+            object.iter().all(|(key, item)| {
+                let property = &schema["properties"][key];
+                schema_value_matches(property, item)
+            })
+        }
+        _ => false,
+    }
 }
 
 fn assistant_tool_message(text: &str, calls: &[(String, String, serde_json::Value)]) -> Message {

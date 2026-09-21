@@ -223,7 +223,7 @@ async fn bounded_partial_reply_settles_and_observation_restores_commands() {
     );
     assert!(saved.active_job.is_none());
     assert!(!state.sessions.busy(&token.id()));
-    assert!(backend.last_tools().is_empty());
+    assert_eq!(backend.last_tools(), vec![crate::tools::ASK_USER]);
     let mut instructions = super::instructions(&state, &record);
     language.append_instructions(&mut instructions);
     assert_eq!(

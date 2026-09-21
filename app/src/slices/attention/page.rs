@@ -101,6 +101,19 @@ fn decisions(state: &AppState) -> Vec<Decision> {
                 evidence: String::new(),
                 reason: "Needs command approval",
             });
+        } else if record.active_job.is_some_and(|job| {
+            state
+                .conversations
+                .pending_question(record.id, job)
+                .is_some()
+        }) {
+            decisions.push(Decision {
+                title: record.title,
+                context: "Ordinary question".to_owned(),
+                href: format!("/conversations/{}", record.id.as_hex()),
+                evidence: String::new(),
+                reason: "Needs an answer",
+            });
         }
     }
     decisions

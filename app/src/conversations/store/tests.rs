@@ -67,6 +67,7 @@ impl ConversationStore {
             pending: std::sync::Mutex::new(std::collections::BTreeMap::new()),
             uncertain: std::sync::Mutex::new(std::collections::BTreeSet::new()),
             title_updates: tokio::sync::broadcast::channel(16).0,
+            questions: super::super::questions::QuestionWaiters::new(),
         }
     }
 }

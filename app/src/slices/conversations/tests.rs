@@ -1361,7 +1361,7 @@ async fn applied_preset_copies_model_and_instructions_without_directory_authorit
             .unwrap()
             .starts_with("Review only the supplied discussion.")
     );
-    assert!(backend.last_tools().is_empty());
+    assert_eq!(backend.last_tools(), vec![crate::tools::ASK_USER]);
 
     let concise_settings = crate::execution::ExecutionSettings::new(
         selection.clone(),

@@ -4256,9 +4256,10 @@ fn settle_with_reply(
         let message_status = match status {
             JobStatus::Completed => crate::conversations::MessageStatus::Complete,
             JobStatus::Cancelled => crate::conversations::MessageStatus::Interrupted,
-            JobStatus::Failed | JobStatus::AwaitingDecision | JobStatus::Running => {
-                crate::conversations::MessageStatus::Failed
-            }
+            JobStatus::Failed
+            | JobStatus::AwaitingDecision
+            | JobStatus::AwaitingQuestion
+            | JobStatus::Running => crate::conversations::MessageStatus::Failed,
         };
         let _ = state.conversations.settle_message(
             &conversation_id,
@@ -4302,6 +4303,9 @@ fn settle_with_reply(
         }
     }
     state.host_approvals.invalidate_job(workflow.job.id());
+    state
+        .conversations
+        .invalidate_questions_for_job(workflow.job.id());
     let _ = workflow.job.finish(status, error.as_deref());
 }
 
@@ -4315,7 +4319,9 @@ fn conversation_result(status: JobStatus, response: &str, href: &str) -> String 
         JobStatus::Completed => "completed",
         JobStatus::Cancelled => "was cancelled",
         JobStatus::Failed => "did not complete",
-        JobStatus::Running | JobStatus::AwaitingDecision => "is still active",
+        JobStatus::Running | JobStatus::AwaitingDecision | JobStatus::AwaitingQuestion => {
+            "is still active"
+        }
     };
     let mut response = response.trim().to_owned();
     if response.len() > MAXIMUM_CONCISE_RESULT_BYTES {

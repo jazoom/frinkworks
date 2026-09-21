@@ -221,6 +221,7 @@ fn sandbox_context<'a>(
         output_scope: None,
         output_drafts: None,
         required_outputs: &[],
+        questions: None,
     }
 }
 

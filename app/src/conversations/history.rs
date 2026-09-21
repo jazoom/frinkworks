@@ -413,5 +413,20 @@ pub(crate) fn validate_exchange(messages: &[ConversationMessage]) -> Result<(), 
     Ok(())
 }
 
+pub(crate) fn settle_interrupted_questions(message: &mut ConversationMessage) {
+    for activity in &mut message.activity {
+        if let AssistantActivity::ToolCall { name, result, .. } = activity
+            && name == crate::conversations::questions::ASK_USER
+            && result.is_none()
+        {
+            *result = Some(ToolOutput {
+                label: crate::conversations::questions::ASK_USER.to_owned(),
+                output: crate::conversations::questions::INTERRUPTED_RESULT.to_owned(),
+                command: None,
+            });
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests;

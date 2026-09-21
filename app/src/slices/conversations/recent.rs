@@ -59,6 +59,13 @@ pub(crate) fn conversation_status(
         .is_some_and(|job| state.host_approvals.pending_for(record.id, job).is_some())
     {
         "Needs command approval"
+    } else if record.active_job.is_some_and(|job| {
+        state
+            .conversations
+            .pending_question(record.id, job)
+            .is_some()
+    }) {
+        "Needs an answer"
     } else if let Some(job) = record.active_job {
         if state
             .sessions

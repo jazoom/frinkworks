@@ -1,0 +1,114 @@
+{% if let Some(saved) = self.saved() %}
+  {% if let Some(question) = pending_question %}
+    <section
+      id="conversation-question"
+      class="space-y-4 p-5"
+      aria-labelledby="conversation-question-heading"
+    >
+      <div class="space-y-2">
+        <h3 id="conversation-question-heading" class="text-lg font-semibold">
+          The agent has a question
+        </h3>
+        <p class="text-quiet text-sm">
+          An answer grants no command or directory authority.
+        </p>
+      </div>
+      <p class="break-words whitespace-pre-wrap">{{ question.prompt }}</p>
+      {% if !question.options.is_empty() %}
+        <form
+          data-graft
+          method="post"
+          action="/conversations/{{ saved.id }}/questions/answer"
+          class="space-y-3"
+        >
+          <input type="hidden" name="job" value="{{ question.job }}" />
+          <input
+            type="hidden"
+            name="tool_call"
+            value="{{ question.tool_call }}"
+          />
+          <fieldset class="space-y-2">
+            <legend class="text-sm font-medium">Choose an option</legend>
+            {% for option in question.options %}
+              <label class="flex min-h-11 items-center gap-2">
+                <input
+                  type="radio"
+                  name="option"
+                  value="{{ option.id }}"
+                  class="radio"
+                  {% if loop.first %}checked{% endif %}
+                />
+                <span class="break-words">{{ option.label }}</span>
+              </label>
+            {% endfor %}
+          </fieldset>
+          <button class="btn btn-primary w-full" type="submit">
+            Send choice
+          </button>
+        </form>
+      {% endif %}
+      {% if question.allow_free_text %}
+        <form
+          data-graft
+          method="post"
+          action="/conversations/{{ saved.id }}/questions/answer"
+          class="space-y-3"
+        >
+          <input type="hidden" name="job" value="{{ question.job }}" />
+          <input
+            type="hidden"
+            name="tool_call"
+            value="{{ question.tool_call }}"
+          />
+          <label class="form-control w-full">
+            <span class="text-sm font-medium"
+              >{% if !question.options.is_empty() %}Or write an answer{% else %}Answer{% endif %}</span
+            >
+            <textarea
+              name="text"
+              class="textarea textarea-bordered min-h-24 w-full"
+              maxlength="4096"
+              required
+            ></textarea>
+          </label>
+          <button class="btn btn-primary w-full" type="submit">
+            Send answer
+          </button>
+        </form>
+      {% endif %}
+      <form
+        data-graft
+        method="post"
+        action="/conversations/{{ saved.id }}/questions/cancel"
+        class="space-y-2"
+      >
+        <input type="hidden" name="job" value="{{ question.job }}" />
+        <input
+          type="hidden"
+          name="tool_call"
+          value="{{ question.tool_call }}"
+        />
+        <button class="btn btn-ghost w-full" type="submit">
+          Cancel question
+        </button>
+      </form>
+      <form
+        id="conversation-stop"
+        data-graft
+        method="post"
+        action="/conversations/{{ saved.id }}/cancel"
+        hidden
+      >
+        <input type="hidden" name="job" value="{{ saved.job_id }}" />
+      </form>
+      <button
+        class="btn btn-error w-full"
+        type="submit"
+        form="conversation-stop"
+        aria-label="Stop"
+      >
+        Stop
+      </button>
+    </section>
+  {% endif %}
+{% endif %}

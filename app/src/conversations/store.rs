@@ -14,10 +14,11 @@ use crate::providers::ModelSelection;
 use crate::sessions::JobId;
 
 use super::history::{
-    ConversationMessage, MessageRole, MessageStatus, valid_activity, valid_continuation,
-    valid_message_error,
+    ConversationMessage, MessageRole, MessageStatus, settle_interrupted_questions, valid_activity,
+    valid_continuation, valid_message_error,
 };
 use super::id::{ConversationId, MessageId};
+use super::questions::QuestionWaiters;
 
 mod handoff;
 
@@ -238,6 +239,7 @@ pub(crate) struct ConversationStore {
     pending: Mutex<BTreeMap<ConversationId, usize>>,
     uncertain: Mutex<std::collections::BTreeSet<ConversationId>>,
     title_updates: tokio::sync::broadcast::Sender<()>,
+    questions: QuestionWaiters,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -381,6 +383,7 @@ impl ConversationStore {
             pending: Mutex::new(BTreeMap::new()),
             uncertain: Mutex::new(std::collections::BTreeSet::new()),
             title_updates: tokio::sync::broadcast::channel(16).0,
+            questions: QuestionWaiters::new(),
         })
     }
 
@@ -1242,6 +1245,55 @@ impl ConversationStore {
         Ok(delivered.expect("delivered steering text"))
     }
 
+    pub(crate) fn submit_question(
+        &self,
+        question: super::questions::PendingQuestion,
+    ) -> Result<(), super::questions::QuestionError> {
+        self.questions.submit(question)
+    }
+
+    pub(crate) fn pending_question(
+        &self,
+        conversation: ConversationId,
+        job: JobId,
+    ) -> Option<super::questions::PendingQuestion> {
+        self.questions.pending_for(conversation, job)
+    }
+
+    pub(crate) fn answer_question(
+        &self,
+        conversation: ConversationId,
+        job: &crate::sessions::Job,
+        tool_call: &str,
+        answer: super::questions::QuestionAnswer,
+    ) -> Result<(), super::questions::QuestionError> {
+        self.questions.decide(conversation, job, tool_call, answer)
+    }
+
+    pub(crate) async fn wait_question(
+        &self,
+        conversation: ConversationId,
+        job: &crate::sessions::Job,
+        tool_call: &str,
+    ) -> Result<super::questions::QuestionAnswer, super::questions::QuestionError> {
+        self.questions.wait(conversation, job, tool_call).await
+    }
+
+    pub(crate) fn invalidate_questions_for_job(&self, job: JobId) {
+        self.questions.invalidate_job(job);
+    }
+
+    pub(crate) fn invalidate_questions_for_conversation(&self, conversation: ConversationId) {
+        self.questions.invalidate_conversation(conversation);
+    }
+
+    pub(crate) fn retain_question_sessions(
+        &self,
+        live: impl Fn(&crate::sessions::SessionId) -> bool,
+    ) {
+        self.questions.retain_sessions(live);
+    }
+
     pub(crate) fn delete(
         &self,
         id: &ConversationId,
@@ -1249,6 +1301,7 @@ impl ConversationStore {
     ) -> Result<(), ConversationError> {
         let mut conversations = self.lock();
         self.require_durable(id)?;
+        self.questions.invalidate_conversation(*id);
         let Some(current) = conversations.get(id).cloned() else {
             return Err(ConversationError::Missing);
         };
@@ -1417,6 +1470,7 @@ fn interrupt_recovered_requests(
             .rev()
             .find(|message| message.request == Some(request))
         {
+            settle_interrupted_questions(message);
             message.status = MessageStatus::Interrupted;
         }
         record.active_job = None;

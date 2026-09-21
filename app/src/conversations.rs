@@ -1,6 +1,7 @@
 mod access;
 pub(crate) mod history;
 mod id;
+pub(crate) mod questions;
 pub(crate) mod queue;
 mod store;
 pub(crate) mod titles;
@@ -10,6 +11,7 @@ pub(crate) use history::{
     ContinuationBlock, ContinuationMetadata, ConversationMessage, MessageRole, MessageStatus,
 };
 pub(crate) use id::{ConversationId, MessageId};
+pub(crate) use questions::{PendingQuestion, QuestionAnswer, QuestionError};
 pub(crate) use queue::{ConversationQueue, QueueDelivery, QueueItemId};
 pub(crate) use store::{
     CandidateReviewContext, CandidateReviewCreation, CandidateReviewLink, ConversationError,

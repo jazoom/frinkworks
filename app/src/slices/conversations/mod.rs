@@ -5,6 +5,7 @@ mod job;
 mod model_favourites;
 mod new;
 mod output;
+mod questions;
 mod queue;
 
 pub(crate) mod recent;
@@ -147,6 +148,14 @@ pub(super) fn router() -> Router<AppState> {
         .route(
             "/conversations/{conversation_id}/runs/{run_id}/settle-partial",
             post(settle_partial),
+        )
+        .route(
+            "/conversations/{conversation_id}/questions/answer",
+            post(questions::answer),
+        )
+        .route(
+            "/conversations/{conversation_id}/questions/cancel",
+            post(questions::cancel),
         )
         .route(
             "/conversations/{conversation_id}/host-command/approve",
@@ -1477,6 +1486,7 @@ async fn cancel_message(
     };
     job.request_cancel();
     state.host_approvals.invalidate_job(job.id());
+    state.conversations.invalidate_questions_for_job(job.id());
     render_detail_command(
         graft,
         PatchStatus::Ok,
@@ -2100,6 +2110,11 @@ fn detail_view(
         linked_candidate_reviews,
     )
     .with_access_status(state, session, record)
+    .with_pending_question(
+        record
+            .active_job
+            .and_then(|job_id| state.conversations.pending_question(record.id, job_id)),
+    )
     .with_pending_host_command(
         record
             .active_job

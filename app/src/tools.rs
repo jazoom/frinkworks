@@ -167,6 +167,42 @@ pub(crate) fn definitions_for(selected: &[ToolId], location: ToolLocation) -> Ve
 }
 
 pub(crate) const READ_OUTPUT: &str = "read_output";
+pub(crate) const ASK_USER: &str = crate::conversations::questions::ASK_USER;
+
+pub(crate) fn ask_user_definition() -> ToolDefinition {
+    ToolDefinition {
+        name: ASK_USER.to_owned(),
+        description: "Ask the user a question and wait for one answer. Use this for ordinary choices or short free text. The answer grants no command or directory authority.".to_owned(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "The question to show the user."
+                },
+                "options": {
+                    "type": "array",
+                    "description": "Optional choices with unique identifiers.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": { "type": "string" },
+                            "label": { "type": "string" }
+                        },
+                        "required": ["id", "label"],
+                        "additionalProperties": false
+                    }
+                },
+                "allow_free_text": {
+                    "type": "boolean",
+                    "description": "If true, the user can type an answer instead of choosing an option."
+                }
+            },
+            "required": ["question"],
+            "additionalProperties": false
+        }),
+    }
+}
 
 pub(crate) fn read_output_definition() -> ToolDefinition {
     ToolDefinition {
@@ -299,6 +335,13 @@ pub(crate) struct AgentToolContext<'a> {
     pub(crate) output_drafts:
         Option<&'a std::sync::Mutex<crate::workflows::artefacts::output::OutputDrafts>>,
     pub(crate) required_outputs: &'a [crate::workflows::definition::RequiredOutput],
+    pub(crate) questions: Option<QuestionToolContext<'a>>,
+}
+
+pub(crate) struct QuestionToolContext<'a> {
+    pub(crate) state: &'a crate::state::AppState,
+    pub(crate) session: crate::sessions::SessionId,
+    pub(crate) conversation: crate::conversations::ConversationId,
 }
 
 pub(crate) struct ToolTrace {
@@ -415,6 +458,9 @@ pub(crate) async fn invoke(
     }
     if name == READ_OUTPUT {
         return read_output(context, arguments);
+    }
+    if name == ASK_USER {
+        return ask_user(context, call_id, arguments).await;
     }
     let Some(kind) = authorised_tool(context.tools, name, context.location) else {
         return ToolTrace::fail(
@@ -535,6 +581,98 @@ fn read_output(context: &AgentToolContext<'_>, arguments: &serde_json::Value) ->
             ToolTrace::success(format!("read_output `{reference}`"), output, None)
         }
         Err(error) => plain_failure(READ_OUTPUT, error.message(), ToolFailureKind::Ordinary),
+    }
+}
+
+async fn ask_user(
+    context: &AgentToolContext<'_>,
+    call_id: &str,
+    arguments: &serde_json::Value,
+) -> ToolTrace {
+    let Some(questions) = context.questions.as_ref() else {
+        return plain_failure(
+            ASK_USER,
+            "That question tool is not available.",
+            ToolFailureKind::Authority,
+        );
+    };
+    if !questions.state.sessions.contains_live(&questions.session)
+        || !questions.state.sessions.owns_conversation_job(
+            &questions.session,
+            questions.conversation,
+            context.job.id(),
+        )
+    {
+        return plain_failure(
+            ASK_USER,
+            "That question tool is not available.",
+            ToolFailureKind::Authority,
+        );
+    }
+    let question = match crate::conversations::questions::parse_question(
+        arguments,
+        questions.conversation,
+        context.job.id(),
+        questions.session,
+        call_id,
+    ) {
+        Ok(question) => question,
+        Err(error) => {
+            return plain_failure(ASK_USER, error.message(), ToolFailureKind::Ordinary);
+        }
+    };
+    if let Err(error) = questions
+        .state
+        .conversations
+        .submit_question(question.clone())
+    {
+        return plain_failure(ASK_USER, error.message(), ToolFailureKind::Ordinary);
+    }
+    if context.job.set_awaiting_question().is_none() && context.job.cancel_requested() {
+        questions
+            .state
+            .conversations
+            .invalidate_questions_for_job(context.job.id());
+        return ToolTrace::fail(
+            ASK_USER.to_owned(),
+            "Stopped.".to_owned(),
+            ToolFailureKind::Cancellation,
+            None,
+        );
+    }
+    let decision = questions
+        .state
+        .conversations
+        .wait_question(questions.conversation, context.job, call_id)
+        .await;
+    let _ = context.job.resume();
+    match decision {
+        Ok(answer) => {
+            let failure = matches!(answer, crate::conversations::QuestionAnswer::Cancelled)
+                .then_some(ToolFailureKind::Rejected);
+            let output = answer.result_text();
+            ToolTrace {
+                label: ASK_USER.to_owned(),
+                output,
+                failure,
+                command: None,
+            }
+        }
+        Err(error) => {
+            let failure = if context.job.cancel_requested()
+                || error == crate::conversations::QuestionError::JobCancelled
+            {
+                ToolFailureKind::Cancellation
+            } else {
+                ToolFailureKind::Ordinary
+            };
+            ToolTrace::fail(
+                ASK_USER.to_owned(),
+                error.message().to_owned(),
+                failure,
+                None,
+            )
+        }
     }
 }
 

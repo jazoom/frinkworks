@@ -76,6 +76,7 @@ pub(crate) enum JobOwner {
 pub(crate) enum JobStatus {
     Running,
     AwaitingDecision,
+    AwaitingQuestion,
     Completed,
     Failed,
     Cancelled,
@@ -198,11 +199,25 @@ impl Job {
     }
 
     pub(crate) fn set_awaiting_decision(&self) -> Option<u64> {
+        self.set_awaiting(JobStatus::AwaitingDecision)
+    }
+
+    pub(crate) fn set_awaiting_question(&self) -> Option<u64> {
+        self.set_awaiting(JobStatus::AwaitingQuestion)
+    }
+
+    fn set_awaiting(&self, status: JobStatus) -> Option<u64> {
+        if !matches!(
+            status,
+            JobStatus::AwaitingDecision | JobStatus::AwaitingQuestion
+        ) {
+            return None;
+        }
         let mut inner = self.lock();
         if inner.status != JobStatus::Running {
             return None;
         }
-        inner.status = JobStatus::AwaitingDecision;
+        inner.status = status;
         inner.latest_seq += 1;
         let seq = inner.latest_seq;
         inner.events.push(JobEvent {
@@ -216,7 +231,10 @@ impl Job {
 
     pub(crate) fn resume(&self) -> bool {
         let mut inner = self.lock();
-        if inner.status != JobStatus::AwaitingDecision {
+        if !matches!(
+            inner.status,
+            JobStatus::AwaitingDecision | JobStatus::AwaitingQuestion
+        ) {
             return false;
         }
         inner.status = JobStatus::Running;
@@ -434,7 +452,7 @@ impl Job {
         let mut inner = self.lock();
         if !matches!(
             inner.status,
-            JobStatus::Running | JobStatus::AwaitingDecision
+            JobStatus::Running | JobStatus::AwaitingDecision | JobStatus::AwaitingQuestion
         ) {
             return None;
         }
@@ -449,7 +467,7 @@ impl Job {
                 JobStatus::Completed => JobEventKind::Completed,
                 JobStatus::Failed => JobEventKind::Failed,
                 JobStatus::Cancelled => JobEventKind::Cancelled,
-                JobStatus::Running | JobStatus::AwaitingDecision => {
+                JobStatus::Running | JobStatus::AwaitingDecision | JobStatus::AwaitingQuestion => {
                     unreachable!("terminal status checked above")
                 }
             },
