@@ -109,6 +109,11 @@ pub(crate) enum RunState {
         step: StepKey,
         attempt: AttemptId,
     },
+    Paused {
+        step: StepKey,
+        attempt: AttemptId,
+        checkpoint: crate::conversations::CheckpointId,
+    },
     AwaitingHuman {
         step: StepKey,
         gate: GateId,
@@ -163,6 +168,7 @@ pub(crate) struct AttemptArtefactOutput {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum AttemptState {
     Active,
+    Paused,
     Completed,
     Failed,
     Cancelled,
@@ -203,6 +209,9 @@ pub(crate) struct AttemptRecord {
     pub(crate) apply_transaction: Option<ApplyTransaction>,
     pub(crate) commit_transaction: Option<CommitTransaction>,
     pub(crate) direct_changes: Option<super::direct::DirectChanges>,
+    pub(crate) continuation: Option<crate::conversations::CheckpointId>,
+    pub(crate) paused_candidate: Option<crate::workflows::artefacts::ObjectHash>,
+    pub(crate) paused_drafts: Vec<crate::conversations::PausedOutputDraft>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -309,6 +318,11 @@ enum RunStateFile {
         step: String,
         attempt: String,
     },
+    Paused {
+        step: String,
+        attempt: String,
+        checkpoint: String,
+    },
     AwaitingHuman {
         step: String,
         gate: String,
@@ -403,6 +417,24 @@ struct AttemptFile {
     apply_transaction: Option<ApplyTransactionFile>,
     commit_transaction: Option<CommitTransactionFile>,
     direct_changes: Option<super::direct::DirectChanges>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    continuation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    paused_candidate: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    paused_drafts: Vec<PausedDraftFile>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+struct PausedDraftFile {
+    key: String,
+    kind: String,
+    markdown: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    verdict: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    outcome: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -1386,6 +1418,9 @@ impl WorkflowRun {
             apply_transaction: None,
             commit_transaction: None,
             direct_changes: None,
+            continuation: None,
+            paused_candidate: None,
+            paused_drafts: Vec::new(),
         });
         self.state = RunState::Active {
             step,
@@ -1615,6 +1650,81 @@ impl WorkflowRun {
         Ok(())
     }
 
+    pub(crate) fn pause_attempt(
+        &mut self,
+        attempt_id: AttemptId,
+        checkpoint: crate::conversations::CheckpointId,
+        drafts: Vec<crate::conversations::PausedOutputDraft>,
+        at_ms: u64,
+    ) -> Result<(), TransitionError> {
+        if !self.accepts_time(at_ms) {
+            return Err(TransitionError::Invalid);
+        }
+        let RunState::Active { step, attempt } = self.state.clone() else {
+            return Err(TransitionError::Invalid);
+        };
+        if attempt != attempt_id {
+            return Err(TransitionError::Invalid);
+        }
+        let Some(record) = self.attempts.iter_mut().find(|item| item.id == attempt_id) else {
+            return Err(TransitionError::Invalid);
+        };
+        if record.state != AttemptState::Active
+            || record.result.is_some()
+            || record.cleanup != AttemptCleanupRecord::Complete
+            || record.action_kind != ActionKind::Agent
+        {
+            return Err(TransitionError::Invalid);
+        }
+        record.state = AttemptState::Paused;
+        record.continuation = Some(checkpoint);
+        record.paused_drafts = drafts;
+        self.state = RunState::Paused {
+            step,
+            attempt: attempt_id,
+            checkpoint,
+        };
+        Ok(())
+    }
+
+    pub(crate) fn resume_paused(
+        &mut self,
+        attempt_id: AttemptId,
+        checkpoint: crate::conversations::CheckpointId,
+        at_ms: u64,
+    ) -> Result<(), TransitionError> {
+        if !self.accepts_time(at_ms) {
+            return Err(TransitionError::Invalid);
+        }
+        let RunState::Paused {
+            step,
+            attempt,
+            checkpoint: expected,
+        } = self.state.clone()
+        else {
+            return Err(TransitionError::Invalid);
+        };
+        if attempt != attempt_id || expected != checkpoint {
+            return Err(TransitionError::Invalid);
+        }
+        let Some(record) = self.attempts.iter_mut().find(|item| item.id == attempt_id) else {
+            return Err(TransitionError::Invalid);
+        };
+        if record.state != AttemptState::Paused
+            || record.continuation != Some(checkpoint)
+            || record.cleanup != AttemptCleanupRecord::Complete
+        {
+            return Err(TransitionError::Invalid);
+        }
+        record.state = AttemptState::Active;
+        record.cleanup = AttemptCleanupRecord::Pending;
+        self.state = RunState::Active {
+            step,
+            attempt: attempt_id,
+        };
+        Ok(())
+    }
+
     pub(crate) fn fail_before_attempt(&mut self, at_ms: u64) -> Result<(), TransitionError> {
         if !self.accepts_time(at_ms) {
             return Err(TransitionError::Invalid);
@@ -1670,7 +1780,7 @@ impl WorkflowRun {
                 self.state = RunState::Cancelled;
                 Ok(())
             }
-            RunState::Active { attempt, .. } => {
+            RunState::Active { attempt, .. } | RunState::Paused { attempt, .. } => {
                 let Some(record) = self.attempts.iter().find(|item| item.id == attempt) else {
                     return Err(TransitionError::Invalid);
                 };
@@ -1759,7 +1869,7 @@ impl WorkflowRun {
 
     pub(crate) fn active_attempt(&self) -> Option<AttemptId> {
         match self.state {
-            RunState::Active { attempt, .. } => Some(attempt),
+            RunState::Active { attempt, .. } | RunState::Paused { attempt, .. } => Some(attempt),
             _ => None,
         }
     }
@@ -1858,6 +1968,7 @@ impl WorkflowRun {
         let key = match &self.state {
             RunState::Ready { step }
             | RunState::Active { step, .. }
+            | RunState::Paused { step, .. }
             | RunState::AwaitingHuman { step, .. }
             | RunState::RevisionRequested { step, .. }
             | RunState::Escalated { step, .. } => step,
@@ -1905,7 +2016,7 @@ impl WorkflowRun {
         else {
             return Err(TransitionError::Invalid);
         };
-        if attempt.state != AttemptState::Active
+        if !matches!(attempt.state, AttemptState::Active | AttemptState::Paused)
             || attempt.result.is_some()
             || attempt.review_route.is_some()
         {
@@ -2115,6 +2226,7 @@ impl RunState {
             Self::InitialisingSource => "Source capture",
             Self::Ready { .. } => "Ready",
             Self::Active { .. } => "Active",
+            Self::Paused { .. } => "Paused",
             Self::AwaitingHuman { .. } => "Awaiting decision",
             Self::RevisionRequested { .. } => "Revision requested",
             Self::Escalated { reason, .. } => match reason {
@@ -2137,6 +2249,16 @@ impl RunState {
             RunStateFile::Active { step, attempt } => Self::Active {
                 step: StepKey::parse(&step).map_err(|_| RunRecordError::Corrupt)?,
                 attempt: AttemptId::parse(&attempt).ok_or(RunRecordError::Corrupt)?,
+            },
+            RunStateFile::Paused {
+                step,
+                attempt,
+                checkpoint,
+            } => Self::Paused {
+                step: StepKey::parse(&step).map_err(|_| RunRecordError::Corrupt)?,
+                attempt: AttemptId::parse(&attempt).ok_or(RunRecordError::Corrupt)?,
+                checkpoint: crate::conversations::CheckpointId::parse(&checkpoint)
+                    .ok_or(RunRecordError::Corrupt)?,
             },
             RunStateFile::AwaitingHuman { step, gate } => Self::AwaitingHuman {
                 step: StepKey::parse(&step).map_err(|_| RunRecordError::Corrupt)?,
@@ -2173,6 +2295,15 @@ impl RunStateFile {
             RunState::Active { step, attempt } => Self::Active {
                 step: step.as_str().to_owned(),
                 attempt: attempt.as_hex(),
+            },
+            RunState::Paused {
+                step,
+                attempt,
+                checkpoint,
+            } => Self::Paused {
+                step: step.as_str().to_owned(),
+                attempt: attempt.as_hex(),
+                checkpoint: checkpoint.as_hex(),
             },
             RunState::AwaitingHuman { step, gate } => Self::AwaitingHuman {
                 step: step.as_str().to_owned(),
@@ -2246,6 +2377,19 @@ impl AttemptRecord {
                 .as_ref()
                 .map(commit_transaction_to_file),
             direct_changes: self.direct_changes.clone(),
+            continuation: self.continuation.map(|id| id.as_hex()),
+            paused_candidate: self.paused_candidate.map(|hash| hash.as_str()),
+            paused_drafts: self
+                .paused_drafts
+                .iter()
+                .map(|draft| PausedDraftFile {
+                    key: draft.key.clone(),
+                    kind: draft.kind.clone(),
+                    markdown: draft.markdown.clone(),
+                    verdict: draft.verdict.clone(),
+                    outcome: draft.outcome.clone(),
+                })
+                .collect(),
         }
     }
 
@@ -2299,6 +2443,31 @@ impl AttemptRecord {
                 .map(commit_transaction_from_file)
                 .transpose()?,
             direct_changes: file.direct_changes,
+            continuation: match file.continuation {
+                Some(value) => Some(
+                    crate::conversations::CheckpointId::parse(&value)
+                        .ok_or(RunRecordError::Corrupt)?,
+                ),
+                None => None,
+            },
+            paused_candidate: file
+                .paused_candidate
+                .map(|value| {
+                    crate::workflows::artefacts::ObjectHash::parse(&value)
+                        .ok_or(RunRecordError::Corrupt)
+                })
+                .transpose()?,
+            paused_drafts: file
+                .paused_drafts
+                .into_iter()
+                .map(|draft| crate::conversations::PausedOutputDraft {
+                    key: draft.key,
+                    kind: draft.kind,
+                    markdown: draft.markdown,
+                    verdict: draft.verdict,
+                    outcome: draft.outcome,
+                })
+                .collect(),
         })
     }
 }
@@ -2307,6 +2476,7 @@ impl AttemptState {
     fn parse(value: &str) -> Option<Self> {
         match value {
             "active" => Some(Self::Active),
+            "paused" => Some(Self::Paused),
             "completed" => Some(Self::Completed),
             "failed" => Some(Self::Failed),
             "cancelled" => Some(Self::Cancelled),
@@ -2318,6 +2488,7 @@ impl AttemptState {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Active => "active",
+            Self::Paused => "paused",
             Self::Completed => "completed",
             Self::Failed => "failed",
             Self::Cancelled => "cancelled",
@@ -2328,6 +2499,7 @@ impl AttemptState {
     pub(crate) fn as_label(self) -> &'static str {
         match self {
             Self::Active => "Active",
+            Self::Paused => "Paused",
             Self::Completed => "Completed",
             Self::Failed => "Failed",
             Self::Cancelled => "Cancelled",
@@ -3635,11 +3807,21 @@ fn validate_attempt_result(
     attempt: &AttemptRecord,
     action: &StepDefinition,
 ) -> Result<(), RunRecordError> {
+    crate::workflows::artefacts::output::OutputDrafts::default()
+        .restore(action.required_outputs(), &attempt.paused_drafts)
+        .map_err(|_| RunRecordError::Corrupt)?;
     let valid_finish = attempt
         .finished_at_ms
         .is_some_and(|finished| finished >= attempt.started_at_ms);
     match (&attempt.state, &attempt.finished_at_ms, &attempt.result) {
         (AttemptState::Active, None, None) => Ok(()),
+        (AttemptState::Paused, None, None)
+            if attempt.continuation.is_some()
+                && attempt.cleanup == AttemptCleanupRecord::Complete
+                && attempt.action_kind == ActionKind::Agent =>
+        {
+            Ok(())
+        }
         (AttemptState::Completed, Some(_), Some(AttemptResult::Completed { outputs }))
             if valid_finish
                 && *outputs == required_output_keys(&action.action)
@@ -3909,7 +4091,7 @@ fn validate_attempt_isolation(
         return Err(RunRecordError::Corrupt);
     }
     match (&attempt.state, &attempt.cleanup) {
-        (AttemptState::Completed, AttemptCleanupRecord::Complete) => {}
+        (AttemptState::Completed | AttemptState::Paused, AttemptCleanupRecord::Complete) => {}
         (
             AttemptState::Active,
             AttemptCleanupRecord::Pending
@@ -4521,6 +4703,11 @@ fn validate_state_facts(run: &WorkflowRun) -> Result<(), RunRecordError> {
                     step: attempt.step.clone(),
                     attempt: attempt.id,
                 },
+                AttemptState::Paused => RunState::Paused {
+                    step: attempt.step.clone(),
+                    attempt: attempt.id,
+                    checkpoint: attempt.continuation.ok_or(RunRecordError::Corrupt)?,
+                },
                 _ => predicted_from_attempt(run, attempt)?,
             };
             attempt_index += 1;
@@ -4618,7 +4805,7 @@ fn predicted_from_attempt(
         AttemptState::Failed => Ok(RunState::Failed),
         AttemptState::Cancelled => Ok(RunState::Cancelled),
         AttemptState::Interrupted => Ok(RunState::Interrupted),
-        AttemptState::Active => Err(RunRecordError::Corrupt),
+        AttemptState::Active | AttemptState::Paused => Err(RunRecordError::Corrupt),
     }
 }
 

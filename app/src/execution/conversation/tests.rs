@@ -67,6 +67,7 @@ fn failed_preparation_retains_reservations_until_cleanup_settles() {
         Some("The environment is unavailable.".to_owned()),
         None,
         false,
+        None,
     );
     assert!(state.sessions.conversation_reserved(record.id));
     assert!(state.workflow_execution.acquire_exclusive().is_err());

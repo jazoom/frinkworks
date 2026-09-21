@@ -275,6 +275,7 @@ fn read_spec(
         output_scope: None,
         conversation: Some(conversation),
         steering_session: None,
+        budget: crate::execution::BudgetPolicy::ordinary(),
     }
 }
 
@@ -961,4 +962,181 @@ async fn steering_requires_a_complete_response_and_live_owner() {
             assert_eq!(ended.outcome, super::AgentOutcome::ProviderFailure);
         }
     }
+}
+
+#[tokio::test]
+async fn budget_exhaustion_pauses_after_a_settled_tool_batch() {
+    use crate::config::RuntimeConfig;
+    use crate::execution::BudgetPolicy;
+    use crate::providers::{
+        ChatBackend, ChatTurn, CompletionReason, ModelEvent, ProviderConnection, ProviderKind,
+    };
+    use std::time::Duration;
+    let mut state = crate::tests::test_state(RuntimeConfig::development());
+    let backend = crate::tests::ScriptedBackend::rounds(vec![
+        vec![
+            Ok(ModelEvent::ToolCall {
+                id: "call-1".to_owned(),
+                name: "read".to_owned(),
+                arguments: serde_json::json!({"path": "src/main.rs"}),
+            }),
+            Ok(ModelEvent::Complete {
+                reason: CompletionReason::ToolCalls,
+            }),
+        ],
+        vec![
+            Ok(ModelEvent::Text("should not run".to_owned())),
+            Ok(ModelEvent::Complete {
+                reason: CompletionReason::Stop,
+            }),
+        ],
+    ]);
+    state.chat = std::sync::Arc::new(ChatBackend::Scripted(backend));
+    let connection = ProviderConnection::with_key(ProviderKind::Xai, "test-key", "grok-4.6");
+    state.vault.put(connection.clone()).expect("provider");
+    let (record, job) = conversation_job(&state);
+    let mut spec = granted_read_spec(connection, record.id, record.revision);
+    spec.budget = BudgetPolicy {
+        model_requests: 1,
+        tool_dispatches: 20,
+        elapsed: Duration::from_secs(60),
+    };
+    let ended = super::run_agent_action(
+        &state,
+        spec,
+        vec![ChatTurn::user("Read the file".to_owned())],
+        job.clone(),
+    )
+    .await;
+    assert_eq!(ended.outcome, super::AgentOutcome::BudgetExhausted);
+    assert_eq!(ended.reply.tools.len(), 1);
+    assert!(ended.budget.is_some());
+    assert_eq!(tool_finished_count(&job), 1);
+}
+
+#[tokio::test]
+async fn ordinary_budget_allows_more_than_twelve_rounds() {
+    use crate::config::RuntimeConfig;
+    use crate::providers::{
+        ChatBackend, ChatTurn, CompletionReason, ModelEvent, ProviderConnection, ProviderKind,
+    };
+    let mut state = crate::tests::test_state(RuntimeConfig::development());
+    let mut rounds = Vec::new();
+    for index in 0..13 {
+        rounds.push(vec![
+            Ok(ModelEvent::ToolCall {
+                id: format!("call-{index}"),
+                name: "read".to_owned(),
+                arguments: serde_json::json!({"path": "src/main.rs"}),
+            }),
+            Ok(ModelEvent::Complete {
+                reason: CompletionReason::ToolCalls,
+            }),
+        ]);
+    }
+    rounds.push(vec![
+        Ok(ModelEvent::Text("Done after thirteen rounds".to_owned())),
+        Ok(ModelEvent::Complete {
+            reason: CompletionReason::Stop,
+        }),
+    ]);
+    let backend = crate::tests::ScriptedBackend::rounds(rounds);
+    state.chat = std::sync::Arc::new(ChatBackend::Scripted(backend));
+    let connection = ProviderConnection::with_key(ProviderKind::Xai, "test-key", "grok-4.6");
+    state.vault.put(connection.clone()).expect("provider");
+    let (record, job) = conversation_job(&state);
+    let ended = super::run_agent_action(
+        &state,
+        granted_read_spec(connection, record.id, record.revision),
+        vec![ChatTurn::user("Read the file".to_owned())],
+        job.clone(),
+    )
+    .await;
+    assert_eq!(ended.outcome, super::AgentOutcome::Completed);
+    assert_eq!(ended.reply.text, "Done after thirteen rounds");
+    assert_eq!(tool_finished_count(&job), 13);
+}
+
+#[tokio::test]
+async fn retries_consume_the_model_request_budget_without_replaying_tools() {
+    use crate::providers::{
+        ChatBackend, ChatTurn, CompletionReason, ModelEvent, ProviderConnection, ProviderError,
+        ProviderKind,
+    };
+    let mut state = crate::tests::test_state(crate::config::RuntimeConfig::development());
+    let backend = crate::tests::ScriptedBackend::turn_results(vec![
+        Ok(vec![
+            Ok(ModelEvent::ToolCall {
+                id: "completed".to_owned(),
+                name: "read".to_owned(),
+                arguments: serde_json::json!({"path": "src/main.rs"}),
+            }),
+            Ok(ModelEvent::Complete {
+                reason: CompletionReason::ToolCalls,
+            }),
+        ]),
+        Err(ProviderError::RateLimited { retry_after: None }),
+        Ok(vec![
+            Ok(ModelEvent::Text("Over budget".to_owned())),
+            Ok(ModelEvent::Complete {
+                reason: CompletionReason::Stop,
+            }),
+        ]),
+    ]);
+    state.chat = std::sync::Arc::new(ChatBackend::Scripted(backend));
+    let connection = ProviderConnection::with_key(ProviderKind::Xai, "test-key", "grok-4.6");
+    let (record, job) = conversation_job(&state);
+    let mut spec = granted_read_spec(connection, record.id, record.revision);
+    spec.budget.model_requests = 2;
+    let ended = super::run_agent_action(
+        &state,
+        spec,
+        vec![ChatTurn::user("Read".to_owned())],
+        job.clone(),
+    )
+    .await;
+    assert_eq!(ended.outcome, super::AgentOutcome::BudgetExhausted);
+    assert_eq!(ended.budget.unwrap().model_requests, 2);
+    assert_eq!(ended.reply.tools.len(), 1);
+    assert!(!ended.reply.text.contains("Over budget"));
+    assert_eq!(ended.budget.unwrap().tool_dispatches, 1);
+}
+
+#[tokio::test]
+async fn a_tool_batch_cannot_exceed_the_dispatch_budget() {
+    use crate::providers::{
+        ChatBackend, ChatTurn, CompletionReason, ModelEvent, ProviderConnection, ProviderKind,
+    };
+    let mut state = crate::tests::test_state(crate::config::RuntimeConfig::development());
+    let backend = crate::tests::ScriptedBackend::rounds(vec![vec![
+        Ok(ModelEvent::ToolCall {
+            id: "first".to_owned(),
+            name: "read".to_owned(),
+            arguments: serde_json::json!({"path": "src/main.rs"}),
+        }),
+        Ok(ModelEvent::ToolCall {
+            id: "second".to_owned(),
+            name: "read".to_owned(),
+            arguments: serde_json::json!({"path": "src/main.rs"}),
+        }),
+        Ok(ModelEvent::Complete {
+            reason: CompletionReason::ToolCalls,
+        }),
+    ]]);
+    state.chat = std::sync::Arc::new(ChatBackend::Scripted(backend));
+    let connection = ProviderConnection::with_key(ProviderKind::Xai, "test-key", "grok-4.6");
+    let (record, job) = conversation_job(&state);
+    let mut spec = granted_read_spec(connection, record.id, record.revision);
+    spec.budget.tool_dispatches = 1;
+    let ended =
+        super::run_agent_action(&state, spec, vec![ChatTurn::user("Read".to_owned())], job).await;
+    assert_eq!(ended.outcome, super::AgentOutcome::BudgetExhausted);
+    let budget = ended.budget.unwrap();
+    assert!(budget.valid());
+    assert_eq!(budget.tool_dispatches, 1);
+    assert_eq!(ended.reply.tools.len(), 2);
+    assert_eq!(
+        ended.reply.tools[1].command.as_ref().unwrap().termination,
+        crate::execution::CommandTermination::NotDispatched
+    );
 }

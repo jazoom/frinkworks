@@ -83,7 +83,10 @@ pub(in crate::slices::conversations) fn settings_text(run: &WorkflowRun) -> Stri
     format!("{phases}\n\nPinned workflow sequence:\n{steps}")
 }
 
-pub(super) fn validate_pinned(state: &AppState, run: &WorkflowRun) -> Result<(), &'static str> {
+pub(in crate::slices::conversations) fn validate_pinned(
+    state: &AppState,
+    run: &WorkflowRun,
+) -> Result<(), &'static str> {
     for phase in run.model_phases() {
         crate::workflows::validate_phase_selection(state, &phase.selection)
             .map_err(|_| "Connect each pinned provider before continuation.")?;

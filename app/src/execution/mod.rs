@@ -1,6 +1,7 @@
 pub(crate) mod agent;
 mod approval;
 pub(crate) mod authority;
+pub(crate) mod budget;
 pub(crate) mod command;
 mod consent;
 pub(crate) mod conversation;
@@ -16,6 +17,7 @@ pub(crate) use approval::{
     ApprovalError, HostApprovalStore, HostCommandDecision, HostCommandRequest, command_token,
 };
 pub(crate) use authority::ProjectFreeAuthority;
+pub(crate) use budget::{Budget, BudgetPolicy, BudgetReason, BudgetSnapshot};
 pub(crate) use command::{CommandFailure, CommandResult, CommandStream, CommandTermination};
 pub(crate) use consent::{AccessConsentStore, draft_nonce, settings_digest};
 pub(crate) use conversation::{ConversationRuntime, OrdinaryKind, ordinary_kind};

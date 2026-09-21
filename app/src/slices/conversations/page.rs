@@ -448,6 +448,7 @@ pub(super) struct ConversationDetailView {
     pub(super) host_consent_request: String,
     pub(super) pending_host_command: Option<HostCommandView>,
     pub(super) pending_question: Option<super::questions::QuestionView>,
+    pub(super) continuation: Option<super::continuation::ContinuationView>,
     pub(super) observe_active: bool,
     pub(super) settings_open: bool,
     pub(super) directories_open: bool,
@@ -641,6 +642,7 @@ impl ConversationDetailView {
             host_consent_request,
             pending_host_command: None,
             pending_question: None,
+            continuation: None,
             observe_active: false,
             settings_open: false,
             directories_open: false,
@@ -684,6 +686,7 @@ impl ConversationDetailView {
             self.job_active
                 || self.pending_host_command.is_some()
                 || self.pending_question.is_some()
+                || self.continuation.is_some()
                 || saved.pending_gate.is_some()
                 || saved.workflow_progress.is_some()
         })
@@ -1015,6 +1018,11 @@ impl ConversationDetailView {
             host_consent_request: String::new(),
             pending_host_command: None,
             pending_question: None,
+            continuation: record
+                .continuation
+                .as_ref()
+                .filter(|_| !job_active)
+                .map(super::continuation::ContinuationView::from_checkpoint),
             observe_active,
             settings_open: false,
             directories_open: false,
@@ -1022,7 +1030,7 @@ impl ConversationDetailView {
             retry,
             queue: super::queue::QueueView::from_queue(
                 &record.queue,
-                job_active || pending_gate.is_some(),
+                job_active || pending_gate.is_some() || record.continuation.is_some(),
                 job.is_some_and(|job| job.status == JobStatus::Running),
             ),
             state: ConversationPageState::Saved(Box::new(SavedConversationState {
@@ -1052,6 +1060,15 @@ impl ConversationDetailView {
         session: crate::sessions::SessionId,
         record: &ConversationRecord,
     ) -> Self {
+        if let Some(pause) = &mut self.continuation
+            && let Some(run) = record
+                .continuation
+                .as_ref()
+                .and_then(|checkpoint| checkpoint.run)
+                .and_then(|id| state.workflow_runs.get(&id))
+        {
+            pause.settings_summary = super::handoff::transfer::settings_text(&run);
+        }
         self.data_root = state.local_data.root().to_string_lossy().into_owned();
         if let Some(configuration) = &record.model {
             for (view, grant) in self

@@ -1,4 +1,5 @@
 mod activity;
+mod continuation;
 mod directories;
 mod handoff;
 mod job;
@@ -148,6 +149,14 @@ pub(super) fn router() -> Router<AppState> {
         .route(
             "/conversations/{conversation_id}/runs/{run_id}/settle-partial",
             post(settle_partial),
+        )
+        .route(
+            "/conversations/{conversation_id}/continue",
+            post(continuation::resume),
+        )
+        .route(
+            "/conversations/{conversation_id}/continue/end",
+            post(continuation::end_pause),
         )
         .route(
             "/conversations/{conversation_id}/questions/answer",
@@ -1156,6 +1165,12 @@ async fn start_message_mode(
             ConversationError::Active.message(),
         ));
     }
+    if record.continuation.is_some() {
+        return Err(StartMessageError::User(
+            PatchStatus::Conflict,
+            "This conversation is paused. Continue or end the pause first.",
+        ));
+    }
     if let Err(error) = valid_selection(state, &model.settings.model) {
         return Err(StartMessageError::User(
             PatchStatus::UnprocessableEntity,
@@ -1387,7 +1402,7 @@ async fn start_message_mode(
     Ok(state.conversations.get(&record.id).unwrap_or(record))
 }
 
-fn spawn_conversation_work<F>(
+pub(super) fn spawn_conversation_work<F>(
     state: AppState,
     session: crate::sessions::SessionId,
     conversation: ConversationId,
@@ -1418,6 +1433,7 @@ pub(crate) async fn continue_follow_ups(
     if has_pending_review(&state, conversation)
         || state.conversation_runtime.unsettled(conversation)
         || has_uncertain_application(&state, conversation)
+        || record.continuation.is_some()
     {
         return;
     }

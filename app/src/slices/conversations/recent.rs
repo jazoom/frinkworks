@@ -35,7 +35,7 @@ struct RecentConversation {
 /// active work uses the progress dot and settled records stay quiet.
 pub(crate) fn status_dot(status: &str) -> &'static str {
     match status {
-        "Needs your review" | "Needs command approval" | "Needs recovery" => "attention",
+        "Needs your review" | "Needs command approval" | "Needs recovery" | "Paused" => "attention",
         "In progress" | "Active" | "Awaiting decision" => "active",
         _ => "quiet",
     }
@@ -76,6 +76,8 @@ pub(crate) fn conversation_status(
         } else {
             "In progress"
         }
+    } else if record.continuation.is_some() {
+        "Paused"
     } else {
         let latest = state
             .workflow_runs

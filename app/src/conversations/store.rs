@@ -77,6 +77,7 @@ pub(crate) struct ConversationRecord {
     pub(crate) candidate_review_context: Option<CandidateReviewContext>,
     pub(crate) messages: Vec<ConversationMessage>,
     pub(crate) active_job: Option<JobId>,
+    pub(crate) continuation: Option<super::history::ContinuationCheckpoint>,
     pub(crate) queue: super::queue::ConversationQueue,
     pub(crate) created_at_ms: u64,
     pub(crate) updated_at_ms: u64,
@@ -265,12 +266,56 @@ struct ConversationFile {
     messages: Vec<MessageFile>,
     #[serde(deserialize_with = "crate::storage::required_option")]
     active_job: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    continuation: Option<ContinuationFile>,
     #[serde(default)]
     queue_revision: u32,
     #[serde(default)]
     queue: Vec<QueueItemFile>,
     created_at_ms: u64,
     updated_at_ms: u64,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+struct ContinuationFile {
+    id: String,
+    boundary: String,
+    pinned: ConversationModelFile,
+    budget: BudgetFile,
+    #[serde(deserialize_with = "crate::storage::required_option")]
+    run: Option<String>,
+    #[serde(deserialize_with = "crate::storage::required_option")]
+    attempt: Option<String>,
+    #[serde(deserialize_with = "crate::storage::required_option")]
+    step: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    drafts: Vec<PausedDraftFile>,
+    created_at_ms: u64,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+struct BudgetFile {
+    model_requests: u32,
+    model_request_limit: u32,
+    tool_dispatches: u32,
+    tool_dispatch_limit: u32,
+    elapsed_ms: u64,
+    elapsed_limit_ms: u64,
+    reason: String,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+struct PausedDraftFile {
+    key: String,
+    kind: String,
+    markdown: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    verdict: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    outcome: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -448,6 +493,7 @@ impl ConversationStore {
             candidate_review_context: None,
             messages: Vec::new(),
             active_job: None,
+            continuation: None,
             queue: super::queue::ConversationQueue::default(),
             created_at_ms: now,
             updated_at_ms: now,
@@ -536,6 +582,7 @@ impl ConversationStore {
             }),
             messages: Vec::new(),
             active_job: None,
+            continuation: None,
             queue: super::queue::ConversationQueue::default(),
             created_at_ms: now,
             updated_at_ms: now,
@@ -1010,9 +1057,139 @@ impl ConversationStore {
             message.error = error;
             message.completion = reply.completion;
             current.active_job = None;
+            current.continuation = None;
             Ok(())
         })
         .map(|_| ())
+    }
+
+    pub(crate) fn pause_for_budget(
+        &self,
+        id: &ConversationId,
+        request: JobId,
+        reply: crate::providers::AssistantReply,
+        mut checkpoint: super::history::ContinuationCheckpoint,
+    ) -> Result<ConversationRecord, ConversationError> {
+        validate_reply(&reply)?;
+        if !checkpoint.budget.valid() {
+            return Err(ConversationError::Message);
+        }
+        self.replace(id, 0, |current| {
+            if current.active_job != Some(request) {
+                return Err(ConversationError::Conflict);
+            }
+            let empty_pending = {
+                let message = active_assistant(current, request)?;
+                reply.is_empty() && message.text.is_empty() && message.activity.is_empty()
+            };
+            if empty_pending {
+                current.messages.pop();
+            } else {
+                let message = active_assistant(current, request)?;
+                message.text = reply.text;
+                message.activity = reply.activity;
+                message.continuation = reply.continuation;
+                message.status = MessageStatus::Complete;
+                message.error = None;
+                message.completion = reply.completion;
+            }
+            current.active_job = None;
+            let boundary = current
+                .messages
+                .iter()
+                .rev()
+                .find(|message| {
+                    message.role == MessageRole::Assistant
+                        && message.status == MessageStatus::Complete
+                })
+                .map(|message| message.id)
+                .ok_or(ConversationError::Message)?;
+            checkpoint.boundary = boundary;
+            if !checkpoint.valid(&current.messages) {
+                return Err(ConversationError::Message);
+            }
+            current.continuation = Some(checkpoint);
+            Ok(())
+        })
+    }
+
+    pub(crate) fn claim_continuation(
+        &self,
+        id: &ConversationId,
+        expected_revision: u32,
+        checkpoint: super::id::CheckpointId,
+        request: JobId,
+    ) -> Result<ConversationRecord, ConversationError> {
+        let assistant_id = MessageId::generate().map_err(|_| ConversationError::Random)?;
+        self.replace(id, expected_revision, |current| {
+            if current.active_job.is_some() {
+                return Err(ConversationError::Active);
+            }
+            let Some(stored) = current.continuation.as_ref() else {
+                return Err(ConversationError::Conflict);
+            };
+            if stored.id != checkpoint {
+                return Err(ConversationError::Conflict);
+            }
+            if current.messages.len() >= MAXIMUM_MESSAGES {
+                return Err(ConversationError::Full);
+            }
+            current.messages.push(ConversationMessage {
+                id: assistant_id,
+                role: MessageRole::Assistant,
+                text: String::new(),
+                activity: Vec::new(),
+                continuation: Vec::new(),
+                status: MessageStatus::Pending,
+                error: None,
+                request: Some(request),
+                completion: None,
+            });
+            current.active_job = Some(request);
+            Ok(())
+        })
+    }
+
+    pub(crate) fn clear_continuation(
+        &self,
+        id: &ConversationId,
+        expected_revision: u32,
+        checkpoint: super::id::CheckpointId,
+        runs: &crate::workflows::WorkflowRunStore,
+    ) -> Result<ConversationRecord, ConversationError> {
+        self.replace(id, expected_revision, |current| {
+            if current.active_job.is_some() {
+                return Err(ConversationError::Active);
+            }
+            let stored = current.continuation.as_ref().ok_or(ConversationError::Conflict)?;
+            if stored.id != checkpoint {
+                return Err(ConversationError::Conflict);
+            }
+            if let Some(run_id) = stored.run {
+                // The conversation lock keeps the displayed revision stable through cancellation.
+                // If the second record write fails, the terminal run prevents execution from this checkpoint.
+                runs.mutate(&run_id, |run| {
+                    if run.conversation_id != Some(*id)
+                        || run.pending_handoff.is_some()
+                        || !run.attempts.iter().any(|attempt| Some(attempt.id) == stored.attempt && attempt.continuation == Some(checkpoint))
+                    {
+                        return Err(crate::workflows::run::TransitionError::Invalid);
+                    }
+                    if run.is_terminal() {
+                        return Ok(());
+                    }
+                    if !matches!(run.state, crate::workflows::run::RunState::Paused { checkpoint: expected, .. } if expected == checkpoint) {
+                        return Err(crate::workflows::run::TransitionError::Invalid);
+                    }
+                    run.cancel(crate::workflows::now_ms())
+                }).map_err(|error| match error {
+                    crate::workflows::StoreError::Conflict | crate::workflows::StoreError::Missing => ConversationError::Conflict,
+                    _ => ConversationError::Persist,
+                })?;
+            }
+            current.continuation = None;
+            Ok(())
+        })
     }
 
     pub(crate) fn enqueue(
@@ -1663,8 +1840,12 @@ fn record_from_file(file: ConversationFile) -> Result<ConversationRecord, Conver
         source_candidate_review,
         candidate_reviews,
         candidate_review_context,
-        messages,
+        messages: messages.clone(),
         active_job,
+        continuation: file
+            .continuation
+            .map(|file| continuation_from_file(file, &messages))
+            .transpose()?,
         queue,
         created_at_ms: file.created_at_ms,
         updated_at_ms: file.updated_at_ms,
@@ -2046,11 +2227,96 @@ fn record_to_file(record: &ConversationRecord) -> ConversationFile {
             })
             .collect(),
         active_job: record.active_job.map(|request| request.as_hex()),
+        continuation: record.continuation.as_ref().map(continuation_to_file),
         queue_revision: record.queue.revision,
         queue: record.queue.items.iter().map(queue_item_to_file).collect(),
         created_at_ms: record.created_at_ms,
         updated_at_ms: record.updated_at_ms,
     }
+}
+
+fn continuation_to_file(checkpoint: &super::history::ContinuationCheckpoint) -> ContinuationFile {
+    ContinuationFile {
+        id: checkpoint.id.as_hex(),
+        boundary: checkpoint.boundary.as_hex(),
+        pinned: model_to_file(&ConversationModelConfiguration {
+            settings: checkpoint.pinned.clone(),
+            preset: None,
+        }),
+        budget: BudgetFile {
+            model_requests: checkpoint.budget.model_requests,
+            model_request_limit: checkpoint.budget.model_request_limit,
+            tool_dispatches: checkpoint.budget.tool_dispatches,
+            tool_dispatch_limit: checkpoint.budget.tool_dispatch_limit,
+            elapsed_ms: checkpoint.budget.elapsed_ms,
+            elapsed_limit_ms: checkpoint.budget.elapsed_limit_ms,
+            reason: checkpoint.budget.reason.as_str().to_owned(),
+        },
+        run: checkpoint.run.map(|id| id.as_hex()),
+        attempt: checkpoint.attempt.map(|id| id.as_hex()),
+        step: checkpoint.step.clone(),
+        drafts: checkpoint
+            .drafts
+            .iter()
+            .map(|draft| PausedDraftFile {
+                key: draft.key.clone(),
+                kind: draft.kind.clone(),
+                markdown: draft.markdown.clone(),
+                verdict: draft.verdict.clone(),
+                outcome: draft.outcome.clone(),
+            })
+            .collect(),
+        created_at_ms: checkpoint.created_at_ms,
+    }
+}
+
+fn continuation_from_file(
+    file: ContinuationFile,
+    messages: &[ConversationMessage],
+) -> Result<super::history::ContinuationCheckpoint, ConversationError> {
+    let pinned = model_from_file(file.pinned)?;
+    let checkpoint = super::history::ContinuationCheckpoint {
+        id: super::id::CheckpointId::parse(&file.id).ok_or(ConversationError::Corrupt)?,
+        boundary: MessageId::parse(&file.boundary).ok_or(ConversationError::Corrupt)?,
+        pinned: pinned.settings,
+        budget: crate::execution::BudgetSnapshot {
+            model_requests: file.budget.model_requests,
+            model_request_limit: file.budget.model_request_limit,
+            tool_dispatches: file.budget.tool_dispatches,
+            tool_dispatch_limit: file.budget.tool_dispatch_limit,
+            elapsed_ms: file.budget.elapsed_ms,
+            elapsed_limit_ms: file.budget.elapsed_limit_ms,
+            reason: crate::execution::BudgetReason::parse(&file.budget.reason)
+                .ok_or(ConversationError::Corrupt)?,
+        },
+        run: match file.run {
+            Some(value) => Some(RunId::parse(&value).ok_or(ConversationError::Corrupt)?),
+            None => None,
+        },
+        attempt: match file.attempt {
+            Some(value) => {
+                Some(crate::workflows::AttemptId::parse(&value).ok_or(ConversationError::Corrupt)?)
+            }
+            None => None,
+        },
+        step: file.step,
+        drafts: file
+            .drafts
+            .into_iter()
+            .map(|draft| super::history::PausedOutputDraft {
+                key: draft.key,
+                kind: draft.kind,
+                markdown: draft.markdown,
+                verdict: draft.verdict,
+                outcome: draft.outcome,
+            })
+            .collect(),
+        created_at_ms: file.created_at_ms,
+    };
+    if !checkpoint.valid(messages) {
+        return Err(ConversationError::Corrupt);
+    }
+    Ok(checkpoint)
 }
 
 fn queue_from_file(

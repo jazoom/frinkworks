@@ -88,6 +88,25 @@ pub(super) fn before(
         .workflow_runs
         .get(&job.run_id)
         .ok_or("The run is unavailable.")?;
+    // A continuation retains the original baseline, not the host state after its earlier writes.
+    if run.attempts.iter().any(|record| {
+        record.id == attempt && record.continuation.is_some() && record.direct_changes.is_some()
+    }) {
+        return state
+            .workflow_runs
+            .mutate(&job.run_id, |run| {
+                let changes = run
+                    .attempts
+                    .iter_mut()
+                    .find(|record| record.id == attempt)
+                    .and_then(|record| record.direct_changes.as_mut())
+                    .ok_or(TransitionError::Invalid)?;
+                changes.after = None;
+                Ok(())
+            })
+            .map(|_| ())
+            .map_err(|_| "Power Plant cannot retain the direct-write baseline.");
+    }
     let Some(before) = capture(state, &run, step)? else {
         return Ok(());
     };

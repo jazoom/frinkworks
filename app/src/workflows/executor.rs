@@ -392,7 +392,22 @@ async fn drive_attempts(
             }
             return;
         }
-        let Some(step_key) = run.ready_step().cloned() else {
+        let resumed = match &run.state {
+            crate::workflows::run::RunState::Active { step, attempt }
+                if run
+                    .attempts
+                    .iter()
+                    .any(|item| item.id == *attempt && item.continuation.is_some()) =>
+            {
+                Some((step.clone(), *attempt))
+            }
+            _ => None,
+        };
+        let Some(step_key) = resumed
+            .as_ref()
+            .map(|(step, _)| step.clone())
+            .or_else(|| run.ready_step().cloned())
+        else {
             fail_operational(&state, &job);
             return;
         };
@@ -624,16 +639,20 @@ async fn drive_attempts(
             }
             None
         };
-        let attempt_id = match run
-            .revision_reservation
-            .as_ref()
-            .map(|reservation| Ok(reservation.attempt))
-            .unwrap_or_else(AttemptId::generate)
-        {
-            Ok(id) => id,
-            Err(_) => {
-                fail_operational(&state, &job);
-                return;
+        let attempt_id = if let Some((_, attempt)) = resumed {
+            attempt
+        } else {
+            match run
+                .revision_reservation
+                .as_ref()
+                .map(|reservation| Ok(reservation.attempt))
+                .unwrap_or_else(AttemptId::generate)
+            {
+                Ok(id) => id,
+                Err(_) => {
+                    fail_operational(&state, &job);
+                    return;
+                }
             }
         };
         let capabilities = if let Some(authority) = job.project_free_authority.as_ref() {
@@ -714,15 +733,16 @@ async fn drive_attempts(
                 snapshot_digest,
             }
         };
-        if persist_start(
-            &state,
-            &job.run_id,
-            attempt_id,
-            inputs.clone(),
-            capabilities.clone(),
-            sandbox_record,
-        )
-        .is_err()
+        if resumed.is_none()
+            && persist_start(
+                &state,
+                &job.run_id,
+                attempt_id,
+                inputs.clone(),
+                capabilities.clone(),
+                sandbox_record,
+            )
+            .is_err()
         {
             fail_operational(&state, &job);
             return;
@@ -804,6 +824,9 @@ async fn drive_attempts(
                 captured,
             } => (outcome, cleanup, drafts, captured),
         };
+        if matches!(outcome, StepOutcome::Paused { .. }) && job.job.cancel_requested() {
+            outcome = StepOutcome::Cancelled;
+        }
         if let Err(error) = super::direct::after(&state, &job, &step, attempt_id) {
             outcome = StepOutcome::Failed {
                 category: FailureCategory::Operational,
@@ -1025,6 +1048,10 @@ async fn drive_attempts(
                 }
                 continue;
             }
+            StepOutcome::Paused { budget, reply } => {
+                pause_driven_job(&state, &mut job, attempt_id, &step, budget, *reply, &drafts);
+                return;
+            }
         }
     }
 }
@@ -1071,6 +1098,10 @@ enum StepOutcome {
         error: Option<String>,
     },
     Cancelled,
+    Paused {
+        budget: crate::execution::BudgetSnapshot,
+        reply: Box<crate::providers::AssistantReply>,
+    },
 }
 
 enum IsolatedRun {
@@ -1090,9 +1121,27 @@ async fn isolate_and_run(
     inputs: &[super::run::AttemptArtefactInput],
     capabilities: &crate::workflows::capabilities::AttemptCapabilities,
 ) -> IsolatedRun {
-    let drafts = std::sync::Arc::new(std::sync::Mutex::new(
-        crate::workflows::artefacts::output::OutputDrafts::default(),
-    ));
+    let drafts = std::sync::Arc::new(std::sync::Mutex::new({
+        let mut drafts = crate::workflows::artefacts::output::OutputDrafts::default();
+        if let Some(run) = state.workflow_runs.get(&job.run_id)
+            && let Some(attempt) = run.attempts.iter().find(|item| item.id == attempt_id)
+            && let StepAction::Agent(action) = &step.action
+            && drafts
+                .restore(&action.required_outputs, &attempt.paused_drafts)
+                .is_err()
+        {
+            return IsolatedRun::Finished {
+                outcome: StepOutcome::Failed {
+                    category: FailureCategory::Operational,
+                    error: Some("The paused output drafts are invalid.".to_owned()),
+                },
+                cleanup: crate::workflows::run::AttemptCleanupRecord::Complete,
+                drafts: std::sync::Arc::new(std::sync::Mutex::new(drafts)),
+                captured: None,
+            };
+        }
+        drafts
+    }));
     if let Some(run) = state.workflow_runs.get(&job.run_id)
         && step_is_host(&run, step)
     {
@@ -1361,7 +1410,8 @@ async fn isolate_and_run(
     };
     let mut outcome = match (outcome, stopped, private_workspace || captured.is_some()) {
         (StepOutcome::Completed, true, true) => StepOutcome::Completed,
-        (StepOutcome::Completed, _, _) => StepOutcome::Failed {
+        (paused @ StepOutcome::Paused { .. }, true, true) => paused,
+        (StepOutcome::Completed | StepOutcome::Paused { .. }, _, _) => StepOutcome::Failed {
             category: FailureCategory::Operational,
             error: Some("Power Plant could not capture isolated outputs.".to_owned()),
         },
@@ -1546,6 +1596,22 @@ fn load_candidate_input(
         input.artefact.kind == crate::workflows::definition::ArtefactKind::CandidateRevision
     })?;
     let run = state.workflow_runs.get(&job.run_id)?;
+    if let Some(hash) = run
+        .active_attempt()
+        .and_then(|id| run.attempts.iter().find(|attempt| attempt.id == id))
+        .and_then(|attempt| attempt.paused_candidate)
+    {
+        let bytes = state.workflow_artefacts.get(&hash).ok()?;
+        let artefact = crate::workflows::artefacts::CandidatePayload::from_manifest_bytes(&bytes)?;
+        return Some(LoadedCandidate {
+            artefact_hash: crate::workflows::artefacts::artefact_hash_for(
+                crate::workflows::definition::ArtefactKind::CandidateRevision,
+                crate::workflows::artefacts::CANDIDATE_SCHEMA,
+                &bytes,
+            ),
+            artefact,
+        });
+    }
     let record = run.artefact(&input.artefact.id)?;
     let bytes = state.workflow_artefacts.get(&record.object_hash).ok()?;
     let artefact = crate::workflows::artefacts::CandidatePayload::from_manifest_bytes(&bytes)?;
@@ -2381,6 +2447,7 @@ async fn run_ordinary_file_agent(
         output_scope: Some(crate::execution::OutputScope::conversation(conversation)),
         conversation: Some(conversation),
         steering_session: Some(job.session_id),
+        budget: crate::execution::BudgetPolicy::ordinary(),
     };
     let ended = crate::execution::run_agent_action(state, spec, turns, job.job.clone()).await;
     if ended.outcome == AgentOutcome::Completed {
@@ -2411,6 +2478,10 @@ async fn run_ordinary_file_agent(
             error: ended.error,
         },
         AgentOutcome::Cancelled => StepOutcome::Cancelled,
+        AgentOutcome::BudgetExhausted => StepOutcome::Paused {
+            budget: ended.budget.expect("budget pause carries a snapshot"),
+            reply: Box::new(ended.reply),
+        },
     }
 }
 
@@ -2772,6 +2843,12 @@ async fn run_agent_step(
             error: Some(OPERATIONAL_STORE_ERROR.to_owned()),
         };
     };
+    let packet = run
+        .attempts
+        .iter()
+        .find(|attempt| attempt.id == attempt_id && attempt.continuation.is_some())
+        .and_then(|attempt| attempt.initial_context.clone())
+        .unwrap_or(packet);
     if state
         .workflow_runs
         .mutate(&job.run_id, |run| {
@@ -2848,23 +2925,38 @@ async fn run_agent_step(
         }),
         conversation: job.conversation_id,
         steering_session: None,
+        budget: crate::execution::BudgetPolicy::ordinary(),
     };
     // Conversation workflow output belongs to attempt evidence, not the conversation reply.
     if job.conversation_id.is_some() && run.kind == super::run::RunKind::Configured {
         job.job.set_output_visible(false);
     }
-    let turns = packet.request_messages();
+    let mut turns = packet.request_messages();
+    if let Some(attempt) = run.attempts.iter().find(|attempt| attempt.id == attempt_id)
+        && attempt.continuation.is_some()
+    {
+        let Some(stored) = state.workflow_evidence.get(&run.id, &attempt_id) else {
+            return StepOutcome::Failed {
+                category: FailureCategory::Operational,
+                error: Some("The paused phase history is unavailable.".to_owned()),
+            };
+        };
+        turns.extend(stored.history);
+    }
     let ended = crate::execution::run_agent_action(state, spec, turns, job.job.clone()).await;
-    let terminal_state = match ended.outcome {
-        AgentOutcome::Completed => crate::workflows::evidence::TerminalState::Completed,
-        AgentOutcome::ProviderFailure
-        | AgentOutcome::ToolFailure
-        | AgentOutcome::AuthorityFailure
-        | AgentOutcome::PersistenceFailure
-        | AgentOutcome::UncertainEffect => crate::workflows::evidence::TerminalState::Failed,
-        AgentOutcome::Cancelled => crate::workflows::evidence::TerminalState::Cancelled,
-    };
-    evidence.terminal(terminal_state, &ended.reply, ended.error.as_deref(), secret);
+    if ended.outcome != AgentOutcome::BudgetExhausted {
+        let terminal_state = match ended.outcome {
+            AgentOutcome::Completed => crate::workflows::evidence::TerminalState::Completed,
+            AgentOutcome::ProviderFailure
+            | AgentOutcome::ToolFailure
+            | AgentOutcome::AuthorityFailure
+            | AgentOutcome::PersistenceFailure
+            | AgentOutcome::UncertainEffect => crate::workflows::evidence::TerminalState::Failed,
+            AgentOutcome::Cancelled => crate::workflows::evidence::TerminalState::Cancelled,
+            AgentOutcome::BudgetExhausted => unreachable!("budget pause skips terminal evidence"),
+        };
+        evidence.terminal(terminal_state, &ended.reply, ended.error.as_deref(), secret);
+    }
     if ended.outcome == AgentOutcome::Completed {
         *job.eligible_reply
             .lock()
@@ -2893,6 +2985,10 @@ async fn run_agent_step(
             error: ended.error,
         },
         AgentOutcome::Cancelled => StepOutcome::Cancelled,
+        AgentOutcome::BudgetExhausted => StepOutcome::Paused {
+            budget: ended.budget.expect("budget pause carries a snapshot"),
+            reply: Box::new(ended.reply),
+        },
     }
 }
 
@@ -2903,6 +2999,9 @@ fn record_missing_terminal_evidence(
     attempt_id: AttemptId,
     outcome: &StepOutcome,
 ) {
+    if matches!(outcome, StepOutcome::Paused { .. }) {
+        return;
+    }
     if state
         .workflow_evidence
         .get(&job.run_id, &attempt_id)
@@ -2940,6 +3039,9 @@ fn terminal_for_outcome(
             error.as_deref(),
         ),
         StepOutcome::Cancelled => (crate::workflows::evidence::TerminalState::Cancelled, None),
+        StepOutcome::Paused { .. } => {
+            (crate::workflows::evidence::TerminalState::Interrupted, None)
+        }
     }
 }
 
@@ -3723,6 +3825,31 @@ async fn finalise_attempt(
             Some(attempt_id),
             FailureCategory::Definition,
         ),
+        StepOutcome::Paused { .. } => {
+            let candidate = captured
+                .map(|candidate| {
+                    let bytes = candidate
+                        .manifest_bytes()
+                        .map_err(|_| StoreError::Persist)?;
+                    state
+                        .workflow_artefacts
+                        .publish(&bytes)
+                        .map_err(|_| StoreError::Persist)
+                })
+                .transpose()?;
+            state
+                .workflow_runs
+                .mutate(&job.run_id, |run| {
+                    let attempt = run
+                        .attempts
+                        .iter_mut()
+                        .find(|attempt| attempt.id == attempt_id)
+                        .ok_or(super::run::TransitionError::Invalid)?;
+                    attempt.paused_candidate = candidate;
+                    Ok(())
+                })
+                .map(|_| ())
+        }
     }
 }
 
@@ -4121,6 +4248,7 @@ fn persist_outcome(
             persist_fail(state, run_id, Some(attempt_id), *category)
         }
         StepOutcome::Cancelled => persist_cancel(state, run_id),
+        StepOutcome::Paused { .. } => Ok(()),
     }
 }
 
@@ -4208,6 +4336,79 @@ pub(crate) fn settle_completed_job(state: &AppState, workflow: &WorkflowJob) {
 
 pub(crate) fn settle_cancelled_job(state: &AppState, workflow: &WorkflowJob) {
     settle_job(state, workflow, JobStatus::Cancelled, None);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn pause_driven_job(
+    state: &AppState,
+    job: &mut WorkflowJob,
+    attempt_id: AttemptId,
+    step: &StepDefinition,
+    budget: crate::execution::BudgetSnapshot,
+    reply: crate::providers::AssistantReply,
+    drafts: &std::sync::Arc<std::sync::Mutex<crate::workflows::artefacts::output::OutputDrafts>>,
+) {
+    let Ok(checkpoint) = crate::conversations::CheckpointId::generate() else {
+        fail_operational(state, job);
+        return;
+    };
+    let drafts = drafts
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .snapshot();
+    if state
+        .workflow_runs
+        .mutate(&job.run_id, |run| {
+            run.pause_attempt(attempt_id, checkpoint, drafts.clone(), now_ms())
+        })
+        .is_err()
+    {
+        fail_operational(state, job);
+        return;
+    }
+    let Some(conversation) = job.conversation_id else {
+        job.job.finish(JobStatus::Completed, None);
+        return;
+    };
+    let Some(record) = state.conversations.get(&conversation) else {
+        fail_operational(state, job);
+        return;
+    };
+    let Some(model) = record.model.clone() else {
+        fail_operational(state, job);
+        return;
+    };
+    let Ok(boundary) = crate::conversations::MessageId::generate() else {
+        fail_operational(state, job);
+        return;
+    };
+    let stored = crate::conversations::ContinuationCheckpoint {
+        id: checkpoint,
+        boundary,
+        pinned: state
+            .workflow_runs
+            .get(&job.run_id)
+            .and_then(|run| run.phase_settings(&step.key).cloned())
+            .unwrap_or(model.settings),
+        budget,
+        run: Some(job.run_id),
+        attempt: Some(attempt_id),
+        step: Some(step.key.as_str().to_owned()),
+        drafts,
+        created_at_ms: now_ms(),
+    };
+    if state
+        .conversations
+        .pause_for_budget(&conversation, job.job.id(), reply, stored)
+        .is_err()
+    {
+        fail_operational(state, job);
+        return;
+    }
+    job.job.finish(JobStatus::Completed, None);
+    state
+        .sessions
+        .finish_conversation_job(&job.session_id, conversation, job.job.id());
 }
 
 fn settle_job(state: &AppState, workflow: &WorkflowJob, status: JobStatus, error: Option<&str>) {

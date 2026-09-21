@@ -36,7 +36,7 @@ pub(super) async fn run(
         crate::providers::AuthMethod::Plan => None,
     };
     let secret = secret.as_deref();
-    let (reply, outcome, error) = match history_with_review(&state, &record, secret) {
+    let (reply, outcome, error, budget) = match history_with_review(&state, &record, secret) {
         Ok(history) => {
             let spec = AgentRunSpec {
                 agent_id: None,
@@ -55,17 +55,31 @@ pub(super) async fn run(
                 output_scope: None,
                 conversation: Some(conversation),
                 steering_session: Some(session),
+                budget: crate::execution::BudgetPolicy::ordinary(),
             };
             let ended =
                 crate::execution::run_agent_action(&state, spec, history, job.clone()).await;
-            (ended.reply, ended.outcome, ended.error)
+            (ended.reply, ended.outcome, ended.error, ended.budget)
         }
         Err(error) => (
             AssistantReply::default(),
             AgentOutcome::ProviderFailure,
             Some(error.to_owned()),
+            None,
         ),
     };
+    if outcome == AgentOutcome::BudgetExhausted {
+        crate::execution::conversation::settle_pause(
+            &state,
+            session,
+            &state.conversations.get(&conversation).unwrap_or(record),
+            &job,
+            None,
+            reply,
+            budget,
+        );
+        return;
+    }
     let (status, message_status) = match outcome {
         AgentOutcome::Completed => (JobStatus::Completed, MessageStatus::Complete),
         AgentOutcome::Cancelled => (JobStatus::Cancelled, MessageStatus::Interrupted),
@@ -73,7 +87,8 @@ pub(super) async fn run(
         | AgentOutcome::ToolFailure
         | AgentOutcome::AuthorityFailure
         | AgentOutcome::PersistenceFailure
-        | AgentOutcome::UncertainEffect => (JobStatus::Failed, MessageStatus::Failed),
+        | AgentOutcome::UncertainEffect
+        | AgentOutcome::BudgetExhausted => (JobStatus::Failed, MessageStatus::Failed),
     };
     let error = error
         .and_then(|text| crate::providers::sanitise_detail(&crate::tools::redact(&text, secret)));

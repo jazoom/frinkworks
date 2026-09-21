@@ -103,6 +103,90 @@ impl OutputDrafts {
             .position(|(item, _)| item == key)
             .map(|index| self.drafts.remove(index).1)
     }
+
+    pub(crate) fn snapshot(&self) -> Vec<crate::conversations::PausedOutputDraft> {
+        self.drafts
+            .iter()
+            .map(|(key, draft)| match draft {
+                OutputDraft::Plan { markdown } => crate::conversations::PausedOutputDraft {
+                    key: key.as_str().to_owned(),
+                    kind: "plan".to_owned(),
+                    markdown: markdown.clone(),
+                    verdict: None,
+                    outcome: None,
+                },
+                OutputDraft::Review { verdict, markdown } => {
+                    crate::conversations::PausedOutputDraft {
+                        key: key.as_str().to_owned(),
+                        kind: "review-report".to_owned(),
+                        markdown: markdown.clone(),
+                        verdict: Some(match verdict {
+                            super::payload::ReviewVerdict::Approved => "approved".to_owned(),
+                            super::payload::ReviewVerdict::RevisionRequired => {
+                                "revision-required".to_owned()
+                            }
+                            super::payload::ReviewVerdict::Blocked => "blocked".to_owned(),
+                        }),
+                        outcome: None,
+                    }
+                }
+                OutputDraft::Test { outcome, markdown } => {
+                    crate::conversations::PausedOutputDraft {
+                        key: key.as_str().to_owned(),
+                        kind: "test-report".to_owned(),
+                        markdown: markdown.clone(),
+                        verdict: None,
+                        outcome: Some(match outcome {
+                            super::payload::TestOutcome::Passed => "passed".to_owned(),
+                            super::payload::TestOutcome::Failed => "failed".to_owned(),
+                            super::payload::TestOutcome::NotRun => "not-run".to_owned(),
+                        }),
+                    }
+                }
+            })
+            .collect()
+    }
+
+    pub(crate) fn restore(
+        &mut self,
+        outputs: &[RequiredOutput],
+        drafts: &[crate::conversations::PausedOutputDraft],
+    ) -> Result<(), OutputDraftError> {
+        if drafts.len() > 16 {
+            return Err(OutputDraftError::Kind);
+        }
+        let mut restored = Self::default();
+        for draft in drafts {
+            if draft.markdown.len() > 64 * 1024
+                || draft.markdown.contains('\0')
+                || restored
+                    .drafts
+                    .iter()
+                    .any(|(key, _)| key.as_str() == draft.key)
+                || (draft.kind != "review-report" && draft.verdict.is_some())
+                || (draft.kind != "test-report" && draft.outcome.is_some())
+            {
+                return Err(OutputDraftError::Kind);
+            }
+            restored.submit(
+                outputs,
+                &draft.key,
+                match draft.kind.as_str() {
+                    "plan" => OutputKind::Plan,
+                    "review-report" => OutputKind::ReviewReport,
+                    "test-report" => OutputKind::TestReport,
+                    _ => return Err(OutputDraftError::Kind),
+                },
+                Some(draft.markdown.clone()),
+                draft.verdict.as_deref(),
+                draft.outcome.as_deref(),
+                false,
+                false,
+            )?;
+        }
+        *self = restored;
+        Ok(())
+    }
 }
 
 fn parse_verdict(value: &str) -> Result<ReviewVerdict, OutputDraftError> {

@@ -8,7 +8,7 @@ use rig_core::completion::{AssistantContent, Message};
 use crate::{
     agents::{AgentId, DirectoryPolicy, ToolId},
     conversations::ConversationId,
-    execution::ToolLocation,
+    execution::{Budget, BudgetPolicy, BudgetSnapshot, ToolLocation},
     providers::{
         AssistantActivity, AssistantReply, ChatTurn, CompletionReason, ModelEvent, ModelUsage,
         ProviderConnection, ProviderError, ToolOutput,
@@ -40,6 +40,7 @@ pub(crate) struct AgentRunSpec {
     pub(crate) output_scope: Option<crate::execution::OutputScope>,
     pub(crate) conversation: Option<ConversationId>,
     pub(crate) steering_session: Option<crate::sessions::SessionId>,
+    pub(crate) budget: BudgetPolicy,
 }
 
 pub(super) const MIN_PROGRESS_INTERVAL: Duration = if cfg!(test) {
@@ -56,8 +57,6 @@ pub(super) const MAXIMUM_MODEL_REPLY_BYTES: usize = 64 * 1024;
 pub(super) const MAXIMUM_THINKING_BYTES: usize = 64 * 1024;
 const MAXIMUM_VISIBLE_TOOL_BYTES: usize = 64 * 1024;
 
-const MAXIMUM_TOOL_ROUNDS: usize = 12;
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum AgentOutcome {
     Completed,
@@ -67,12 +66,14 @@ pub(crate) enum AgentOutcome {
     PersistenceFailure,
     UncertainEffect,
     Cancelled,
+    BudgetExhausted,
 }
 
 pub(crate) struct AgentActionEnd {
     pub(crate) outcome: AgentOutcome,
     pub(crate) error: Option<String>,
     pub(crate) reply: AssistantReply,
+    pub(crate) budget: Option<BudgetSnapshot>,
 }
 
 pub(crate) async fn run_agent_action(
@@ -104,8 +105,12 @@ pub(crate) async fn run_agent_action(
     let mut response_redactor = StreamRedactor::new(secret);
     let mut thinking_redactor = StreamRedactor::new(secret);
     let mut event_count = 0usize;
+    let mut budget = Budget::start(spec.budget);
 
-    'round: for _ in 0..MAXIMUM_TOOL_ROUNDS {
+    'round: loop {
+        if let Some(reason) = budget.next_request_block() {
+            return pause_action(&job, reply, budget.snapshot(reason));
+        }
         if let Err(error) = persist_output(state, spec.conversation, &job, &reply, false) {
             return store_failure(&reply, error);
         }
@@ -136,6 +141,13 @@ pub(crate) async fn run_agent_action(
         let mut calls;
         let mut completion;
         'provider: loop {
+            if job.cancel_requested() {
+                return cancel_action(&job, &reply);
+            }
+            if let Some(reason) = budget.next_request_block() {
+                return pause_action(&job, reply, budget.snapshot(reason));
+            }
+            budget.record_model_request();
             reply.completion = Some(CompletionReason::Unknown);
             thinking_progress.begin_phase();
             if job.cancel_requested() {
@@ -153,6 +165,7 @@ pub(crate) async fn run_agent_action(
                         outcome: AgentOutcome::ProviderFailure,
                         error: Some(ProviderError::Unreachable.message().to_owned()),
                         reply,
+                        budget: None,
                     };
                 }
                 result = state.chat.stream_turn(
@@ -209,6 +222,7 @@ pub(crate) async fn run_agent_action(
                             outcome: AgentOutcome::ProviderFailure,
                             error: Some(error.message().to_owned()),
                             reply: reply.clone(),
+                            budget: None,
                         };
                     }
                 },
@@ -238,6 +252,7 @@ pub(crate) async fn run_agent_action(
                             outcome: AgentOutcome::ProviderFailure,
                             error: Some(ProviderError::Unreachable.message().to_owned()),
                             reply,
+                            budget: None,
                         };
                     }
                     _ = wait_for_thinking => {
@@ -258,6 +273,7 @@ pub(crate) async fn run_agent_action(
                         outcome: AgentOutcome::ProviderFailure,
                         error: Some(ProviderError::ReplyTooLong.message().to_owned()),
                         reply,
+                        budget: None,
                     };
                 }
                 match chunk {
@@ -292,6 +308,7 @@ pub(crate) async fn run_agent_action(
                                 outcome: AgentOutcome::ProviderFailure,
                                 error: Some(ProviderError::ReplyTooLong.message().to_owned()),
                                 reply: reply.clone(),
+                                budget: None,
                             };
                         }
                     }
@@ -342,6 +359,7 @@ pub(crate) async fn run_agent_action(
                                 outcome: AgentOutcome::ProviderFailure,
                                 error: Some(ProviderError::Refused.message().to_owned()),
                                 reply,
+                                budget: None,
                             };
                         }
                         let visible_id = tools::redact(&id, secret);
@@ -355,6 +373,7 @@ pub(crate) async fn run_agent_action(
                                 outcome: AgentOutcome::ProviderFailure,
                                 error: Some(ProviderError::ReplyTooLong.message().to_owned()),
                                 reply,
+                                budget: None,
                             };
                         }
                         if !arguments.is_object() {
@@ -362,6 +381,7 @@ pub(crate) async fn run_agent_action(
                                 outcome: AgentOutcome::ProviderFailure,
                                 error: Some(ProviderError::Refused.message().to_owned()),
                                 reply,
+                                budget: None,
                             };
                         }
                         if crate::conversations::history::contains_credential(
@@ -374,6 +394,7 @@ pub(crate) async fn run_agent_action(
                                 outcome: AgentOutcome::ProviderFailure,
                                 error: Some(ProviderError::Refused.message().to_owned()),
                                 reply,
+                                budget: None,
                             };
                         }
                         job.start_tool(visible_id.clone(), visible_name.clone(), arguments.clone());
@@ -409,6 +430,7 @@ pub(crate) async fn run_agent_action(
                                         .to_owned(),
                                 ),
                                 reply,
+                                budget: None,
                             };
                         }
                     }
@@ -480,6 +502,7 @@ pub(crate) async fn run_agent_action(
                             outcome: AgentOutcome::ProviderFailure,
                             error: Some(error.message().to_owned()),
                             reply: reply.clone(),
+                            budget: None,
                         };
                     }
                 }
@@ -515,6 +538,7 @@ pub(crate) async fn run_agent_action(
                         outcome: AgentOutcome::ProviderFailure,
                         error: Some(ProviderError::ReplyTooLong.message().to_owned()),
                         reply: reply.clone(),
+                        budget: None,
                     };
                 }
                 if matches!(completion, Some(CompletionReason::Stop) | None)
@@ -605,6 +629,7 @@ pub(crate) async fn run_agent_action(
                     outcome: AgentOutcome::ProviderFailure,
                     error: Some(ProviderError::Incomplete.message().to_owned()),
                     reply: reply.clone(),
+                    budget: None,
                 };
             }
             if let Err(error) = validate_tool_batch(&calls, &request_tools) {
@@ -619,11 +644,11 @@ pub(crate) async fn run_agent_action(
                     outcome: AgentOutcome::ProviderFailure,
                     error: Some(error.message().to_owned()),
                     reply: reply.clone(),
+                    budget: None,
                 };
             }
             break 'provider;
         }
-
         publish_reply_before_tools(
             &job,
             &reply,
@@ -674,6 +699,22 @@ pub(crate) async fn run_agent_action(
         let mut resolved_calls: Vec<crate::providers::ChatToolCall> = Vec::new();
         let mut pending = calls.into_iter();
         while let Some((id, name, arguments)) = pending.next() {
+            if budget.next_tool_block().is_some() {
+                record_not_dispatched(
+                    std::iter::once((id, name, arguments)).chain(pending),
+                    secret,
+                    &mut reply,
+                    &mut resolved_calls,
+                    &mut extra,
+                    &job,
+                    &mut visible_tool_bytes,
+                );
+                if let Err(error) = persist_output(state, spec.conversation, &job, &reply, true) {
+                    return store_failure(&reply, error);
+                }
+                break;
+            }
+            budget.record_tool_dispatches(1);
             let trace = tools::invoke(&context, &id, &name, &arguments).await;
             let output = tools::redact(&trace.output, secret);
 
@@ -777,6 +818,7 @@ pub(crate) async fn run_agent_action(
                     outcome: outcome_for_tool(kind),
                     error: Some(output),
                     reply: reply.clone(),
+                    budget: None,
                 };
             }
         }
@@ -797,7 +839,11 @@ pub(crate) async fn run_agent_action(
                 outcome: AgentOutcome::PersistenceFailure,
                 error: Some(error.message().to_owned()),
                 reply,
+                budget: None,
             };
+        }
+        if let Some(reason) = budget.next_request_block() {
+            return pause_action(&job, reply, budget.snapshot(reason));
         }
         match take_steering(state, &spec, &job, &reply) {
             Ok(Some(text)) => {
@@ -817,19 +863,6 @@ pub(crate) async fn run_agent_action(
             Ok(None) => {}
             Err(error) => return store_failure(&reply, error),
         }
-    }
-
-    thinking_progress.flush(&job, &reply.thinking);
-    publish_reply_remaining(
-        &job,
-        &reply,
-        published_response,
-        thinking_progress.published,
-    );
-    AgentActionEnd {
-        outcome: AgentOutcome::ToolFailure,
-        error: Some(TOOL_LOOP_LIMIT.to_owned()),
-        reply,
     }
 }
 
@@ -879,8 +912,6 @@ impl<'a> StreamRedactor<'a> {
     }
 }
 
-const TOOL_LOOP_LIMIT: &str = "The agent stopped after too many tool calls. Try again.";
-
 fn finish_without_tools(
     reply: &AssistantReply,
     completion: Option<CompletionReason>,
@@ -894,15 +925,15 @@ fn finish_without_tools(
         )
         | None => Some(ProviderError::Incomplete),
     };
-    AgentActionEnd {
-        outcome: if error.is_some() {
+    end(
+        if error.is_some() {
             AgentOutcome::ProviderFailure
         } else {
             AgentOutcome::Completed
         },
-        error: error.map(|error| error.message().to_owned()),
-        reply: reply.clone(),
-    }
+        error.map(|error| error.message().to_owned()),
+        reply.clone(),
+    )
 }
 
 fn validate_tool_batch(
@@ -1343,10 +1374,43 @@ fn store_failure(
     reply: &AssistantReply,
     error: crate::conversations::ConversationError,
 ) -> AgentActionEnd {
+    end(
+        AgentOutcome::PersistenceFailure,
+        Some(error.message().to_owned()),
+        reply.clone(),
+    )
+}
+
+fn end(outcome: AgentOutcome, error: Option<String>, reply: AssistantReply) -> AgentActionEnd {
     AgentActionEnd {
-        outcome: AgentOutcome::PersistenceFailure,
-        error: Some(error.message().to_owned()),
-        reply: reply.clone(),
+        outcome,
+        error,
+        reply,
+        budget: None,
+    }
+}
+
+fn pause_action(job: &Job, reply: AssistantReply, budget: BudgetSnapshot) -> AgentActionEnd {
+    if job.cancel_requested() {
+        return cancel_action(job, &reply);
+    }
+    let published = job.snapshot().output;
+    let mut thinking_progress = ThinkingProgress {
+        published: published.thinking.len().min(reply.thinking.len()),
+        ..ThinkingProgress::default()
+    };
+    thinking_progress.flush(job, &reply.thinking);
+    publish_reply_remaining(
+        job,
+        &reply,
+        published.text.len().min(reply.text.len()),
+        thinking_progress.published,
+    );
+    AgentActionEnd {
+        outcome: AgentOutcome::BudgetExhausted,
+        error: None,
+        reply,
+        budget: Some(budget),
     }
 }
 
@@ -1513,11 +1577,7 @@ fn cancel_action(job: &Job, reply: &AssistantReply) -> AgentActionEnd {
         published.text.len().min(reply.text.len()),
         thinking_progress.published,
     );
-    AgentActionEnd {
-        outcome: AgentOutcome::Cancelled,
-        error: None,
-        reply: reply.clone(),
-    }
+    end(AgentOutcome::Cancelled, None, reply.clone())
 }
 
 fn publish_reply_before_tools(

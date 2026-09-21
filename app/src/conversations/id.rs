@@ -79,6 +79,41 @@ impl std::fmt::Debug for MessageId {
     }
 }
 
+#[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) struct CheckpointId([u8; 16]);
+
+impl CheckpointId {
+    pub(crate) fn generate() -> Result<Self, ConversationIdError> {
+        let mut bytes = [0_u8; 16];
+        SysRng
+            .try_fill_bytes(&mut bytes)
+            .map_err(|_| ConversationIdError::RandomUnavailable)?;
+        Ok(Self(bytes))
+    }
+
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        hex::decode(value).map(Self)
+    }
+
+    pub(crate) fn as_hex(&self) -> String {
+        hex::encode(&self.0)
+    }
+}
+
+impl std::fmt::Display for CheckpointId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.as_hex())
+    }
+}
+
+impl std::fmt::Debug for CheckpointId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("CheckpointId(")?;
+        formatter.write_str(&self.as_hex())?;
+        formatter.write_str(")")
+    }
+}
+
 impl std::fmt::Display for ConversationIdError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("system random source unavailable")

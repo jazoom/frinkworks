@@ -1106,6 +1106,7 @@ fn step_status(
         crate::workflows::run::RunState::InitialisingSource
         | crate::workflows::run::RunState::Ready { .. }
         | crate::workflows::run::RunState::Active { .. }
+        | crate::workflows::run::RunState::Paused { .. }
         | crate::workflows::run::RunState::AwaitingHuman { .. } => "Waiting",
     }
 }
@@ -1120,6 +1121,9 @@ fn state_note(state: &crate::workflows::run::RunState) -> &'static str {
         }
         crate::workflows::run::RunState::Active { .. } => {
             "The current step uses an isolated attempt. File application and explicit Git commits update host files."
+        }
+        crate::workflows::run::RunState::Paused { .. } => {
+            "The execution budget paused this model phase. Continue resumes the same step. Approval phases stay later in the sequence."
         }
         crate::workflows::run::RunState::AwaitingHuman { .. } => {
             "The decision covers the exact candidate set. Approval permits the configured file application or explicit Git commit."

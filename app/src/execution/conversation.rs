@@ -219,6 +219,7 @@ pub(crate) async fn run(state: AppState, work: OrdinaryRun) {
                 Some(failed.error),
                 secret,
                 false,
+                None,
             );
             return;
         }
@@ -255,6 +256,7 @@ pub(crate) async fn run(state: AppState, work: OrdinaryRun) {
         error,
         secret,
         cleanup_failed,
+        ended.budget,
     );
 }
 
@@ -268,6 +270,7 @@ async fn run_file_change(state: AppState, mut work: OrdinaryRun) {
             Some(persist_error().to_owned()),
             None,
             false,
+            None,
         );
         return;
     };
@@ -280,6 +283,7 @@ async fn run_file_change(state: AppState, mut work: OrdinaryRun) {
             Some(persist_error().to_owned()),
             None,
             false,
+            None,
         );
         return;
     };
@@ -294,6 +298,7 @@ async fn run_file_change(state: AppState, mut work: OrdinaryRun) {
             ),
             None,
             false,
+            None,
         );
         return;
     }
@@ -419,6 +424,7 @@ async fn prepare(
             output_scope: Some(OutputScope::conversation(work.record.id)),
             conversation: Some(work.record.id),
             steering_session: Some(work.session),
+            budget: crate::execution::BudgetPolicy::ordinary(),
         },
         turns: work.turns.clone(),
         guest,
@@ -653,6 +659,7 @@ fn append_block(preamble: &mut String, block: &str) {
     preamble.push_str(block);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn settle(
     state: &AppState,
     work: OrdinaryRun,
@@ -661,6 +668,7 @@ fn settle(
     error: Option<String>,
     secret: Option<&str>,
     retain: bool,
+    budget: Option<crate::execution::BudgetSnapshot>,
 ) {
     let OrdinaryRun {
         session,
@@ -670,6 +678,28 @@ fn settle(
         ..
     } = work;
     let conversation = record.id;
+    if outcome == AgentOutcome::BudgetExhausted {
+        if retain || state.conversation_runtime.unsettled(conversation) {
+            execution.require_recovery();
+            let _ = job.finish(
+                JobStatus::Failed,
+                Some(
+                    "Execution remains unsettled. This operation retains its reservations until recovery and cleanup finish.",
+                ),
+            );
+            return;
+        }
+        settle_pause(
+            state,
+            session,
+            &record,
+            &job,
+            Some(execution),
+            reply,
+            budget,
+        );
+        return;
+    }
     let (status, message_status) = match outcome {
         AgentOutcome::Completed => (JobStatus::Completed, MessageStatus::Complete),
         AgentOutcome::Cancelled => (JobStatus::Cancelled, MessageStatus::Interrupted),
@@ -677,7 +707,8 @@ fn settle(
         | AgentOutcome::ToolFailure
         | AgentOutcome::AuthorityFailure
         | AgentOutcome::PersistenceFailure
-        | AgentOutcome::UncertainEffect => (JobStatus::Failed, MessageStatus::Failed),
+        | AgentOutcome::UncertainEffect
+        | AgentOutcome::BudgetExhausted => (JobStatus::Failed, MessageStatus::Failed),
     };
     let error = error
         .and_then(|text| crate::providers::sanitise_detail(&crate::tools::redact(&text, secret)));
@@ -702,6 +733,88 @@ fn settle(
         return;
     }
     job.finish(status, error.as_deref());
+    state
+        .sessions
+        .finish_conversation_job(&session, conversation, job.id());
+    drop(execution);
+}
+
+pub(crate) fn settle_pause(
+    state: &AppState,
+    session: crate::sessions::SessionId,
+    record: &ConversationRecord,
+    job: &Arc<Job>,
+    execution: Option<ExecutionGuard>,
+    reply: AssistantReply,
+    budget: Option<crate::execution::BudgetSnapshot>,
+) {
+    let conversation = record.id;
+    let fail = |execution: Option<ExecutionGuard>, job: &Arc<Job>| {
+        if let Some(execution) = execution {
+            execution.require_recovery();
+        }
+        let _ = job.finish(
+            JobStatus::Failed,
+            Some("The execution budget pause could not be recorded."),
+        );
+    };
+    if job.cancel_requested() {
+        if state
+            .conversations
+            .settle_message(
+                &conversation,
+                job.id(),
+                reply,
+                MessageStatus::Interrupted,
+                None,
+            )
+            .is_err()
+        {
+            fail(execution, job);
+            return;
+        }
+        job.finish(JobStatus::Cancelled, None);
+        state
+            .sessions
+            .finish_conversation_job(&session, conversation, job.id());
+        return;
+    }
+    let Some(budget) = budget.filter(|snapshot| snapshot.valid()) else {
+        fail(execution, job);
+        return;
+    };
+    let Some(model) = record.model.clone() else {
+        fail(execution, job);
+        return;
+    };
+    let Ok(id) = crate::conversations::CheckpointId::generate() else {
+        fail(execution, job);
+        return;
+    };
+    let Ok(boundary) = crate::conversations::MessageId::generate() else {
+        fail(execution, job);
+        return;
+    };
+    let checkpoint = crate::conversations::ContinuationCheckpoint {
+        id,
+        boundary,
+        pinned: model.settings,
+        budget,
+        run: None,
+        attempt: None,
+        step: None,
+        drafts: Vec::new(),
+        created_at_ms: crate::workflows::now_ms(),
+    };
+    if state
+        .conversations
+        .pause_for_budget(&conversation, job.id(), reply, checkpoint)
+        .is_err()
+    {
+        fail(execution, job);
+        return;
+    }
+    job.finish(JobStatus::Completed, None);
     state
         .sessions
         .finish_conversation_job(&session, conversation, job.id());

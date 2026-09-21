@@ -608,6 +608,9 @@ fn attempt_ordinals_count_repeated_step_attempts() {
         apply_transaction: None,
         commit_transaction: None,
         direct_changes: None,
+        continuation: None,
+        paused_drafts: Vec::new(),
+        paused_candidate: None,
     };
     let second = AttemptRecord {
         id: AttemptId::generate().expect("attempt"),
@@ -635,6 +638,9 @@ fn attempt_ordinals_count_repeated_step_attempts() {
         apply_transaction: None,
         commit_transaction: None,
         direct_changes: None,
+        continuation: None,
+        paused_drafts: Vec::new(),
+        paused_candidate: None,
     };
     assert_eq!(next_ordinal_for(&[], &step), 1);
     assert_eq!(next_ordinal_for(std::slice::from_ref(&first), &step), 2);
@@ -1060,6 +1066,9 @@ fn durable_commit_transactions_preserve_every_review_reference() {
         apply_transaction: None,
         commit_transaction: None,
         direct_changes: None,
+        continuation: None,
+        paused_drafts: Vec::new(),
+        paused_candidate: None,
     };
     let transaction = crate::workflows::commit::CommitTransaction {
         candidate,
@@ -1117,6 +1126,9 @@ fn durable_commit_transactions_record_an_approved_human_decision() {
         apply_transaction: None,
         commit_transaction: None,
         direct_changes: None,
+        continuation: None,
+        paused_drafts: Vec::new(),
+        paused_candidate: None,
     };
     let transaction = crate::workflows::commit::CommitTransaction {
         candidate,
@@ -1984,4 +1996,45 @@ fn terminal_partial_offers_no_redundant_settlement() {
     assert!(run.is_terminal());
     assert!(!run.partial_settlement_eligible());
     assert!(run.settle_known_partial(13).is_err());
+}
+
+#[test]
+fn pause_keeps_the_attempt_and_rejects_a_stale_checkpoint() {
+    let mut run = new_run();
+    let attempt = start(&mut run);
+    run.record_cleanup(attempt, AttemptCleanupRecord::Complete)
+        .expect("cleanup");
+    let checkpoint = crate::conversations::CheckpointId::generate().expect("checkpoint");
+    run.pause_attempt(attempt, checkpoint, Vec::new(), 12)
+        .expect("pause");
+    assert!(matches!(run.state, RunState::Paused { .. }));
+    assert!(!run.is_terminal());
+    assert!(!run.is_active());
+    assert_eq!(run.active_attempt(), Some(attempt));
+    let other = crate::conversations::CheckpointId::generate().expect("other");
+    assert_eq!(
+        run.resume_paused(attempt, other, 13),
+        Err(TransitionError::Invalid)
+    );
+    let mut run = WorkflowRun::from_file(run.to_file()).expect("reload pause");
+    run.resume_paused(attempt, checkpoint, 13).expect("resume");
+    let run = WorkflowRun::from_file(run.to_file()).expect("reload claimed checkpoint");
+    assert!(matches!(run.state, RunState::Active { .. }));
+    assert_eq!(run.active_attempt(), Some(attempt));
+    assert_eq!(run.attempts.len(), 1);
+}
+
+#[test]
+fn pause_does_not_complete_required_outputs() {
+    let mut run = new_run();
+    let attempt = start(&mut run);
+    run.record_cleanup(attempt, AttemptCleanupRecord::Complete)
+        .expect("cleanup");
+    let checkpoint = crate::conversations::CheckpointId::generate().expect("checkpoint");
+    run.pause_attempt(attempt, checkpoint, Vec::new(), 12)
+        .expect("pause");
+    assert!(run.complete_attempt(attempt, 13).is_err());
+    let record = run.attempts.iter().find(|item| item.id == attempt).unwrap();
+    assert!(record.outputs.is_empty());
+    assert_eq!(record.state, AttemptState::Paused);
 }

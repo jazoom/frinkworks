@@ -6,12 +6,14 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::execution::BudgetSnapshot;
 use crate::providers::{
     AssistantActivity, ChatToolCall, ChatTurn, CompletionReason, ModelSelection, ToolOutput,
 };
 use crate::sessions::JobId;
+use crate::workflows::{AttemptId, RunId};
 
-use super::id::MessageId;
+use super::id::{CheckpointId, MessageId};
 
 pub(crate) const MAXIMUM_ACTIVITY_ITEMS: usize = 256;
 pub(crate) const MAXIMUM_ACTIVITY_BYTES: usize = 256 * 1024;
@@ -75,6 +77,55 @@ pub(crate) enum ContinuationBlock {
     Redacted {
         data: String,
     },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ContinuationCheckpoint {
+    pub(crate) id: CheckpointId,
+    pub(crate) boundary: MessageId,
+    pub(crate) pinned: crate::execution::ExecutionSettings,
+    pub(crate) budget: BudgetSnapshot,
+    pub(crate) run: Option<RunId>,
+    pub(crate) attempt: Option<AttemptId>,
+    pub(crate) step: Option<String>,
+    pub(crate) drafts: Vec<PausedOutputDraft>,
+    pub(crate) created_at_ms: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PausedOutputDraft {
+    pub(crate) key: String,
+    pub(crate) kind: String,
+    pub(crate) markdown: String,
+    pub(crate) verdict: Option<String>,
+    pub(crate) outcome: Option<String>,
+}
+
+impl ContinuationCheckpoint {
+    pub(crate) fn valid(&self, messages: &[ConversationMessage]) -> bool {
+        self.budget.valid()
+            && self.drafts.len() <= 16
+            && self.drafts.iter().all(|draft| {
+                !draft.key.is_empty()
+                    && draft.key.len() <= 64
+                    && !draft.kind.is_empty()
+                    && draft.kind.len() <= 32
+                    && draft.markdown.len() <= 64 * 1024
+                    && !draft.key.contains('\0')
+                    && !draft.markdown.contains('\0')
+            })
+            && self
+                .step
+                .as_ref()
+                .is_none_or(|step| !step.is_empty() && step.len() <= 64 && !step.contains('\0'))
+            && self.run.is_some() == self.attempt.is_some()
+            && self.step.is_some() == self.run.is_some()
+            && messages.iter().any(|message| {
+                message.id == self.boundary
+                    && message.role == MessageRole::Assistant
+                    && message.status == MessageStatus::Complete
+            })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

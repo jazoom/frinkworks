@@ -1059,6 +1059,175 @@ fn fixing_publication_fixture() -> (
 }
 
 #[tokio::test]
+async fn pause_retains_the_exact_candidate_without_replacing_the_application_baseline() {
+    let (state, job, step, attempt, inputs, baseline, _) = fixing_publication_fixture();
+    let directory = tempfile::tempdir().unwrap();
+    assert!(
+        std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(directory.path())
+            .status()
+            .unwrap()
+            .success()
+    );
+    std::fs::write(directory.path().join("file.txt"), "paused edits\n").unwrap();
+    let candidate = crate::workflows::artefacts::CandidateCapture::capture_host(
+        directory.path(),
+        &state.workflow_artefacts,
+    )
+    .unwrap();
+    assert_ne!(candidate.candidate_hash, baseline.candidate_hash);
+    let candidate = crate::workflows::artefacts::CandidatePayload::Revision(candidate);
+    let budget = crate::execution::BudgetSnapshot {
+        model_requests: 1,
+        model_request_limit: 1,
+        tool_dispatches: 1,
+        tool_dispatch_limit: 10,
+        elapsed_ms: 1,
+        elapsed_limit_ms: 60_000,
+        reason: crate::execution::BudgetReason::ModelRequests,
+    };
+    super::finalise_attempt(
+        &state,
+        &job,
+        &step,
+        attempt,
+        &inputs,
+        Some(&candidate),
+        &StepOutcome::Paused {
+            budget,
+            reply: Box::default(),
+        },
+        false,
+    )
+    .await
+    .unwrap();
+    let checkpoint = crate::conversations::CheckpointId::generate().unwrap();
+    state
+        .workflow_runs
+        .mutate(&job.run_id, |run| {
+            run.pause_attempt(attempt, checkpoint, Vec::new(), 3)?;
+            run.resume_paused(attempt, checkpoint, 4)
+        })
+        .unwrap();
+    let resumed = super::load_candidate_input(&state, &job, &inputs).unwrap();
+    assert_eq!(resumed.artefact, candidate);
+    let run = state.workflow_runs.get(&job.run_id).unwrap();
+    assert_eq!(run.attempts[0].inputs, inputs);
+    assert!(run.attempts[0].outputs.is_empty());
+    assert!(run.attempts[0].result.is_none());
+}
+
+#[tokio::test]
+async fn a_resumed_phase_keeps_its_tool_results_and_excludes_conversation_history() {
+    let (mut state, mut job, step, attempt, _, _, drafts) = fixing_publication_fixture();
+    job.connection = crate::providers::ProviderConnection::with_key(
+        crate::providers::ProviderKind::Xai,
+        "test-private-context-credential",
+        "model",
+    );
+    let backend = crate::tests::ScriptedBackend::accept();
+    state.chat = std::sync::Arc::new(crate::providers::ChatBackend::Scripted(backend.clone()));
+    let retained = crate::providers::ChatTurn {
+        role: crate::providers::Role::Assistant,
+        text: "The command already ran.".to_owned(),
+        thinking: String::new(),
+        tools: Vec::new(),
+        activity: Vec::new(),
+        usage: None,
+        calls: vec![crate::providers::ChatToolCall {
+            id: "completed-call".to_owned(),
+            name: "list".to_owned(),
+            arguments: serde_json::json!({"path": "/workspace/project"}),
+            result: Some(crate::providers::ToolOutput {
+                label: "list".to_owned(),
+                output: "file.txt".to_owned(),
+                command: None,
+            }),
+        }],
+        continuation: Vec::new(),
+    };
+    crate::workflows::AttemptEvidenceContext::new(
+        state.workflow_evidence.clone(),
+        job.run_id,
+        attempt,
+        step.key.as_str(),
+    )
+    .turn(&retained)
+    .unwrap();
+    let checkpoint = crate::conversations::CheckpointId::generate().unwrap();
+    state
+        .workflow_runs
+        .mutate(&job.run_id, |run| {
+            run.launch_brief = "Continue the assigned phase.".to_owned();
+            run.pause_attempt(attempt, checkpoint, Vec::new(), 3)?;
+            run.resume_paused(attempt, checkpoint, 4)
+        })
+        .unwrap();
+    job.turns = vec![crate::providers::ChatTurn::user(
+        "Excluded conversation text".to_owned(),
+    )];
+    let sandbox = state.sandboxes.attempt_handle(job.run_id, attempt);
+    let directory = tempfile::tempdir().unwrap();
+    job.host_policy = DirectoryPolicy::from_grants(
+        vec![PolicyGrant {
+            alias: "project".to_owned(),
+            guest_path: GUEST_PROJECT.to_owned(),
+            host_path: directory.path().to_owned(),
+            access: AccessMode::ReadWrite,
+        }],
+        "project".to_owned(),
+    );
+    sandbox
+        .start_from_snapshot(
+            std::path::Path::new("snapshot"),
+            "sha256:deadbeef",
+            crate::sandbox::SandboxSpec {
+                mounts: vec![crate::sandbox::MountSpec {
+                    guest: GUEST_PROJECT.to_owned(),
+                    host: directory.path().to_owned(),
+                    read_only: true,
+                }],
+                workdir: GUEST_PROJECT.to_owned(),
+                network: crate::agents::NetworkAccess::None,
+            },
+        )
+        .await
+        .unwrap();
+    let crate::workflows::definition::StepAction::Agent(action) = &step.action else {
+        panic!("agent phase")
+    };
+    let outcome = super::run_agent_step(
+        &state,
+        &job,
+        action,
+        Some(&sandbox),
+        std::sync::Arc::new(drafts),
+    )
+    .await;
+    if let StepOutcome::Failed { error, .. } = &outcome {
+        panic!("resume failed: {error:?}");
+    }
+    assert!(matches!(outcome, StepOutcome::Completed));
+    let history = backend.last_history();
+    assert_eq!(
+        history
+            .iter()
+            .filter(|turn| turn.calls.iter().any(|call| call.id == "completed-call"))
+            .count(),
+        1
+    );
+    assert_eq!(history.last(), Some(&retained));
+    assert!(
+        !history
+            .iter()
+            .any(|turn| turn.text.contains("Excluded conversation text"))
+    );
+    sandbox.stop().await.unwrap();
+    sandbox.remove().await.unwrap();
+}
+
+#[tokio::test]
 async fn a_configured_phase_uses_its_pinned_provider_model() {
     let (mut state, mut job, step, attempt, _, _, drafts) = fixing_publication_fixture();
     state
@@ -1590,6 +1759,9 @@ fn completed_output_attempt(
         apply_transaction: None,
         commit_transaction: None,
         direct_changes: None,
+        continuation: None,
+        paused_drafts: Vec::new(),
+        paused_candidate: None,
     }
 }
 

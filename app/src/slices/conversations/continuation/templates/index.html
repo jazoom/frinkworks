@@ -1,0 +1,77 @@
+{% if let Some(pause) = continuation %}
+  <section
+    id="conversation-continuation"
+    class="space-y-4 p-5"
+    aria-labelledby="conversation-continuation-heading"
+  >
+    <div class="space-y-2">
+      <h3 id="conversation-continuation-heading" class="text-lg font-semibold">
+        Execution budget pause
+      </h3>
+      <p class="text-quiet text-sm">{{ pause.reason }}</p>
+      <p class="text-quiet text-sm">
+        Continue resumes from the last complete exchange. Queued messages stay
+        on hold. Host command and candidate approvals remain separate.
+      </p>
+    </div>
+    <dl class="grid gap-2 text-sm sm:grid-cols-[9rem_1fr]">
+      <dt class="text-quiet">Model requests</dt>
+      <dd>{{ pause.model_requests }}</dd>
+      <dt class="text-quiet">Tool dispatches</dt>
+      <dd>{{ pause.tool_dispatches }}</dd>
+      <dt class="text-quiet">Elapsed time</dt>
+      <dd>{{ pause.elapsed }}</dd>
+    </dl>
+    <form
+      data-graft
+      method="post"
+      action="/conversations/{{ saved.id }}/continue"
+    >
+      <input type="hidden" name="revision" value="{{ saved.revision }}" />
+      <input type="hidden" name="checkpoint" value="{{ pause.checkpoint }}" />
+      {% if pause.run != "" %}
+        <input type="hidden" name="run" value="{{ pause.run }}" />
+        <input type="hidden" name="attempt" value="{{ pause.attempt }}" />
+        <input type="hidden" name="step" value="{{ pause.step }}" />
+      {% endif %}
+      {% if pause.needs_run_consent %}
+        <details class="mb-3">
+          <summary class="min-h-11 cursor-pointer text-sm">
+            Pinned execution settings
+          </summary>
+          <pre
+            tabindex="0"
+            class="bg-base-200 max-h-80 overflow-auto p-3 text-xs break-words whitespace-pre-wrap"
+          >
+{{ pause.settings_summary }}</pre>
+        </details>
+        <label class="mb-3 flex items-start gap-3 text-sm">
+          <input
+            type="checkbox"
+            name="approval"
+            value="continue-run"
+            required
+            class="checkbox"
+          />
+          <span>I approve these pinned settings for this execution only.</span>
+        </label>
+      {% endif %}
+      <button
+        id="conversation-continue"
+        class="btn btn-primary w-full"
+        type="submit"
+      >
+        Continue
+      </button>
+    </form>
+    <form
+      data-graft
+      method="post"
+      action="/conversations/{{ saved.id }}/continue/end"
+    >
+      <input type="hidden" name="revision" value="{{ saved.revision }}" />
+      <input type="hidden" name="checkpoint" value="{{ pause.checkpoint }}" />
+      <button class="btn btn-ghost w-full" type="submit">End pause</button>
+    </form>
+  </section>
+{% endif %}

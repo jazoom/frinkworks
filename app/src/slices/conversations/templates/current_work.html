@@ -106,6 +106,7 @@
     </section>
   {% endif %}
   {% include "conversations/questions/templates/index.html" %}
+  {% include "conversations/continuation/templates/index.html" %}
   {% if let Some(gate) = saved.pending_gate %}
     {% include "conversations/templates/candidate.html" %}
   {% endif %}

@@ -27,6 +27,13 @@
       <dd>{{ run.name }}</dd>
       <dt class="text-quiet">State</dt>
       <dd>{{ run.state }}</dd>
+      {% if run.state == "Paused" %}
+        <dt class="text-quiet">Pause</dt>
+        <dd>
+          The model phase waits for Continue. Approval phases stay later in the
+          sequence.
+        </dd>
+      {% endif %}
       <dt class="text-quiet">Current phase</dt>
       <dd>{{ run.current_step }}</dd>
       {% if run.task_progress != "" %}
