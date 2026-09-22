@@ -180,6 +180,28 @@ pub(crate) struct WorkflowJob {
     pub(crate) turns: Vec<ChatTurn>,
     pub(crate) job: Arc<Job>,
     pub(crate) eligible_reply: Arc<std::sync::Mutex<String>>,
+    /// A direct shell command replaces the model work step for this run. The
+    /// driver captures the candidate through its normal file-attempt path.
+    pub(crate) command: Option<DirectCommandWork>,
+}
+
+/// One direct command bound to a workflow run. The command is not a model tool
+/// call and it is not a registered deterministic workflow operation.
+#[derive(Clone)]
+pub(crate) struct DirectCommandWork {
+    pub(crate) message: crate::conversations::MessageId,
+    pub(crate) command: String,
+    pub(crate) included: bool,
+    pub(crate) settlement: Arc<std::sync::Mutex<Option<DirectCommandSettlement>>>,
+}
+
+/// Process output also resides in the conversation entry before cleanup.
+/// Final settlement waits for the file decision without changing the process outcome.
+#[derive(Clone)]
+pub(crate) struct DirectCommandSettlement {
+    pub(crate) output: Option<crate::execution::CommandResult>,
+    pub(crate) status: crate::conversations::MessageStatus,
+    pub(crate) error: Option<String>,
 }
 
 impl WorkflowJob {
@@ -442,11 +464,17 @@ async fn drive_attempts(
         } else {
             None
         };
-        let connection = match phase_connection(&state, &job, &run, &step) {
-            Ok(connection) => connection,
-            Err(error) => {
-                settle_job(&state, &job, JobStatus::Failed, Some(&error));
-                return;
+        // A direct command needs no provider. Provider validation applies only
+        // to the ordinary model action.
+        let connection = if job.command.is_some() {
+            None
+        } else {
+            match phase_connection(&state, &job, &run, &step) {
+                Ok(connection) => connection,
+                Err(error) => {
+                    settle_job(&state, &job, JobStatus::Failed, Some(&error));
+                    return;
+                }
             }
         };
         set_active_connection(&job, connection);
@@ -1364,7 +1392,9 @@ async fn isolate_and_run(
             captured: None,
         };
     }
-    let outcome = if ordinary_file_agent(state, job) {
+    let outcome = if job.command.is_some() {
+        run_ordinary_command(state, job, &sandbox).await
+    } else if ordinary_file_agent(state, job) {
         run_ordinary_file_agent(state, job, Some(&sandbox)).await
     } else {
         dispatch_step(state, job, step, &sandbox, drafts.clone()).await
@@ -2200,6 +2230,142 @@ fn ordinary_file_agent(state: &AppState, job: &WorkflowJob) -> bool {
         .workflow_runs
         .get(&job.run_id)
         .is_some_and(|run| run.kind == crate::workflows::run::RunKind::QuickTask)
+}
+
+async fn run_ordinary_command(
+    state: &AppState,
+    job: &WorkflowJob,
+    sandbox: &std::sync::Arc<GuestSandbox>,
+) -> StepOutcome {
+    let Some(command) = job.command.as_ref() else {
+        return StepOutcome::Failed {
+            category: FailureCategory::Definition,
+            error: Some("A command step needs a direct command.".to_owned()),
+        };
+    };
+    if command
+        .settlement
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .is_some()
+    {
+        return StepOutcome::Failed {
+            category: FailureCategory::Operational,
+            error: Some("A direct command cannot run again in the same operation.".to_owned()),
+        };
+    }
+    if job.project_free_authority.is_some()
+        && let Err(error) = confirm_run_authority(state, job)
+    {
+        return StepOutcome::Failed {
+            category: FailureCategory::Authority,
+            error: Some(error),
+        };
+    }
+    let Some(run) = state.workflow_runs.get(&job.run_id) else {
+        return StepOutcome::Failed {
+            category: FailureCategory::Operational,
+            error: Some(OPERATIONAL_STORE_ERROR.to_owned()),
+        };
+    };
+    let Some(attempt_id) = run.active_attempt() else {
+        return StepOutcome::Failed {
+            category: FailureCategory::Operational,
+            error: Some(OPERATIONAL_STORE_ERROR.to_owned()),
+        };
+    };
+    let Some(attempt) = run.attempts.iter().find(|attempt| attempt.id == attempt_id) else {
+        return StepOutcome::Failed {
+            category: FailureCategory::Operational,
+            error: Some(OPERATIONAL_STORE_ERROR.to_owned()),
+        };
+    };
+    let workdir = attempt
+        .capabilities
+        .directories
+        .first()
+        .map(|directory| directory.guest_path.clone())
+        .unwrap_or_else(|| crate::execution::GUEST_WORKSPACE.to_owned());
+    let connection = job.active_connection();
+    let secret = match &connection.auth {
+        crate::providers::AuthMethod::ApiKey => Some(connection.api_key.expose().to_owned()),
+        crate::providers::AuthMethod::Plan => None,
+    };
+    let secret = secret.as_deref();
+    let visible_call = command.message.as_hex();
+    let key = crate::execution::OutputKey {
+        scope: crate::execution::OutputScope {
+            conversation: job.conversation_id,
+            run: Some(job.run_id),
+            attempt: Some(attempt_id),
+        },
+        job: job.job.id(),
+        tool_call: visible_call.clone(),
+        model_hidden: !command.included,
+    };
+    let result = crate::execution::command::capture_sandbox_command(
+        sandbox,
+        GuestExec::shell(&command.command).in_dir(workdir),
+        &job.job,
+        secret,
+        crate::tools::SANDBOX_COMMAND_TIMEOUT,
+        &visible_call,
+        Some((&state.outputs, &key)),
+    )
+    .await;
+    let (settlement, outcome) = match result {
+        Ok(result) => (
+            DirectCommandSettlement {
+                output: Some(result),
+                status: crate::conversations::MessageStatus::Complete,
+                error: None,
+            },
+            StepOutcome::Completed,
+        ),
+        Err(failure) => {
+            let status =
+                if failure.result.termination == crate::execution::CommandTermination::Cancelled {
+                    crate::conversations::MessageStatus::Interrupted
+                } else {
+                    crate::conversations::MessageStatus::Failed
+                };
+            let error = (status == crate::conversations::MessageStatus::Failed)
+                .then(|| failure.message.to_owned());
+            let outcome = match status {
+                crate::conversations::MessageStatus::Interrupted => StepOutcome::Cancelled,
+                _ => StepOutcome::Failed {
+                    category: FailureCategory::Tool,
+                    error: Some(failure.message.to_owned()),
+                },
+            };
+            (
+                DirectCommandSettlement {
+                    output: Some(failure.result),
+                    status,
+                    error,
+                },
+                outcome,
+            )
+        }
+    };
+    *command
+        .settlement
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(settlement.clone());
+    if let Some(output) = settlement.output.as_ref()
+        && job.conversation_id.is_none_or(|id| {
+            state
+                .conversations
+                .record_command_output(&id, job.job.id(), output.clone())
+                .is_err()
+        })
+    {
+        return StepOutcome::Failed {
+            category: FailureCategory::Operational,
+            error: Some(OPERATIONAL_STORE_ERROR.to_owned()),
+        };
+    }
+    outcome
 }
 
 fn append_preamble(preamble: &mut String, block: &str) {
@@ -4534,6 +4700,62 @@ fn settle_job(state: &AppState, workflow: &WorkflowJob, status: JobStatus, error
     settle_with_reply(state, workflow, status, error, &reply);
 }
 
+fn settle_command_job(
+    state: &AppState,
+    workflow: &WorkflowJob,
+    command: &DirectCommandWork,
+    job_status: JobStatus,
+    failure: Option<&str>,
+) {
+    let Some(conversation_id) = workflow.conversation_id else {
+        let _ = workflow.job.finish(JobStatus::Failed, None);
+        return;
+    };
+    let settlement = command
+        .settlement
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .take();
+    let (output, status, error) = match settlement {
+        Some(settlement) => (settlement.output, settlement.status, settlement.error),
+        None if job_status == JobStatus::Cancelled => {
+            (None, crate::conversations::MessageStatus::Interrupted, None)
+        }
+        None => (
+            None,
+            crate::conversations::MessageStatus::Failed,
+            Some(failure.unwrap_or("The command outcome is unavailable. Inspect the local execution evidence before further work.").to_owned()),
+        ),
+    };
+    if state
+        .conversations
+        .settle_command(
+            &conversation_id,
+            workflow.job.id(),
+            output,
+            status,
+            error.clone(),
+            None,
+            None,
+        )
+        .is_err()
+    {
+        workflow.job.finish(
+            JobStatus::Failed,
+            Some("Power Plant could not store the command outcome. Restart before you continue."),
+        );
+        return;
+    }
+    workflow
+        .job
+        .finish(job_status, failure.or(error.as_deref()));
+    let _ = state.sessions.finish_conversation_job(
+        &workflow.session_id,
+        conversation_id,
+        workflow.job.id(),
+    );
+}
+
 fn settle_with_reply(
     state: &AppState,
     workflow: &WorkflowJob,
@@ -4541,6 +4763,13 @@ fn settle_with_reply(
     error: Option<&str>,
     reply: &crate::providers::AssistantReply,
 ) {
+    // A direct command owns a command entry, not an assistant message. It also
+    // starts no title request. The outcome is taken from the command itself so
+    // a gate decision cannot rewrite it.
+    if let Some(command) = workflow.command.as_ref() {
+        settle_command_job(state, workflow, command, status, error);
+        return;
+    }
     let connection = workflow.active_connection();
     let secret = match &connection.auth {
         crate::providers::AuthMethod::ApiKey => Some(connection.api_key.expose()),

@@ -256,13 +256,15 @@ A composer message that starts with `!` runs a shell command directly. A message
 
 The first non-whitespace character decides the syntax. Classification runs on the original typed text before resource expansion. A backslash before `!` writes literal text, for example `\!note`. Expansion output never runs command classification again.
 
-A direct command needs host selection, the Run capability and valid consent. It needs no provider connection. The provider page offers **Continue without a provider** for a new session. When the approval policy is Ask each time, the command waits for the same command approval as a model tool command. Typed syntax alone is not approval. The application rejects an empty command and an attached image. A rejected submission leaves the draft intact.
+A direct command needs the selected location, the Run capability and valid consent. A host command needs host selection. A sandbox command needs a ready environment and directory approval. It needs no provider connection. The provider page offers **Continue without a provider** for a new session. When the approval policy is Ask each time, a host command waits for the same command approval as a model tool command. Typed syntax alone is not approval. The application rejects an empty command and an attached image. A rejected submission leaves the draft intact.
 
-The application persists the pending command entry before it starts a process. The entry records the context inclusion, the command text, the actual directory, the output reference and the termination. A restart marks an unsettled command as interrupted. The application never replays it.
+The application persists the pending command entry before it starts a process. The entry records the context inclusion, the command text, the actual directory, the output reference and the termination. A restart marks an unsettled command as interrupted. Captured process output survives a restart before a review decision. The application never replays the command.
 
 An included `!` entry becomes delimited command evidence in the model projection. An excluded `!!` entry is absent from ordinary context, compaction, titles, workflow context and generated handoff prompts. The `read_output` tool refuses an excluded record even with the exact reference. Local output views remain available.
 
 A command with a named host directory captures a baseline manifest before the process and a final manifest after it. The two manifests stay in the artefact repository. A failed final capture reports the limitation and keeps the captured output. The conversation blocks further execution when the final file snapshot is absent.
+
+A sandbox command uses the selected ready environment and the existing file-attempt driver. Preparation, candidate materialisation, final snapshots, review and cleanup are shared with ordinary sandbox work. The command runs inside the guest, so preparation failure starts nothing on the host. A **Review before apply** directory keeps the guest writes in an isolated copy and opens the same exact-candidate decision as an ordinary sandbox change. A **Direct write** directory exposes the authorised host directory to guest writes immediately. An uncertain outcome or an incomplete cleanup blocks further work. Cancellation never reverses a direct write. Context exclusion remains separate from local approval and recovery evidence.
 
 Context exclusion does not restrict filesystem access through independently authorised tools.
 

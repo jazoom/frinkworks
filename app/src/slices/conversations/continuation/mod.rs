@@ -710,6 +710,7 @@ async fn resume_workflow_job(
         turns,
         job,
         eligible_reply: std::sync::Arc::new(std::sync::Mutex::new(String::new())),
+        command: None,
     };
     if run.kind == crate::workflows::run::RunKind::QuickTask {
         crate::workflows::drive_ordinary_file_run(state, workflow, execution).await;

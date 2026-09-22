@@ -324,6 +324,7 @@ async fn run_file_change(state: AppState, mut work: OrdinaryRun) {
         turns: work.turns.clone(),
         job: work.job.clone(),
         eligible_reply: std::sync::Arc::new(std::sync::Mutex::new(String::new())),
+        command: None,
     };
     crate::workflows::drive_ordinary_file_run(state, job, work.execution).await;
 }

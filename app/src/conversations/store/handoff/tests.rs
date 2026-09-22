@@ -63,6 +63,65 @@ fn fixture() -> (
 }
 
 #[test]
+fn command_review_recovery_preserves_output_and_exact_candidate_without_replay() {
+    let (mut state, root, _source, owner, _run, _files) = fixture();
+    let job = JobId::generate().unwrap();
+    let owner = state
+        .conversations
+        .begin_command(
+            &owner.id,
+            owner.revision,
+            None,
+            job,
+            "printf prepared > file.txt".to_owned(),
+            false,
+            "/workspace".to_owned(),
+        )
+        .unwrap();
+    let message = owner.messages.last().unwrap().id;
+    let output = crate::execution::CommandResult::new(
+        Vec::new(),
+        crate::execution::CommandTermination::Exited(0),
+    );
+    state
+        .conversations
+        .record_command_output(&owner.id, job, output.clone())
+        .unwrap();
+    let (mut run, files) = crate::workflows::handoff::tests::prepared_run(&state, &owner);
+    run.command_message = Some(message);
+    state.workflow_runs.create(run.clone()).unwrap();
+    state.conversations =
+        Arc::new(ConversationStore::open(root.path().join("conversations")).unwrap());
+    state.workflow_runs = Arc::new(WorkflowRunStore::open(root.path().join("runs")).unwrap());
+    state.conversations.interrupt_requests().unwrap();
+    let recovered = state.workflow_runs.get(&run.id).unwrap();
+    assert_eq!(recovered.command_message, Some(message));
+    let owner = state.conversations.get(&owner.id).unwrap();
+    let new_job = JobId::generate().unwrap();
+    let restored = state
+        .conversations
+        .restore_prepared(&state.workflow_runs, &recovered, &owner, new_job)
+        .unwrap();
+    assert_eq!(restored.messages.len(), 1);
+    assert_eq!(restored.messages[0].id, message);
+    assert_eq!(restored.messages[0].request, Some(new_job));
+    assert_eq!(
+        restored.messages[0]
+            .command
+            .as_ref()
+            .unwrap()
+            .output
+            .as_ref(),
+        Some(&output)
+    );
+    assert_eq!(state.workflow_runs.get(&run.id).unwrap().gates, run.gates);
+    assert_eq!(
+        std::fs::read_to_string(files.path().join("file.txt")).unwrap(),
+        "original\n"
+    );
+}
+
+#[test]
 fn committed_transfer_recovers_after_catalogue_failure_without_duplicate_ownership_or_file_writes()
 {
     let (state, root, source, destination, run, files) = fixture();

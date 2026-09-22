@@ -1662,95 +1662,29 @@ async fn capture(
         return Err(command_not_dispatched("That tool is not available."));
     };
     let visible_call_id = redact(call_id, context.secret);
-    let mut capture = match (context.outputs, &context.output_scope) {
-        (Some(store), Some(scope)) => crate::execution::command::CommandCapture::with_output(
-            context.secret,
-            store,
-            &crate::execution::OutputKey {
-                scope: scope.clone(),
-                job: context.job.id(),
-                tool_call: visible_call_id.clone(),
-                model_hidden: false,
-            },
-        )
-        .map_err(|error| command_not_dispatched(error.message()))?,
-        _ => crate::execution::command::CommandCapture::with_secret(context.secret),
+    let key = match (context.outputs, &context.output_scope) {
+        (Some(_), Some(scope)) => Some(crate::execution::OutputKey {
+            scope: scope.clone(),
+            job: context.job.id(),
+            tool_call: visible_call_id.clone(),
+            model_hidden: false,
+        }),
+        _ => None,
     };
-    let mut session = match sandbox.exec_cmd(request).await {
-        Ok(session) => session,
-        Err(error) => return Err(command_not_dispatched(error.message())),
+    let retained = match (context.outputs, key.as_ref()) {
+        (Some(store), Some(key)) => Some((store, key)),
+        _ => None,
     };
-    let deadline = tokio::time::Instant::now() + SANDBOX_COMMAND_TIMEOUT;
-    let mut progress = crate::execution::command::CommandProgress::new();
-    let mut progress_tick = tokio::time::interval(Duration::from_millis(100));
-    progress_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let mut exit = None;
-    loop {
-        let event = tokio::select! {
-            biased;
-            _ = context.job.cancelled() => {
-                session.kill().await;
-                session.close().await;
-                return Err(command_failure(capture, CommandTermination::Cancelled, "Stopped."));
-            }
-            _ = tokio::time::sleep_until(deadline) => {
-                session.kill().await;
-                session.close().await;
-                return Err(command_failure(
-                    capture,
-                    CommandTermination::TimedOut,
-                    "The command exceeded the time limit.",
-                ));
-            }
-            _ = progress_tick.tick() => {
-                progress.publish(context.job, &visible_call_id);
-                continue;
-            }
-            event = session.recv() => event,
-        };
-        let Some(event) = event else {
-            break;
-        };
-        match event {
-            crate::sandbox::CommandEvent::Output { stream, bytes } => {
-                let push = capture.push(stream, &bytes);
-                for chunk in push.safe {
-                    progress.push(chunk.stream, chunk.text);
-                }
-                if push.overflow {
-                    session.kill().await;
-                    session.close().await;
-                    return Err(command_failure(
-                        capture,
-                        CommandTermination::ResourceLimit,
-                        "The command exceeded the output resource limit.",
-                    ));
-                }
-            }
-            crate::sandbox::CommandEvent::Exited(code) => {
-                exit = Some(code);
-                break;
-            }
-            crate::sandbox::CommandEvent::Failed => {
-                session.kill().await;
-                session.close().await;
-                return Err(command_failure(
-                    capture,
-                    CommandTermination::Unknown,
-                    "Power Plant could not run the command. Try again.",
-                ));
-            }
-        }
-    }
-    if exit.is_none() {
-        session.kill().await;
-    }
-    session.close().await;
-    let termination = match exit {
-        Some(code) => CommandTermination::Exited(code),
-        None => CommandTermination::Unknown,
-    };
-    Ok(capture.into_result(termination))
+    crate::execution::command::capture_sandbox_command(
+        sandbox,
+        request,
+        context.job,
+        context.secret,
+        SANDBOX_COMMAND_TIMEOUT,
+        &visible_call_id,
+        retained,
+    )
+    .await
 }
 
 async fn capture_stdout_bytes(
@@ -1873,14 +1807,6 @@ fn command_not_dispatched(message: &'static str) -> CommandFailure {
         CommandResult::new(Vec::new(), CommandTermination::NotDispatched),
         message,
     )
-}
-
-fn command_failure(
-    capture: crate::execution::command::CommandCapture,
-    termination: CommandTermination,
-    message: &'static str,
-) -> CommandFailure {
-    CommandFailure::new(capture.into_result(termination), message)
 }
 
 #[cfg(test)]

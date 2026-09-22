@@ -608,6 +608,7 @@ fn awaiting_gate(kind: RunKind) -> GateFixture {
         eligible_reply: std::sync::Arc::new(std::sync::Mutex::new(
             "Here is the change.".to_owned(),
         )),
+        command: None,
     });
     assert!(inserted);
     GateFixture {
@@ -892,6 +893,7 @@ fn conversation_awaiting_gate() -> GateFixture {
         eligible_reply: std::sync::Arc::new(std::sync::Mutex::new(
             "Here is the change.".to_owned(),
         )),
+        command: None,
     }));
     GateFixture {
         state,

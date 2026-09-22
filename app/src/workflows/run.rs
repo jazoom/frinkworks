@@ -34,6 +34,7 @@ pub(crate) struct WorkflowRun {
     pub(crate) ownership_history: Vec<ConversationId>,
     pub(crate) pending_handoff: Option<super::handoff::PendingHandoff>,
     pub(crate) launch_brief: String,
+    pub(crate) command_message: Option<crate::conversations::MessageId>,
 
     pub(crate) kind: RunKind,
     pub(crate) agent_id: Option<AgentId>,
@@ -289,6 +290,7 @@ pub(super) struct RunFile {
     ownership_history: Vec<String>,
     pending_handoff: Option<super::handoff::PendingHandoff>,
     launch_brief: String,
+    command_message: Option<String>,
 
     kind: String,
     #[serde(deserialize_with = "crate::storage::required_option")]
@@ -714,6 +716,7 @@ impl WorkflowRun {
             ownership_history: Vec::new(),
             pending_handoff: None,
             launch_brief: String::new(),
+            command_message: None,
 
             kind,
             agent_id,
@@ -803,6 +806,7 @@ impl WorkflowRun {
             ownership_history: Vec::new(),
             pending_handoff: None,
             launch_brief: String::new(),
+            command_message: None,
 
             kind: RunKind::QuickTask,
             agent_id: None,
@@ -2044,6 +2048,7 @@ impl WorkflowRun {
                 .collect(),
             pending_handoff: self.pending_handoff.clone(),
             launch_brief: self.launch_brief.clone(),
+            command_message: self.command_message.map(|id| id.as_hex()),
 
             kind: self.kind.as_str().to_owned(),
             agent_id: self.agent_id.map(|id| id.as_hex()),
@@ -2128,6 +2133,11 @@ impl WorkflowRun {
                 .collect::<Result<Vec<_>, _>>()?,
             pending_handoff: file.pending_handoff,
             launch_brief: file.launch_brief,
+            command_message: file
+                .command_message
+                .as_deref()
+                .map(|id| crate::conversations::MessageId::parse(id).ok_or(RunRecordError::Corrupt))
+                .transpose()?,
             kind,
             agent_id,
             phase_models,

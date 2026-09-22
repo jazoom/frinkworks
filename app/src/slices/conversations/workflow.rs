@@ -553,6 +553,7 @@ pub(super) async fn launch(
                 turns: Vec::new(),
                 job: job.clone(),
                 eligible_reply: std::sync::Arc::new(std::sync::Mutex::new(String::new())),
+                command: None,
             },
             None,
             execution,

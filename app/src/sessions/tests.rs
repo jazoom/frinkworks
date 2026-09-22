@@ -58,6 +58,7 @@ fn state_with_gate(name: &str) -> (AppState, ValidatedToken, SessionId, RunId) {
         turns: Vec::new(),
         job: Job::new(JobId::generate().expect("job"), run_id, 0),
         eligible_reply: Arc::new(std::sync::Mutex::new(String::new())),
+        command: None,
     };
     assert!(state.gate_continuations.insert(continuation));
     (state, raw, session, run_id)

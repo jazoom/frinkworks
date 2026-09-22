@@ -466,6 +466,11 @@ pub(super) struct HostCommandView {
     pub(super) approval_policy: String,
 }
 
+pub(super) struct PendingCommandView {
+    pub(super) location: String,
+    pub(super) cleanup: bool,
+}
+
 pub(super) struct ExecutionSwitchView {
     pub(super) requested_location: String,
     pub(super) requested_host_approval: String,
@@ -585,6 +590,9 @@ pub(super) struct ConversationDetailView {
     pub(super) host_pending_approval: bool,
     pub(super) host_consent_request: String,
     pub(super) pending_host_command: Option<HostCommandView>,
+    /// A direct command that is still running. It reports the selected
+    /// location and any unfinished sandbox cleanup.
+    pub(super) pending_command: Option<PendingCommandView>,
     pub(super) pending_question: Option<super::questions::QuestionView>,
     pub(super) continuation: Option<super::continuation::ContinuationView>,
     pub(super) observe_active: bool,
@@ -828,6 +836,7 @@ impl ConversationDetailView {
             host_pending_approval,
             host_consent_request,
             pending_host_command: None,
+            pending_command: None,
             pending_question: None,
             continuation: None,
             observe_active: false,
@@ -883,6 +892,7 @@ impl ConversationDetailView {
         self.saved().is_some_and(|saved| {
             self.job_active
                 || self.pending_host_command.is_some()
+                || self.pending_command.is_some()
                 || self.pending_question.is_some()
                 || self.continuation.is_some()
                 || saved.pending_gate.is_some()
@@ -1312,6 +1322,7 @@ impl ConversationDetailView {
             host_pending_approval: false,
             host_consent_request: String::new(),
             pending_host_command: None,
+            pending_command: None,
             pending_question: None,
             continuation: record
                 .continuation
@@ -1463,6 +1474,11 @@ impl ConversationDetailView {
             },
             approval_policy: approval_policy.to_owned(),
         });
+        self
+    }
+
+    pub(super) fn with_pending_command(mut self, command: Option<PendingCommandView>) -> Self {
+        self.pending_command = command;
         self
     }
 

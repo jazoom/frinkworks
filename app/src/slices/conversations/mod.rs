@@ -1614,6 +1614,25 @@ pub(super) async fn preflight_execution(
             "A direct command has no final file snapshot. Its effects remain uncertain. Use a separate conversation after local recovery.",
         ));
     }
+    if conversation
+        .and_then(|id| state.conversations.get(&id))
+        .is_some_and(|record| {
+            record.messages.iter().any(|message| {
+                message.command.as_ref().is_some_and(|entry| {
+                    (message.status == crate::conversations::MessageStatus::Interrupted
+                        && entry.output.is_none())
+                        || entry.output.as_ref().is_some_and(|output| {
+                            output.termination == crate::execution::CommandTermination::Unknown
+                        })
+                })
+            })
+        })
+    {
+        return Err(StartMessageError::User(
+            PatchStatus::Conflict,
+            "A command outcome remains unknown. Inspect the local execution evidence before further work.",
+        ));
+    }
     if conversation.is_some_and(|id| has_pending_review(state, id)) {
         return Err(StartMessageError::User(
             PatchStatus::Conflict,
@@ -2861,6 +2880,7 @@ fn detail_view_with_transcript(
             page::pending_code_gate(&run, &state.workflow_artefacts, destination)
         });
     let (source_candidate_review, linked_candidate_reviews) = conversation_links(state, record);
+    let pending_command = pending_command(state, record);
     let workflow_progress = state
         .workflow_runs
         .for_conversation(&record.id)
@@ -2907,9 +2927,44 @@ fn detail_view_with_transcript(
             })
             .unwrap_or("Ask each time"),
     )
+    .with_pending_command(pending_command)
     .with_workflow_progress(workflow_progress)
     .with_direct_results(state, record.id)
     .with_prepared_recovery(state, session, record)
+}
+
+fn pending_command(
+    state: &AppState,
+    record: &ConversationRecord,
+) -> Option<page::PendingCommandView> {
+    let pending = record.messages.iter().any(|message| {
+        message.role == crate::conversations::MessageRole::Command
+            && message.status == crate::conversations::MessageStatus::Pending
+    });
+    let cleanup = state
+        .workflow_runs
+        .for_conversation(&record.id)
+        .iter()
+        .any(|run| {
+            run.command_message.is_some()
+                && run.attempts.iter().any(|attempt| {
+                    matches!(
+                        attempt.cleanup,
+                        crate::workflows::run::AttemptCleanupRecord::Orphaned { .. }
+                    )
+                })
+        });
+    if !pending && !cleanup {
+        return None;
+    }
+    let location = record.model.as_ref().map(|model| {
+        match model.settings.location {
+            crate::execution::ToolLocation::Sandbox => "Sandbox",
+            crate::execution::ToolLocation::Host => "Host",
+        }
+        .to_owned()
+    })?;
+    Some(page::PendingCommandView { location, cleanup })
 }
 
 fn conversation_links(

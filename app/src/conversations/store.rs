@@ -1555,6 +1555,31 @@ impl ConversationStore {
         .map(|_| ())
     }
 
+    /// Preserve process evidence before cleanup or a review decision. The job
+    /// remains active until the file-attempt driver releases ownership.
+    pub(crate) fn record_command_output(
+        &self,
+        id: &ConversationId,
+        request: JobId,
+        output: crate::execution::CommandResult,
+    ) -> Result<(), ConversationError> {
+        if !super::history::valid_command(Some(&output)) {
+            return Err(ConversationError::Message);
+        }
+        self.update(id, 0, false, |current| {
+            if current.active_job != Some(request) {
+                return Err(ConversationError::Conflict);
+            }
+            let entry = active_assistant(current, request)?
+                .command
+                .as_mut()
+                .ok_or(ConversationError::Conflict)?;
+            entry.output = Some(output);
+            Ok(())
+        })
+        .map(|_| ())
+    }
+
     /// Settle one direct command entry. A failed write leaves the pending
     /// entry intact, so recovery never replays the command.
     #[allow(clippy::too_many_arguments)]

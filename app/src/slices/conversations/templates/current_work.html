@@ -150,6 +150,30 @@
       </div>
     </section>
   {% endif %}
+  {% if let Some(command) = pending_command %}
+    <section
+      id="conversation-pending-command"
+      class="space-y-2 p-5"
+      aria-labelledby="conversation-pending-command-heading"
+    >
+      <h3
+        id="conversation-pending-command-heading"
+        class="text-lg font-semibold"
+      >
+        Direct command
+      </h3>
+      <p class="text-quiet text-sm">
+        This command runs in the selected location: {{ command.location }}. It
+        is not a model request.
+      </p>
+      {% if command.cleanup %}
+        <p class="text-sm">
+          Sandbox cleanup is unfinished. This operation retains its reservations
+          until recovery finishes.
+        </p>
+      {% endif %}
+    </section>
+  {% endif %}
   {% include "conversations/compaction/templates/index.html" %}
   {% include "conversations/questions/templates/index.html" %}
   {% include "conversations/continuation/templates/index.html" %}

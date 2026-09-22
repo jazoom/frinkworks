@@ -85,6 +85,7 @@ fn run_for(
         included,
         directory,
         secret: None,
+        execution: state.workflow_execution.acquire().expect("execution guard"),
     }
 }
 
@@ -344,5 +345,155 @@ async fn restart_marks_a_pending_command_interrupted_without_replay() {
             .command
             .as_ref()
             .is_some_and(|command| !command.included && command.output.is_none())
+    );
+}
+
+#[tokio::test]
+async fn sandbox_command_uses_guest_capture_without_a_host_write() {
+    use crate::environments::{EnvironmentDraft, SnapshotAvailability};
+
+    let state = crate::tests::test_state(crate::config::RuntimeConfig::development());
+    let (environment, preparation) = state
+        .environments
+        .create(EnvironmentDraft {
+            name: "Alpine Git".to_owned(),
+            oci_image: "alpine/git".to_owned(),
+            setup_script: String::new(),
+        })
+        .expect("environment");
+    state.environments.claim_oldest_queued().expect("claim");
+    let snapshot = crate::tests::sample_snapshot(preparation.id);
+    state.environment_snapshots.mark(
+        snapshot.artifact_key.clone(),
+        SnapshotAvailability::Available,
+    );
+    state
+        .environments
+        .finish_ready(&preparation.id, snapshot, preparation.log)
+        .expect("ready");
+    let token = crate::sessions::generate_session_token().expect("session token");
+    let session = token.id();
+    state.sessions.insert(session);
+    let directory = tempfile::tempdir().expect("directory");
+    std::fs::write(directory.path().join("note.txt"), "before\n").expect("note");
+    let mut grant = DirectoryGrant::from_selected(directory.path(), &[]).expect("grant");
+    grant.access = crate::execution::DirectoryAccess::ReviewBeforeApply;
+    let settings = ExecutionSettings::new(
+        ModelSelection::new(ProviderKind::Deepseek, "deepseek-chat".to_owned(), None)
+            .expect("selection"),
+        String::new(),
+        vec![ToolId::Run],
+        environment.id,
+    )
+    .expect("settings")
+    .with_location(ToolLocation::Sandbox)
+    .with_directories(vec![grant])
+    .expect("directories");
+    let record = state
+        .conversations
+        .create_saved(
+            ConversationId::generate().expect("id"),
+            Some("Command".to_owned()),
+            Some(model(settings.clone())),
+            Vec::new(),
+        )
+        .expect("create");
+    let job = state
+        .sessions
+        .begin_conversation_job(&session, record.id)
+        .expect("job");
+    let command = "printf after > note.txt".to_owned();
+    let started = state
+        .conversations
+        .begin_command(
+            &record.id,
+            record.revision,
+            Some(model(settings)),
+            job.id(),
+            command.clone(),
+            true,
+            "/workspace".to_owned(),
+        )
+        .expect("begin command");
+    let message = started.messages.last().expect("entry").id;
+    super::run(
+        state.clone(),
+        run_for(
+            &state,
+            session,
+            started,
+            job,
+            message,
+            command,
+            true,
+            std::path::PathBuf::from("/workspace"),
+        ),
+    )
+    .await;
+    let run = state
+        .workflow_runs
+        .all_summaries()
+        .into_iter()
+        .find_map(|summary| state.workflow_runs.get(&summary.id))
+        .expect("run");
+    // The scripted guest makes no change, so the run completes without a gate.
+    assert_eq!(run.attempts.len(), 1);
+    assert_eq!(
+        std::fs::read_to_string(directory.path().join("note.txt")).expect("note"),
+        "before\n"
+    );
+    let settled = state.conversations.get(&record.id).expect("conversation");
+    let entry = settled.messages.last().expect("entry");
+    assert_eq!(entry.role, MessageRole::Command);
+    assert_eq!(entry.status, MessageStatus::Complete);
+    let output = entry
+        .command
+        .as_ref()
+        .and_then(|command| command.output.as_ref())
+        .expect("command output");
+    assert!(output.combined().contains("printf after > note.txt"));
+    assert!(settled.active_job.is_none());
+    assert!(!state.conversation_runtime.unsettled(record.id));
+}
+
+#[tokio::test]
+async fn sandbox_command_rejects_a_revoked_run_capability() {
+    let (state, session) = state_and_session();
+    let settings = ExecutionSettings::new(
+        ModelSelection::new(ProviderKind::Deepseek, "deepseek-chat".to_owned(), None)
+            .expect("selection"),
+        String::new(),
+        Vec::new(),
+        crate::tests::test_environment_id(),
+    )
+    .expect("settings")
+    .with_location(ToolLocation::Sandbox);
+    let record = state
+        .conversations
+        .create_saved(
+            ConversationId::generate().expect("id"),
+            Some("Command".to_owned()),
+            Some(model(settings)),
+            Vec::new(),
+        )
+        .expect("create");
+    let job = state
+        .sessions
+        .begin_conversation_job(&session, record.id)
+        .expect("job");
+    let run = run_for(
+        &state,
+        session,
+        record,
+        job,
+        crate::conversations::MessageId::generate().expect("message"),
+        "echo hi".to_owned(),
+        true,
+        std::path::PathBuf::from("/workspace"),
+    );
+    let settings = run.record.model.as_ref().expect("model").settings.clone();
+    assert_eq!(
+        super::validate_sandbox(&state, &run, &settings),
+        Err("The Run capability is not enabled for this conversation.".to_owned())
     );
 }

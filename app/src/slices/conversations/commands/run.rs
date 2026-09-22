@@ -50,21 +50,33 @@ pub(in crate::slices::conversations) fn command_directory(
     model: &ConversationModelConfiguration,
 ) -> Result<(PathBuf, String), StartMessageError> {
     let settings = &model.settings;
-    if settings.location != ToolLocation::Host {
+    if !settings.tools.contains(&ToolId::Run) {
         return Err(StartMessageError::User(
             PatchStatus::UnprocessableEntity,
-            "Direct commands need host selection. Choose Host in Settings and approve access.",
+            "Enable the Run capability before a direct command.",
         ));
     }
-    if !settings.host_tools() || !settings.tools.contains(&ToolId::Run) {
-        return Err(StartMessageError::User(
-            PatchStatus::UnprocessableEntity,
-            "Enable host tools and the Run capability before a direct command.",
-        ));
+    match settings.location {
+        ToolLocation::Host => {
+            if !settings.host_tools() {
+                return Err(StartMessageError::User(
+                    PatchStatus::UnprocessableEntity,
+                    "Enable host tools before a direct command.",
+                ));
+            }
+            let directory = crate::execution::command_directory(&settings.directories);
+            let text = directory.to_string_lossy().into_owned();
+            Ok((directory, text))
+        }
+        ToolLocation::Sandbox => {
+            let alias = settings
+                .directories
+                .first()
+                .map(|grant| grant.guest_path())
+                .unwrap_or_else(|| crate::execution::GUEST_WORKSPACE.to_owned());
+            Ok((PathBuf::from(alias.clone()), alias))
+        }
     }
-    let directory = crate::execution::command_directory(&settings.directories);
-    let text = directory.to_string_lossy().into_owned();
-    Ok((directory, text))
 }
 
 /// Start one direct command on an existing conversation. The pending entry is
@@ -155,7 +167,6 @@ pub(crate) async fn start_saved(
     let result = started.clone();
     let state = state.clone();
     spawn_conversation_work(state.clone(), session, started.id, async move {
-        let _execution = execution;
         crate::execution::conversation::command::run(
             state.clone(),
             crate::execution::conversation::command::DirectCommandRun {
@@ -167,6 +178,7 @@ pub(crate) async fn start_saved(
                 included: !direct.excluded,
                 directory,
                 secret,
+                execution,
             },
         )
         .await;

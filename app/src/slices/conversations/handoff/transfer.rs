@@ -88,8 +88,10 @@ pub(in crate::slices::conversations) fn validate_pinned(
     run: &WorkflowRun,
 ) -> Result<(), &'static str> {
     for phase in run.model_phases() {
-        crate::workflows::validate_phase_selection(state, &phase.selection)
-            .map_err(|_| "Connect each pinned provider before continuation.")?;
+        if run.command_message.is_none() {
+            crate::workflows::validate_phase_selection(state, &phase.selection)
+                .map_err(|_| "Connect each pinned provider before continuation.")?;
+        }
         if let Some(settings) = &phase.settings {
             crate::execution::ProjectFreeAuthority::from_settings(1, settings).map_err(|_| "A pinned directory changed identity. The prepared changes remain with their current owner.")?;
         }

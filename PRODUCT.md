@@ -78,6 +78,8 @@ Sandbox tools use authorised mounts. Host tools run as the Power Plant process u
 
 Both modes offer the selected file and command tools. Host file changes take effect immediately. Host command approval applies only to Run.
 
+A direct `!command` or `!!command` runs in the selected location. It needs no provider connection. A host command writes directly and keeps baseline and final snapshots as evidence. A sandbox command uses a ready environment. A **Review before apply** directory opens the exact-candidate decision before any host write. A **Direct write** directory exposes the authorised host directory to guest writes immediately. A failed preparation starts nothing on the host. Cancellation never reverses a direct write.
+
 Ask each time is the default host command policy. Run without approval requires fresh consent for the destination settings.
 
 Command approval covers the submitted command. Power Plant does not inspect script internals. The hosted model receives command output.

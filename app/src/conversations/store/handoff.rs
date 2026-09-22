@@ -151,7 +151,10 @@ impl ConversationStore {
         let message = updated
             .messages
             .last_mut()
-            .filter(|message| message.role == MessageRole::Assistant)
+            .filter(|message| match expected.command_message {
+                Some(id) => message.id == id && message.role == MessageRole::Command,
+                None => message.role == MessageRole::Assistant,
+            })
             .ok_or(ConversationError::Conflict)?;
         message.status = MessageStatus::Pending;
         message.error = None;

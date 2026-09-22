@@ -633,6 +633,7 @@ fn sensitive_dispatch_requires_live_consent_and_the_original_directory() {
         turns: Vec::new(),
         job: crate::sessions::Job::new(crate::sessions::JobId::generate().unwrap(), run_id, 0),
         eligible_reply: std::sync::Arc::new(std::sync::Mutex::new(String::new())),
+        command: None,
     };
     assert!(super::confirm_run_authority(&state, &job).is_err());
     let request = state
@@ -1049,6 +1050,7 @@ fn fixing_publication_fixture() -> (
         turns: Vec::new(),
         job: crate::sessions::Job::new(crate::sessions::JobId::generate().expect("job"), run_id, 0),
         eligible_reply: std::sync::Arc::new(std::sync::Mutex::new(String::new())),
+        command: None,
     };
     (
         state,
@@ -1415,6 +1417,7 @@ fn interruption_failure_restores_current_and_unprocessed_jobs() {
                 0,
             ),
             eligible_reply: std::sync::Arc::new(std::sync::Mutex::new(String::new())),
+            command: None,
         };
         assert!(state.gate_continuations.insert(job));
     }
@@ -2064,6 +2067,7 @@ fn gate_ready_fixture(
         turns: begun.turns,
         job: begun.job,
         eligible_reply: std::sync::Arc::new(std::sync::Mutex::new("No files changed.".to_owned())),
+        command: None,
     };
     (state, job, session_id, key)
 }
@@ -2233,4 +2237,213 @@ async fn execute_run_opens_a_gate_for_an_unchanged_configured_candidate() {
         snapshot.job.map(|job| job.status),
         Some(JobStatus::AwaitingDecision)
     );
+}
+
+fn command_job_fixture() -> (
+    crate::state::AppState,
+    crate::conversations::ConversationId,
+    crate::sessions::SessionId,
+    std::sync::Arc<crate::sessions::Job>,
+    String,
+) {
+    let state = crate::tests::test_state(crate::config::RuntimeConfig::development());
+    let token = crate::sessions::generate_session_token().expect("session token");
+    let session = token.id();
+    state.sessions.insert(session);
+    let record = state
+        .conversations
+        .create_saved(
+            crate::conversations::ConversationId::generate().expect("id"),
+            Some("Command".to_owned()),
+            None,
+            Vec::new(),
+        )
+        .expect("create");
+    let job = state
+        .sessions
+        .begin_conversation_job(&session, record.id)
+        .expect("job");
+    let started = state
+        .conversations
+        .begin_command(
+            &record.id,
+            record.revision,
+            None,
+            job.id(),
+            "printf after".to_owned(),
+            true,
+            "/workspace".to_owned(),
+        )
+        .expect("begin command");
+    (
+        state,
+        record.id,
+        session,
+        job,
+        started.messages.last().expect("entry").id.as_hex(),
+    )
+}
+
+fn command_job(
+    conversation: crate::conversations::ConversationId,
+    session: crate::sessions::SessionId,
+    job: std::sync::Arc<crate::sessions::Job>,
+    message: &str,
+    settlement: Option<super::DirectCommandSettlement>,
+) -> super::WorkflowJob {
+    super::WorkflowJob {
+        run_id: crate::workflows::RunId::generate().expect("run"),
+        session_id: session,
+        agent_id: None,
+        agent_revision: 1,
+        conversation_id: Some(conversation),
+        authority: None,
+        project_free_authority: None,
+        grant_alias: String::new(),
+        connection: crate::providers::ProviderConnection::with_key(
+            crate::providers::ProviderKind::Xai,
+            "key",
+            "model",
+        ),
+        phase_providers: Vec::new(),
+        active_connection: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        host_policy: DirectoryPolicy::from_grants(Vec::new(), String::new()),
+        turns: Vec::new(),
+        job,
+        eligible_reply: std::sync::Arc::new(std::sync::Mutex::new(String::new())),
+        command: Some(super::DirectCommandWork {
+            message: crate::conversations::MessageId::parse(message).expect("message"),
+            command: "printf after".to_owned(),
+            included: true,
+            settlement: std::sync::Arc::new(std::sync::Mutex::new(settlement)),
+        }),
+    }
+}
+
+#[tokio::test]
+async fn command_job_settles_its_command_entry_without_an_assistant_message() {
+    let (state, conversation, session, job, message) = command_job_fixture();
+    let settlement = super::DirectCommandSettlement {
+        output: Some(crate::execution::CommandResult::new(
+            vec![crate::execution::command::CommandChunk {
+                stream: crate::execution::command::CommandStream::Stdout,
+                text: "after\n".to_owned(),
+            }],
+            crate::execution::CommandTermination::Exited(0),
+        )),
+        status: crate::conversations::MessageStatus::Complete,
+        error: None,
+    };
+    let workflow = command_job(conversation, session, job, &message, Some(settlement));
+    let command = workflow.command.as_ref().expect("command");
+    super::settle_command_job(&state, &workflow, command, JobStatus::Completed, None);
+    let settled = state
+        .conversations
+        .get(&conversation)
+        .expect("conversation");
+    let entry = settled.messages.last().expect("entry");
+    assert_eq!(entry.role, crate::conversations::MessageRole::Command);
+    assert_eq!(entry.status, crate::conversations::MessageStatus::Complete);
+    assert_eq!(
+        entry
+            .command
+            .as_ref()
+            .and_then(|command| command.output.as_ref())
+            .map(crate::execution::CommandResult::combined),
+        Some("after\n".to_owned())
+    );
+    assert!(settled.active_job.is_none());
+    assert_eq!(settled.messages.len(), 1);
+}
+
+#[tokio::test]
+async fn command_output_survives_interruption_before_review_settlement() {
+    let (state, conversation, _session, job, _message) = command_job_fixture();
+    let output = crate::execution::CommandResult::new(
+        Vec::new(),
+        crate::execution::CommandTermination::Exited(7),
+    );
+    assert!(
+        state
+            .conversations
+            .record_command_output(
+                &conversation,
+                crate::sessions::JobId::generate().expect("foreign job"),
+                output.clone(),
+            )
+            .is_err()
+    );
+    state
+        .conversations
+        .record_command_output(&conversation, job.id(), output.clone())
+        .expect("checkpoint");
+    assert_eq!(
+        state
+            .conversations
+            .get(&conversation)
+            .expect("record")
+            .active_job,
+        Some(job.id())
+    );
+    state
+        .conversations
+        .interrupt_requests()
+        .expect("restart recovery");
+    let record = state
+        .conversations
+        .get(&conversation)
+        .expect("recovered record");
+    let entry = record.messages.last().expect("command");
+    assert_eq!(
+        entry.command.as_ref().expect("evidence").output.as_ref(),
+        Some(&output)
+    );
+    assert_eq!(
+        entry.status,
+        crate::conversations::MessageStatus::Interrupted
+    );
+    assert!(record.active_job.is_none());
+}
+
+#[tokio::test]
+async fn command_preparation_failure_keeps_the_actual_error() {
+    let (state, conversation, session, job, message) = command_job_fixture();
+    let workflow = command_job(conversation, session, job, &message, None);
+    super::settle_command_job(
+        &state,
+        &workflow,
+        workflow.command.as_ref().expect("command"),
+        JobStatus::Failed,
+        Some("The sandbox runtime is not available."),
+    );
+    let record = state.conversations.get(&conversation).expect("record");
+    assert_eq!(
+        record.messages.last().expect("command").error.as_deref(),
+        Some("The sandbox runtime is not available.")
+    );
+}
+
+#[tokio::test]
+async fn interrupted_command_settlement_is_idempotent() {
+    let (state, conversation, session, job, message) = command_job_fixture();
+    let workflow = command_job(conversation, session, job, &message, None);
+    let command = workflow.command.as_ref().expect("command");
+    super::settle_command_job(&state, &workflow, command, JobStatus::Cancelled, None);
+    super::settle_command_job(&state, &workflow, command, JobStatus::Cancelled, None);
+    let settled = state
+        .conversations
+        .get(&conversation)
+        .expect("conversation");
+    let entry = settled.messages.last().expect("entry");
+    assert_eq!(
+        entry.status,
+        crate::conversations::MessageStatus::Interrupted
+    );
+    assert!(
+        entry
+            .command
+            .as_ref()
+            .is_some_and(|command| command.output.is_none())
+    );
+    assert_eq!(settled.messages.len(), 1);
 }

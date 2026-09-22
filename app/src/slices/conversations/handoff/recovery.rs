@@ -156,11 +156,54 @@ pub(super) fn attach(
     let private = crate::execution::ProjectFreeAuthority::from_settings(record.revision, &settings)
         .map_err(|_| "A pinned directory changed identity.")?;
     let policy = private.policy.clone();
-    let connection = run
-        .model_phases()
-        .next()
-        .and_then(|phase| state.vault.connection_for(&phase.selection))
-        .ok_or("The selected provider is unavailable.")?;
+    let command = run
+        .command_message
+        .map(|id| {
+            let message = record
+                .messages
+                .iter()
+                .find(|message| message.id == id)
+                .ok_or("The command evidence is unavailable.")?;
+            let entry = message
+                .command
+                .as_ref()
+                .ok_or("The command evidence is unavailable.")?;
+            let output = entry
+                .output
+                .clone()
+                .ok_or("The command outcome is unavailable.")?;
+            if !matches!(
+                output.termination,
+                crate::execution::CommandTermination::Exited(_)
+            ) {
+                return Err("The command outcome does not permit a review decision.");
+            }
+            Ok(crate::workflows::DirectCommandWork {
+                message: id,
+                command: message.text.clone(),
+                included: entry.included,
+                settlement: Arc::new(Mutex::new(Some(
+                    crate::workflows::DirectCommandSettlement {
+                        output: Some(output),
+                        status: crate::conversations::MessageStatus::Complete,
+                        error: None,
+                    },
+                ))),
+            })
+        })
+        .transpose()?;
+    let connection = if command.is_some() {
+        crate::providers::ProviderConnection::with_key(
+            settings.model.provider,
+            String::new(),
+            settings.model.model.clone(),
+        )
+    } else {
+        run.model_phases()
+            .next()
+            .and_then(|phase| state.vault.connection_for(&phase.selection))
+            .ok_or("The selected provider is unavailable.")?
+    };
     // This approval supplies runtime authority only for the pinned run, never future conversation messages.
     state
         .access_consent
@@ -179,10 +222,13 @@ pub(super) fn attach(
         grant_alias: String::new(),
         authority: None,
         connection,
-        phase_providers: run
-            .model_phases()
-            .map(|phase| phase.selection.provider)
-            .collect(),
+        phase_providers: if command.is_some() {
+            Vec::new()
+        } else {
+            run.model_phases()
+                .map(|phase| phase.selection.provider)
+                .collect()
+        },
         active_connection: Arc::new(Mutex::new(None)),
         turns: record
             .messages
@@ -192,6 +238,7 @@ pub(super) fn attach(
             .unwrap_or_default(),
         job: job.clone(),
         eligible_reply: Arc::new(Mutex::new(String::new())),
+        command,
     };
     if !state.gate_continuations.insert(continuation) {
         return Err("Another operation controls the prepared changes.");

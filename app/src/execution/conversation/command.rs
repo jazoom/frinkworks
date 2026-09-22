@@ -1,9 +1,10 @@
-//! Direct host command execution.
+//! Direct command execution.
 //!
 //! A direct command is a durable conversation entry, not a model tool call.
 //! The submission handler persists the pending entry before this module starts
 //! a process, so a restart can never replay a command whose outcome is
-//! unknown.
+//! unknown. Host commands run directly. Sandbox commands reuse the ordinary
+//! file-attempt driver for preparation, review, application and cleanup.
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -19,6 +20,9 @@ use crate::{
     },
     sessions::{Job, JobStatus, SessionId},
     state::AppState,
+    workflows::{
+        DirectCommandWork, PhaseModelSelection, PinnedPreset, RunId, WorkflowJob, WorkflowRun,
+    },
 };
 
 /// One direct command dispatch. No provider request is made.
@@ -33,9 +37,253 @@ pub(crate) struct DirectCommandRun {
     pub(crate) included: bool,
     pub(crate) directory: PathBuf,
     pub(crate) secret: Option<String>,
+    /// Held across the whole command so only one execution is unfinished.
+    pub(crate) execution: crate::workflows::ExecutionGuard,
 }
 
 pub(crate) async fn run(state: AppState, work: DirectCommandRun) {
+    let settings = work
+        .record
+        .model
+        .as_ref()
+        .map(|model| model.settings.clone());
+    match settings.as_ref().map(|settings| settings.location) {
+        Some(ToolLocation::Sandbox) => run_sandbox(state, work).await,
+        _ => run_host(state, work).await,
+    }
+}
+
+async fn run_sandbox(state: AppState, work: DirectCommandRun) {
+    let conversation = work.record.id;
+    let Some(model) = work.record.model.clone() else {
+        settle(
+            &state,
+            &work,
+            None,
+            MessageStatus::Failed,
+            Some("This conversation has no execution settings.".to_owned()),
+            None,
+            None,
+        );
+        return;
+    };
+    if let Err(message) = validate_sandbox(&state, &work, &model.settings) {
+        settle(
+            &state,
+            &work,
+            None,
+            MessageStatus::Failed,
+            Some(message),
+            None,
+            None,
+        );
+        return;
+    }
+    let project_free = match crate::execution::ProjectFreeAuthority::from_settings(
+        work.record.revision,
+        &model.settings,
+    ) {
+        Ok(project_free) => project_free,
+        Err(error) => {
+            settle(
+                &state,
+                &work,
+                None,
+                MessageStatus::Failed,
+                Some(error.message().to_owned()),
+                None,
+                None,
+            );
+            return;
+        }
+    };
+    let pinned = match crate::workflows::pin_agent_work(&model.settings) {
+        Ok(pinned) => pinned,
+        Err(error) => {
+            settle(
+                &state,
+                &work,
+                None,
+                MessageStatus::Failed,
+                Some(error.message().to_owned()),
+                None,
+                None,
+            );
+            return;
+        }
+    };
+    let environments = match crate::workflows::resolve_environments(
+        &pinned.definition,
+        &state.environments,
+        &state.environment_snapshots,
+    )
+    .await
+    {
+        Ok(environments) => environments,
+        Err(error) => {
+            settle(
+                &state,
+                &work,
+                None,
+                MessageStatus::Failed,
+                Some(error.message().to_owned()),
+                None,
+                None,
+            );
+            return;
+        }
+    };
+    let run_id = match RunId::generate() {
+        Ok(run_id) => run_id,
+        Err(_) => {
+            settle(
+                &state,
+                &work,
+                None,
+                MessageStatus::Failed,
+                Some("Power Plant could not create a command run identifier.".to_owned()),
+                None,
+                None,
+            );
+            return;
+        }
+    };
+    let phase_models = pinned
+        .definition
+        .steps()
+        .iter()
+        .filter(|step| {
+            matches!(
+                &step.action,
+                crate::workflows::definition::StepAction::Agent(_)
+            )
+        })
+        .map(|step| PhaseModelSelection {
+            step: step.key.clone(),
+            selection: model.settings.model.clone(),
+            instructions: model.settings.instructions.clone(),
+            preset: model.preset.as_ref().map(|preset| PinnedPreset {
+                id: preset.id,
+                revision: preset.revision,
+                name: preset.name.clone(),
+            }),
+            settings: Some(model.settings.clone()),
+        })
+        .collect::<Vec<_>>();
+    let mut run = WorkflowRun::create_source_free_for_conversation(
+        run_id,
+        crate::workflows::now_ms(),
+        conversation,
+        pinned,
+        environments,
+        phase_models,
+    );
+    run.launch_brief = if work.included {
+        work.command.clone()
+    } else {
+        "Direct command excluded from model context.".to_owned()
+    };
+    run.command_message = Some(work.message);
+    if state.workflow_runs.create(run).is_err() {
+        settle(
+            &state,
+            &work,
+            None,
+            MessageStatus::Failed,
+            Some("Power Plant could not store the command run.".to_owned()),
+            None,
+            None,
+        );
+        return;
+    }
+    // A direct command needs no provider connection. The value here only feeds
+    // redaction and the active-connection fallback.
+    let connection = crate::providers::ProviderConnection::with_key(
+        model.settings.model.provider,
+        work.secret.clone().unwrap_or_default(),
+        model.settings.model.model.clone(),
+    );
+    let job = WorkflowJob {
+        run_id,
+        session_id: work.session,
+        agent_id: None,
+        agent_revision: work.record.revision,
+        conversation_id: Some(conversation),
+        authority: None,
+        project_free_authority: Some(project_free.clone()),
+        grant_alias: String::new(),
+        connection,
+        phase_providers: Vec::new(),
+        active_connection: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        host_policy: project_free.policy.clone(),
+        turns: Vec::new(),
+        job: work.job.clone(),
+        eligible_reply: std::sync::Arc::new(std::sync::Mutex::new(String::new())),
+        command: Some(DirectCommandWork {
+            message: work.message,
+            command: work.command.clone(),
+            included: work.included,
+            settlement: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        }),
+    };
+    crate::workflows::drive_ordinary_file_run(state, job, work.execution).await;
+}
+
+/// Revalidate consent, authority and the active job immediately before sandbox
+/// preparation. A change since submission rejects the command without effects.
+fn validate_sandbox(
+    state: &AppState,
+    work: &DirectCommandRun,
+    settings: &crate::execution::ExecutionSettings,
+) -> Result<(), String> {
+    if settings.location != ToolLocation::Sandbox {
+        return Err("Direct commands need a ready sandbox selection.".to_owned());
+    }
+    if !settings.tools.contains(&ToolId::Run) {
+        return Err("The Run capability is not enabled for this conversation.".to_owned());
+    }
+    if work.job.cancel_requested() || !state.sessions.contains_live(&work.session) {
+        return Err(
+            "Sandbox access expired or changed. Approve the current settings again.".to_owned(),
+        );
+    }
+    if state.sandboxes.missing().is_some() {
+        return Err("The sandbox runtime is not available.".to_owned());
+    }
+    let record = state
+        .conversations
+        .get(&work.record.id)
+        .ok_or_else(|| "This conversation is not available.".to_owned())?;
+    if record.active_job != Some(work.job.id())
+        || record
+            .model
+            .as_ref()
+            .is_none_or(|model| model.settings != *settings)
+    {
+        return Err("This command is no longer active.".to_owned());
+    }
+    for grant in &settings.directories {
+        grant
+            .revalidate()
+            .map_err(|_| "A work location changed or is not available.".to_owned())?;
+        if grant.requires_access_consent(state.local_data.root())
+            && !state.access_consent.authorised_conversation(
+                work.session,
+                work.record.id,
+                settings,
+                grant,
+            )
+            && !state
+                .conversations
+                .directory_approved(&work.record.id, settings, grant)
+        {
+            return Err("Directory access needs explicit approval.".to_owned());
+        }
+    }
+    Ok(())
+}
+
+async fn run_host(state: AppState, work: DirectCommandRun) {
     let conversation = work.record.id;
     let Some(settings) = work
         .record

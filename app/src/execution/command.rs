@@ -588,6 +588,122 @@ impl<'a> CommandCapture<'a> {
     }
 }
 
+/// Capture one sandbox command with bounded output and live progress.
+///
+/// Model tools and direct sandbox commands share this loop so
+/// cancellation, timeouts, redaction and retained output behave the same way.
+/// `tool_call` labels live progress only. It is not an authority token.
+pub(crate) async fn capture_sandbox_command(
+    sandbox: &crate::sandbox::GuestSandbox,
+    request: crate::sandbox::GuestExec,
+    job: &crate::sessions::Job,
+    secret: Option<&str>,
+    timeout: std::time::Duration,
+    tool_call: &str,
+    retained: Option<(&super::output::OutputStore, &super::output::OutputKey)>,
+) -> Result<CommandResult, CommandFailure> {
+    let mut capture = match retained {
+        Some((store, key)) => match CommandCapture::with_output(secret, store, key) {
+            Ok(capture) => capture,
+            Err(error) => {
+                return Err(CommandFailure::new(
+                    CommandResult::new(Vec::new(), CommandTermination::NotDispatched),
+                    error.message(),
+                ));
+            }
+        },
+        None => CommandCapture::with_secret(secret),
+    };
+    if job.cancel_requested() {
+        return Err(CommandFailure::new(
+            capture.into_result(CommandTermination::NotDispatched),
+            "Stopped before command dispatch.",
+        ));
+    }
+    let mut session = match sandbox.exec_cmd(request).await {
+        Ok(session) => session,
+        Err(error) => {
+            return Err(CommandFailure::new(
+                CommandResult::new(Vec::new(), CommandTermination::NotDispatched),
+                error.message(),
+            ));
+        }
+    };
+    let deadline = tokio::time::Instant::now() + timeout;
+    let mut progress = CommandProgress::new();
+    let mut progress_tick = tokio::time::interval(std::time::Duration::from_millis(100));
+    progress_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut exit = None;
+    loop {
+        let event = tokio::select! {
+            biased;
+            _ = job.cancelled() => {
+                session.kill().await;
+                session.close().await;
+                return Err(CommandFailure::new(
+                    capture.into_result(CommandTermination::Cancelled),
+                    "Stopped.",
+                ));
+            }
+            _ = tokio::time::sleep_until(deadline) => {
+                session.kill().await;
+                session.close().await;
+                return Err(CommandFailure::new(
+                    capture.into_result(CommandTermination::TimedOut),
+                    "The command exceeded the time limit.",
+                ));
+            }
+            _ = progress_tick.tick() => {
+                progress.publish(job, tool_call);
+                continue;
+            }
+            event = session.recv() => event,
+        };
+        let Some(event) = event else {
+            break;
+        };
+        match event {
+            crate::sandbox::CommandEvent::Output { stream, bytes } => {
+                let push = capture.push(stream, &bytes);
+                for chunk in push.safe {
+                    progress.push(chunk.stream, chunk.text);
+                }
+                if push.overflow {
+                    session.kill().await;
+                    session.close().await;
+                    return Err(CommandFailure::new(
+                        capture.into_result(CommandTermination::ResourceLimit),
+                        "The command exceeded the output resource limit.",
+                    ));
+                }
+            }
+            crate::sandbox::CommandEvent::Exited(code) => {
+                exit = Some(code);
+                break;
+            }
+            crate::sandbox::CommandEvent::Failed => {
+                session.kill().await;
+                session.close().await;
+                return Err(CommandFailure::new(
+                    capture.into_result(CommandTermination::Unknown),
+                    "The command outcome is unknown. Inspect the local execution evidence before further work.",
+                ));
+            }
+        }
+    }
+    if exit.is_none() {
+        session.kill().await;
+    }
+    session.close().await;
+    match exit {
+        Some(code) => Ok(capture.into_result(CommandTermination::Exited(code))),
+        None => Err(CommandFailure::new(
+            capture.into_result(CommandTermination::Unknown),
+            "The command outcome is unknown. Inspect the local execution evidence before further work.",
+        )),
+    }
+}
+
 fn append_line(output: &mut String, line: &str) {
     if line.is_empty() {
         return;
