@@ -1,6 +1,14 @@
-{% if view.error != "" %}
-  <p class="text-error text-sm" role="alert">{{ view.error }}</p>
-{% endif %}
+<p
+  class="text-error text-sm"
+  role="alert"
+  data-attachment-error
+  {% if view.error == "" %}hidden{% endif %}
+>
+  {{ view.error }}
+</p>
+<p class="text-quiet text-sm" role="status" data-attachment-pending hidden>
+  Adding images…
+</p>
 {% if !view.attachments.is_empty() %}
   <ul class="flex flex-wrap gap-2" aria-label="Attached images">
     {% for attachment in view.attachments %}

@@ -102,6 +102,35 @@ function enter(input: HTMLElement) {
     );
 }
 
+function attachmentMarkup(action: string): string {
+    return `<div data-attachments>
+        <p data-attachment-error hidden></p>
+        <p data-attachment-pending hidden></p>
+        <form
+            method="post"
+            action="${action}"
+            enctype="multipart/form-data"
+            data-attachment-upload
+        >
+            <input
+                type="file"
+                name="image"
+                multiple
+                data-attachment-input
+            />
+        </form>
+    </div>`;
+}
+
+function transferredFiles(files: { name: string; type: string }[]) {
+    const transfer = new DataTransfer();
+    for (const file of files)
+        transfer.items.add(
+            new File([new Uint8Array([1])], file.name, { type: file.type }),
+        );
+    return transfer;
+}
+
 test("search normalises text without changing the model, effort or message, and renders names as text", () => {
     search("  ALP  ");
     expect(document.querySelectorAll("[data-composer-model]")).toHaveLength(2);
@@ -484,4 +513,192 @@ test("a link navigation keeps the revision target across an unrelated view", () 
     document.querySelector("[data-revision-state]")!.remove();
     navigate();
     expect(document.querySelector("[data-revision-state]")).toBeNull();
+});
+
+test("mixed paste inserts the text once and stages each image once", () => {
+    document.body.insertAdjacentHTML(
+        "beforeend",
+        attachmentMarkup("/conversations/new/attachments?draft=aaa"),
+    );
+    const form = document.querySelector<HTMLFormElement>(
+        "[data-attachment-upload]",
+    )!;
+    form.requestSubmit = vi.fn();
+    const message =
+        document.querySelector<HTMLTextAreaElement>("#composer-message")!;
+    message.value = "Hello world";
+    message.setSelectionRange(5, 5);
+    const transfer = transferredFiles([
+        { name: "shot.png", type: "image/png" },
+    ]);
+    const repeated = transfer.items[0].getAsFile()!;
+    transfer.items.add(repeated);
+    transfer.setData("text/plain", " and paste");
+    const paste = new ClipboardEvent("paste", {
+        bubbles: true,
+        cancelable: true,
+        clipboardData: transfer,
+    });
+    message.dispatchEvent(paste);
+    expect(paste.defaultPrevented).toBe(true);
+    expect(message.value).toBe("Hello and paste world");
+    const input = document.querySelector<HTMLInputElement>(
+        "[data-attachment-input]",
+    )!;
+    expect(input.files).toHaveLength(1);
+    expect(form.requestSubmit).toHaveBeenCalledOnce();
+    expect(
+        document.querySelector<HTMLElement>("[data-attachment-pending]")!
+            .hidden,
+    ).toBe(false);
+});
+
+test("mixed files retain distinct images and rejection details after the upload patch", () => {
+    const action = "/conversations/new/attachments?draft=aaa";
+    document.body.insertAdjacentHTML("beforeend", attachmentMarkup(action));
+    const form = document.querySelector<HTMLFormElement>(
+        "[data-attachment-upload]",
+    )!;
+    form.requestSubmit = vi.fn();
+    const transfer = new DataTransfer();
+    for (const byte of [1, 2]) {
+        transfer.items.add(
+            new File([new Uint8Array([byte])], "image.png", {
+                type: "image/png",
+                lastModified: 1,
+            }),
+        );
+    }
+    transfer.items.add(
+        new File(["pdf"], "notes.pdf", { type: "application/pdf" }),
+    );
+    document.querySelector("#composer-message")!.dispatchEvent(
+        new ClipboardEvent("paste", {
+            bubbles: true,
+            cancelable: true,
+            clipboardData: transfer,
+        }),
+    );
+    expect(form.querySelector<HTMLInputElement>("input")!.files).toHaveLength(
+        2,
+    );
+    expect(
+        document.querySelector("[data-attachment-error]")!.textContent,
+    ).toContain("PNG");
+    expect(form.requestSubmit).toHaveBeenCalledOnce();
+    const submittedForm = form.querySelector("input")!.closest("form")!;
+    document
+        .querySelector("[data-attachments]")!
+        .replaceWith(
+            document
+                .createRange()
+                .createContextualFragment(attachmentMarkup(action)),
+        );
+    for (const listener of settled)
+        listener({
+            requestKind: "patch",
+            form: submittedForm,
+            url: form.action,
+            outcome: "applied-patch",
+            status: 200,
+            targetIds: ["conversation-attachment-controls"],
+        });
+    const error = document.querySelector<HTMLElement>(
+        "[data-attachment-error]",
+    )!;
+    expect(error.hidden).toBe(false);
+    expect(error.textContent).toContain("PNG");
+    expect(
+        document.querySelector<HTMLTextAreaElement>("#composer-message")!.value,
+    ).toBe("Unsent text");
+});
+
+test("a text-only paste keeps the browser's ordinary insertion", () => {
+    const transfer = new DataTransfer();
+    transfer.setData("text/plain", "plain text");
+    const paste = new ClipboardEvent("paste", {
+        bubbles: true,
+        cancelable: true,
+        clipboardData: transfer,
+    });
+    document
+        .querySelector<HTMLTextAreaElement>("#composer-message")!
+        .dispatchEvent(paste);
+    expect(paste.defaultPrevented).toBe(false);
+    expect(
+        document.querySelector<HTMLInputElement>("[data-attachment-input]"),
+    ).toBeNull();
+});
+
+test("an unsupported drop reports beside the draft and stages nothing", () => {
+    document.body.insertAdjacentHTML(
+        "beforeend",
+        attachmentMarkup("/conversations/new/attachments?draft=aaa"),
+    );
+    const dock = document.createElement("div");
+    dock.dataset.attachmentDropZone = "";
+    const hint = document.createElement("p");
+    hint.dataset.attachmentDropHint = "";
+    hint.className = "hidden";
+    dock.append(hint);
+    document.body.prepend(dock);
+    const transfer = transferredFiles([
+        { name: "notes.txt", type: "text/plain" },
+    ]);
+    const drop = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(drop, "dataTransfer", { value: transfer });
+    dock.dispatchEvent(drop);
+    expect(drop.defaultPrevented).toBe(true);
+    expect(hint.classList.contains("hidden")).toBe(true);
+    const input = document.querySelector<HTMLInputElement>(
+        "[data-attachment-input]",
+    )!;
+    expect(input.files ?? []).toHaveLength(0);
+    const error = document.querySelector<HTMLElement>(
+        "[data-attachment-error]",
+    )!;
+    expect(error.hidden).toBe(false);
+    expect(error.textContent).toContain("PNG");
+});
+
+test("a stale upload completion after navigation leaves the new draft alone", () => {
+    document.body.insertAdjacentHTML(
+        "beforeend",
+        attachmentMarkup("/conversations/new/attachments?draft=aaa"),
+    );
+    const oldForm = document.querySelector<HTMLFormElement>(
+        "[data-attachment-upload]",
+    )!;
+    oldForm.requestSubmit = vi.fn();
+    const oldInput = oldForm.querySelector<HTMLInputElement>(
+        "[data-attachment-input]",
+    )!;
+    oldInput.files = transferredFiles([
+        { name: "a.png", type: "image/png" },
+    ]).files;
+    oldInput.dispatchEvent(new Event("change", { bubbles: true }));
+    // Navigation replaces the composer scope with another draft.
+    document.querySelector("[data-attachments]")!.innerHTML = `
+        <p data-attachment-error hidden></p>
+        <p data-attachment-pending hidden></p>
+        <form method="post" action="/conversations/new/attachments?draft=bbb" data-attachment-upload>
+            <input type="file" name="image" multiple data-attachment-input />
+        </form>`;
+    const newInput = document.querySelector<HTMLInputElement>(
+        "[data-attachment-input]",
+    )!;
+    newInput.files = transferredFiles([
+        { name: "b.png", type: "image/png" },
+    ]).files;
+    for (const listener of settled)
+        listener({
+            requestKind: "patch",
+            form: oldInput.closest("form")!,
+            url: oldForm.action,
+            outcome: "applied-patch",
+            status: 200,
+            targetIds: ["conversation-attachment-controls"],
+        });
+    expect(newInput.files).toHaveLength(1);
+    expect(newInput.files?.[0]?.name).toBe("b.png");
 });

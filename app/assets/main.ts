@@ -1346,20 +1346,192 @@ listenForRequestSettled((detail) => {
     reconcileRevision();
 });
 
-listenForRequestSettled((detail) => {
-    if (
-        detail.outcome !== "applied-patch" ||
-        !detail.form.matches("[data-attachment-upload]")
-    )
-        return;
-    const form = document.querySelector<HTMLFormElement>(
-        "[data-attachment-upload]",
+// Use the multipart form to retain Hypergraft's unsafe-command guard.
+const SUPPORTED_IMAGE_TYPES = new Set([
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+]);
+
+let pendingAttachmentUpload:
+    { form: HTMLFormElement; action: string; warning: string } | undefined;
+
+function attachmentForm(): HTMLFormElement | null {
+    return document.querySelector<HTMLFormElement>("[data-attachment-upload]");
+}
+
+function attachmentControls(): HTMLElement | null {
+    return document.querySelector<HTMLElement>("[data-attachments]");
+}
+
+function setAttachmentError(message: string) {
+    const error = attachmentControls()?.querySelector<HTMLElement>(
+        "[data-attachment-error]",
     );
-    if (form?.action !== detail.form.action) return;
-    const input = form.querySelector<HTMLInputElement>(
+    if (!error) return;
+    error.textContent = message;
+    error.hidden = message === "";
+}
+
+function setAttachmentPending(pending: boolean) {
+    const controls = attachmentControls();
+    controls
+        ?.querySelectorAll<HTMLElement>("[data-attachment-pending]")
+        .forEach((node) => {
+            node.hidden = !pending;
+        });
+    const form = attachmentForm();
+    if (form) {
+        if (pending) form.setAttribute("aria-busy", "true");
+        else form.removeAttribute("aria-busy");
+    }
+    // A disabled file input is omitted from the multipart body, so the
+    // pending state never disables it.
+    const input = form?.querySelector<HTMLInputElement>(
         "[data-attachment-input]",
     );
-    if (input) input.value = "";
+    if (input) {
+        if (pending) input.setAttribute("aria-disabled", "true");
+        else input.removeAttribute("aria-disabled");
+    }
+}
+
+function supportedImage(file: File): boolean {
+    return SUPPORTED_IMAGE_TYPES.has(file.type.toLocaleLowerCase());
+}
+
+function distinctFiles(files: File[]): File[] {
+    // Equal metadata does not imply equal image bytes.
+    return [...new Set(files)];
+}
+
+function insertAtCaret(field: HTMLTextAreaElement, text: string) {
+    const start = field.selectionStart ?? field.value.length;
+    const end = field.selectionEnd ?? field.value.length;
+    field.value = field.value.slice(0, start) + text + field.value.slice(end);
+    field.selectionStart = start + text.length;
+    field.selectionEnd = start + text.length;
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function stageAttachmentFiles(files: File[]): boolean {
+    const form = attachmentForm();
+    const input = form?.querySelector<HTMLInputElement>(
+        "[data-attachment-input]",
+    );
+    if (!form || !input || input.disabled) {
+        setAttachmentError(
+            "Power Plant cannot attach another image to this message.",
+        );
+        return false;
+    }
+    if (typeof DataTransfer === "undefined") {
+        setAttachmentError(
+            "This browser cannot stage images from the clipboard.",
+        );
+        return false;
+    }
+    if (commandBlockReason()) {
+        setAttachmentError(
+            "Wait for the current command to finish before adding images.",
+        );
+        return false;
+    }
+    const transfer = new DataTransfer();
+    for (const file of files) transfer.items.add(file);
+    input.files = transfer.files;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+}
+
+function clipboardImages(clipboard: DataTransfer): File[] {
+    return distinctFiles(Array.from(clipboard.files ?? []));
+}
+
+function stageTransferredFiles(files: File[]) {
+    const supported = files.filter(supportedImage);
+    const unsupported = files.some((file) => !supportedImage(file));
+    const staged = supported.length > 0 && stageAttachmentFiles(supported);
+    if (!unsupported) return;
+    const warning = "Power Plant can attach PNG, JPEG and WebP images only.";
+    if (staged && pendingAttachmentUpload) {
+        pendingAttachmentUpload.warning = warning;
+    }
+    const error = attachmentControls()?.querySelector<HTMLElement>(
+        "[data-attachment-error]",
+    );
+    setAttachmentError(
+        [error?.textContent?.trim(), warning].filter(Boolean).join(" "),
+    );
+}
+
+document.addEventListener("paste", (event) => {
+    const field = event.target;
+    if (!(field instanceof HTMLTextAreaElement)) return;
+    if (field.id !== "composer-message" || field.disabled) return;
+    const clipboard = event.clipboardData;
+    if (!clipboard) return;
+    const files = clipboardImages(clipboard);
+    // A text-only paste keeps the browser's ordinary insertion behaviour.
+    if (files.length === 0) return;
+    event.preventDefault();
+    const text = clipboard.getData("text/plain");
+    if (text !== "") insertAtCaret(field, text);
+    stageTransferredFiles(files);
+});
+
+function dropZone(target: EventTarget | null): HTMLElement | null {
+    return target instanceof Element
+        ? target.closest<HTMLElement>("[data-attachment-drop-zone]")
+        : null;
+}
+
+function fileDrag(data: DataTransfer | null): boolean {
+    if (!data) return false;
+    return (
+        Array.from(data.types).includes("Files") ||
+        (data.files?.length ?? 0) > 0
+    );
+}
+
+function setDropHint(zone: HTMLElement | null, active: boolean) {
+    zone?.querySelector<HTMLElement>(
+        "[data-attachment-drop-hint]",
+    )?.classList.toggle("hidden", !active);
+}
+
+let activeDropZone: HTMLElement | null = null;
+
+document.addEventListener("dragover", (event) => {
+    if (!fileDrag(event.dataTransfer)) return;
+    const zone = dropZone(event.target);
+    if (!zone) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+    if (activeDropZone !== zone) {
+        setDropHint(activeDropZone, false);
+        activeDropZone = zone;
+    }
+    setDropHint(zone, true);
+});
+
+document.addEventListener("dragleave", (event) => {
+    const zone = activeDropZone;
+    if (!zone) return;
+    const next = event.relatedTarget;
+    if (next instanceof Node && zone.contains(next)) return;
+    setDropHint(zone, false);
+    activeDropZone = null;
+});
+
+document.addEventListener("drop", (event) => {
+    const zone = dropZone(event.target);
+    if (!zone || !fileDrag(event.dataTransfer)) return;
+    event.preventDefault();
+    setDropHint(activeDropZone ?? zone, false);
+    activeDropZone = null;
+    const files = distinctFiles(Array.from(event.dataTransfer?.files ?? []));
+    stageTransferredFiles(files);
 });
 
 document.addEventListener("change", (event) => {
@@ -1368,7 +1540,52 @@ document.addEventListener("change", (event) => {
     );
     if (!input || (input.files?.length ?? 0) === 0) return;
     const form = input.closest("form");
-    if (form) form.requestSubmit();
+    if (!form) return;
+    if (commandBlockReason()) {
+        setAttachmentError(
+            "Wait for the current command to finish before adding images.",
+        );
+        return;
+    }
+    pendingAttachmentUpload = { form, action: form.action, warning: "" };
+    setAttachmentError("");
+    setAttachmentPending(true);
+    form.requestSubmit();
+});
+
+// A completion belongs to the draft that started it. A settlement from an
+// earlier scope or a superseded form is ignored. A failure never retries.
+listenForRequestSettled((detail) => {
+    if (!detail.form.matches("[data-attachment-upload]")) return;
+    const initiated = pendingAttachmentUpload;
+    if (!initiated || initiated.form !== detail.form) return;
+    const form = attachmentForm();
+    if (!form || form.action !== initiated.action) {
+        pendingAttachmentUpload = undefined;
+        return;
+    }
+    pendingAttachmentUpload = undefined;
+    setAttachmentPending(false);
+    const input = form.querySelector<HTMLInputElement>(
+        "[data-attachment-input]",
+    );
+    if (detail.outcome === "applied-patch" && detail.status === 200) {
+        if (initiated.warning) {
+            const error = attachmentControls()?.querySelector<HTMLElement>(
+                "[data-attachment-error]",
+            );
+            setAttachmentError(
+                [error?.textContent?.trim(), initiated.warning]
+                    .filter(Boolean)
+                    .join(" "),
+            );
+        }
+        if (input) input.value = "";
+        return;
+    }
+    setAttachmentError(
+        "Power Plant could not confirm the upload. Reload this page before another attempt.",
+    );
 });
 
 startApp();

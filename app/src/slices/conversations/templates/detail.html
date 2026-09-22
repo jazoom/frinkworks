@@ -853,7 +853,17 @@
           {% endif %}
         {% endif %}
       </aside>
-      <div id="conversation-composer-dock" class="composer-dock">
+      <div
+        id="conversation-composer-dock"
+        class="composer-dock"
+        data-attachment-drop-zone
+      >
+        <p
+          class="text-quiet pointer-events-none hidden text-center text-sm"
+          data-attachment-drop-hint
+        >
+          Drop images to attach them.
+        </p>
         <div class="chat-latest-row">
           <button
             type="button"
