@@ -121,3 +121,60 @@ fn discovery_bounds_entries_and_returns_the_full_body_hash() {
     let listed = shell(root.path(), super::SKILL_LIST_COMMAND, &[]);
     assert_eq!(listed.status.code(), Some(7));
 }
+
+#[test]
+fn effective_roots_skip_the_private_data_directory() {
+    let parent = tempfile::tempdir().expect("parent");
+    let data_root = parent.path().join("powerplant-data");
+    std::fs::create_dir_all(&data_root).expect("data root");
+    let project = parent.path().join("project");
+    std::fs::create_dir_all(&project).expect("project");
+    let grant = crate::execution::DirectoryGrant::from_selected(&project, &[]).expect("grant");
+    let policy = crate::agents::DirectoryPolicy::from_grants(
+        vec![crate::agents::PolicyGrant {
+            alias: grant.alias.clone(),
+            guest_path: grant.guest_path(),
+            host_path: grant.host_path.clone(),
+            access: crate::agents::AccessMode::ReadOnly,
+        }],
+        grant.alias.clone(),
+    );
+    let inside =
+        crate::execution::DirectoryGrant::from_selected(&data_root, &[]).expect("data grant");
+    let mut grants = vec![crate::agents::PolicyGrant {
+        alias: inside.alias.clone(),
+        guest_path: inside.guest_path(),
+        host_path: inside.host_path.clone(),
+        access: crate::agents::AccessMode::ReadOnly,
+    }];
+    grants.extend(policy.grants().iter().cloned());
+    let combined = crate::agents::DirectoryPolicy::from_grants(grants, grant.alias.clone());
+    let roots = super::effective_roots(&combined, &[], &data_root);
+    assert_eq!(roots.len(), 1);
+    assert_eq!(roots[0].scope, grant.alias);
+}
+
+#[test]
+fn effective_roots_prefer_an_immutable_candidate_over_the_host() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(root.path().join("host.txt"), b"host").expect("host file");
+    let grant = crate::execution::DirectoryGrant::from_selected(root.path(), &[]).expect("grant");
+    let policy = crate::agents::DirectoryPolicy::from_grants(
+        vec![crate::agents::PolicyGrant {
+            alias: grant.alias.clone(),
+            guest_path: grant.guest_path(),
+            host_path: grant.host_path.clone(),
+            access: crate::agents::AccessMode::ReadOnly,
+        }],
+        grant.alias.clone(),
+    );
+    let candidates = vec![super::CandidateRoot {
+        alias: grant.alias.clone(),
+        entries: vec!["candidate.txt".to_owned()],
+    }];
+    let roots = super::effective_roots(&policy, &candidates, std::path::Path::new("/nonexistent"));
+    assert_eq!(roots.len(), 1);
+    assert!(roots[0].candidate());
+    assert!(roots[0].host_path.is_none());
+    assert_eq!(roots[0].candidate_paths, vec!["candidate.txt".to_owned()]);
+}

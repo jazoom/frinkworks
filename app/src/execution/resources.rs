@@ -3,6 +3,7 @@
 //! Discovery stays at authorised roots and rejects symbolic links.
 //! It never searches global home directories outside those roots.
 
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -24,6 +25,14 @@ pub(crate) const MAXIMUM_SKILL_DESCRIPTION_BYTES: usize = 4 * 1024;
 pub(crate) const MAXIMUM_SKILL_ADVERTISEMENT_BYTES: usize = 256 * 1024;
 pub(crate) const MAXIMUM_SKILL_BODY_BYTES: usize = 1024 * 1024;
 pub(crate) const SKILL_METADATA_NAME: &str = "SKILL.md";
+
+/// File suggestions are a preview. The traversal work budget bounds search
+/// cost independently of the retained history bound.
+pub(crate) const MAXIMUM_FILE_RESULTS: usize = 50;
+pub(crate) const MAXIMUM_FILE_TRAVERSAL_ENTRIES: usize = 20_000;
+pub(crate) const MAXIMUM_FILE_QUERY_BYTES: usize = 200;
+pub(crate) const MAXIMUM_FILE_PATH_BYTES: usize = 4096;
+pub(crate) const MAXIMUM_FILE_DEPTH: usize = 32;
 
 const DISCOVERY_DEADLINE: Duration = Duration::from_secs(5);
 const SKILL_LIST_COMMAND: &str = r#"
@@ -598,6 +607,77 @@ pub(crate) fn compose_instructions(sources: &[InstructionSource]) -> String {
         composed.push('\n');
     }
     composed
+}
+
+/// An immutable candidate view for one authorised root alias. A
+/// review-before-apply root reads this captured manifest instead of the host.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CandidateRoot {
+    pub(crate) alias: String,
+    pub(crate) entries: Vec<String>,
+}
+
+/// The effective read-only source for one authorised root. `model_path` is
+/// the path prefix a model request uses. A candidate-backed root has no host
+/// directory because its entries are the immutable source.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct EffectiveRoot {
+    pub(crate) scope: String,
+    pub(crate) model_path: String,
+    pub(crate) host_path: Option<PathBuf>,
+    pub(crate) candidate_paths: Vec<String>,
+}
+
+impl EffectiveRoot {
+    pub(crate) fn candidate(&self) -> bool {
+        self.host_path.is_none()
+    }
+}
+
+/// Resolve the effective read-only roots for idle previews. This never starts
+/// a sandbox. Host work locations keep their host paths; sandbox roots use
+/// grant aliases. An immutable candidate replaces its review root so a preview
+/// cannot substitute newer host files for a captured candidate.
+pub(crate) fn effective_roots(
+    policy: &crate::agents::DirectoryPolicy,
+    candidates: &[CandidateRoot],
+    data_root: &Path,
+) -> Vec<EffectiveRoot> {
+    let mut roots = Vec::new();
+    for grant in policy.grants() {
+        if !grant.host_path.is_absolute() {
+            continue;
+        }
+        // Private Power Plant data stays out of previews even when a parent
+        // directory is authorised. The traversal also rejects nested data.
+        if grant.host_path.starts_with(data_root)
+            || grant
+                .host_path
+                .components()
+                .any(|part| part.as_os_str() == ".git")
+        {
+            continue;
+        }
+        if let Some(candidate) = candidates
+            .iter()
+            .find(|candidate| candidate.alias == grant.alias)
+        {
+            roots.push(EffectiveRoot {
+                scope: grant.alias.clone(),
+                model_path: grant.guest_path.clone(),
+                host_path: None,
+                candidate_paths: candidate.entries.clone(),
+            });
+            continue;
+        }
+        roots.push(EffectiveRoot {
+            scope: grant.alias.clone(),
+            model_path: grant.guest_path.clone(),
+            host_path: Some(grant.host_path.clone()),
+            candidate_paths: Vec::new(),
+        });
+    }
+    roots
 }
 
 /// Compose the skill advertisement block. Skill text stays below the explicit

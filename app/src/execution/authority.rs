@@ -64,6 +64,49 @@ impl ProjectFreeAuthority {
             reviewed_aliases,
         })
     }
+
+    /// Build preview authority from saved grants without a model selection.
+    /// This revalidates every root identity and never starts a sandbox. A host
+    /// preview keeps host paths; a sandbox preview keeps grant aliases.
+    pub(crate) fn from_preview_grants(
+        revision: u32,
+        grants: &[super::DirectoryGrant],
+        location: super::ToolLocation,
+    ) -> Result<Self, super::DirectoryGrantError> {
+        super::validate_directories(grants)?;
+        for grant in grants {
+            grant.revalidate()?;
+        }
+        let policy_grants = grants
+            .iter()
+            .map(|grant| PolicyGrant {
+                alias: grant.alias.clone(),
+                guest_path: grant.guest_path(),
+                host_path: grant.host_path.clone(),
+                access: AccessMode::ReadOnly,
+            })
+            .collect();
+        let primary_alias = grants
+            .first()
+            .map(|grant| grant.alias.clone())
+            .unwrap_or_default();
+        let mut policy = DirectoryPolicy::from_grants_with_workspace(policy_grants, primary_alias);
+        if location == super::ToolLocation::Host {
+            policy = policy.on_host(&super::command_directory(grants));
+        }
+        let reviewed_aliases = grants
+            .iter()
+            .filter(|grant| grant.access == super::DirectoryAccess::ReviewBeforeApply)
+            .map(|grant| grant.alias.clone())
+            .collect();
+        Ok(Self {
+            revision,
+            tools: Vec::new(),
+            network: NetworkAccess::None,
+            policy,
+            reviewed_aliases,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

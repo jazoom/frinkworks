@@ -1588,6 +1588,349 @@ listenForRequestSettled((detail) => {
     );
 });
 
+// At-sign file search. A suggestion contains a scope label and a
+// model-visible path. Selection is distinct from Send, and a response for an
+// older caret or conversation is discarded.
+type FileSuggestion = {
+    path: string;
+    scope: string;
+    directory: boolean;
+};
+
+type FileToken = {
+    start: number;
+    end: number;
+    text: string;
+};
+
+let fileLookupSequence = 0;
+let fileSuggestions: FileSuggestion[] = [];
+let fileSelection = -1;
+let fileRequest: AbortController | null = null;
+let fileDebounce: number | undefined;
+let fileSuggestionState: string | null = null;
+
+function fileState(): string | null {
+    const field = fileField();
+    const token = field ? fileTokenAt(field) : null;
+    if (!field || !token) return null;
+    return JSON.stringify([
+        field.value,
+        token.start,
+        token.end,
+        fileLookupUrl(token),
+        document.querySelector<HTMLInputElement>(
+            '#conversation-composer input[name="revision"]',
+        )?.value,
+    ]);
+}
+
+function fileField(): HTMLTextAreaElement | null {
+    return document.querySelector<HTMLTextAreaElement>("#composer-message");
+}
+
+function fileContainer(): HTMLElement | null {
+    return document.querySelector<HTMLElement>("[data-file-suggestions]");
+}
+
+function fileTokenAt(field: HTMLTextAreaElement): FileToken | null {
+    if (field.disabled) return null;
+    const caret = field.selectionStart ?? 0;
+    if (field.selectionEnd !== caret) return null;
+    const value = field.value;
+    let index = -1;
+    for (let position = caret - 1; position >= 0; position -= 1) {
+        const character = value[position];
+        if (character === "@") {
+            index = position;
+            break;
+        }
+        if (/\s/.test(character)) return null;
+    }
+    if (index < 0) return null;
+    if (index > 0 && !/\s/.test(value[index - 1])) return null;
+    return { start: index, end: caret, text: value.slice(index + 1, caret) };
+}
+
+function fileInsert(path: string, directory: boolean): string {
+    const withSeparator = directory ? `${path}/` : path;
+    const quoted = /[\s"\\]/.test(path)
+        ? JSON.stringify(withSeparator)
+        : withSeparator;
+    return `${quoted} `;
+}
+
+function closeFileSuggestions() {
+    ++fileLookupSequence;
+    if (fileDebounce !== undefined) window.clearTimeout(fileDebounce);
+    fileDebounce = undefined;
+    fileSuggestionState = null;
+    fileSuggestions = [];
+    fileSelection = -1;
+    fileRequest?.abort();
+    fileRequest = null;
+    const container = fileContainer();
+    if (container) {
+        container.hidden = true;
+        container.replaceChildren();
+    }
+    const field = fileField();
+    field?.removeAttribute("aria-expanded");
+    field?.removeAttribute("aria-controls");
+}
+
+function renderFileSuggestions(payload: {
+    suggestions?: FileSuggestion[];
+    message?: string;
+}) {
+    const container = fileContainer();
+    if (!container) return;
+    fileSuggestions = payload.suggestions ?? [];
+    fileSelection = fileSuggestions.length > 0 ? 0 : -1;
+    const nodes: Node[] = [];
+    if (payload.message) {
+        const status = document.createElement("p");
+        status.className = "text-quiet px-3 py-2 text-xs";
+        status.setAttribute("role", "status");
+        status.textContent = payload.message;
+        nodes.push(status);
+    }
+    if (fileSuggestions.length === 0) {
+        if (!payload.message) {
+            const status = document.createElement("p");
+            status.className = "text-quiet px-3 py-2 text-xs";
+            status.setAttribute("role", "status");
+            status.textContent = "No matching files.";
+            nodes.push(status);
+        }
+    } else {
+        const list = document.createElement("ul");
+        list.id = "conversation-file-options";
+        list.className =
+            "menu menu-sm max-h-[min(18rem,40dvh)] w-full flex-nowrap overflow-y-auto";
+        list.setAttribute("role", "listbox");
+        list.setAttribute("aria-label", "File suggestions");
+        fileSuggestions.forEach((suggestion, index) => {
+            const item = document.createElement("li");
+            item.id = `conversation-file-option-${index}`;
+            item.setAttribute("role", "option");
+            item.setAttribute(
+                "aria-selected",
+                index === fileSelection ? "true" : "false",
+            );
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className =
+                "flex w-full min-w-0 items-center justify-between gap-3 text-left";
+            button.dataset.fileSuggestion = "";
+            button.dataset.filePath = suggestion.path;
+            button.dataset.fileDirectory = String(suggestion.directory);
+            const label = document.createElement("span");
+            label.className = "truncate";
+            label.textContent = suggestion.directory
+                ? `${suggestion.path}/`
+                : suggestion.path;
+            const scope = document.createElement("span");
+            scope.className = "text-quiet shrink-0 text-xs";
+            scope.textContent = suggestion.scope;
+            button.append(label, scope);
+            item.append(button);
+            list.append(item);
+        });
+        nodes.push(list);
+    }
+    container.replaceChildren(...nodes);
+    container.hidden = false;
+    const field = fileField();
+    field?.setAttribute("aria-expanded", "true");
+    field?.setAttribute("aria-controls", "conversation-file-options");
+}
+
+function updateFileSelection(delta: number) {
+    if (fileSuggestions.length === 0) return;
+    fileSelection =
+        (fileSelection + delta + fileSuggestions.length) %
+        fileSuggestions.length;
+    fileContainer()
+        ?.querySelectorAll<HTMLElement>('[role="option"]')
+        .forEach((option, index) => {
+            option.setAttribute(
+                "aria-selected",
+                index === fileSelection ? "true" : "false",
+            );
+            if (index === fileSelection)
+                option.scrollIntoView({ block: "nearest" });
+        });
+}
+
+function chooseFileSuggestion(path: string, directory: boolean) {
+    const field = fileField();
+    const token = field ? fileTokenAt(field) : null;
+    if (!field || !token || fileState() !== fileSuggestionState) {
+        closeFileSuggestions();
+        return;
+    }
+    const insert = fileInsert(path, directory);
+    field.value =
+        field.value.slice(0, token.start) +
+        insert +
+        field.value.slice(token.end);
+    const caret = token.start + insert.length;
+    field.focus();
+    field.setSelectionRange(caret, caret);
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    closeFileSuggestions();
+}
+
+function fileLookupUrl(token: FileToken): string | null {
+    const owner =
+        document.querySelector<HTMLElement>("[data-conversation-url]")?.dataset
+            .conversationUrl ?? "";
+    const params = new URLSearchParams();
+    params.set("q", token.text);
+    if (owner !== "") return `${owner}/files?${params.toString()}`;
+    const state = document.querySelector<HTMLElement>(
+        "[data-conversation-state]",
+    )?.dataset.conversationState;
+    if (state !== "new") return null;
+    const form = document.querySelector<HTMLFormElement>(
+        "#conversation-composer",
+    );
+    if (!form) return null;
+    for (const name of [
+        "draft_nonce",
+        "consent_reference",
+        "location",
+        "directory_0",
+        "directory_1",
+        "directory_2",
+        "directory_3",
+        "directory_4",
+        "directory_5",
+        "directory_6",
+        "directory_7",
+    ]) {
+        const value = form.elements.namedItem(name);
+        if (value instanceof HTMLInputElement && value.value !== "") {
+            params.set(name, value.value);
+        }
+    }
+    return `/conversations/new/files?${params.toString()}`;
+}
+
+async function requestFileSuggestions(token: FileToken) {
+    const field = fileField();
+    const current = field ? fileTokenAt(field) : null;
+    if (!current || JSON.stringify(current) !== JSON.stringify(token)) return;
+    const url = fileLookupUrl(token);
+    if (!url) return;
+    const state = fileState();
+    const sequence = ++fileLookupSequence;
+    fileRequest?.abort();
+    const controller = new AbortController();
+    fileRequest = controller;
+    try {
+        const response = await fetch(url, {
+            headers: { Accept: "application/json" },
+            credentials: "same-origin",
+            signal: controller.signal,
+        });
+        const payload = await response.json();
+        if (sequence !== fileLookupSequence || state !== fileState()) return;
+        fileSuggestionState = state;
+        renderFileSuggestions(payload);
+    } catch (error) {
+        if ((error as { name?: string } | null)?.name === "AbortError") return;
+        if (sequence !== fileLookupSequence) return;
+        closeFileSuggestions();
+    }
+}
+
+function scheduleFileSuggestions() {
+    closeFileSuggestions();
+    const field = fileField();
+    const token = field ? fileTokenAt(field) : null;
+    if (!token) {
+        closeFileSuggestions();
+        return;
+    }
+    if (fileDebounce !== undefined) window.clearTimeout(fileDebounce);
+    fileDebounce = window.setTimeout(() => {
+        fileDebounce = undefined;
+        void requestFileSuggestions(token);
+    }, 120);
+}
+
+document.addEventListener("input", (event) => {
+    if (!(event.target instanceof HTMLTextAreaElement)) return;
+    if (event.target.id !== "composer-message") return;
+    scheduleFileSuggestions();
+});
+
+document.addEventListener(
+    "keydown",
+    (event) => {
+        if (!(event.target instanceof HTMLTextAreaElement)) return;
+        if (event.target.id !== "composer-message") return;
+        if (event.isComposing || event.ctrlKey || event.metaKey || event.altKey)
+            return;
+        if (fileSuggestionState !== fileState()) closeFileSuggestions();
+        if (fileSuggestions.length === 0) {
+            if (event.key === "Escape") closeFileSuggestions();
+            return;
+        }
+        if (event.key === "ArrowDown") {
+            updateFileSelection(1);
+        } else if (event.key === "ArrowUp") {
+            updateFileSelection(-1);
+        } else if (event.key === "Enter") {
+            const selected = fileSuggestions[fileSelection];
+            if (selected) {
+                chooseFileSuggestion(selected.path, selected.directory);
+            }
+        } else if (event.key === "Escape") {
+            closeFileSuggestions();
+        } else {
+            return;
+        }
+        // Selection never reaches Send or ordinary focus traversal.
+        event.preventDefault();
+        event.stopImmediatePropagation();
+    },
+    true,
+);
+
+document.addEventListener("click", (event) => {
+    if (!(event.target instanceof Element)) return;
+    const button = event.target.closest<HTMLElement>("[data-file-suggestion]");
+    if (!button) return;
+    const path = button.dataset.filePath ?? "";
+    if (path === "") return;
+    event.preventDefault();
+    chooseFileSuggestion(path, button.dataset.fileDirectory === "true");
+});
+
+document.addEventListener("pointerdown", (event) => {
+    if (!(event.target instanceof Element)) return;
+    if (event.target.closest("[data-file-suggestions]")) return;
+    if (
+        event.target instanceof HTMLTextAreaElement &&
+        event.target.id === "composer-message"
+    )
+        return;
+    closeFileSuggestions();
+});
+
+document.addEventListener("selectionchange", () => {
+    if (fileSuggestionState !== null && fileSuggestionState !== fileState()) {
+        closeFileSuggestions();
+    }
+});
+listenForLivePatches(() => {
+    if (fileSuggestionState !== fileState()) closeFileSuggestions();
+});
+listenForLocationChanges(() => closeFileSuggestions());
+
 startApp();
 reconcileRevision();
 listenForLivePatches(() => reconcileRevision());

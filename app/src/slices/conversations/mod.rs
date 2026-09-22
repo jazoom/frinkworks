@@ -4,6 +4,7 @@ mod compaction;
 mod context;
 mod continuation;
 mod directories;
+mod files;
 mod forks;
 mod handoff;
 mod job;
@@ -77,6 +78,11 @@ pub(super) fn router() -> Router<AppState> {
         .route(
             "/conversations/new/attachments/{attachment_id}",
             get(attachments::serve_new),
+        )
+        .route("/conversations/new/files", get(files::lookup_new))
+        .route(
+            "/conversations/{conversation_id}/files",
+            get(files::lookup_saved),
         )
         .route(
             "/conversations/{conversation_id}/attachments",

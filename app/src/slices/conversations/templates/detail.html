@@ -875,6 +875,12 @@
           </button>
         </div>
         <div class="mx-auto w-full max-w-3xl">
+          <div
+            id="conversation-file-suggestions"
+            class="border-base-300 bg-base-100 rounded-box mb-2 border shadow-sm"
+            data-file-suggestions
+            hidden
+          ></div>
           {% include "conversations/queue/templates/index.html" %}
           {% let view = &self.attachments %}
           <div

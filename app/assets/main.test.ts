@@ -702,3 +702,113 @@ test("a stale upload completion after navigation leaves the new draft alone", ()
     expect(newInput.files).toHaveLength(1);
     expect(newInput.files?.[0]?.name).toBe("b.png");
 });
+
+function fileLookupMarkup(): void {
+    document.body.innerHTML = `
+        <template data-conversation-state="new"></template>
+        <div data-file-suggestions hidden></div>
+        <form id="conversation-composer">
+            <input type="hidden" name="draft_nonce" value="${"a".repeat(64)}">
+            <textarea id="composer-message">see @src/ma</textarea>
+        </form>`;
+    const field =
+        document.querySelector<HTMLTextAreaElement>("#composer-message")!;
+    field.focus();
+    field.setSelectionRange(field.value.length, field.value.length);
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function suggestionResponse(path: string): Response {
+    return {
+        json: async () => ({
+            suggestions: [{ path, scope: "project", directory: false }],
+            message: "",
+        }),
+    } as unknown as Response;
+}
+
+test("at-sign lookup quotes a path with spaces at the caret", async () => {
+    const fetchMock = vi.fn(async () =>
+        suggestionResponse("/access/project/src/my file.rs"),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    fileLookupMarkup();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const field =
+        document.querySelector<HTMLTextAreaElement>("#composer-message")!;
+    field.dispatchEvent(
+        new KeyboardEvent("keydown", {
+            key: "Enter",
+            bubbles: true,
+            cancelable: true,
+        }),
+    );
+    expect(field.value).toBe('see "/access/project/src/my file.rs" ');
+    expect(
+        document.querySelector<HTMLElement>("[data-file-suggestions]")!.hidden,
+    ).toBe(true);
+});
+
+test("lookup discards a response after draft scope changes", async () => {
+    let complete!: (response: Response) => void;
+    vi.stubGlobal(
+        "fetch",
+        vi.fn(
+            () =>
+                new Promise<Response>((resolve) => {
+                    complete = resolve;
+                }),
+        ),
+    );
+    fileLookupMarkup();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    document.querySelector<HTMLInputElement>(
+        'input[name="draft_nonce"]',
+    )!.value = "b".repeat(64);
+    complete(suggestionResponse("/access/old/secret.rs"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(
+        document.querySelector<HTMLElement>("[data-file-suggestions]")!.hidden,
+    ).toBe(true);
+});
+
+test("escape cancels a pending lookup before dispatch", async () => {
+    const fetchMock = vi.fn(async () =>
+        suggestionResponse("/access/project/main.rs"),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    fileLookupMarkup();
+    document.querySelector("#composer-message")!.dispatchEvent(
+        new KeyboardEvent("keydown", {
+            key: "Escape",
+            bubbles: true,
+            cancelable: true,
+        }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(fetchMock).not.toHaveBeenCalled();
+});
+
+test("escape closes suggestions without changing the draft", async () => {
+    vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => suggestionResponse("/access/project/src/main.rs")),
+    );
+    fileLookupMarkup();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const field =
+        document.querySelector<HTMLTextAreaElement>("#composer-message")!;
+    const before = field.value;
+    field.dispatchEvent(
+        new KeyboardEvent("keydown", {
+            key: "Escape",
+            bubbles: true,
+            cancelable: true,
+        }),
+    );
+    expect(field.value).toBe(before);
+    expect(
+        document.querySelector<HTMLElement>("[data-file-suggestions]")!.hidden,
+    ).toBe(true);
+});

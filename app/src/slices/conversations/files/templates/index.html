@@ -1,0 +1,40 @@
+{% if !view.message.is_empty() %}
+  <p class="text-quiet px-3 py-2 text-xs" data-file-search-status role="status">
+    {{ view.message }}
+  </p>
+{% endif %}
+{% if view.suggestions.is_empty() %}
+  {% if view.message.is_empty() %}
+    <p
+      class="text-quiet px-3 py-2 text-xs"
+      data-file-search-status
+      role="status"
+    >
+      No matching files.
+    </p>
+  {% endif %}
+{% else %}
+  <ul
+    class="menu menu-sm max-h-[min(18rem,40dvh)] w-full flex-nowrap overflow-y-auto"
+    role="listbox"
+    aria-label="File suggestions"
+    data-file-suggestion-list
+  >
+    {% for suggestion in view.suggestions %}
+      <li role="option" aria-selected="false">
+        <button
+          type="button"
+          class="flex w-full min-w-0 items-center justify-between gap-3 text-left"
+          data-file-suggestion
+          data-file-path="{{ suggestion.path }}"
+          data-file-directory="{{ suggestion.directory }}"
+        >
+          <span class="truncate">{{ suggestion.display }}</span>
+          <span class="text-quiet shrink-0 text-xs"
+            >{{ suggestion.scope }}</span
+          >
+        </button>
+      </li>
+    {% endfor %}
+  </ul>
+{% endif %}

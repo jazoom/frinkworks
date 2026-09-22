@@ -182,6 +182,29 @@ impl AccessConsentStore {
             .any(|reference| self.approved(reference).as_ref() == Some(&expected))
     }
 
+    /// Read-only preview consent for one draft root. The full settings digest
+    /// binds write consent; an idle preview only needs the approved grant for
+    /// the session and draft nonce. It never grants dispatch authority.
+    pub(crate) fn authorised_draft_preview(
+        &self,
+        reference: &str,
+        session: SessionId,
+        nonce: &str,
+        grant: &DirectoryGrant,
+    ) -> bool {
+        let target = ConsentTarget::Grant(grant.into());
+        let base = nonce.split(':').next().unwrap_or_default();
+        let approved = lock(&self.approved);
+        reference.split(',').any(|key| {
+            approved.get(key).is_some_and(|binding| {
+                binding.session == session
+                    && binding.target == target
+                    && matches!(&binding.subject, Subject::Draft { nonce: stored, .. }
+                        if stored.split(':').next() == Some(base))
+            })
+        })
+    }
+
     pub(crate) fn consume_draft(
         &self,
         reference: &str,
