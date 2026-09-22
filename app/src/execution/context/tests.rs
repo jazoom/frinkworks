@@ -1,5 +1,6 @@
 use rig_core::completion::ToolDefinition;
 
+use crate::preferences::CompactionPreference;
 use crate::providers::{ChatToolCall, ChatTurn, ProviderKind, ToolOutput};
 
 use super::{ContextError, ContextRequest, FALLBACK_CONTEXT_TOKENS, inspect, measure};
@@ -122,7 +123,7 @@ fn usage_never_carries_over_to_a_new_request() {
     let maximum_capacity = inspect(request("Help.", &[], &turns), Some(u64::MAX)).unwrap();
     let measured = maximum_capacity.with_measured_input(u64::MAX);
     assert!(!measured.fits());
-    assert!(measured.needs_compaction(true));
+    assert!(measured.needs_compaction(true, CompactionPreference::default()));
     let mut usage = ModelUsage::new(ProviderKind::Xai, "another-model");
     usage.input_tokens = Some(u64::MAX);
     turns[0].usage.push(RequestUsage {
@@ -145,7 +146,8 @@ fn unknown_capacity_never_uses_a_percentage_trigger() {
         let estimate = inspect(request("Help.", &[], &turns), capacity).unwrap();
         assert!(estimate.unknown_capacity());
         assert!(estimate.fits());
-        assert!(!estimate.needs_compaction(true));
+        assert!(!estimate.needs_compaction(true, CompactionPreference::default()));
+        assert_eq!(estimate.input_occupancy_percent(), None);
     }
 }
 
@@ -254,10 +256,81 @@ fn tool_declarations_contribute_to_input_tokens_once() {
 }
 
 #[test]
-fn compaction_triggers_before_the_request_fills_the_limit() {
-    let turns = [user("x".repeat(1_200))];
-    let estimate = inspect(request("Help.", &[], &turns), Some(400)).expect("inspect");
-    assert!(estimate.needs_compaction(true));
+fn compaction_triggers_at_the_configured_input_percentage() {
+    let turns = [user("Hello")];
+    let estimate = inspect(request("Help.", &[], &turns), Some(10_000)).unwrap();
+    for threshold in [1, 95, 100] {
+        let policy = CompactionPreference::new(true, threshold).unwrap();
+        let boundary = u64::from(threshold) * 100;
+        let below = estimate.with_measured_input(boundary - 1);
+        let at = estimate.with_measured_input(boundary);
+        assert!(!below.needs_compaction(true, policy));
+        assert!(at.needs_compaction(true, policy));
+        assert!(!at.needs_compaction(false, policy));
+        assert!(!at.needs_compaction(
+            true,
+            CompactionPreference {
+                enabled: false,
+                ..policy
+            }
+        ));
+    }
+    let fractional = inspect(request("Help.", &[], &turns), Some(10_001)).unwrap();
+    assert!(
+        !fractional
+            .with_measured_input(9_500)
+            .automatic_trigger(CompactionPreference::default())
+    );
+    assert!(
+        fractional
+            .with_measured_input(9_501)
+            .automatic_trigger(CompactionPreference::default())
+    );
+}
+
+#[test]
+fn a_below_threshold_request_does_not_compact_early() {
+    let turns = [user("x".repeat(72_000))];
+    let estimate = inspect(request("Help.", &[], &turns), Some(20_000)).expect("inspect");
+    assert!(estimate.input_occupancy_percent().unwrap() < 95);
+    assert!(!estimate.needs_compaction(true, CompactionPreference::default()));
+    // The output reservation can make the request not fit without meeting the
+    // input percentage. The explanation names the headroom, not the input.
+    assert!(!estimate.fits());
+    assert_eq!(
+        estimate.blocked_message(CompactionPreference::default()),
+        ContextError::Headroom.message()
+    );
+}
+
+#[test]
+fn unknown_capacity_never_reports_an_input_percentage() {
+    let turns = [user("Hello")];
+    let estimate = inspect(request("Help.", &[], &turns), None).expect("inspect");
+    assert_eq!(estimate.input_occupancy_percent(), None);
+    assert_eq!(
+        estimate.blocked_message(CompactionPreference::default()),
+        ContextError::Capacity.message()
+    );
+}
+
+#[test]
+fn the_occupancy_percentage_uses_input_tokens_not_the_output_reservation() {
+    let turns = [user("x".repeat(1_600))];
+    let with_output = inspect(
+        ContextRequest {
+            output_limit: Some(10),
+            ..request("Help.", &[], &turns)
+        },
+        Some(400),
+    )
+    .expect("inspect");
+    let without_output = inspect(request("Help.", &[], &turns), Some(400)).expect("inspect");
+    assert_eq!(
+        with_output.input_occupancy_percent(),
+        without_output.input_occupancy_percent()
+    );
+    assert!(with_output.reserved_output_tokens < without_output.reserved_output_tokens);
 }
 
 #[test]

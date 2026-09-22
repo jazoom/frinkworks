@@ -7,6 +7,7 @@
 use rig_core::completion::{Message, ToolDefinition};
 
 use crate::execution::resources::{InstructionSource, ResourceSource, SkillAdvertisement};
+use crate::preferences::CompactionPreference;
 use crate::providers::{ChatTurn, ProviderKind};
 
 #[cfg(test)]
@@ -19,8 +20,6 @@ const MAXIMUM_REQUEST_BYTES: usize = 2 * 1024 * 1024;
 /// Minimum output headroom the fit check reserves. It is an operational bound,
 /// not a model fact. The published output limit caps the actual allowance.
 const MINIMUM_OUTPUT_TOKENS: u64 = 4_096;
-const COMPACTION_NUMERATOR: u64 = 3;
-const COMPACTION_DENOMINATOR: u64 = 4;
 
 /// How the input token count was produced.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -50,6 +49,8 @@ pub(crate) enum ContextError {
     Bound,
     Untrusted,
     Overflow,
+    Headroom,
+    Capacity,
     Orphan,
     Continuation,
 }
@@ -60,7 +61,13 @@ impl ContextError {
             Self::Bound => "The model request is larger than Power Plant can measure.",
             Self::Untrusted => "The model request contains invalid context text.",
             Self::Overflow => {
-                "The request does not fit this model's context. Compact earlier exchanges or choose a larger model."
+                "The request does not fit this model's context. Compact earlier exchanges manually or choose a larger model."
+            }
+            Self::Headroom => {
+                "Input context is below the automatic compaction threshold, but the output reservation leaves no room. Compact context manually or choose a larger model."
+            }
+            Self::Capacity => {
+                "This model has no published context capacity, so Power Plant cannot use an automatic percentage. Compact context manually or choose a model with a known context window."
             }
             Self::Orphan => {
                 "A tool result is missing its originating call. Compact cannot drop it."
@@ -79,15 +86,37 @@ impl ContextEstimate {
             .is_some_and(|total| total <= self.limit)
     }
 
-    pub(crate) fn needs_compaction(self, compactable: bool) -> bool {
-        compactable && (self.compaction_trigger() || !self.fits())
+    /// Automatic compaction applies only when a boundary exists, the policy is
+    /// enabled and a known capacity meets the configured input percentage.
+    /// A provider overflow never changes this decision.
+    pub(crate) fn needs_compaction(self, compactable: bool, policy: CompactionPreference) -> bool {
+        compactable && policy.enabled && self.automatic_trigger(policy)
     }
 
-    fn compaction_trigger(self) -> bool {
+    /// The input occupancy reached the configured percentage of a known
+    /// capacity. The output reservation does not affect this decision.
+    pub(crate) fn automatic_trigger(self, policy: CompactionPreference) -> bool {
         self.catalogue_limit.is_some_and(|limit| {
-            u128::from(self.total_tokens) * u128::from(COMPACTION_DENOMINATOR)
-                >= u128::from(limit) * u128::from(COMPACTION_NUMERATOR)
+            u128::from(self.input_tokens) * 100 >= u128::from(limit) * u128::from(policy.threshold)
         })
+    }
+
+    /// Input occupancy as an integer percentage of the published capacity.
+    /// Unknown capacity returns `None` rather than a guessed value.
+    pub(crate) fn input_occupancy_percent(self) -> Option<u8> {
+        let limit = self.catalogue_limit?;
+        let percent = u128::from(self.input_tokens) * 100 / u128::from(limit);
+        Some(u8::try_from(percent.min(100)).unwrap_or(100))
+    }
+
+    /// The explanation for a request that does not fit. The policy decides
+    /// whether the input percentage or the missing capacity is the cause.
+    pub(crate) fn blocked_message(self, policy: CompactionPreference) -> &'static str {
+        match self.input_occupancy_percent() {
+            None => ContextError::Capacity.message(),
+            Some(percent) if percent >= policy.threshold => ContextError::Overflow.message(),
+            Some(_) => ContextError::Headroom.message(),
+        }
     }
 
     /// The catalogue does not publish a context window for this model.

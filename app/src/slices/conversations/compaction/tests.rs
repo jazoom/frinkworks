@@ -96,8 +96,15 @@ fn seed_exchanges(
 }
 
 #[tokio::test]
-async fn compact_commands_use_patch_representation() {
+async fn manual_compaction_uses_patch_representation_with_automation_disabled() {
     let state = test_state();
+    state
+        .preferences
+        .set_compaction(crate::preferences::CompactionPreference {
+            enabled: false,
+            threshold: 95,
+        })
+        .unwrap();
     let token = connected(&state);
     let record = seed_exchanges(&state, &token);
     let path = format!("/conversations/{}/compact", record.id);

@@ -16,14 +16,15 @@ use crate::{
     error::AppResult,
     local_data::{ResetError, ResetRequest},
     models::models_dev::RefreshResult,
-    preferences::Theme,
+    preferences::{CompactionPreference, Theme},
     responses,
     sessions::RequiredSession,
     state::AppState,
 };
 
 use self::page::{
-    CONFIRMATION_ABSENT, CONFIRMATION_DUPLICATED, CONFIRMATION_MALFORMED, LocalDataSection,
+    COMPACTION_FAILED, COMPACTION_MALFORMED, COMPACTION_RANGE, CONFIRMATION_ABSENT,
+    CONFIRMATION_DUPLICATED, CONFIRMATION_MALFORMED, CompactionSetting, LocalDataSection,
     ModelCatalogueSetting, RECORD_FAILED, ResetStatusPage, SettingsPage, ThemeSetting,
     WORKFLOW_BUSY,
 };
@@ -32,6 +33,7 @@ pub(super) fn router() -> Router<AppState> {
     Router::new()
         .route("/settings", get(show))
         .route("/settings/theme", post(update_theme))
+        .route("/settings/compaction", post(update_compaction))
         .route(
             "/settings/model-catalogue/refresh",
             post(refresh_model_catalogue),
@@ -47,7 +49,7 @@ async fn show(
     if state.local_data.is_pending() {
         return render_reset_status_page(&state, graft);
     }
-    let page = SettingsPage::new(state.preferences.theme());
+    let page = SettingsPage::new(state.preferences.theme(), state.preferences.compaction());
     match graft {
         PageGraft::Document => responses::chat_page_response(page::TITLE, &state, &page),
         PageGraft::Navigation => Ok(hypergraft::outcome::page_patch(
@@ -92,6 +94,62 @@ async fn update_theme(
         );
     }
     theme_patch(PatchStatus::Ok, &state, None)
+}
+
+#[derive(Deserialize)]
+struct CompactionForm {
+    threshold: String,
+    #[serde(default)]
+    enabled: Option<String>,
+}
+
+async fn update_compaction(
+    State(state): State<AppState>,
+    _session: RequiredSession,
+    _graft: PatchGraft,
+    form: Result<Form<CompactionForm>, FormRejection>,
+) -> AppResult<Response> {
+    let Ok(Form(form)) = form else {
+        return compaction_patch(
+            PatchStatus::UnprocessableEntity,
+            &state,
+            Some(COMPACTION_MALFORMED),
+        );
+    };
+    let Some(preference) = form
+        .threshold
+        .trim()
+        .parse::<u8>()
+        .ok()
+        .and_then(|threshold| CompactionPreference::new(form.enabled.is_some(), threshold))
+    else {
+        return compaction_patch(
+            PatchStatus::UnprocessableEntity,
+            &state,
+            Some(COMPACTION_RANGE),
+        );
+    };
+    if let Err(error) = state.preferences.set_compaction(preference) {
+        crate::error::trace_operation_failure("store compaction preference", &error);
+        return compaction_patch(
+            PatchStatus::UnprocessableEntity,
+            &state,
+            Some(COMPACTION_FAILED),
+        );
+    }
+    compaction_patch(PatchStatus::Ok, &state, None)
+}
+
+fn compaction_patch(
+    status: PatchStatus,
+    state: &AppState,
+    error: Option<&'static str>,
+) -> AppResult<Response> {
+    Ok(hypergraft::outcome::children_patch(
+        status,
+        "compaction-setting",
+        &CompactionSetting::new(state.preferences.compaction(), error),
+    )?)
 }
 
 async fn refresh_model_catalogue(

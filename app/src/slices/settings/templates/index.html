@@ -21,6 +21,22 @@
 
   <section
     class="catalogue-settings-section"
+    aria-labelledby="settings-compaction-heading"
+  >
+    <h2 id="settings-compaction-heading">Compaction</h2>
+    <form
+      id="compaction-setting"
+      method="post"
+      action="/settings/compaction"
+      data-graft
+      class="catalogue-settings-stack"
+    >
+      {% include "settings/templates/compaction.html" %}
+    </form>
+  </section>
+
+  <section
+    class="catalogue-settings-section"
     aria-labelledby="settings-catalogue-heading"
   >
     <h2 id="settings-catalogue-heading">Model catalogue</h2>

@@ -26,6 +26,10 @@ Conversation settings stay local. Use saved settings as future defaults explicit
 
 New drafts copy those requested defaults without authority. Ordinary setup controls apply when they change. Execution review, consent and preset replacement stay behind their own confirmations.
 
+The transcript retains complete history. Model context is a separate projection. Automatic compaction replaces earlier exchanges with a summary. It runs when the input reaches the configured percentage of a known model context window. The default is enabled at 95 percent. Settings can disable automation or set a whole percentage from 1 through 100.
+
+Automatic compaction applies only when the model catalogue publishes a context window. Unknown capacity keeps the request on the operational bound and never triggers a percentage. Below the threshold, a request can still lack output headroom. Power Plant then reports the shortage and offers manual compaction. Manual compaction is independent of the automatic policy.
+
 ## Workflows
 
 A workflow is an optional explicit sequence. Steps can call a model, execute a registered deterministic operation or request a human decision.

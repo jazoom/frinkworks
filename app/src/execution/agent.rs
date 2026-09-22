@@ -182,7 +182,11 @@ pub(crate) async fn run_agent_action(
             if let Some(reason) = budget.next_request_block() {
                 return pause_action(&job, reply, budget.snapshot(reason));
             }
-            if overflow_recovery > 0 && !overflow_compacted && !compaction_guard.blocked() {
+            if overflow_recovery > 0
+                && !overflow_compacted
+                && !compaction_guard.blocked()
+                && automatic_compaction_allowed(state, &spec, &turns, &extra, &request_tools)
+            {
                 overflow_compacted = true;
                 match compact_history(state, &spec, &job, &mut turns, &extra, &request_tools).await
                 {
@@ -247,6 +251,13 @@ pub(crate) async fn run_agent_action(
                         if matches!(error, ProviderError::ContextOverflow) {
                             if overflow_recovery
                                 < crate::conversations::compaction::MAXIMUM_OVERFLOW_RECOVERY
+                                && automatic_compaction_allowed(
+                                    state,
+                                    &spec,
+                                    &turns,
+                                    &extra,
+                                    &request_tools,
+                                )
                             {
                                 overflow_recovery += 1;
                                 overflow_compacted = false;
@@ -598,6 +609,13 @@ pub(crate) async fn run_agent_action(
                         if matches!(error, ProviderError::ContextOverflow) {
                             if overflow_recovery
                                 < crate::conversations::compaction::MAXIMUM_OVERFLOW_RECOVERY
+                                && automatic_compaction_allowed(
+                                    state,
+                                    &spec,
+                                    &turns,
+                                    &extra,
+                                    &request_tools,
+                                )
                             {
                                 overflow_recovery += 1;
                                 overflow_compacted = false;
@@ -1749,9 +1767,12 @@ async fn fit_context(
             if estimate.fits() {
                 Ok(estimate)
             } else {
+                // Below the policy threshold, the shortage belongs to the
+                // output reservation. Do not compact early.
+                let policy = state.preferences.compaction();
                 Err(context_blocked(
                     AssistantReply::default(),
-                    crate::execution::ContextError::Overflow.message(),
+                    estimate.blocked_message(policy),
                 ))
             }
         }
@@ -1808,7 +1829,10 @@ async fn compact_if_needed(
                 .is_ok_and(|ends| ends.len() >= 2)
         }
     };
-    if !estimate.needs_compaction(compactable) {
+    // Read the saved policy at this safe boundary. A summary that starts now
+    // keeps this captured decision even if the preference changes meanwhile.
+    let policy = state.preferences.compaction();
+    if !estimate.needs_compaction(compactable, policy) {
         return Ok(());
     }
     if compaction_guard.blocked() {
@@ -1817,6 +1841,22 @@ async fn compact_if_needed(
     let reduced = compact_history(state, spec, job, turns, extra, tools).await?;
     compaction_guard.record(reduced);
     Ok(())
+}
+
+/// Provider overflow recovery uses the same policy as ordinary decisions.
+/// Disabled automation, unknown capacity and a below-threshold occupancy all
+/// block the recovery path instead of forcing an early summary.
+fn automatic_compaction_allowed(
+    state: &AppState,
+    spec: &AgentRunSpec,
+    turns: &[ChatTurn],
+    extra: &[Message],
+    tools: &[rig_core::completion::ToolDefinition],
+) -> bool {
+    let policy = state.preferences.compaction();
+    policy.enabled
+        && current_estimate(state, spec, turns, extra, tools)
+            .is_ok_and(|estimate| estimate.automatic_trigger(policy))
 }
 
 fn run_selection(spec: &AgentRunSpec) -> crate::providers::ModelSelection {

@@ -1,0 +1,35 @@
+{% if let Some(message) = compaction_error %}
+  <p class="text-error text-sm" role="alert">{{ message }}</p>
+{% endif %}
+<div class="flex max-w-md flex-col items-start gap-4">
+  <label class="flex items-start gap-2 text-sm" for="compaction-enabled">
+    <input
+      id="compaction-enabled"
+      class="checkbox checkbox-sm mt-0.5"
+      type="checkbox"
+      name="enabled"
+      value="on"
+      {% if compaction_enabled %}checked{% endif %}
+    />
+    <span>Compact context automatically when input reaches the threshold.</span>
+  </label>
+  <label class="flex flex-col gap-1 text-sm" for="compaction-threshold">
+    <span>Threshold percentage</span>
+    <input
+      id="compaction-threshold"
+      class="input input-bordered w-32"
+      type="number"
+      name="threshold"
+      min="1"
+      max="100"
+      step="1"
+      value="{{ compaction_threshold }}"
+      required
+    />
+  </label>
+  <p class="text-quiet text-sm">
+    The default is 95 percent of the chosen model's context window. This applies
+    only when the catalogue publishes a context capacity.
+  </p>
+  <button class="btn" type="submit">Save compaction settings</button>
+</div>

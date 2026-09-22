@@ -254,6 +254,7 @@ fn conversation_job(
 
 #[tokio::test]
 async fn automatic_compaction_fits_a_smaller_model_without_deleting_local_tool_results() {
+    use crate::preferences::CompactionPreference;
     use crate::providers::{
         AssistantReply, ChatBackend, CompletionReason, ModelEvent, ProviderConnection,
         ProviderKind, ToolOutput,
@@ -266,6 +267,12 @@ async fn automatic_compaction_fits_a_smaller_model_without_deleting_local_tool_r
         }),
     ]);
     state.chat = std::sync::Arc::new(ChatBackend::Scripted(backend.clone()));
+    // This fixture sits below the default 95 percent but above 90 percent.
+    // Set the policy explicitly so the test pins compaction mechanics.
+    state
+        .preferences
+        .set_compaction(CompactionPreference::new(true, 90).unwrap())
+        .unwrap();
     let (record, job) = conversation_job(&state);
     // Each exchange fits alone, but both results exceed this model's context window.
     for (id, output) in [
@@ -323,6 +330,74 @@ async fn automatic_compaction_fits_a_smaller_model_without_deleting_local_tool_r
         before
     );
     assert_eq!(stored.summary_requests.len(), 1);
+}
+
+#[tokio::test]
+async fn disabled_automatic_compaction_blocks_provider_overflow_without_a_summary_request() {
+    overflow_without_summary(false, 1).await;
+}
+
+#[tokio::test]
+async fn below_threshold_provider_overflow_does_not_dispatch_a_summary() {
+    overflow_without_summary(true, 95).await;
+}
+
+async fn overflow_without_summary(enabled: bool, threshold: u8) {
+    use crate::config::RuntimeConfig;
+    use crate::preferences::CompactionPreference;
+    use crate::providers::{ChatBackend, ProviderConnection, ProviderError, ProviderKind};
+    let mut state = crate::tests::test_state(RuntimeConfig::development());
+    let backend =
+        crate::tests::ScriptedBackend::turn_results(vec![Err(ProviderError::ContextOverflow)]);
+    state.chat = std::sync::Arc::new(ChatBackend::Scripted(backend.clone()));
+    state
+        .preferences
+        .set_compaction(CompactionPreference { enabled, threshold })
+        .unwrap();
+    let connection = ProviderConnection::with_key(
+        ProviderKind::Openrouter,
+        "test-key",
+        "qwen/qwen-2.5-7b-instruct",
+    );
+    state.vault.put(connection.clone()).expect("provider");
+    let (record, job) = conversation_job(&state);
+    // A real summary boundary ensures that an unintended recovery can dispatch.
+    for id in ["first", "latest"] {
+        let mut reply = crate::providers::AssistantReply::default();
+        reply.start_tool(
+            id.to_owned(),
+            "read".to_owned(),
+            serde_json::json!({"path": "file.txt"}),
+        );
+        reply.finish_tool(
+            id,
+            crate::providers::ToolOutput {
+                resource: None,
+                label: "read".to_owned(),
+                output: "file content ".repeat(500),
+                command: None,
+            },
+        );
+        reply.completion = Some(crate::providers::CompletionReason::ToolCalls);
+        state
+            .conversations
+            .settle_tool_batch(&record.id, job.id(), &reply)
+            .unwrap();
+    }
+    let mut spec = read_spec(connection, record.id, record.revision);
+    spec.steering_session = Some(crate::sessions::generate_session_token().unwrap().id());
+    let turns = super::current_conversation_turns(&state, &spec).unwrap();
+    let estimate = super::current_estimate(&state, &spec, &turns, &[], &spec.tools).unwrap();
+    assert_eq!(
+        estimate.automatic_trigger(state.preferences.compaction()),
+        !enabled
+    );
+    let ended = super::run_agent_action(&state, spec, turns, job).await;
+    assert_eq!(ended.outcome, super::AgentOutcome::ContextBlocked);
+    assert_eq!(backend.turn_count(), 1);
+    let stored = state.conversations.get(&record.id).unwrap();
+    assert!(stored.compaction.is_none());
+    assert!(stored.summary_requests.is_empty());
 }
 
 #[tokio::test]
@@ -1452,6 +1527,11 @@ async fn a_compacted_long_turn_settles_once_without_replaying_settled_tools() {
         ProviderKind, ToolOutput,
     };
     let mut state = crate::tests::test_state(crate::config::RuntimeConfig::development());
+    // This fixture sits below the default 95 percent but above 90 percent.
+    state
+        .preferences
+        .set_compaction(crate::preferences::CompactionPreference::new(true, 90).unwrap())
+        .unwrap();
     let backend = crate::tests::ScriptedBackend::rounds(vec![
         vec![
             Ok(ModelEvent::Text("Retained file result".repeat(2_750))),

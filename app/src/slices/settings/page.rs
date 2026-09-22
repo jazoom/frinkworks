@@ -1,6 +1,6 @@
 use askama::Template;
 
-use crate::preferences::Theme;
+use crate::preferences::{CompactionPreference, Theme};
 
 pub(super) const TITLE: &str = "Settings | Power Plant";
 pub(super) const RESET_STATUS_TITLE: &str = "Reset local data | Power Plant";
@@ -10,6 +10,10 @@ pub(super) const CONFIRMATION_DUPLICATED: &str = "That form includes a duplicate
 pub(super) const CONFIRMATION_MALFORMED: &str = "That form is not valid.";
 pub(super) const WORKFLOW_BUSY: &str = "A workflow is still running. Wait until it finishes.";
 pub(super) const RECORD_FAILED: &str = "Power Plant could not record the reset. Try again.";
+pub(super) const COMPACTION_MALFORMED: &str = "That compaction form is not valid.";
+pub(super) const COMPACTION_RANGE: &str =
+    "Enter a whole percentage from 1 through 100 for automatic compaction.";
+pub(super) const COMPACTION_FAILED: &str = "Power Plant cannot save the compaction preference.";
 
 #[derive(Template)]
 #[template(path = "settings/templates/index.html")]
@@ -17,17 +21,23 @@ pub(super) struct SettingsPage {
     theme: &'static str,
     themes: &'static [Theme],
     error: Option<&'static str>,
+    compaction_enabled: bool,
+    compaction_threshold: u8,
+    compaction_error: Option<&'static str>,
     catalogue_status: Option<&'static str>,
     catalogue_error: Option<&'static str>,
     reset_error: Option<&'static str>,
 }
 
 impl SettingsPage {
-    pub(super) fn new(theme: Theme) -> Self {
+    pub(super) fn new(theme: Theme, compaction: CompactionPreference) -> Self {
         Self {
             theme: theme.as_str(),
             themes: Theme::ALL,
             error: None,
+            compaction_enabled: compaction.enabled,
+            compaction_threshold: compaction.threshold,
+            compaction_error: None,
             catalogue_status: None,
             catalogue_error: None,
             reset_error: None,
@@ -49,6 +59,24 @@ impl ThemeSetting {
             theme: theme.as_str(),
             themes: Theme::ALL,
             error,
+        }
+    }
+}
+
+#[derive(Template)]
+#[template(path = "settings/templates/compaction.html")]
+pub(super) struct CompactionSetting {
+    compaction_enabled: bool,
+    compaction_threshold: u8,
+    compaction_error: Option<&'static str>,
+}
+
+impl CompactionSetting {
+    pub(super) fn new(compaction: CompactionPreference, error: Option<&'static str>) -> Self {
+        Self {
+            compaction_enabled: compaction.enabled,
+            compaction_threshold: compaction.threshold,
+            compaction_error: error,
         }
     }
 }

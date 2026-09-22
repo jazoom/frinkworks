@@ -15,6 +15,39 @@ const MAXIMUM_FILE_BYTES: usize = 512 * 1024;
 #[cfg(test)]
 mod tests;
 
+/// Last-resort automatic compaction. The percentage compares input occupancy
+/// with the published context capacity. Output reservation does not affect it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct CompactionPreference {
+    pub(crate) enabled: bool,
+    pub(crate) threshold: u8,
+}
+
+impl Default for CompactionPreference {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            threshold: 95,
+        }
+    }
+}
+
+impl CompactionPreference {
+    pub(crate) fn new(enabled: bool, threshold: u8) -> Option<Self> {
+        (1..=100)
+            .contains(&threshold)
+            .then_some(Self { enabled, threshold })
+    }
+}
+
+fn default_automatic_compaction() -> bool {
+    CompactionPreference::default().enabled
+}
+
+fn default_compaction_threshold() -> u8 {
+    CompactionPreference::default().threshold
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum Theme {
     #[default]
@@ -72,6 +105,10 @@ struct PreferencesFile {
     version: u32,
     theme: String,
     show_thinking: bool,
+    #[serde(default = "default_automatic_compaction")]
+    automatic_compaction: bool,
+    #[serde(default = "default_compaction_threshold")]
+    compaction_threshold: u8,
     #[serde(deserialize_with = "crate::storage::required_option")]
     selected_provider: Option<ProviderKind>,
     models: Vec<ProviderPreference>,
@@ -82,6 +119,7 @@ struct PreferencesFile {
 struct PreferenceValues {
     theme: Theme,
     show_thinking: bool,
+    compaction: CompactionPreference,
     selected_provider: Option<ProviderKind>,
     models: Vec<ProviderPreference>,
     conversation_defaults: Option<crate::execution::ExecutionSettings>,
@@ -115,7 +153,8 @@ impl PreferenceValues {
     }
 
     fn is_valid(&self) -> bool {
-        self.models.len() <= ProviderKind::ALL.len()
+        (1..=100).contains(&self.compaction.threshold)
+            && self.models.len() <= ProviderKind::ALL.len()
             && self.selected_provider.is_none_or(|kind| {
                 self.models
                     .iter()
@@ -201,6 +240,20 @@ impl Preferences {
 
     pub(crate) fn set_show_thinking(&self, show: bool) -> Result<(), PreferenceError> {
         self.update(|values| values.show_thinking = show)
+    }
+
+    pub(crate) fn compaction(&self) -> CompactionPreference {
+        self.values().compaction
+    }
+
+    pub(crate) fn set_compaction(
+        &self,
+        preference: CompactionPreference,
+    ) -> Result<(), PreferenceError> {
+        if CompactionPreference::new(preference.enabled, preference.threshold).is_none() {
+            return Err(PreferenceError);
+        }
+        self.update(|values| values.compaction = preference)
     }
 
     pub(crate) fn desk_providers(&self, vault: &ProviderVault) -> Vec<DeskProvider> {
@@ -347,6 +400,10 @@ fn load(path: &std::path::Path) -> PreferenceValues {
     let values = PreferenceValues {
         theme,
         show_thinking: file.show_thinking,
+        compaction: CompactionPreference {
+            enabled: file.automatic_compaction,
+            threshold: file.compaction_threshold,
+        },
         selected_provider: file.selected_provider,
         models: file.models,
         conversation_defaults: file
@@ -369,6 +426,8 @@ fn persist(path: &std::path::Path, values: &PreferenceValues) -> Result<(), Pref
         version: FILE_VERSION,
         theme: values.theme.as_str().to_owned(),
         show_thinking: values.show_thinking,
+        automatic_compaction: values.compaction.enabled,
+        compaction_threshold: values.compaction.threshold,
         selected_provider: values.selected_provider,
         models: values.models.clone(),
         conversation_defaults: values

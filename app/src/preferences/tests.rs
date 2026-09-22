@@ -304,6 +304,60 @@ fn conversation_defaults_keep_theme_and_requested_settings_without_credentials()
 }
 
 #[test]
+fn compaction_defaults_to_enabled_at_95_percent() {
+    let preferences = Preferences::in_memory();
+    let default = super::CompactionPreference::default();
+    assert_eq!(preferences.compaction(), default);
+    assert!(default.enabled);
+    assert_eq!(default.threshold, 95);
+}
+
+#[test]
+fn compaction_preferences_round_trip_and_reject_out_of_range_percentages() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("preferences.json");
+    let preferences = Preferences::open(path.clone());
+    let disabled = super::CompactionPreference {
+        enabled: false,
+        threshold: 42,
+    };
+    preferences.set_compaction(disabled).unwrap();
+    assert_eq!(Preferences::open(path.clone()).compaction(), disabled);
+    let persisted: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(persisted["automatic_compaction"], false);
+    assert_eq!(persisted["compaction_threshold"], 42);
+    for threshold in [0u8, 101, u8::MAX] {
+        let invalid = super::CompactionPreference {
+            enabled: true,
+            threshold,
+        };
+        assert!(preferences.set_compaction(invalid).is_err());
+        assert_eq!(preferences.compaction(), disabled);
+    }
+}
+
+#[test]
+fn an_invalid_compaction_threshold_defaults_without_rewriting_the_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("preferences.json");
+    let bytes = br#"{"version":1,"theme":"system","show_thinking":false,"automatic_compaction":false,"compaction_threshold":0,"selected_provider":null,"models":[]}"#;
+    crate::storage::write_private(&path, bytes).unwrap();
+    let reader = Preferences::open(path.clone());
+    assert_eq!(reader.compaction(), super::CompactionPreference::default());
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+}
+
+#[test]
+fn an_absent_compaction_field_uses_the_enabled_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("preferences.json");
+    let bytes = br#"{"version":1,"theme":"system","show_thinking":false,"selected_provider":null,"models":[]}"#;
+    crate::storage::write_private(&path, bytes).unwrap();
+    let reader = Preferences::open(path);
+    assert_eq!(reader.compaction(), super::CompactionPreference::default());
+}
+
+#[test]
 fn only_known_themes_parse() {
     for theme in Theme::ALL {
         assert_eq!(Theme::parse(theme.as_str()), Some(*theme));

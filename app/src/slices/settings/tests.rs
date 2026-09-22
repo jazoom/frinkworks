@@ -12,7 +12,7 @@ use crate::{
     agents::{AccessMode, AgentDraft, DirectoryGrant, ToolId},
     config::{RuntimeConfig, StartupConfig},
     local_data::CatalogueResetConflict,
-    preferences::Theme,
+    preferences::{CompactionPreference, Theme},
     providers::{ProviderConnection, ProviderKind},
     sessions,
     state::AppState,
@@ -254,6 +254,10 @@ fn reset_request(token: &str, body: &str) -> Request<Body> {
     patch_form(token, "/settings/local-data/reset", body.to_owned())
 }
 
+fn compaction_request(token: &str, body: &str) -> Request<Body> {
+    patch_form(token, "/settings/compaction", body.to_owned())
+}
+
 async fn body_text(response: axum::http::Response<Body>) -> String {
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     String::from_utf8(body.to_vec()).unwrap()
@@ -268,6 +272,132 @@ fn assert_no_paths(text: &str, paths: &[&Path]) {
         assert!(
             !text.contains(displayed.as_ref()),
             "response included path {displayed}: {text}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn compaction_patch_persists_valid_values_and_returns_the_authoritative_setting() {
+    let state = test_state();
+    let token = connected(&state);
+
+    let response = app(&state)
+        .oneshot(compaction_request(&token, "enabled=on&threshold=80"))
+        .await
+        .expect("compaction");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        state.preferences.compaction(),
+        CompactionPreference {
+            enabled: true,
+            threshold: 80,
+        }
+    );
+    let text = body_text(response).await;
+    assert!(text.contains("target=\"compaction-setting\""));
+    assert!(text.contains("value=\"80\""));
+    assert!(text.contains("checked"));
+}
+
+#[tokio::test]
+async fn compaction_rejects_non_command_representations_without_a_mutation() {
+    let state = test_state();
+    let token = connected(&state);
+    for representation in [None, Some("navigation")] {
+        let mut request = compaction_request(&token, "threshold=1");
+        request.headers_mut().remove(hypergraft::GRAFT_REQUEST);
+        if let Some(value) = representation {
+            request
+                .headers_mut()
+                .insert(hypergraft::GRAFT_REQUEST, value.parse().unwrap());
+        }
+        let response = app(&state).oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            state.preferences.compaction(),
+            CompactionPreference::default()
+        );
+    }
+}
+
+#[tokio::test]
+async fn compaction_patch_accepts_a_disabled_policy() {
+    let state = test_state();
+    let token = connected(&state);
+
+    let response = app(&state)
+        .oneshot(compaction_request(&token, "threshold=95"))
+        .await
+        .expect("compaction");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        state.preferences.compaction(),
+        CompactionPreference {
+            enabled: false,
+            threshold: 95,
+        }
+    );
+    let text = body_text(response).await;
+    assert!(!text.contains("checked"));
+}
+
+#[tokio::test]
+async fn an_out_of_range_compaction_percentage_is_rejected() {
+    let state = test_state();
+    let token = connected(&state);
+    for body in [
+        "threshold=0",
+        "threshold=101",
+        "threshold=nine",
+        "threshold=95.5",
+    ] {
+        let response = app(&state)
+            .oneshot(compaction_request(&token, body))
+            .await
+            .expect("compaction");
+        assert_eq!(
+            response.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{body}"
+        );
+        let text = body_text(response).await;
+        assert!(text.contains("target=\"compaction-setting\""), "{body}");
+        assert!(text.contains(page::COMPACTION_RANGE), "{body}");
+        assert_eq!(
+            state.preferences.compaction(),
+            CompactionPreference::default(),
+            "{body}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_malformed_compaction_form_is_rejected_without_changing_the_preference() {
+    let state = test_state();
+    let token = connected(&state);
+
+    for body in [
+        "",
+        "enabled=on",
+        "threshold=95&threshold=1",
+        "threshold=95&enabled=on&enabled=on",
+    ] {
+        let response = app(&state)
+            .oneshot(compaction_request(&token, body))
+            .await
+            .expect("compaction");
+        assert_eq!(
+            response.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{body}"
+        );
+        let text = body_text(response).await;
+        assert!(text.contains("target=\"compaction-setting\""), "{body}");
+        assert!(text.contains(page::COMPACTION_MALFORMED), "{body}");
+        assert_eq!(
+            state.preferences.compaction(),
+            CompactionPreference::default(),
+            "{body}"
         );
     }
 }
