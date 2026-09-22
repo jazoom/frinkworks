@@ -91,14 +91,18 @@ impl Catalogue {
     }
 
     fn search(&self, query: &str, mode: &str, secret: Option<&str>) -> Search {
-        match mode.trim() {
+        let mut search = match mode.trim() {
             "preview" => page::preview(&self.offers, &self.templates, query, secret),
             "" | "suggest" => page::suggest(&self.offers, &self.templates, query),
             _ => Search {
                 message: "The command lookup mode is not valid.".to_owned(),
                 ..Search::default()
             },
-        }
+        };
+        // Surface a candidate-backed or unreadable source as a limitation
+        // instead of a silent empty catalogue.
+        search.unavailable = search.unavailable.saturating_add(self.unavailable);
+        search
     }
 }
 
@@ -267,13 +271,14 @@ fn fill(
         match ProjectFreeAuthority::from_preview_grants(revision, grants, location) {
             Ok(authority) => {
                 let (mut offers, mut unavailable) = page::global_offers(state, location);
-                let (project, project_unavailable) = page::project_offers(
+                let (project, project_templates, project_unavailable) = page::project_resources(
                     &authority.policy,
                     grants,
                     candidates,
                     state.local_data.root(),
                 );
                 offers.extend(project);
+                catalogue.templates.extend(project_templates);
                 unavailable += project_unavailable;
                 (offers, unavailable)
             }
@@ -282,7 +287,7 @@ fn fill(
                 page::global_offers(state, location)
             }
         };
-    catalogue.no_roots = offers.is_empty();
+    catalogue.no_roots = offers.is_empty() && catalogue.templates.is_empty();
     catalogue.offers = offers;
     catalogue.unavailable += unavailable;
 }

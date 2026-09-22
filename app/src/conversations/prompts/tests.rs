@@ -216,3 +216,129 @@ fn discovery_reports_an_oversized_file() {
     assert!(catalogue.templates.is_empty());
     assert_eq!(catalogue.unavailable, 1);
 }
+
+fn project_root(root: &Path, name: &str, body: &str) -> DirectoryGrant {
+    let prompts = root.join(PROJECT_PROMPTS_DIRECTORY);
+    std::fs::create_dir_all(&prompts).expect("prompts directory");
+    std::fs::write(prompts.join(format!("{name}.md")), body).expect("project template");
+    DirectoryGrant::from_selected(root, &[]).expect("grant")
+}
+
+fn effective(grant: &DirectoryGrant) -> EffectiveRoot {
+    EffectiveRoot {
+        scope: grant.alias.clone(),
+        model_path: grant.guest_path(),
+        host_path: Some(grant.host_path.clone()),
+        candidate_paths: Vec::new(),
+    }
+}
+
+#[test]
+fn project_discovery_keeps_same_name_across_roots() {
+    let left = tempfile::tempdir().expect("left");
+    let right = tempfile::tempdir().expect("right");
+    let left_grant = project_root(left.path(), "review", "Left $1.");
+    let right_grant = project_root(right.path(), "review", "Right $1.");
+    let data_root = tempfile::tempdir().expect("data");
+    let (templates, unavailable) = discover_project(
+        &[effective(&left_grant), effective(&right_grant)],
+        &[left_grant, right_grant],
+        data_root.path(),
+    );
+    assert_eq!(unavailable, 0);
+    assert_eq!(templates.len(), 2);
+    assert!(templates.iter().all(|template| template.name == "review"));
+    assert_ne!(templates[0].source.scope, templates[1].source.scope);
+    assert!(
+        templates
+            .iter()
+            .all(|template| template.source.kind == ResourceKind::Prompt)
+    );
+    assert!(
+        templates
+            .iter()
+            .all(|template| { template.source.path.contains(PROJECT_PROMPTS_DIRECTORY) })
+    );
+}
+
+#[test]
+fn global_project_alias_remains_distinct_from_global_templates() {
+    let data = tempfile::tempdir().expect("data");
+    std::fs::create_dir(data.path().join(PROMPTS_DIRECTORY)).expect("global prompts");
+    std::fs::write(data.path().join("prompts/review.md"), "Global.").expect("global template");
+    let parent = tempfile::tempdir().expect("project parent");
+    let grant = project_root(&parent.path().join("global"), "review", "Project.");
+    let (mut templates, _) = discover_project(&[effective(&grant)], &[grant], data.path());
+    templates.extend(discover(data.path()).templates);
+    for (command, body) in [
+        ("/global/review", "Global."),
+        ("/project:global/review", "Project."),
+    ] {
+        let expansion = crate::conversations::input::expand(command, &[], &templates, None)
+            .expect("distinct scope");
+        assert_eq!(expansion.expanded, body);
+    }
+}
+
+#[test]
+fn project_discovery_rejects_case_insensitive_collisions_within_one_root() {
+    let root = tempfile::tempdir().expect("root");
+    let prompts = root.path().join(PROJECT_PROMPTS_DIRECTORY);
+    std::fs::create_dir_all(&prompts).expect("prompts directory");
+    std::fs::write(prompts.join("Review.md"), "Review $1.").expect("first");
+    std::fs::write(prompts.join("review.md"), "Review $1.").expect("second");
+    std::fs::write(prompts.join("unique.md"), "Unique.").expect("unique");
+    let grant = DirectoryGrant::from_selected(root.path(), &[]).expect("grant");
+    let data_root = tempfile::tempdir().expect("data");
+    let (templates, unavailable) =
+        discover_project(&[effective(&grant)], &[grant], data_root.path());
+    assert_eq!(templates.len(), 1);
+    assert_eq!(templates[0].name, "unique");
+    assert_eq!(unavailable, 2);
+}
+
+#[test]
+fn candidate_backed_templates_report_unavailable_bodies() {
+    let data_root = tempfile::tempdir().expect("data");
+    let root = EffectiveRoot {
+        scope: "project".to_owned(),
+        model_path: "/access/project".to_owned(),
+        host_path: None,
+        candidate_paths: vec![
+            ".agents/prompts/review.md".to_owned(),
+            ".agents/prompts/review.md".to_owned(),
+            ".agents/prompts/nested/other.md".to_owned(),
+            "src/main.rs".to_owned(),
+        ],
+    };
+    let (templates, unavailable) = discover_project(&[root], &[], data_root.path());
+    assert!(templates.is_empty());
+    assert_eq!(unavailable, 1);
+}
+
+#[test]
+fn project_discovery_skips_the_private_data_directory() {
+    let data_root = tempfile::tempdir().expect("data");
+    let root = data_root.path().join("project");
+    let grant = project_root(&root, "review", "Review $1.");
+    let (templates, unavailable) =
+        discover_project(&[effective(&grant)], &[grant], data_root.path());
+    assert!(templates.is_empty());
+    assert_eq!(unavailable, 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn project_discovery_rejects_symbolic_links() {
+    let root = tempfile::tempdir().expect("root");
+    let outside = tempfile::NamedTempFile::new().expect("outside");
+    let prompts = root.path().join(PROJECT_PROMPTS_DIRECTORY);
+    std::fs::create_dir_all(&prompts).expect("prompts directory");
+    std::os::unix::fs::symlink(outside.path(), prompts.join("linked.md")).expect("link");
+    let grant = DirectoryGrant::from_selected(root.path(), &[]).expect("grant");
+    let data_root = tempfile::tempdir().expect("data");
+    let (templates, unavailable) =
+        discover_project(&[effective(&grant)], &[grant], data_root.path());
+    assert!(templates.is_empty());
+    assert_eq!(unavailable, 1);
+}

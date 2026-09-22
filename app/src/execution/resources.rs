@@ -774,9 +774,9 @@ fn read_preview_root(
         if folder.is_empty() || matches!(folder.as_str(), "." | ".." | ".git") {
             continue;
         }
-        let Some(bytes) = open_preview_directory(&directory, &folder)
-            .and_then(|directory| read_preview_bytes(&directory, MAXIMUM_SKILL_BODY_BYTES))
-        else {
+        let Some(bytes) = open_preview_directory(&directory, &folder).and_then(|directory| {
+            read_preview_file(&directory, SKILL_METADATA_NAME, MAXIMUM_SKILL_BODY_BYTES)
+        }) else {
             continue;
         };
         let Ok(metadata) = parse_skill_metadata(&bytes) else {
@@ -798,7 +798,10 @@ fn read_preview_root(
     }
 }
 
-fn open_preview_directory(directory: &cap_std::fs::Dir, name: &str) -> Option<cap_std::fs::Dir> {
+pub(crate) fn open_preview_directory(
+    directory: &cap_std::fs::Dir,
+    name: &str,
+) -> Option<cap_std::fs::Dir> {
     use cap_std::fs::OpenOptionsExt;
     let mut options = cap_std::fs::OpenOptions::new();
     // Directory handles and O_NOFOLLOW prevent replacement with an escaping link.
@@ -807,13 +810,19 @@ fn open_preview_directory(directory: &cap_std::fs::Dir, name: &str) -> Option<ca
     Some(cap_std::fs::Dir::from_std_file(file.into_std()))
 }
 
-fn read_preview_bytes(directory: &cap_std::fs::Dir, maximum: usize) -> Option<Vec<u8>> {
+/// Read one bounded regular file from an open directory handle. A symbolic
+/// link, a non-regular file and an oversized file return `None`.
+pub(crate) fn read_preview_file(
+    directory: &cap_std::fs::Dir,
+    name: &str,
+    maximum: usize,
+) -> Option<Vec<u8>> {
     use cap_std::fs::OpenOptionsExt;
     use std::io::Read;
     let mut options = cap_std::fs::OpenOptions::new();
     // O_NONBLOCK avoids a FIFO stall before the regular-file check.
     options.read(true).custom_flags(0o400000 | 0o4000);
-    let file = directory.open_with(SKILL_METADATA_NAME, &options).ok()?;
+    let file = directory.open_with(name, &options).ok()?;
     let metadata = file.metadata().ok()?;
     if !metadata.is_file() || metadata.len() > u64::try_from(maximum).ok()? {
         return None;

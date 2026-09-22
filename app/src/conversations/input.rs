@@ -92,7 +92,7 @@ impl InputError {
                 "No available skill or template matches that command. Check the name and try again."
             }
             Self::Ambiguous => {
-                "More than one skill uses that name. Use /skill:scope/name to choose one."
+                "More than one resource uses that name. Use a scope-qualified name to choose one."
             }
             Self::Empty => "Enter a command name after / or a skill name after /skill:.",
             Self::Bound => {
@@ -212,13 +212,7 @@ fn expand_prompt(
     if name.is_empty() {
         return Err(InputError::Empty);
     }
-    if prompts::reserved_name(name) {
-        return Err(InputError::Unknown);
-    }
-    let template = templates
-        .iter()
-        .find(|template| template.name.eq_ignore_ascii_case(name))
-        .ok_or(InputError::Unknown)?;
+    let template = select_prompt(name, templates)?;
     validate_prompt(template, secret)?;
     let expanded = prompts::render(&template.body, arguments).map_err(|error| match error {
         PromptError::Malformed => InputError::Arguments,
@@ -346,6 +340,34 @@ fn select<'a>(reference: &str, offers: &'a [SkillOffer]) -> Result<&'a SkillOffe
                 _ => Err(InputError::Ambiguous),
             }
         }
+    }
+}
+
+fn select_prompt<'a>(
+    name: &str,
+    templates: &'a [PromptTemplate],
+) -> Result<&'a PromptTemplate, InputError> {
+    let (scope, template_name) = match name.split_once('/') {
+        Some((scope, template_name)) => (Some(scope), template_name),
+        None => (None, name),
+    };
+    if scope.is_some_and(str::is_empty) || template_name.is_empty() {
+        return Err(InputError::Empty);
+    }
+    if prompts::reserved_name(template_name) {
+        return Err(InputError::Unknown);
+    }
+    let matches = templates
+        .iter()
+        .filter(|template| template.name.eq_ignore_ascii_case(template_name))
+        .filter(|template| {
+            scope.is_none_or(|scope| template.source.scope.eq_ignore_ascii_case(scope))
+        })
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [] => Err(InputError::Unknown),
+        [only] => Ok(only),
+        _ => Err(InputError::Ambiguous),
     }
 }
 

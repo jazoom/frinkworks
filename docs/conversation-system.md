@@ -226,7 +226,11 @@ The application rejects a skill body above 1 MiB or an expanded message above 32
 
 ## Prompt templates
 
-A composer message can start with `/template-name`. The resolver reads global templates directly inside `<data_root>/prompts`. An absent folder produces no templates. Session submission and unsaved drafts use the same catalogue builder, so a preview and a send agree on the source.
+A composer message can start with `/template-name` or `/scope/template-name`. The resolver reads global templates directly inside `<data_root>/prompts` and project templates from `.agents/prompts` directly below an authorised work location. An absent folder produces no templates. Global templates use the `global` scope. A project template uses its work-location alias.
+
+If the alias is `global`, its templates use `project:global` to avoid a scope collision. `/project:global/template-name` selects that project template. Session submission and unsaved drafts use the same catalogue builder, so a preview and a send agree on the source.
+
+An unqualified duplicate name is ambiguous. The suggestions show the scopes and insert a qualified command for duplicate names. A user selects one with `/scope/template-name` rather than a silent precedence rule. A candidate-backed location exposes no template body. The preview reports the limitation instead of reading current host files. A template body is never read from a nested directory or an external application configuration.
 
 Frontmatter is optional. It carries `description` and `argument-hint`. The template body is the Markdown after the closing delimiter. A file that starts a frontmatter block must close it. The template name is the file stem without the `.md` extension.
 

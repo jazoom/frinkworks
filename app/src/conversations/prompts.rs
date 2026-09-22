@@ -1,21 +1,24 @@
-//! Global prompt templates with non-recursive argument substitution.
+//! Prompt templates with non-recursive argument substitution.
 //!
-//! Discovery reads bounded Markdown files directly inside the Power Plant
-//! data-directory `prompts` folder. The parser and renderer are pure. Template
-//! text is never executed and expansion output never runs command
-//! classification again.
+//! Global discovery reads bounded Markdown files directly inside the Power
+//! Plant data-directory `prompts` folder. Project discovery reads
+//! `.agents/prompts/*.md` directly below an authorised work location. The
+//! parser and renderer are pure. Template text is never executed and
+//! expansion output never runs command classification again.
 
-use std::{io, path::Path};
+use std::{collections::BTreeSet, io, path::Path};
 
 use serde::Deserialize;
 
-use crate::execution::{ResourceKind, ResourceSource};
+use crate::execution::resources::{EffectiveRoot, open_preview_directory, read_preview_file};
+use crate::execution::{DirectoryGrant, ResourceKind, ResourceSource};
 
 #[cfg(test)]
 mod tests;
 
 pub(crate) const PROMPTS_DIRECTORY: &str = "prompts";
-pub(crate) const PROMPTS_SCOPE: &str = "Global prompts";
+pub(crate) const PROJECT_PROMPTS_DIRECTORY: &str = ".agents/prompts";
+pub(crate) const PROMPTS_SCOPE: &str = "global";
 pub(crate) const MAXIMUM_PROMPTS: usize = 64;
 pub(crate) const MAXIMUM_PROMPT_ENTRIES: usize = 256;
 pub(crate) const MAXIMUM_PROMPT_NAME_BYTES: usize = 128;
@@ -136,20 +139,207 @@ fn template_from_entry(directory: &Path, entry: &std::fs::DirEntry) -> Option<Pr
     }
     let path = directory.join(file_name);
     let bytes = crate::storage::read_private_bounded(&path, MAXIMUM_PROMPT_BODY_BYTES).ok()?;
-    let markdown = std::str::from_utf8(&bytes).ok()?;
+    template_from_bytes(
+        name,
+        &bytes,
+        PROMPTS_SCOPE,
+        format!("{PROMPTS_DIRECTORY}/{file_name}"),
+    )
+}
+
+fn template_from_bytes(
+    name: &str,
+    bytes: &[u8],
+    scope: &str,
+    path: String,
+) -> Option<PromptTemplate> {
+    if bytes.len() > MAXIMUM_PROMPT_BODY_BYTES {
+        return None;
+    }
+    let markdown = std::str::from_utf8(bytes).ok()?;
     let document = parse_document(markdown).ok()?;
     Some(PromptTemplate {
         name: name.to_owned(),
         description: document.description,
         argument_hint: document.argument_hint,
         body: document.body,
-        source: ResourceSource::new(
-            ResourceKind::Prompt,
-            PROMPTS_SCOPE,
-            format!("{PROMPTS_DIRECTORY}/{file_name}"),
-            &bytes,
-        ),
+        source: ResourceSource::new(ResourceKind::Prompt, scope, path, bytes),
     })
+}
+
+/// Discover project templates from the effective read-only roots. Discovery
+/// reads `.agents/prompts` directly below each root. It never scans a nested
+/// directory or an external application configuration. A candidate-backed
+/// root resolves names from the immutable candidate entries and reports an
+/// unavailable body instead of reading current host files.
+pub(crate) fn discover_project(
+    roots: &[EffectiveRoot],
+    grants: &[DirectoryGrant],
+    data_root: &Path,
+) -> (Vec<PromptTemplate>, usize) {
+    let mut templates = Vec::new();
+    let mut unavailable = 0;
+    for root in roots {
+        if templates.len() >= MAXIMUM_PROMPTS {
+            break;
+        }
+        let Some(host) = root.host_path.as_deref() else {
+            unavailable += project_candidate_count(&root.candidate_paths);
+            continue;
+        };
+        let Some(grant) = grants
+            .iter()
+            .find(|grant| grant.host_path.as_path() == host)
+        else {
+            unavailable += 1;
+            continue;
+        };
+        read_project_root(
+            root,
+            host,
+            grant,
+            data_root,
+            &mut templates,
+            &mut unavailable,
+        );
+    }
+    templates.sort_by(|left, right| {
+        left.source
+            .scope
+            .cmp(&right.source.scope)
+            .then(left.name.cmp(&right.name))
+    });
+    (templates, unavailable)
+}
+
+/// Count the distinct `.agents/prompts/*.md` names in one immutable candidate.
+/// The body bytes are not part of that source, so each name stays unavailable.
+fn project_candidate_count(entries: &[String]) -> usize {
+    let mut seen = BTreeSet::new();
+    for entry in entries {
+        let Some(rest) = entry.strip_prefix(&format!("{PROJECT_PROMPTS_DIRECTORY}/")) else {
+            continue;
+        };
+        if rest.contains('/') {
+            continue;
+        }
+        let Some(name) = rest.strip_suffix(&format!(".{PROMPT_EXTENSION}")) else {
+            continue;
+        };
+        if !valid_name(name) || reserved_name(name) {
+            continue;
+        }
+        seen.insert(name.to_ascii_lowercase());
+    }
+    seen.len()
+}
+
+fn read_project_root(
+    root: &EffectiveRoot,
+    host: &Path,
+    grant: &DirectoryGrant,
+    data_root: &Path,
+    templates: &mut Vec<PromptTemplate>,
+    unavailable: &mut usize,
+) {
+    use cap_std::fs::MetadataExt;
+    let prompts_path = host.join(PROJECT_PROMPTS_DIRECTORY);
+    // An authorised parent must not expose private data through its prompt directory.
+    if prompts_path.starts_with(data_root) || data_root.starts_with(&prompts_path) {
+        return;
+    }
+    let Ok(directory) = cap_std::fs::Dir::open_ambient_dir(host, cap_std::ambient_authority())
+    else {
+        *unavailable += 1;
+        return;
+    };
+    if grant.revalidate().is_err()
+        || !directory.dir_metadata().is_ok_and(|metadata| {
+            metadata.dev() == grant.identity.device && metadata.ino() == grant.identity.inode
+        })
+    {
+        *unavailable += 1;
+        return;
+    }
+    let Some(directory) = open_preview_directory(&directory, ".agents")
+        .and_then(|directory| open_preview_directory(&directory, "prompts"))
+    else {
+        return;
+    };
+    let Ok(entries) = directory.entries() else {
+        *unavailable += 1;
+        return;
+    };
+    let mut found: Vec<PromptTemplate> = Vec::new();
+    let mut seen = BTreeSet::new();
+    let mut duplicates = BTreeSet::new();
+    for (index, entry) in entries.enumerate() {
+        if index >= MAXIMUM_PROMPT_ENTRIES {
+            *unavailable += 1;
+            break;
+        }
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => {
+                *unavailable += 1;
+                continue;
+            }
+        };
+        let Some((name, file_name)) = project_file(&entry) else {
+            *unavailable += 1;
+            continue;
+        };
+        let Some(bytes) = read_preview_file(&directory, &file_name, MAXIMUM_PROMPT_BODY_BYTES)
+        else {
+            *unavailable += 1;
+            continue;
+        };
+        let model_path = root.model_path.trim_end_matches('/');
+        let path = format!("{model_path}/{PROJECT_PROMPTS_DIRECTORY}/{file_name}");
+        // Grant aliases cannot contain a colon, so this scope cannot collide with another root.
+        let scope = if root.scope.eq_ignore_ascii_case(PROMPTS_SCOPE) {
+            "project:global"
+        } else {
+            &root.scope
+        };
+        let Some(template) = template_from_bytes(&name, &bytes, scope, path) else {
+            *unavailable += 1;
+            continue;
+        };
+        let key = name.to_ascii_lowercase();
+        if seen.insert(key.clone()) {
+            found.push(template);
+        } else {
+            duplicates.insert(key);
+            *unavailable += 1;
+        }
+    }
+    for template in found {
+        if templates.len() >= MAXIMUM_PROMPTS {
+            *unavailable += 1;
+            continue;
+        }
+        // Reject every member of a case-insensitive collision within one root.
+        if duplicates.contains(&template.name.to_ascii_lowercase()) {
+            *unavailable += 1;
+            continue;
+        }
+        templates.push(template);
+    }
+}
+
+fn project_file(entry: &cap_std::fs::DirEntry) -> Option<(String, String)> {
+    let file_type = entry.file_type().ok()?;
+    if file_type.is_symlink() || !file_type.is_file() {
+        return None;
+    }
+    let file_name = entry.file_name();
+    let file_name = file_name.to_str()?;
+    let name = file_name.strip_suffix(&format!(".{PROMPT_EXTENSION}"))?;
+    if !valid_name(name) || reserved_name(name) {
+        return None;
+    }
+    Some((name.to_owned(), file_name.to_owned()))
 }
 
 pub(crate) fn valid_name(name: &str) -> bool {

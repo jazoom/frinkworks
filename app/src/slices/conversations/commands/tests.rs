@@ -104,6 +104,29 @@ fn project_fixture() -> tempfile::TempDir {
     root
 }
 
+fn prompt_fixture() -> tempfile::TempDir {
+    let root = tempfile::tempdir().expect("root");
+    let prompts = root.path().join(".agents/prompts");
+    std::fs::create_dir_all(&prompts).expect("prompts dir");
+    std::fs::write(
+        prompts.join("review.md"),
+        "---\ndescription: Project review.\nargument-hint: <path>\n---\nProject review $1.",
+    )
+    .expect("prompt file");
+    root
+}
+
+fn prompt_suggestions(body: &str) -> Vec<serde_json::Value> {
+    let value: serde_json::Value = serde_json::from_str(body).expect("json");
+    value["suggestions"]
+        .as_array()
+        .expect("suggestions")
+        .iter()
+        .filter(|suggestion| suggestion["kind"] == "prompt")
+        .cloned()
+        .collect()
+}
+
 #[tokio::test]
 async fn draft_preview_does_not_expose_a_known_provider_key() {
     let state = test_state();
@@ -493,4 +516,135 @@ async fn new_draft_lookup_suggests_prompt_templates() {
         .expect("lookup");
     let body = text(response).await;
     assert!(commands(&body).contains(&"/review".to_owned()), "{body}");
+}
+
+#[tokio::test]
+async fn project_prompt_uses_the_grant_alias_scope() {
+    let state = test_state();
+    let token = connected(&state);
+    let root = prompt_fixture();
+    let (record, grant) = conversation(&state, root.path());
+    let response = app(&state)
+        .oneshot(json_request(
+            &format!("/conversations/{}/commands?q=/re", record.id),
+            &token,
+        ))
+        .await
+        .expect("lookup");
+    let body = text(response).await;
+    let prompts = prompt_suggestions(&body);
+    assert_eq!(prompts.len(), 1, "{body}");
+    assert_eq!(prompts[0]["command"], "/review");
+    assert_eq!(prompts[0]["scope"], grant.alias);
+    assert_eq!(prompts[0]["description"], "Project review.");
+
+    let response = app(&state)
+        .oneshot(json_request(
+            &format!(
+                "/conversations/{}/commands?q=/review&mode=preview",
+                record.id
+            ),
+            &token,
+        ))
+        .await
+        .expect("preview");
+    let value: serde_json::Value = serde_json::from_str(&text(response).await).expect("json");
+    assert_eq!(value["preview"]["kind"], "prompt");
+    assert_eq!(value["preview"]["scope"], grant.alias);
+    let source = value["preview"]["source"].as_str().expect("source");
+    assert!(
+        source.contains(&format!("/{}/.agents/prompts/review.md", grant.alias)),
+        "{source}"
+    );
+    assert!(
+        !source.contains(&root.path().display().to_string()),
+        "{source}"
+    );
+    assert!(
+        value["preview"]["expanded"]
+            .as_str()
+            .expect("expanded")
+            .contains("Project review")
+    );
+}
+
+#[tokio::test]
+async fn duplicate_global_and_project_prompt_names_require_a_scope() {
+    let (state, _data) = state_with_prompts();
+    let token = connected(&state);
+    let root = prompt_fixture();
+    let (record, grant) = conversation(&state, root.path());
+    let response = app(&state)
+        .oneshot(json_request(
+            &format!("/conversations/{}/commands?q=/re", record.id),
+            &token,
+        ))
+        .await
+        .expect("lookup");
+    let body = text(response).await;
+    let prompts = prompt_suggestions(&body);
+    assert_eq!(prompts.len(), 2, "{body}");
+    for scope in ["global", grant.alias.as_str()] {
+        let response = app(&state)
+            .oneshot(json_request(
+                &format!("/conversations/{}/commands?q=/{scope}/re", record.id),
+                &token,
+            ))
+            .await
+            .expect("qualified lookup");
+        let body = text(response).await;
+        let suggestions = commands(&body);
+        assert_eq!(suggestions, vec![format!("/{scope}/review")], "{body}");
+    }
+
+    std::fs::write(
+        root.path().join(".agents/prompts/broken.md"),
+        "---\nunclosed",
+    )
+    .expect("invalid template");
+    let response = app(&state)
+        .oneshot(json_request(
+            &format!("/conversations/{}/commands?q=/re", record.id),
+            &token,
+        ))
+        .await
+        .expect("partially available lookup");
+    let value: serde_json::Value = serde_json::from_str(&text(response).await).expect("json");
+    assert_eq!(value["unavailable"], 1);
+    assert_eq!(
+        value["message"],
+        "Some command sources are not available for previews."
+    );
+    assert!(
+        prompts
+            .iter()
+            .any(|suggestion| suggestion["command"] == "/global/review"),
+        "{body}"
+    );
+    assert!(
+        prompts
+            .iter()
+            .any(|suggestion| suggestion["command"] == format!("/{}/review", grant.alias)),
+        "{body}"
+    );
+
+    let response = app(&state)
+        .oneshot(json_request(
+            &format!(
+                "/conversations/{}/commands?q=/review&mode=preview",
+                record.id
+            ),
+            &token,
+        ))
+        .await
+        .expect("preview");
+    let value: serde_json::Value = serde_json::from_str(&text(response).await).expect("json");
+    assert!(value["preview"].is_null());
+    assert!(
+        value["message"]
+            .as_str()
+            .expect("message")
+            .contains("More than one resource"),
+        "{value}"
+    );
 }

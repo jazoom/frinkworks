@@ -14,10 +14,10 @@ fn offer(scope: &str, name: &str, body: &str) -> SkillOffer {
     }
 }
 
-fn template(name: &str, body: &str) -> PromptTemplate {
+fn scoped_template(scope: &str, name: &str, body: &str) -> PromptTemplate {
     let source = ResourceSource::new(
         ResourceKind::Prompt,
-        crate::conversations::prompts::PROMPTS_SCOPE,
+        scope,
         format!("prompts/{name}.md"),
         body.as_bytes(),
     );
@@ -28,6 +28,10 @@ fn template(name: &str, body: &str) -> PromptTemplate {
         body: body.to_owned(),
         source,
     }
+}
+
+fn template(name: &str, body: &str) -> PromptTemplate {
+    scoped_template(crate::conversations::prompts::PROMPTS_SCOPE, name, body)
 }
 
 #[test]
@@ -236,4 +240,44 @@ fn malformed_template_arguments_are_rejected_without_dropping_the_draft() {
         expand("/review \"unterminated", &[], &templates, None).unwrap_err(),
         InputError::Arguments
     );
+}
+
+#[test]
+fn scoped_prompt_selection_disambiguates_duplicate_names() {
+    let templates = [
+        scoped_template("global", "review", "Global $1."),
+        scoped_template("work", "review", "Project $1."),
+    ];
+    assert_eq!(
+        expand("/review", &[], &templates, None).unwrap_err(),
+        InputError::Ambiguous
+    );
+    let global = expand("/global/review alpha", &[], &templates, None).expect("global");
+    assert_eq!(global.expanded, "Global alpha.");
+    assert_eq!(
+        global.provenance.expect("provenance").source.scope,
+        "global"
+    );
+    let project = expand("/work/review beta", &[], &templates, None).expect("project");
+    assert_eq!(project.expanded, "Project beta.");
+    assert_eq!(project.provenance.expect("provenance").source.scope, "work");
+}
+
+#[test]
+fn unknown_and_empty_prompt_scopes_are_rejected() {
+    let templates = [scoped_template("work", "review", "Project $1.")];
+    assert_eq!(
+        expand("/other/review", &[], &templates, None).unwrap_err(),
+        InputError::Unknown
+    );
+    assert_eq!(
+        expand("/review/", &[], &templates, None).unwrap_err(),
+        InputError::Empty
+    );
+    assert_eq!(
+        expand("/skill", &[], &templates, None).unwrap_err(),
+        InputError::Unknown
+    );
+    let single = expand("/review x", &[], &templates, None).expect("single match");
+    assert_eq!(single.expanded, "Project x.");
 }

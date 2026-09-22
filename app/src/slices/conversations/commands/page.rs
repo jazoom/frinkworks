@@ -10,7 +10,7 @@ use askama::Template;
 use serde::Serialize;
 
 use crate::conversations::input::{self, InputExpansion, InputProvenance, SkillOffer};
-use crate::conversations::prompts::{self, PROMPTS_SCOPE, PromptTemplate};
+use crate::conversations::prompts::{self, PromptTemplate};
 use crate::execution::resources::{CandidateRoot, effective_roots, preview_project_skills};
 use crate::execution::{GUEST_GLOBAL_SKILLS, ResourceKind, ResourceSource};
 use crate::state::AppState;
@@ -103,17 +103,18 @@ pub(super) fn global_templates(state: &AppState) -> (Vec<PromptTemplate>, usize)
     (catalogue.templates, catalogue.unavailable)
 }
 
-/// Project skills come from the effective read-only roots. A candidate-backed
-/// root has no readable body, so it stays unavailable rather than substituting
-/// the current host files.
-pub(super) fn project_offers(
+/// Project skills and templates come from the effective read-only roots. A
+/// candidate-backed root has no readable body, so it stays unavailable rather
+/// than substituting the current host files.
+pub(super) fn project_resources(
     policy: &crate::agents::DirectoryPolicy,
     grants: &[crate::execution::DirectoryGrant],
     candidates: &[CandidateRoot],
     data_root: &Path,
-) -> (Vec<SkillOffer>, usize) {
+) -> (Vec<SkillOffer>, Vec<PromptTemplate>, usize) {
     let roots = effective_roots(policy, candidates, data_root);
-    let (skills, unavailable) = preview_project_skills(&roots, grants, data_root);
+    let (skills, skills_unavailable) = preview_project_skills(&roots, grants, data_root);
+    let (templates, templates_unavailable) = prompts::discover_project(&roots, grants, data_root);
     let offers = skills
         .into_iter()
         .map(|skill| {
@@ -133,19 +134,24 @@ pub(super) fn project_offers(
             }
         })
         .collect();
-    (offers, unavailable)
+    (
+        offers,
+        templates,
+        skills_unavailable + templates_unavailable,
+    )
 }
 
-/// Bounded prefix autocomplete. A duplicate unqualified skill name always
-/// inserts the qualified form so selection is never ambiguous.
+/// Bounded prefix autocomplete. A duplicate unqualified skill or template name
+/// always inserts the scope-qualified form so selection is never ambiguous.
 pub(super) fn suggest(offers: &[SkillOffer], templates: &[PromptTemplate], query: &str) -> Search {
     let trimmed = query.trim_start();
     let skill_only = trimmed.starts_with(input::SKILL_PREFIX) || trimmed == "/skill";
-    let (_, prefix) = query_parts(query);
+    let (scope, prefix) = query_parts(query);
     let mut suggestions = Vec::new();
     let mut matched = offers
         .iter()
         .filter(|offer| name_starts_with(&offer.name, prefix))
+        .filter(|_| skill_only || scope.is_empty())
         .collect::<Vec<_>>();
     matched.sort_by(|left, right| {
         left.name
@@ -176,13 +182,30 @@ pub(super) fn suggest(offers: &[SkillOffer], templates: &[PromptTemplate], query
         let mut matched = templates
             .iter()
             .filter(|template| name_starts_with(&template.name, prefix))
+            .filter(|template| {
+                scope.is_empty() || template.source.scope.eq_ignore_ascii_case(scope)
+            })
             .collect::<Vec<_>>();
-        matched.sort_by_key(|left| left.name.to_lowercase());
+        matched.sort_by(|left, right| {
+            left.name
+                .to_lowercase()
+                .cmp(&right.name.to_lowercase())
+                .then(left.source.scope.cmp(&right.source.scope))
+        });
         for template in matched {
+            let duplicates = templates
+                .iter()
+                .filter(|candidate| candidate.name.eq_ignore_ascii_case(&template.name))
+                .count();
+            let command = if duplicates > 1 || !scope.is_empty() {
+                format!("/{}/{}", template.source.scope, template.name)
+            } else {
+                format!("/{}", template.name)
+            };
             suggestions.push(Suggestion {
-                command: format!("/{}", template.name),
+                command,
                 name: template.name.clone(),
-                scope: PROMPTS_SCOPE.to_owned(),
+                scope: template.source.scope.clone(),
                 description: template.description.clone(),
                 kind: "prompt".to_owned(),
                 hint: template.argument_hint.clone(),
@@ -275,9 +298,13 @@ pub(super) fn explanation(search: &Search, restricted: bool, no_roots: bool) -> 
         return "";
     }
     if restricted {
-        "Some work locations need approval before their skills appear."
-    } else if no_roots && search.unavailable > 0 {
-        "A command source is not available for previews."
+        "Some work locations need approval before their skills and templates appear."
+    } else if search.unavailable > 0 {
+        if no_roots {
+            "A command source is not available for previews."
+        } else {
+            "Some command sources are not available for previews."
+        }
     } else {
         ""
     }
