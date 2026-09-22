@@ -46,6 +46,7 @@ pub(crate) struct ModelsDevCatalogue {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ModelMetadata {
     pub(crate) id: String,
+    pub(crate) deprecated: bool,
     pub(crate) attachment: bool,
     pub(crate) image_input: bool,
     pub(crate) context_limit: u64,
@@ -135,6 +136,13 @@ impl ModelsDevCatalogue {
     }
 
     pub(crate) fn models(&self, kind: ProviderKind) -> Vec<ModelMetadata> {
+        self.known_models(kind)
+            .into_iter()
+            .filter(|model| !model.deprecated)
+            .collect()
+    }
+
+    pub(crate) fn known_models(&self, kind: ProviderKind) -> Vec<ModelMetadata> {
         let active = self.read();
         active
             .providers
@@ -149,6 +157,27 @@ impl ModelsDevCatalogue {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    /// New drafts prefer the saved model, then the provider default, then the
+    /// first eligible identifier in lexical order. Never cross providers.
+    pub(crate) fn preferred_model(&self, kind: ProviderKind, saved: &str) -> Option<String> {
+        let models = self.models(kind);
+        models
+            .iter()
+            .find(|model| model.id == saved)
+            .or_else(|| models.iter().find(|model| model.id == kind.default_model()))
+            .or_else(|| models.iter().min_by(|left, right| left.id.cmp(&right.id)))
+            .map(|model| model.id.clone())
+    }
+
+    pub(crate) fn refresh_status(&self) -> (u64, u64, bool) {
+        let snapshot = self.read();
+        (
+            snapshot.checked_at_unix_seconds,
+            snapshot.last_attempt_at_unix_seconds,
+            snapshot.refresh_failed,
+        )
     }
 
     pub(crate) fn model(&self, kind: ProviderKind, id: &str) -> Option<ModelMetadata> {
@@ -312,6 +341,7 @@ impl ModelsDevCatalogue {
         };
         if response.status() == reqwest::StatusCode::NOT_MODIFIED {
             attempted.checked_at_unix_seconds = now;
+            attempted.refresh_failed = false;
             self.replace(attempted, false);
             tracing::info!(source = "network", "model capability catalogue unchanged");
             return RefreshResult::Unchanged;
@@ -337,10 +367,13 @@ impl ModelsDevCatalogue {
             tracing::warn!("model capability response size rejected");
             return RefreshResult::Failed;
         };
-        let Ok(mut next) = filter_source(&body, &etag, now) else {
-            self.persist_attempt(attempted);
-            tracing::warn!("model capability schema rejected");
-            return RefreshResult::Failed;
+        let mut next = match filter_source(&body, &etag, now) {
+            Ok(next) => next,
+            Err(reason) => {
+                self.persist_attempt(attempted);
+                tracing::warn!(%reason, "model capability schema rejected");
+                return RefreshResult::Failed;
+            }
         };
         next.last_attempt_at_unix_seconds = now;
         let changed = capabilities_differ(&previous, &next);
@@ -352,7 +385,8 @@ impl ModelsDevCatalogue {
         }
     }
 
-    fn persist_attempt(&self, snapshot: Snapshot) {
+    fn persist_attempt(&self, mut snapshot: Snapshot) {
+        snapshot.refresh_failed = true;
         self.replace(snapshot, false);
     }
     fn replace(&self, snapshot: Snapshot, changed: bool) {
@@ -392,6 +426,7 @@ pub(crate) async fn refresh_worker(state: crate::state::AppState) {
 fn model_metadata(model: &catalogue::Model) -> ModelMetadata {
     ModelMetadata {
         id: model.id.clone(),
+        deprecated: model.deprecated,
         attachment: model.attachment,
         image_input: model.image_input,
         context_limit: model.limit.context,
@@ -405,6 +440,8 @@ fn capabilities_differ(left: &Snapshot, right: &Snapshot) -> bool {
 
 fn local_is_newer(bundled: &Snapshot, local: &Snapshot) -> bool {
     local.checked_at_unix_seconds > bundled.checked_at_unix_seconds
+        || (local.checked_at_unix_seconds == bundled.checked_at_unix_seconds
+            && local.last_attempt_at_unix_seconds > bundled.last_attempt_at_unix_seconds)
 }
 
 fn unix_seconds() -> u64 {

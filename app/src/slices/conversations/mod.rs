@@ -1144,7 +1144,7 @@ fn candidate_review_model(
             })
             .ok_or("Choose a model before you start this review.")?
     };
-    valid_selection(state, &selection)?;
+    valid_new_selection(state, &selection)?;
     let environment = source
         .and_then(|record| record.model.as_ref())
         .map(|model| model.settings.environment)
@@ -1182,7 +1182,7 @@ fn candidate_submitted_selection(
     };
     let selection = ModelSelection::new(provider, form.model.clone(), thinking)
         .ok_or("Enter a valid model name.")?;
-    valid_selection(state, &selection)?;
+    valid_new_selection(state, &selection)?;
     Ok(selection)
 }
 
@@ -2449,7 +2449,7 @@ async fn select_model(
             ),
         );
     };
-    if let Err(error) = valid_selection(&state, &selection) {
+    if let Err(error) = valid_replacement_selection(&state, &record, &selection) {
         return render_detail_command(
             graft,
             PatchStatus::UnprocessableEntity,
@@ -2645,7 +2645,10 @@ fn effective_model(
             .desk_providers(&state.vault)
             .into_iter()
             .find(|provider| provider.selected)
-            .and_then(|connection| {
+            .and_then(|mut connection| {
+                connection.model = state
+                    .models_dev
+                    .preferred_model(connection.kind, &connection.model)?;
                 default_environment(state).ok().map(|environment| {
                     ConversationModelConfiguration::direct(
                         ModelSelection {
@@ -2702,6 +2705,34 @@ fn has_uncertain_application(state: &AppState, conversation: ConversationId) -> 
         .for_conversation(&conversation)
         .into_iter()
         .any(|run| run.apply_is_uncertain())
+}
+
+fn valid_replacement_selection(
+    state: &AppState,
+    record: &ConversationRecord,
+    selection: &ModelSelection,
+) -> Result<(), &'static str> {
+    let same_model = record.model.as_ref().is_some_and(|model| {
+        model.settings.model.provider == selection.provider
+            && model.settings.model.model == selection.model
+    });
+    if same_model {
+        valid_selection(state, selection)
+    } else {
+        valid_new_selection(state, selection)
+    }
+}
+
+fn valid_new_selection(state: &AppState, selection: &ModelSelection) -> Result<(), &'static str> {
+    valid_selection(state, selection)?;
+    if state
+        .models_dev
+        .model(selection.provider, &selection.model)
+        .is_some_and(|model| model.deprecated)
+    {
+        return Err("This model is deprecated. Choose an available model.");
+    }
+    Ok(())
 }
 
 fn valid_selection(state: &AppState, selection: &ModelSelection) -> Result<(), &'static str> {

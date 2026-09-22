@@ -208,10 +208,10 @@
                   required
                   data-review-model
                 >
-                  {% if model_picker.models.is_empty() && !model_picker.model_unavailable %}
+                  {% if model_picker.models.is_empty() && !model_picker.model_unavailable && !model_picker.model_deprecated %}
                     <option value="" disabled>No models available</option>
                   {% endif %}
-                  {% if model_picker.model_unavailable %}
+                  {% if model_picker.model_unavailable || model_picker.model_deprecated %}
                     <option value="{{ model_picker.model }}" selected>
                       Unavailable · {{ model_picker.model }}
                     </option>

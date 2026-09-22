@@ -1235,7 +1235,7 @@
                 class="shortcut-hint text-quiet text-center text-xs"
               ></span>
             </div>
-            {% if !model_available %}
+            {% if !model_available && model_picker.providers.is_empty() %}
               <p class="text-quiet col-span-2 text-sm">
                 <a href="/connect" data-graft class="link"
                   >Connect a provider</a

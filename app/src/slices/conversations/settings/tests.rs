@@ -96,6 +96,58 @@ async fn future_defaults_require_an_explicit_revision_bound_command_without_acce
 }
 
 #[tokio::test]
+async fn settings_reject_retired_replacements_but_keep_the_current_retired_model() {
+    let state = test_state();
+    let token = connected(&state);
+    super::super::tests::ready_starter_environment(&state).await;
+    let provider = ProviderKind::Deepseek;
+    state
+        .vault
+        .put(crate::providers::ProviderConnection::with_key(
+            provider,
+            "test-key",
+            "deepseek-flash",
+        ))
+        .unwrap();
+    for current in ["deepseek-flash", "deepseek-v4-flash"] {
+        let record = state.conversations.create("Saved".to_owned()).unwrap();
+        let record = state
+            .conversations
+            .select_model(
+                &record.id,
+                record.revision,
+                ModelSelection::new(
+                    provider,
+                    current.to_owned(),
+                    crate::providers::ThinkingEffort::new("high".to_owned()),
+                )
+                .unwrap(),
+                super::super::default_environment(&state).unwrap(),
+            )
+            .unwrap();
+        let response = app(&state).oneshot(command(
+            &format!("/conversations/{}/settings", record.id),
+            &token,
+            &format!("revision={}&provider=deepseek&model=deepseek-v4-flash&thinking=low&instructions=Updated&tool_read=read", record.revision),
+        )).await.unwrap();
+        let status = response.status();
+        let body = text(response).await;
+        let saved = state.conversations.get(&record.id).unwrap();
+        assert_eq!(saved.model.as_ref().unwrap().settings.model.model, current);
+        if current == "deepseek-flash" {
+            assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+            assert!(body.contains("This model is deprecated."));
+            assert_eq!(saved.revision, record.revision);
+        } else {
+            assert_eq!(status, StatusCode::OK, "{body}");
+            let settings = saved.model.unwrap().settings;
+            assert_eq!(settings.instructions, "Updated");
+            assert_eq!(settings.model.thinking.unwrap().as_str(), "low");
+        }
+    }
+}
+
+#[tokio::test]
 async fn settings_update_validates_the_complete_form_and_revision() {
     let state = test_state();
     let token = connected(&state);

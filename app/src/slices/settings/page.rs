@@ -151,6 +151,9 @@ pub(super) struct SettingsPage {
     compaction_error: Option<&'static str>,
     catalogue_status: Option<&'static str>,
     catalogue_error: Option<&'static str>,
+    catalogue_checked: String,
+    catalogue_attempt: String,
+    catalogue_failed: bool,
     reset_error: Option<&'static str>,
     defaults_exists: bool,
     defaults_fields: Vec<DefaultsField>,
@@ -160,6 +163,7 @@ pub(super) struct SettingsPage {
 impl SettingsPage {
     pub(super) fn new(state: &AppState) -> Self {
         let defaults = ConversationDefaultsSection::new(state, None);
+        let catalogue = ModelCatalogueSetting::result(state, None, None);
         Self {
             theme: state.preferences.theme().as_str(),
             themes: Theme::ALL,
@@ -169,6 +173,9 @@ impl SettingsPage {
             compaction_error: None,
             catalogue_status: None,
             catalogue_error: None,
+            catalogue_checked: catalogue.catalogue_checked,
+            catalogue_attempt: catalogue.catalogue_attempt,
+            catalogue_failed: catalogue.catalogue_failed,
             reset_error: None,
             defaults_exists: defaults.defaults_exists,
             defaults_fields: defaults.defaults_fields,
@@ -218,18 +225,44 @@ impl CompactionSetting {
 pub(super) struct ModelCatalogueSetting {
     catalogue_status: Option<&'static str>,
     catalogue_error: Option<&'static str>,
+    catalogue_checked: String,
+    catalogue_attempt: String,
+    catalogue_failed: bool,
 }
 
 impl ModelCatalogueSetting {
     pub(super) fn result(
+        state: &AppState,
         catalogue_status: Option<&'static str>,
         catalogue_error: Option<&'static str>,
     ) -> Self {
+        let (checked, attempted, failed) = state.models_dev.refresh_status();
         Self {
             catalogue_status,
             catalogue_error,
+            catalogue_checked: catalogue_age(checked),
+            catalogue_attempt: catalogue_age(attempted),
+            catalogue_failed: failed,
         }
     }
+}
+
+fn catalogue_age(timestamp: u64) -> String {
+    let now = time::OffsetDateTime::now_utc().unix_timestamp().max(0) as u64;
+    if timestamp == 0 || timestamp > now {
+        return "Unknown".to_owned();
+    }
+    let seconds = now - timestamp;
+    let (count, unit) = if seconds < 60 {
+        return "Less than a minute ago".to_owned();
+    } else if seconds < 3600 {
+        (seconds / 60, "minute")
+    } else if seconds < 86400 {
+        (seconds / 3600, "hour")
+    } else {
+        (seconds / 86400, "day")
+    };
+    format!("{count} {unit}{} ago", if count == 1 { "" } else { "s" })
 }
 
 #[derive(Template)]

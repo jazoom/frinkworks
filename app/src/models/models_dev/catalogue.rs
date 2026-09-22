@@ -58,6 +58,8 @@ pub(super) struct ModelPrices {
 pub(super) struct Model {
     pub(super) id: String,
     pub(super) reasoning: bool,
+    #[serde(default)]
+    pub(super) deprecated: bool,
     pub(super) efforts: Vec<String>,
     pub(super) attachment: bool,
     #[serde(default)]
@@ -85,12 +87,14 @@ pub(super) struct Snapshot {
     pub(super) source: Source,
     pub(super) checked_at_unix_seconds: u64,
     pub(super) last_attempt_at_unix_seconds: u64,
+    #[serde(default)]
+    pub(super) refresh_failed: bool,
     pub(super) providers: Vec<Provider>,
 }
 
 #[derive(Deserialize)]
 struct SourceProvider {
-    models: HashMap<String, SourceModel>,
+    models: HashMap<String, serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -144,39 +148,54 @@ struct ReasoningOption {
     values: serde_json::Value,
 }
 
-pub(super) fn filter_source(bytes: &[u8], etag: &str, now: u64) -> Result<Snapshot, ()> {
-    if bytes.len() > MAXIMUM_SOURCE_BYTES || !valid_etag(etag) {
-        return Err(());
+pub(super) fn filter_source(bytes: &[u8], etag: &str, now: u64) -> Result<Snapshot, String> {
+    if bytes.len() > MAXIMUM_SOURCE_BYTES {
+        return Err("The source exceeds the size limit.".to_owned());
     }
-    let source: HashMap<String, SourceProvider> = serde_json::from_slice(bytes).map_err(|_| ())?;
+    if !valid_etag(etag) {
+        return Err("The source ETag is invalid.".to_owned());
+    }
+    let mut source: HashMap<String, serde_json::Value> = serde_json::from_slice(bytes)
+        .map_err(|_| "The source must be a JSON object.".to_owned())?;
     let mut providers = Vec::new();
     let mut total = 0;
     for kind in ProviderKind::ALL {
         let source_id = models_dev_id(kind);
-        let provider = source.get(source_id).ok_or(())?;
-        if !provider.models.contains_key(kind.default_model())
-            || provider.models.len() > MAXIMUM_PROVIDER_MODELS
-        {
-            return Err(());
+        let value = source
+            .remove(source_id)
+            .ok_or_else(|| format!("{source_id}: The provider is absent."))?;
+        let provider: SourceProvider = serde_json::from_value(value)
+            .map_err(|_| format!("{source_id}: The models must be a JSON object."))?;
+        if provider.models.len() > MAXIMUM_PROVIDER_MODELS {
+            return Err(format!(
+                "{source_id}: The provider exceeds the model limit."
+            ));
         }
         let mut models = Vec::new();
-        for (key, model) in &provider.models {
-            let id = model.id.as_deref().unwrap_or(key);
-            if id != key
-                || !bounded(id, MAXIMUM_MODEL_BYTES)
-                || !valid_modalities(&model.modalities)
-                || !matches!(
-                    model.status.as_deref(),
-                    None | Some("alpha" | "beta" | "deprecated")
-                )
-            {
-                return Err(());
+        for (key, value) in provider.models {
+            if !bounded(&key, MAXIMUM_MODEL_BYTES) {
+                return Err(format!("{source_id}: A model identifier is invalid."));
             }
-            let background = background_metadata(id, model);
+            let invalid = |reason| format!("{source_id}/{key}: {reason}");
+            let model: SourceModel = serde_json::from_value(value)
+                .map_err(|_| invalid("A model field is absent or has an invalid type."))?;
+            let id = model.id.as_deref().unwrap_or(&key);
+            if id != key {
+                return Err(invalid("The model identifier does not match its key."));
+            }
+            if !valid_modalities(&model.modalities) {
+                return Err(invalid("The model modalities are invalid."));
+            }
+            if !matches!(
+                model.status.as_deref(),
+                None | Some("alpha" | "beta" | "deprecated")
+            ) {
+                return Err(invalid("The model status is unknown."));
+            }
+            let background = background_metadata(id, &model);
             if (!model.tool_call && background.is_none())
                 || !model.modalities.input.iter().any(|value| value == "text")
                 || model.modalities.output.as_slice() != ["text"]
-                || model.status.as_deref() == Some("deprecated")
             {
                 continue;
             }
@@ -185,29 +204,35 @@ pub(super) fn filter_source(bytes: &[u8], etag: &str, now: u64) -> Result<Snapsh
                 if option.kind != "effort" {
                     continue;
                 }
-                let values = option.values.as_array().ok_or(())?;
+                let values = option
+                    .values
+                    .as_array()
+                    .ok_or_else(|| invalid("The effort values must be an array."))?;
                 for value in values {
                     if value.is_null() {
                         continue;
                     }
-                    let value = value.as_str().ok_or(())?;
+                    let value = value
+                        .as_str()
+                        .ok_or_else(|| invalid("Each effort must be text or null."))?;
                     if value == "default" {
                         continue;
                     }
                     if ThinkingEffort::new(value.to_owned()).is_none() {
-                        return Err(());
+                        return Err(invalid("An effort exceeds the text bounds."));
                     }
                     if !efforts.iter().any(|effort| effort == value) {
                         efforts.push(value.to_owned());
                     }
                     if efforts.len() > MAXIMUM_EFFORTS {
-                        return Err(());
+                        return Err(invalid("The model exceeds the effort limit."));
                     }
                 }
             }
             models.push(Model {
                 id: id.to_owned(),
                 reasoning: model.reasoning,
+                deprecated: model.status.as_deref() == Some("deprecated"),
                 efforts,
                 attachment: model.attachment,
                 image_input: model
@@ -224,12 +249,6 @@ pub(super) fn filter_source(bytes: &[u8], etag: &str, now: u64) -> Result<Snapsh
                 prices: model_prices(model.cost.as_ref()),
             });
         }
-        if !models
-            .iter()
-            .any(|model| model.id == kind.default_model() && model.supports_tools)
-        {
-            return Err(());
-        }
         models.sort_by(|left, right| left.id.cmp(&right.id));
         total += models.len();
         providers.push(Provider {
@@ -239,7 +258,7 @@ pub(super) fn filter_source(bytes: &[u8], etag: &str, now: u64) -> Result<Snapsh
         });
     }
     if total > MAXIMUM_MODELS {
-        return Err(());
+        return Err("The catalogue exceeds the model limit.".to_owned());
     }
     providers.sort_by(|left, right| left.id.cmp(&right.id));
     let sha256 = {
@@ -256,6 +275,7 @@ pub(super) fn filter_source(bytes: &[u8], etag: &str, now: u64) -> Result<Snapsh
         },
         checked_at_unix_seconds: now,
         last_attempt_at_unix_seconds: now,
+        refresh_failed: false,
         providers,
     })
 }
@@ -338,10 +358,6 @@ fn validate_snapshot(snapshot: &Snapshot) -> Result<(), ()> {
         }
         if provider.models_dev_id != models_dev_id(kind)
             || provider.models.len() > MAXIMUM_PROVIDER_MODELS
-            || !provider
-                .models
-                .iter()
-                .any(|model| model.id == kind.default_model() && model.supports_tools)
         {
             return Err(());
         }
@@ -351,7 +367,9 @@ fn validate_snapshot(snapshot: &Snapshot) -> Result<(), ()> {
             if !bounded(&model.id, MAXIMUM_MODEL_BYTES)
                 || (!model.supports_tools && model.background.is_none())
                 || model.background.as_ref().is_some_and(|metadata| {
-                    !metadata.valid() || super::background::unsuitable(&model.id)
+                    model.deprecated
+                        || !metadata.valid()
+                        || super::background::unsuitable(&model.id)
                 })
                 || !model_ids.insert(&model.id)
                 || model.efforts.len() > MAXIMUM_EFFORTS
@@ -587,8 +605,7 @@ async fn update_repository(
     let source_bytes = bounded_body(response, MAXIMUM_SOURCE_BYTES)
         .await
         .ok_or("The models.dev response exceeds the size limit.")?;
-    let snapshot = filter_source(&source_bytes, &etag, super::unix_seconds())
-        .map_err(|()| "The models.dev response is invalid.")?;
+    let snapshot = filter_source(&source_bytes, &etag, super::unix_seconds())?;
     let mut output = serde_json::to_vec_pretty(&snapshot)?;
     output.push(b'\n');
     if output.len() > MAXIMUM_CACHE_BYTES {

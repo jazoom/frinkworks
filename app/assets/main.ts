@@ -15,6 +15,7 @@ import {
 type ComposerModel = {
     id: string;
     favourite: boolean;
+    deprecated: boolean;
     image_input: boolean;
     default_effort: string;
     efforts: { value: string; label: string }[];
@@ -82,6 +83,7 @@ function renderComposerModels() {
             return models
                 .filter(
                     (model) =>
+                        !model.deprecated &&
                         (!filter.value || filter.value === provider) &&
                         (!favouritesOnly || model.favourite) &&
                         (!imagesOnly || model.image_input) &&
@@ -161,7 +163,12 @@ function renderComposerModels() {
               ? "No image-capable models match. Turn off Images to see all models."
               : favouritesOnly
                 ? "No favourites match. Turn off Favourites to see all models."
-                : "No models match. Clear the search or change the provider filter.";
+                : filter.value &&
+                    !composerCatalogue()[filter.value]?.some(
+                        (model) => !model.deprecated,
+                    )
+                  ? "This provider has no models for new conversations. Choose another provider or refresh the catalogue in Settings."
+                  : "No models match. Clear the search or change the provider filter.";
 }
 
 function modelIcon(name: string, filled = false): SVGSVGElement {
@@ -194,6 +201,14 @@ function composerEfforts(saved: string) {
         controls.toggle.disabled || efforts.length === 0;
     const label = document.getElementById("conversation-model-value");
     if (label) label.textContent = controls.model.value || "Choose a model";
+    const retirement = document.querySelector<HTMLElement>(
+        "[data-model-retirement]",
+    );
+    if (retirement) retirement.hidden = !selected?.deprecated;
+    const notice = document.querySelector<HTMLElement>(
+        "[data-model-default-notice]",
+    );
+    if (notice) notice.hidden = true;
     syncThinkingChoice();
     syncImageCompatibility();
 }
@@ -741,6 +756,7 @@ listenForRequestSettled((detail) => {
 
 type ReviewCatalogueModel = {
     id: string;
+    deprecated: boolean;
     default_effort: string;
     efforts: { value: string; label: string }[];
 };
@@ -803,7 +819,9 @@ function syncReviewModels(section: HTMLElement, resetModel: boolean) {
     );
     if (!provider || !model) return;
     const catalogue = reviewCatalogue(section);
-    const models = catalogue[provider.value] ?? [];
+    const models = (catalogue[provider.value] ?? []).filter(
+        (model) => !model.deprecated,
+    );
     let selected = model.value;
     if (resetModel && !models.some((item) => item.id === selected))
         selected = models[0]?.id ?? "";

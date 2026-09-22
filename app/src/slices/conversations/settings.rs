@@ -19,7 +19,7 @@ use crate::{
 
 use super::{
     REVISION_MESSAGE, detail_view, load_conversation, parse_revision, render_detail_command,
-    status_for, valid_selection,
+    status_for, valid_replacement_selection,
 };
 
 const CANCELLATION_WAIT: std::time::Duration = if cfg!(test) {
@@ -116,7 +116,11 @@ impl SettingsForm {
     }
 }
 
-fn validate(state: &AppState, form: &SettingsForm) -> Result<ExecutionSettings, &'static str> {
+fn validate(
+    state: &AppState,
+    record: &crate::conversations::ConversationRecord,
+    form: &SettingsForm,
+) -> Result<ExecutionSettings, &'static str> {
     let provider = ProviderKind::parse(form.provider.trim()).ok_or("Choose a stored provider.")?;
     let has_thinking = !form.thinking.trim().is_empty();
     let thinking = has_thinking
@@ -127,7 +131,7 @@ fn validate(state: &AppState, form: &SettingsForm) -> Result<ExecutionSettings, 
     }
     let selection = ModelSelection::new(provider, form.model.clone(), thinking)
         .ok_or("Enter a valid model name.")?;
-    valid_selection(state, &selection)?;
+    valid_replacement_selection(state, record, &selection)?;
     let environment = if form.location.trim() == "host" && !form.environment.trim().is_empty() {
         crate::environments::EnvironmentId::parse(form.environment.trim())
             .ok_or("Choose a valid environment.")?
@@ -269,7 +273,7 @@ pub(super) async fn update(
                 .with_settings_fields(&state, form.submitted_fields()),
         );
     }
-    let settings = match validate(&state, &form).and_then(|settings| {
+    let settings = match validate(&state, &record, &form).and_then(|settings| {
         let directories = record
             .model
             .as_ref()

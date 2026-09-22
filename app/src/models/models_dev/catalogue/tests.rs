@@ -160,7 +160,15 @@ fn source_filter_uses_fallback_identifiers_and_deduplicates_efforts() {
         .iter()
         .find(|provider| provider.id == ProviderKind::OpenaiCodex.as_str())
         .expect("OpenAI provider");
-    assert_eq!(openai.models.len(), 2);
+    assert_eq!(openai.models.len(), 3);
+    assert!(
+        openai
+            .models
+            .iter()
+            .find(|model| model.id == "deprecated")
+            .unwrap()
+            .deprecated
+    );
     let title_only = openai
         .models
         .iter()
@@ -198,6 +206,71 @@ fn source_filter_rejects_an_explicit_empty_identifier() {
     }
 
     assert!(filter_source(&serde_json::to_vec(&source).expect("source"), "", 0).is_err());
+}
+
+fn retirement_source() -> serde_json::Value {
+    let mut source = serde_json::Map::new();
+    for kind in ProviderKind::ALL {
+        source.insert(
+            models_dev_id(kind).to_owned(),
+            serde_json::json!({"models": {}}),
+        );
+    }
+    source["deepseek"]["models"] = serde_json::json!({
+        "deepseek-flash": {
+            "attachment": true, "tool_call": true, "status": "deprecated",
+            "modalities": {"input": ["text", "image"], "output": ["text"]},
+            "limit": {"context": 1000000, "output": 384000},
+            "reasoning_options": [{"type": "effort", "values": ["high"]}]
+        }
+    });
+    serde_json::Value::Object(source)
+}
+
+#[test]
+fn retirement_and_empty_providers_do_not_invalidate_the_catalogue() {
+    let source = retirement_source();
+    let snapshot = filter_source(&serde_json::to_vec(&source).unwrap(), "", 42).unwrap();
+    let deepseek = snapshot
+        .providers
+        .iter()
+        .find(|provider| provider.id == "deepseek")
+        .unwrap();
+    assert!(deepseek.models[0].deprecated);
+    assert_eq!(deepseek.models[0].efforts, ["high"]);
+    assert!(parse_snapshot(&serde_json::to_vec(&snapshot).unwrap()).is_ok());
+    assert!(
+        snapshot
+            .providers
+            .iter()
+            .filter(|provider| provider.id != "deepseek")
+            .all(|provider| provider.models.is_empty())
+    );
+}
+
+#[test]
+fn invalid_supported_models_report_identity_and_reason() {
+    let mut source = retirement_source();
+    source["deepseek"]["models"]["deepseek-flash"]["modalities"]["input"] =
+        serde_json::json!(["unknown"]);
+    let error = filter_source(&serde_json::to_vec(&source).unwrap(), "", 42).unwrap_err();
+    assert_eq!(
+        error,
+        "deepseek/deepseek-flash: The model modalities are invalid."
+    );
+    source["deepseek"]["models"]["deepseek-flash"]["tool_call"] = serde_json::json!("yes");
+    let error = filter_source(&serde_json::to_vec(&source).unwrap(), "", 42).unwrap_err();
+    assert_eq!(
+        error,
+        "deepseek/deepseek-flash: A model field is absent or has an invalid type."
+    );
+}
+
+#[test]
+fn unsupported_providers_do_not_define_our_source_schema() {
+    let mut source = retirement_source();
+    source["unsupported"] = serde_json::json!({"models": {"unrelated": null}});
+    assert!(filter_source(&serde_json::to_vec(&source).unwrap(), "", 42).is_ok());
 }
 
 #[test]

@@ -5,6 +5,7 @@ fn model(id: &str, date: &str, input: f64) -> Model {
     Model {
         id: id.to_owned(),
         reasoning: false,
+        deprecated: false,
         efforts: Vec::new(),
         attachment: false,
         image_input: false,

@@ -84,7 +84,7 @@ impl ProviderKind {
             Self::OpenaiCodex => "gpt-5.6-sol",
             Self::Synthetic => "hf:moonshotai/Kimi-K3",
             Self::Openrouter => "openai/gpt-4o-mini",
-            Self::Deepseek => "deepseek-v4-flash",
+            Self::Deepseek => "deepseek-flash",
         }
     }
 

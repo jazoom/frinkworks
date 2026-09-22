@@ -199,13 +199,13 @@ async fn refresh_model_catalogue(
         RefreshResult::Failed => (
             PatchStatus::UnprocessableEntity,
             None,
-            Some("Power Plant could not refresh the model catalogue. Try again."),
+            Some("The refresh failed. Power Plant kept the last valid catalogue."),
         ),
     };
     Ok(hypergraft::outcome::children_patch(
         status,
         "model-catalogue-setting",
-        &ModelCatalogueSetting::result(message, error),
+        &ModelCatalogueSetting::result(&state, message, error),
     )?)
 }
 

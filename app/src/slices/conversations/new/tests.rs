@@ -5,6 +5,108 @@ use axum::http::StatusCode;
 use tower::ServiceExt;
 
 #[tokio::test]
+async fn retired_draft_defaults_change_only_the_unsaved_model() {
+    let state = test_state();
+    let token = connected(&state);
+    let kind = ProviderKind::Deepseek;
+    state
+        .vault
+        .put(ProviderConnection::with_key(
+            kind,
+            "test-key",
+            "deepseek-v4-flash",
+        ))
+        .unwrap();
+    state
+        .preferences
+        .select_settings(kind, "deepseek-v4-flash".to_owned(), None)
+        .unwrap();
+    let response = app(&state)
+        .oneshot(document("/conversations/new", &token))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = text(response).await;
+    assert!(body.contains("This draft uses deepseek-flash from the same provider."));
+    assert!(body.contains("value=\"deepseek-flash\""));
+    assert!(state.conversations.list().is_empty());
+    assert_eq!(
+        state
+            .preferences
+            .desk_providers(&state.vault)
+            .into_iter()
+            .find(|provider| provider.kind == kind)
+            .unwrap()
+            .model,
+        "deepseek-v4-flash"
+    );
+
+    let response = app(&state)
+        .oneshot(command(
+            "/conversations/new",
+            &token,
+            "action=send&provider=deepseek&model=deepseek-v4-flash&thinking=high&message=Hello",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(text(response).await.contains("This model is deprecated."));
+    assert!(state.conversations.list().is_empty());
+}
+
+#[tokio::test]
+async fn an_empty_provider_blocks_new_model_requests_without_switching_providers() {
+    let mut state = test_state();
+    let token = connected(&state);
+    let provider = ProviderKind::Deepseek;
+    state
+        .vault
+        .put(ProviderConnection::with_key(
+            provider,
+            "test-key",
+            "deepseek-flash",
+        ))
+        .unwrap();
+    state
+        .preferences
+        .select_settings(provider, "deepseek-flash".to_owned(), None)
+        .unwrap();
+    let mut snapshot: serde_json::Value =
+        serde_json::from_slice(include_bytes!("../../../../catalogue/models-dev-v1.json")).unwrap();
+    snapshot["providers"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|entry| entry["id"] == "deepseek")
+        .unwrap()["models"] = serde_json::json!([]);
+    snapshot["checked_at_unix_seconds"] = serde_json::json!(u64::MAX);
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("models.json");
+    crate::storage::write_private(&path, &serde_json::to_vec(&snapshot).unwrap()).unwrap();
+    state.models_dev =
+        std::sync::Arc::new(crate::models::models_dev::ModelsDevCatalogue::open(path).unwrap());
+    let response = app(&state)
+        .oneshot(document("/conversations/new", &token))
+        .await
+        .unwrap();
+    let body = text(response).await;
+    assert!(body.contains("This provider has no models for new conversations."));
+    assert_eq!(hidden_named(&body, "provider"), "deepseek");
+    assert_eq!(hidden_named(&body, "model"), "");
+    assert!(!state.models_dev.models(ProviderKind::Xai).is_empty());
+    let response = app(&state)
+        .oneshot(command(
+            "/conversations/new",
+            &token,
+            "action=send&provider=deepseek&model=deepseek-flash&thinking=high&message=Hello",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(state.conversations.list().is_empty());
+}
+
+#[tokio::test]
 async fn prompt_links_prefill_only_a_qualified_global_command_without_execution() {
     let state = test_state();
     let token = connected(&state);

@@ -112,6 +112,108 @@ fn output_limit_is_exposed_separately_from_context_capacity() {
 }
 
 #[test]
+fn retired_defaults_keep_metadata_and_fallback_never_crosses_providers() {
+    let catalogue = ModelsDevCatalogue::bundled();
+    let kind = ProviderKind::Deepseek;
+    let mut snapshot = catalogue.read().clone();
+    let provider = snapshot
+        .providers
+        .iter_mut()
+        .find(|provider| provider.id == kind.as_str())
+        .unwrap();
+    let mut retired = provider
+        .models
+        .iter()
+        .find(|model| model.id == kind.default_model())
+        .unwrap()
+        .clone();
+    retired.deprecated = true;
+    retired.background = None;
+    let mut replacement = retired.clone();
+    replacement.id = "replacement".to_owned();
+    replacement.deprecated = false;
+    provider.models = vec![retired.clone(), replacement.clone()];
+    catalogue.replace(snapshot.clone(), true);
+    assert_eq!(catalogue.model(kind, &retired.id).unwrap().id, retired.id);
+    assert!(catalogue.model(kind, &retired.id).unwrap().deprecated);
+    assert_eq!(
+        catalogue.preferred_model(kind, &retired.id),
+        Some(replacement.id.clone())
+    );
+    assert_eq!(catalogue.models(kind).len(), 1);
+    assert_eq!(
+        catalogue.output_limit(kind, &retired.id),
+        Some(retired.limit.output)
+    );
+    snapshot
+        .providers
+        .iter_mut()
+        .find(|provider| provider.id == kind.as_str())
+        .unwrap()
+        .models
+        .clear();
+    catalogue.replace(snapshot, true);
+    assert_eq!(catalogue.preferred_model(kind, &retired.id), None);
+    assert!(!catalogue.models(ProviderKind::Xai).is_empty());
+}
+
+#[test]
+fn draft_defaults_prefer_saved_then_configured_then_lexical_model() {
+    let catalogue = ModelsDevCatalogue::bundled();
+    let kind = ProviderKind::Deepseek;
+    let mut snapshot = catalogue.read().clone();
+    let provider = snapshot
+        .providers
+        .iter_mut()
+        .find(|provider| provider.id == kind.as_str())
+        .unwrap();
+    let configured = provider
+        .models
+        .iter()
+        .find(|model| model.id == kind.default_model())
+        .unwrap()
+        .clone();
+    let mut first = configured.clone();
+    first.id = "a".to_owned();
+    let mut saved = configured.clone();
+    saved.id = "z".to_owned();
+    provider.models = vec![saved.clone(), first.clone(), configured.clone()];
+    catalogue.replace(snapshot.clone(), true);
+    assert_eq!(catalogue.preferred_model(kind, "z"), Some(saved.id));
+    assert_eq!(
+        catalogue.preferred_model(kind, "absent"),
+        Some(configured.id)
+    );
+    snapshot
+        .providers
+        .iter_mut()
+        .find(|provider| provider.id == kind.as_str())
+        .unwrap()
+        .models
+        .pop();
+    catalogue.replace(snapshot, true);
+    assert_eq!(catalogue.preferred_model(kind, "absent"), Some(first.id));
+}
+
+#[test]
+fn failed_refresh_keeps_capabilities_and_persists_its_status() {
+    let catalogue = ModelsDevCatalogue::bundled();
+    let original = catalogue.read().clone();
+    let mut attempted = original.clone();
+    attempted.last_attempt_at_unix_seconds += 1;
+    catalogue.persist_attempt(attempted);
+    let failed = catalogue.read().clone();
+    assert!(!capabilities_differ(&original, &failed));
+    assert!(local_is_newer(&original, &failed));
+    let stored = parse_snapshot(&serde_json::to_vec(&failed).unwrap()).unwrap();
+    assert!(stored.refresh_failed);
+    assert_eq!(
+        stored.checked_at_unix_seconds,
+        original.checked_at_unix_seconds
+    );
+}
+
+#[test]
 fn prices_do_not_require_title_or_tool_eligibility() {
     let catalogue = ModelsDevCatalogue::bundled();
     assert!(

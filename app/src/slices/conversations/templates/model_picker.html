@@ -84,6 +84,42 @@
       <use href="/static/images/workspace-icons.svg#down" />
     </svg>
   </button>
+  <p
+    class="text-quiet w-full text-sm"
+    data-model-retirement
+    {% if !model_picker.model_deprecated %}hidden{% endif %}
+  >
+    {% if self.is_new() %}
+      This model is deprecated. Choose an available model before you start this
+      conversation.
+    {% else %}
+      This model is deprecated. You can continue while the provider accepts it.
+    {% endif %}
+    <button
+      type="button"
+      class="btn btn-ghost btn-sm"
+      popovertarget="conversation-model-options"
+      {% if job_active || self.needs_review() %}disabled{% endif %}
+    >
+      Choose model
+    </button>
+  </p>
+  {% if !model_picker.notice.is_empty() %}
+    <p
+      class="text-quiet w-full text-sm"
+      data-model-default-notice
+      role="status"
+    >
+      {{ model_picker.notice }}
+    </p>
+  {% endif %}
+  {% if model_picker.provider_empty && model_picker.notice.is_empty() %}
+    <p class="text-quiet w-full text-sm" data-model-default-notice>
+      This provider has no models for new conversations. Other connected
+      providers stay available.
+      <a href="/settings" data-graft class="link">Model catalogue settings</a>
+    </p>
+  {% endif %}
   <section
     id="conversation-thinking-options"
     popover

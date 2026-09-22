@@ -550,7 +550,7 @@ pub(super) struct ConversationDetailView {
     pub(super) historical: bool,
     pub(super) window_nav: bool,
     pub(super) history_status: String,
-    model_picker: ModelPicker,
+    pub(super) model_picker: ModelPicker,
     pub(super) presets: Vec<PresetOption>,
     pub(super) preset_name: String,
     pub(super) preset_source: String,
@@ -1061,7 +1061,10 @@ impl ConversationDetailView {
             .desk_providers(sources.vault)
             .into_iter()
             .find(|provider| provider.selected)
-            .and_then(|connection| {
+            .and_then(|mut connection| {
+                connection.model = sources
+                    .models
+                    .preferred_model(connection.kind, &connection.model)?;
                 crate::workflows::alpine_git_id(sources.environments)
                     .ok()
                     .map(|environment| {

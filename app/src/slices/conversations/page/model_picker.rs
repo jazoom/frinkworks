@@ -1,5 +1,8 @@
 use super::{ModelsDevCatalogue, ProviderOption, ProviderVault};
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Clone, serde::Serialize)]
 pub(crate) struct EffortOption {
     pub(crate) value: String,
@@ -10,6 +13,7 @@ pub(crate) struct EffortOption {
 pub(crate) struct ModelOption {
     pub(crate) id: String,
     favourite: bool,
+    deprecated: bool,
     /// Whether the catalogue records image-input support for this model.
     image_input: bool,
     efforts: Vec<EffortOption>,
@@ -24,6 +28,9 @@ pub(crate) struct ModelPicker {
     pub(crate) efforts: Vec<EffortOption>,
     pub(crate) model: String,
     pub(crate) model_unavailable: bool,
+    pub(crate) model_deprecated: bool,
+    pub(crate) notice: String,
+    pub(crate) provider_empty: bool,
     /// Known image-input support for the selected model. `None` means the
     /// catalogue has no entry, so the capability is unknown and must not be
     /// presented as supported.
@@ -44,11 +51,13 @@ impl ModelPicker {
         let catalogue_models: std::collections::BTreeMap<_, Vec<_>> = connections
             .iter()
             .map(|connection| {
+                // Catalogue patches also retain metadata for retired selections in open tabs.
                 let models = catalogue
-                    .models(connection.kind)
+                    .known_models(connection.kind)
                     .into_iter()
                     .map(|model| ModelOption {
                         favourite: connection.favourites.contains(&model.id),
+                        deprecated: model.deprecated,
                         image_input: model.image_input,
                         efforts: catalogue
                             .efforts(connection.kind, &model.id)
@@ -95,6 +104,13 @@ impl ModelPicker {
         }
         let model_unavailable =
             !model.is_empty() && !models.iter().any(|option| option.id == model);
+        let model_deprecated = models
+            .iter()
+            .any(|option| option.id == model && option.deprecated);
+        let provider_empty = connections
+            .iter()
+            .any(|connection| connection.kind.as_str() == provider)
+            && !models.iter().any(|option| !option.deprecated);
         let selected_image_input = crate::providers::ProviderKind::parse(provider)
             .and_then(|kind| catalogue.model(kind, model))
             .map(|metadata| metadata.image_input);
@@ -114,10 +130,16 @@ impl ModelPicker {
                     selected: connection.kind.as_str() == provider,
                 })
                 .collect(),
-            models,
+            models: models
+                .into_iter()
+                .filter(|model| !model.deprecated)
+                .collect(),
             efforts,
             model: model.to_owned(),
             model_unavailable,
+            model_deprecated,
+            notice: String::new(),
+            provider_empty,
             selected_image_input,
             thinking: thinking.to_owned(),
         }

@@ -121,6 +121,32 @@ pub(super) async fn show(
     if let Some(settings) = state.preferences.conversation_defaults() {
         super::settings::copy_settings_to_draft(&mut form, &settings);
     }
+    let mut model_notice = String::new();
+    if query.source.is_empty()
+        && let Some(provider) = ProviderKind::parse(&form.provider)
+        && state.vault.contains(provider)
+    {
+        let preferred = state
+            .models_dev
+            .preferred_model(provider, &form.model)
+            .unwrap_or_default();
+        if preferred != form.model {
+            model_notice = if preferred.is_empty() {
+                "This provider has no models for new conversations. Choose another provider or refresh the catalogue in Settings.".to_owned()
+            } else {
+                format!(
+                    "{} is unavailable for new conversations. This draft uses {preferred} from the same provider. Saved conversations stay unchanged.",
+                    form.model
+                )
+            };
+            form.model = preferred;
+            form.thinking = state
+                .models_dev
+                .effective_effort(provider, &form.model, None)
+                .map(|effort| effort.as_str().to_owned())
+                .unwrap_or_default();
+        }
+    }
     if !query.source.is_empty() {
         let Some(source) = load_conversation(&state, &query.source) else {
             return Ok(responses::request_navigation(graft, "/conversations"));
@@ -148,13 +174,9 @@ pub(super) async fn show(
             Err(problem) => error = problem.message(),
         }
     }
-    render_detail(
-        &state,
-        session.0,
-        graft,
-        PatchStatus::Ok,
-        ConversationDetailView::from_new(&state, session.0, form, error),
-    )
+    let mut view = ConversationDetailView::from_new(&state, session.0, form, error);
+    view.model_picker.notice = model_notice;
+    render_detail(&state, session.0, graft, PatchStatus::Ok, view)
 }
 
 impl NewForm {
@@ -293,7 +315,7 @@ pub(super) fn model(
 ) -> Result<Option<ConversationModelConfiguration>, &'static str> {
     let configuration = settings_snapshot(state, session, form)?;
     if let Some(configuration) = &configuration {
-        valid_selection(state, &configuration.settings.model)?;
+        valid_new_selection(state, &configuration.settings.model)?;
     }
     Ok(configuration)
 }

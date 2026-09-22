@@ -1583,6 +1583,84 @@ async fn unavailable_preset_models_apply_without_substitution() {
 }
 
 #[tokio::test]
+async fn deprecated_saved_models_keep_identity_and_remain_valid_for_dispatch() {
+    let state = test_state();
+    let token = connected(&state);
+    let provider = ProviderKind::Deepseek;
+    state
+        .vault
+        .put(ProviderConnection::with_key(
+            provider,
+            "test-key",
+            "deepseek-v4-flash",
+        ))
+        .unwrap();
+    let selection = ModelSelection::new(
+        provider,
+        "deepseek-v4-flash".to_owned(),
+        crate::providers::ThinkingEffort::new("high".to_owned()),
+    )
+    .unwrap();
+    assert!(super::valid_selection(&state, &selection).is_ok());
+    let record = state
+        .conversations
+        .create("Retired model".to_owned())
+        .unwrap();
+    let record = state
+        .conversations
+        .select_model(
+            &record.id,
+            record.revision,
+            selection.clone(),
+            super::default_environment(&state).unwrap(),
+        )
+        .unwrap();
+    let response = app(&state)
+        .oneshot(document(&format!("/conversations/{}", record.id), &token))
+        .await
+        .unwrap();
+    let body = text(response).await;
+    assert!(body.contains("You can continue while the provider accepts it."));
+    let response = app(&state)
+        .oneshot(document(
+            &format!("/conversations/new?source={}", record.id),
+            &token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let draft = normalised(&text(response).await);
+    assert!(draft.contains("Choose an available model before you start this conversation."));
+    assert!(!draft.contains("You can continue while the provider accepts it."));
+    assert_eq!(hidden_named(&draft, "model"), "deepseek-v4-flash");
+    assert_eq!(
+        state
+            .conversations
+            .get(&record.id)
+            .unwrap()
+            .model
+            .unwrap()
+            .settings
+            .model,
+        selection
+    );
+    let response = app(&state)
+        .oneshot(command(
+            &format!("/conversations/{}/model", record.id),
+            &token,
+            &format!(
+                "revision={}&provider=deepseek&model=deepseek-v4-flash&thinking=low",
+                record.revision
+            ),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let saved = state.conversations.get(&record.id).unwrap();
+    assert_eq!(saved.model.unwrap().settings.model.model, selection.model);
+}
+
+#[tokio::test]
 async fn stale_rename_returns_a_conflict_without_replacing_the_current_title() {
     let state = test_state();
     let token = connected(&state);
