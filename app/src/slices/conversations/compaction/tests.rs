@@ -3,7 +3,7 @@ use tower::ServiceExt;
 
 use crate::providers::ProviderKind;
 use crate::slices::conversations::tests::{
-    app, command, connected, document, session_id, test_state, text,
+    app, command, connected, document, form_value, session_id, test_state, text,
 };
 
 fn model_record(state: &crate::state::AppState) -> crate::conversations::ConversationRecord {
@@ -118,6 +118,86 @@ async fn compact_commands_use_patch_representation() {
     *navigation.method_mut() = axum::http::Method::POST;
     let rejected = app(&state).oneshot(navigation).await.unwrap();
     assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn compact_rejects_an_over_bound_preserve() {
+    let state = test_state();
+    let token = connected(&state);
+    let record = seed_exchanges(&state, &token);
+    let path = format!("/conversations/{}/compact", record.id);
+    let body = format!(
+        "revision={}&preserve={}",
+        record.revision,
+        "x".repeat(crate::conversations::compaction::MAXIMUM_PRESERVE_BYTES + 1)
+    );
+    let response = app(&state)
+        .oneshot(command(&path, &token, &body))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let stored = state.conversations.get(&record.id).unwrap();
+    assert!(stored.compaction.is_none());
+    assert!(stored.summary_requests.is_empty());
+}
+
+#[tokio::test]
+async fn compact_binds_preserve_to_the_revision_and_records_provenance() {
+    use crate::providers::{ChatBackend, CompletionReason, ModelEvent};
+    use std::sync::Arc;
+    let mut state = test_state();
+    let backend = crate::tests::ScriptedBackend::events(vec![
+        Ok(ModelEvent::Text("Summary".to_owned())),
+        Ok(ModelEvent::Complete {
+            reason: CompletionReason::Stop,
+        }),
+    ]);
+    state.chat = Arc::new(ChatBackend::Scripted(backend.clone()));
+    let token = connected(&state);
+    let record = seed_exchanges(&state, &token);
+    let path = format!("/conversations/{}/compact", record.id);
+    let stale = format!(
+        "revision={}&preserve={}",
+        record.revision - 1,
+        form_value("Keep the migration plan")
+    );
+    let response = app(&state)
+        .oneshot(command(&path, &token, &stale))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert!(backend.captured().is_empty());
+    let body = format!(
+        "revision={}&preserve={}",
+        record.revision,
+        form_value("Keep the migration plan")
+    );
+    let response = app(&state)
+        .oneshot(command(&path, &token, &body))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    wait_settled(&state, record.id).await;
+    let stored = state.conversations.get(&record.id).unwrap();
+    assert_eq!(
+        stored
+            .compaction
+            .as_ref()
+            .and_then(|compaction| compaction.preserve.as_deref()),
+        Some("Keep the migration plan")
+    );
+    let captured = backend.captured();
+    assert_eq!(captured.len(), 1);
+    let preserve_at = captured[0]
+        .preamble
+        .find("Keep the migration plan")
+        .expect("preserve in preamble");
+    assert!(captured[0].preamble.find("What to preserve:").unwrap() < preserve_at);
+    assert!(
+        captured[0]
+            .preamble
+            .starts_with("You summarise a coding-agent conversation for later model requests")
+    );
 }
 
 #[tokio::test]

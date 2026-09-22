@@ -116,8 +116,11 @@ fn compaction_preserves_consumed_resource_provenance() {
         covered_through,
         retained_from,
         text: "The review skill supplied instructions.".to_owned(),
-        request: serde_json::from_slice(&serde_json::to_vec(&request).expect("persist request"))
-            .expect("reload request"),
+        requests: vec![
+            serde_json::from_slice(&serde_json::to_vec(&request).expect("persist request"))
+                .expect("reload request"),
+        ],
+        preserve: None,
         created_at_ms: 1,
     };
     let compacted = project(&messages, None, Some(&record)).expect("compacted history");
@@ -174,7 +177,8 @@ fn a_malformed_summary_does_not_replace_context() {
         covered_through: messages[1].id,
         retained_from: messages[2].id,
         text: String::new(),
-        request: usage(),
+        requests: vec![usage()],
+        preserve: None,
         created_at_ms: 1,
     };
     assert!(!record.valid(&messages));
@@ -188,7 +192,8 @@ fn a_valid_summary_replaces_only_the_model_projection() {
         covered_through: messages[1].id,
         retained_from: messages[2].id,
         text: "Earlier the user asked first.".to_owned(),
-        request: usage(),
+        requests: vec![usage()],
+        preserve: None,
         created_at_ms: 1,
     };
     assert!(record.valid(&messages));
@@ -206,7 +211,8 @@ fn a_missing_cover_boundary_is_rejected() {
         covered_through: identifier(),
         retained_from: messages[2].id,
         text: "Stale".to_owned(),
-        request: usage(),
+        requests: vec![usage()],
+        preserve: None,
         created_at_ms: 1,
     };
     assert!(!record.valid(&messages));
@@ -223,7 +229,8 @@ fn a_summary_keeps_its_boundary_when_a_later_request_is_pending() {
         covered_through: messages[1].id,
         retained_from: messages[2].id,
         text: "Earlier context".to_owned(),
-        request: usage(),
+        requests: vec![usage()],
+        preserve: None,
         created_at_ms: 1,
     };
     messages.push(user("Next"));
@@ -260,7 +267,8 @@ fn interrupted_completed_tools_do_not_shift_the_retained_suffix() {
         covered_through: messages[3].id,
         retained_from: messages[4].id,
         text: "Summary".to_owned(),
-        request: usage(),
+        requests: vec![usage()],
+        preserve: None,
         created_at_ms: 1,
     };
     let projected = project(&messages, None, Some(&record)).unwrap();
@@ -294,7 +302,8 @@ fn a_summary_checkpoint_is_isolated_to_its_sibling_path() {
         covered_through: shared_id,
         retained_from: a_user.id,
         text: "Shared prefix summary".to_owned(),
-        request: usage(),
+        requests: vec![usage()],
+        preserve: None,
         created_at_ms: 1,
     };
     assert!(record.valid(&path_a));
@@ -311,4 +320,72 @@ fn a_summary_checkpoint_is_isolated_to_its_sibling_path() {
     };
     assert!(!sibling_only.valid(&path_b));
     assert!(project(&path_b, None, Some(&sibling_only)).is_err());
+}
+
+#[test]
+fn preserve_instructions_are_bounded_and_normalised() {
+    assert_eq!(super::normalise_preserve(None), Ok(None));
+    assert_eq!(super::normalise_preserve(Some("   ")), Ok(None));
+    assert_eq!(
+        super::normalise_preserve(Some("  keep the plan  ")),
+        Ok(Some("keep the plan".to_owned()))
+    );
+    assert_eq!(
+        super::normalise_preserve(Some(&"x".repeat(super::MAXIMUM_PRESERVE_BYTES + 1))),
+        Err(CompactionError::Preserve)
+    );
+    assert_eq!(
+        super::normalise_preserve(Some("bad\0text")),
+        Err(CompactionError::Preserve)
+    );
+}
+
+#[test]
+fn a_checkpoint_records_every_summary_request_once() {
+    let messages = two_exchanges();
+    let record = CompactionRecord {
+        covered_through: messages[1].id,
+        retained_from: messages[2].id,
+        text: "Cumulative summary".to_owned(),
+        requests: vec![usage(), usage()],
+        preserve: Some("keep the plan".to_owned()),
+        created_at_ms: 1,
+    };
+    assert!(record.valid(&messages));
+    let history = project(&messages, None, Some(&record)).expect("projection");
+    assert_eq!(history[0].usage.len(), 2);
+    let mut malformed = record.clone();
+    malformed.requests.clear();
+    assert!(!malformed.valid(&messages));
+    let mut unsupported = record.clone();
+    unsupported.preserve = Some("bad\0text".to_owned());
+    assert!(!unsupported.valid(&messages));
+}
+
+#[test]
+fn an_over_bound_summary_is_rejected() {
+    assert_eq!(
+        validate_summary(&"x".repeat(super::MAXIMUM_SUMMARY_BYTES + 1), None),
+        Err(CompactionError::Bound)
+    );
+    assert_eq!(
+        validate_summary(&"x".repeat(super::MAXIMUM_SUMMARY_BYTES), None),
+        Ok("x".repeat(super::MAXIMUM_SUMMARY_BYTES))
+    );
+}
+
+#[test]
+fn project_turns_carries_every_request_and_the_retained_suffix() {
+    let turns = vec![
+        crate::providers::ChatTurn::user("First".to_owned()),
+        crate::providers::ChatTurn::assistant(crate::providers::AssistantReply::from("Reply")),
+        crate::providers::ChatTurn::user("Second".to_owned()),
+        crate::providers::ChatTurn::assistant(crate::providers::AssistantReply::from("Latest")),
+    ];
+    let requests = vec![usage(), usage()];
+    let projected = super::project_turns(&turns, 1, "Summary", &requests).unwrap();
+    assert_eq!(projected.len(), 3);
+    assert_eq!(projected[0].usage.len(), 2);
+    assert_eq!(projected[1].text, "Second");
+    assert_eq!(projected[2].text, "Latest");
 }

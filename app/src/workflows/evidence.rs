@@ -134,7 +134,8 @@ impl AttemptEvidenceContext {
         &self,
         covered_through: u32,
         text: &str,
-        request: crate::conversations::RequestUsage,
+        requests: Vec<crate::conversations::RequestUsage>,
+        preserve: Option<String>,
     ) -> Result<(), EvidenceError> {
         self.store.record_compaction(
             self.run_id,
@@ -143,7 +144,8 @@ impl AttemptEvidenceContext {
             WorkflowCompaction {
                 covered_through,
                 text: text.to_owned(),
-                request,
+                requests,
+                preserve,
             },
         )
     }
@@ -289,7 +291,9 @@ pub(crate) struct AttemptEvidence {
 pub(crate) struct WorkflowCompaction {
     pub(crate) covered_through: u32,
     pub(crate) text: String,
-    pub(crate) request: crate::conversations::RequestUsage,
+    pub(crate) requests: Vec<crate::conversations::RequestUsage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) preserve: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -647,7 +651,12 @@ impl WorkflowEvidenceStore {
         if compaction.text.is_empty()
             || compaction.text.len() > crate::conversations::compaction::MAXIMUM_SUMMARY_BYTES
             || compaction.text.contains('\0')
-            || !compaction.request.valid()
+            || compaction.requests.is_empty()
+            || compaction.requests.len()
+                > crate::conversations::compaction::MAXIMUM_SUMMARY_REQUESTS
+            || !compaction.requests.iter().all(|request| request.valid())
+            || crate::conversations::compaction::normalise_preserve(compaction.preserve.as_deref())
+                .is_err()
         {
             return Err(EvidenceError::Corrupt);
         }
@@ -760,7 +769,11 @@ fn validate_record(record: &AttemptEvidence) -> Result<(), EvidenceError> {
         return Err(EvidenceError::Corrupt);
     }
     if record.compaction.as_ref().is_some_and(|summary| {
-        !summary.request.valid()
+        summary.requests.is_empty()
+            || summary.requests.len() > crate::conversations::compaction::MAXIMUM_SUMMARY_REQUESTS
+            || !summary.requests.iter().all(|request| request.valid())
+            || crate::conversations::compaction::normalise_preserve(summary.preserve.as_deref())
+                .is_err()
             || crate::conversations::compaction::validate_summary(&summary.text, None).is_err()
     }) {
         return Err(EvidenceError::Corrupt);

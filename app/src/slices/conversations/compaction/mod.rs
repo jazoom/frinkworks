@@ -27,6 +27,8 @@ use crate::{
 #[derive(Deserialize)]
 pub(super) struct CompactForm {
     revision: String,
+    #[serde(default)]
+    preserve: String,
 }
 
 pub(super) async fn compact(
@@ -72,6 +74,10 @@ pub(super) async fn compact(
             PatchStatus::UnprocessableEntity,
             "Choose an available model before you compact context.",
         );
+    };
+    let preserve = match compaction::normalise_preserve(Some(&form.preserve)) {
+        Ok(preserve) => preserve,
+        Err(error) => return reject(PatchStatus::UnprocessableEntity, error.message()),
     };
     let (covered_through, retained_from) =
         match compaction::select_boundary(&record.messages, record.compaction.as_ref()) {
@@ -119,34 +125,41 @@ pub(super) async fn compact(
         detail_view(&state, session.0, &started, &started.title, ""),
     )?;
     tokio::spawn(async move {
-        let result =
-            compaction::generation::generate(&state, &connection, &covered, &job, |request| {
+        let result = compaction::generation::generate(
+            &state,
+            &connection,
+            &covered,
+            preserve.as_deref(),
+            &job,
+            |request| {
                 state
                     .conversations
                     .record_summary_request(&record.id, job.id(), request)
                     .map_err(|error| error.message())
-            })
-            .await
-            .and_then(|(text, request)| {
-                if job.cancel_requested() {
-                    return Err("Context compaction was cancelled. The previous context remains.");
-                }
-                state
-                    .conversations
-                    .record_job_compaction(
-                        &record.id,
-                        job.id(),
-                        compaction::CompactionRecord {
-                            covered_through,
-                            retained_from,
-                            text,
-                            request,
-                            created_at_ms: crate::workflows::now_ms(),
-                        },
-                    )
-                    .map(|_| ())
-                    .map_err(|error| error.message())
-            });
+            },
+        )
+        .await
+        .and_then(|outcome| {
+            if job.cancel_requested() {
+                return Err("Context compaction was cancelled. The previous context remains.");
+            }
+            state
+                .conversations
+                .record_job_compaction(
+                    &record.id,
+                    job.id(),
+                    compaction::CompactionRecord {
+                        covered_through,
+                        retained_from,
+                        text: outcome.text,
+                        requests: outcome.requests,
+                        preserve,
+                        created_at_ms: crate::workflows::now_ms(),
+                    },
+                )
+                .map(|_| ())
+                .map_err(|error| error.message())
+        });
         job.clear_compacting();
         let error = result.err();
         if state

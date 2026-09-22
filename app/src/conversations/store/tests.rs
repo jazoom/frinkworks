@@ -137,7 +137,8 @@ fn compaction_survives_restart_with_a_later_pending_request() {
                 covered_through: original[1].id,
                 retained_from: original[2].id,
                 text: "Earlier context".to_owned(),
-                request: request.clone(),
+                requests: vec![request.clone()],
+                preserve: None,
                 created_at_ms: 1,
             },
         )
@@ -1881,7 +1882,8 @@ fn branch_selection_restores_only_ancestor_compactions_across_restart() {
                 covered_through: record.messages[3].id,
                 retained_from: record.messages[4].id,
                 text: "Earlier context".to_owned(),
-                request: request.clone(),
+                requests: vec![request.clone()],
+                preserve: None,
                 created_at_ms: 1,
             },
         )

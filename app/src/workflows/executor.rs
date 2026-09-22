@@ -3010,7 +3010,7 @@ async fn run_agent_step(
                 &turns,
                 compaction.covered_through as usize,
                 &compaction.text,
-                &compaction.request,
+                &compaction.requests,
             ) {
                 Ok(projected) => turns = projected,
                 Err(error) => {

@@ -647,6 +647,16 @@ mod scripted_fixture {
         last_connection: Arc<Mutex<Option<CapturedConnection>>>,
         last_extra_len: Arc<AtomicUsize>,
         last_max_tokens: Arc<Mutex<Option<u64>>>,
+        captured: Arc<Mutex<Vec<CapturedRequest>>>,
+    }
+
+    /// One provider request as the scripted backend observed it. Sequential
+    /// summary requests need every request, not only the last one.
+    #[derive(Clone)]
+    pub(crate) struct CapturedRequest {
+        pub(crate) preamble: String,
+        pub(crate) history: Vec<ChatTurn>,
+        pub(crate) max_tokens: Option<u64>,
     }
 
     impl ScriptedBackend {
@@ -666,6 +676,7 @@ mod scripted_fixture {
                 last_connection: Arc::new(Mutex::new(None)),
                 last_extra_len: Arc::new(AtomicUsize::new(0)),
                 last_max_tokens: Arc::new(Mutex::new(None)),
+                captured: Arc::new(Mutex::new(Vec::new())),
             }
         }
 
@@ -683,6 +694,7 @@ mod scripted_fixture {
                 last_connection: Arc::new(Mutex::new(None)),
                 last_extra_len: Arc::new(AtomicUsize::new(0)),
                 last_max_tokens: Arc::new(Mutex::new(None)),
+                captured: Arc::new(Mutex::new(Vec::new())),
             }
         }
 
@@ -736,6 +748,7 @@ mod scripted_fixture {
                 last_connection: Arc::new(Mutex::new(None)),
                 last_extra_len: Arc::new(AtomicUsize::new(0)),
                 last_max_tokens: Arc::new(Mutex::new(None)),
+                captured: Arc::new(Mutex::new(Vec::new())),
             }
         }
 
@@ -753,6 +766,7 @@ mod scripted_fixture {
                 last_connection: Arc::new(Mutex::new(None)),
                 last_extra_len: Arc::new(AtomicUsize::new(0)),
                 last_max_tokens: Arc::new(Mutex::new(None)),
+                captured: Arc::new(Mutex::new(Vec::new())),
             }
         }
 
@@ -801,6 +815,13 @@ mod scripted_fixture {
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
         }
 
+        pub(crate) fn captured(&self) -> Vec<CapturedRequest> {
+            self.captured
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone()
+        }
+
         pub(crate) fn turn_count(&self) -> usize {
             self.round.load(Ordering::SeqCst)
         }
@@ -840,6 +861,14 @@ mod scripted_fixture {
                 .last_max_tokens
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner()) = max_tokens;
+            self.captured
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(CapturedRequest {
+                    preamble: preamble.to_owned(),
+                    history: history.to_vec(),
+                    max_tokens,
+                });
             match self.script.clone() {
                 Ok(Script::Chunks(items)) => {
                     let failed = items.iter().any(Result::is_err);

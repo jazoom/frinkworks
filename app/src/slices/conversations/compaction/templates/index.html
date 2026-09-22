@@ -13,6 +13,18 @@
       {{ summary.covered }}. Later entries on the selected branch remain in
       model context.
     </p>
+    {% if summary.request_count > 1 %}
+      <p class="text-quiet text-sm">
+        {{ summary.request_count }} sequential summary requests built this
+        checkpoint.
+      </p>
+    {% endif %}
+    {% if let Some(preserve) = summary.preserve %}
+      <div class="text-sm">
+        <p class="font-semibold">What to preserve</p>
+        <p class="text-quiet whitespace-pre-wrap">{{ preserve }}</p>
+      </div>
+    {% endif %}
   </section>
 {% endif %}
 {% if let Some(usage) = summary_usage %}

@@ -439,7 +439,9 @@ struct CompactionFile {
     covered_through: String,
     retained_from: String,
     text: String,
-    request: super::history::RequestUsage,
+    requests: Vec<super::history::RequestUsage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    preserve: Option<String>,
     created_at_ms: u64,
 }
 
@@ -2780,7 +2782,8 @@ fn compaction_to_file(record: &super::compaction::CompactionRecord) -> Compactio
         covered_through: record.covered_through.as_hex(),
         retained_from: record.retained_from.as_hex(),
         text: record.text.clone(),
-        request: record.request.clone(),
+        requests: record.requests.clone(),
+        preserve: record.preserve.clone(),
         created_at_ms: record.created_at_ms,
     }
 }
@@ -2795,7 +2798,8 @@ fn compaction_from_file(
             .ok_or(ConversationError::Corrupt)?,
         retained_from: MessageId::parse(&file.retained_from).ok_or(ConversationError::Corrupt)?,
         text: file.text,
-        request: file.request,
+        requests: file.requests,
+        preserve: file.preserve,
         created_at_ms: file.created_at_ms,
     };
     if validate_messages && !record.valid(messages) {

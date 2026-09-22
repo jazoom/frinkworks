@@ -101,8 +101,9 @@ fn request_for(
             record
                 .compaction
                 .as_ref()
-                .map(|compaction| &compaction.request)
-                .filter(|request| request.id == id)
+                .into_iter()
+                .flat_map(|compaction| compaction.requests.iter())
+                .find(|request| request.id == id)
         })
         .cloned()
 }

@@ -267,9 +267,10 @@ async fn automatic_compaction_fits_a_smaller_model_without_deleting_local_tool_r
     ]);
     state.chat = std::sync::Arc::new(ChatBackend::Scripted(backend.clone()));
     let (record, job) = conversation_job(&state);
+    // Each exchange fits alone, but both results exceed this model's context window.
     for (id, output) in [
-        ("first", "x".repeat(100_000)),
-        ("latest", "Retained file result".repeat(1_600)),
+        ("first", "x".repeat(65_000)),
+        ("latest", "Retained file result".repeat(2_750)),
     ] {
         let mut reply = AssistantReply::default();
         reply.start_tool(
@@ -293,7 +294,11 @@ async fn automatic_compaction_fits_a_smaller_model_without_deleting_local_tool_r
             .unwrap();
     }
     let mut spec = read_spec(
-        ProviderConnection::with_key(ProviderKind::Xai, "test-key", "uncatalogued-small-model"),
+        ProviderConnection::with_key(
+            ProviderKind::Openrouter,
+            "test-key",
+            "qwen/qwen-2.5-7b-instruct",
+        ),
         record.id,
         record.revision,
     );
@@ -302,7 +307,7 @@ async fn automatic_compaction_fits_a_smaller_model_without_deleting_local_tool_r
     let before = turns.clone();
     let mut attempts = 0;
     let result = super::fit_context(&state, &spec, &job, &mut turns, &[], &[], &mut attempts).await;
-    assert!(matches!(result, Ok(estimate) if estimate.fits() && estimate.unknown_capacity()));
+    assert!(matches!(result, Ok(estimate) if estimate.fits() && !estimate.unknown_capacity()));
     assert_eq!(backend.turn_count(), 1);
     assert_eq!(
         turns

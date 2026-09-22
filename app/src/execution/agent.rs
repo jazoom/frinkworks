@@ -1836,15 +1836,16 @@ async fn compact_history_inner(
                 record.compaction.as_ref(),
             )
             .map_err(|error| context_blocked(AssistantReply::default(), error.message()))?;
-            let (text, request) = generate_summary(state, spec, job, &covered).await?;
+            let outcome = generate_summary(state, spec, job, &covered, None).await?;
             if job.cancel_requested() {
                 return Err(cancel_action(job, &AssistantReply::default()));
             }
             let compaction = crate::conversations::CompactionRecord {
                 covered_through,
                 retained_from,
-                text,
-                request,
+                text: outcome.text,
+                requests: outcome.requests,
+                preserve: None,
                 created_at_ms: crate::workflows::now_ms(),
             };
             state
@@ -1866,12 +1867,17 @@ async fn compact_history_inner(
             return Err(context_blocked(AssistantReply::default(), error.message()));
         }
     };
-    let (text, request) = generate_summary(state, spec, job, &turns[..=cover]).await?;
+    let outcome = generate_summary(state, spec, job, &turns[..=cover], None).await?;
     if job.cancel_requested() {
         return Err(cancel_action(job, &AssistantReply::default()));
     }
-    let projected = crate::conversations::compaction::project_turns(turns, cover, &text, &request)
-        .map_err(|error| context_blocked(AssistantReply::default(), error.message()))?;
+    let projected = crate::conversations::compaction::project_turns(
+        turns,
+        cover,
+        &outcome.text,
+        &outcome.requests,
+    )
+    .map_err(|error| context_blocked(AssistantReply::default(), error.message()))?;
     let evidence = spec.evidence.as_ref().ok_or_else(|| {
         context_blocked(
             AssistantReply::default(),
@@ -1879,7 +1885,7 @@ async fn compact_history_inner(
         )
     })?;
     evidence
-        .compaction(cover as u32, &text, request)
+        .compaction(cover as u32, &outcome.text, outcome.requests, None)
         .map_err(|error| {
             end(
                 AgentOutcome::PersistenceFailure,
@@ -1896,12 +1902,14 @@ async fn generate_summary(
     spec: &AgentRunSpec,
     job: &Job,
     turns: &[ChatTurn],
-) -> Result<(String, crate::conversations::RequestUsage), AgentActionEnd> {
+    preserve: Option<&str>,
+) -> Result<crate::conversations::compaction::generation::SummaryOutcome, AgentActionEnd> {
     let mut persistence_failed = false;
     let result = crate::conversations::compaction::generation::generate(
         state,
         &spec.connection,
         turns,
+        preserve,
         job,
         |request| {
             let result = if spec.steering_session.is_some() {
