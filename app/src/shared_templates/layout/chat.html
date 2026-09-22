@@ -68,8 +68,13 @@
         >
         <a href="/conversations" data-graft data-history-link
           ><svg class="workspace-icon" aria-hidden="true">
+            <use href="/static/images/workspace-icons.svg#chat" /></svg
+          >Conversations</a
+        >
+        <a href="/runs" data-graft
+          ><svg class="workspace-icon" aria-hidden="true">
             <use href="/static/images/workspace-icons.svg#clock" /></svg
-          >History</a
+          >Runs</a
         >
         <div id="recent-conversations">{{ recent|safe }}</div>
         <form
@@ -107,6 +112,11 @@
             ><svg class="workspace-icon" aria-hidden="true">
               <use href="/static/images/workspace-icons.svg#file" /></svg
             >Skills</a
+          >
+          <a href="/prompts" data-graft
+            ><svg class="workspace-icon" aria-hidden="true">
+              <use href="/static/images/workspace-icons.svg#chat" /></svg
+            >Prompts</a
           >
         </div>
         <div class="workspace-local">

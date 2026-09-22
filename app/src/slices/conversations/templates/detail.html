@@ -1,8 +1,4 @@
-<main
-  data-section="conversations"
-  data-context-detail
-  class="chat-sheet w-full flex-1"
->
+<main data-section="conversations" class="chat-sheet w-full flex-1">
   <section
     id="conversation-detail"
     data-island="conversation"
@@ -899,6 +895,7 @@
           <form
             id="conversation-composer"
             data-island="composer"
+            data-command-location="{% if location_host %}host{% else %}sandbox{% endif %}"
             data-graft
             method="post"
             action="{{ self.composer_action() }}"
@@ -1076,6 +1073,22 @@
             >
 {{ self.draft_message() }}</textarea>
             {% include "conversations/templates/model_picker.html" %}
+            {# The client keeps this note current after a model change or an
+               image change; the server renders the same rule for the first
+               paint. #}
+            <p
+              class="text-warning col-span-2 flex items-center gap-2 text-sm"
+              role="status"
+              data-image-compatibility
+              {% if self.image_compatibility_note() == "" %}hidden{% endif %}
+            >
+              <svg class="workspace-icon shrink-0" aria-hidden="true">
+                <use href="/static/images/workspace-icons.svg#attention" />
+              </svg>
+              <span data-image-compatibility-text
+                >{{ self.image_compatibility_note() }}</span
+              >
+            </p>
             {% if self.queue.follow_up && self.queue.steering && self.revision.is_none() %}
               <fieldset class="col-span-2 flex flex-wrap gap-3 text-sm">
                 <legend class="sr-only">Queue delivery</legend>
@@ -1101,6 +1114,89 @@
               </fieldset>
             {% endif %}
 
+            <section
+              class="col-span-2 flex flex-wrap items-center gap-x-2 gap-y-1 px-2 pt-1"
+              aria-label="Composer commands"
+            >
+              <button
+                type="button"
+                class="btn btn-ghost btn-xs min-h-9"
+                data-composer-insert="/"
+              >
+                Skills and prompts
+              </button>
+              <button
+                type="button"
+                class="btn btn-ghost btn-xs min-h-9"
+                data-composer-insert="@"
+              >
+                Files
+              </button>
+              <p
+                class="text-quiet min-w-0 flex-1 basis-full text-xs sm:basis-auto"
+                data-composer-command-status
+                role="status"
+                hidden
+              ></p>
+              <details class="dropdown dropdown-top dropdown-end ml-auto">
+                <summary class="btn btn-ghost btn-xs min-h-9">
+                  Composer help
+                </summary>
+                <div
+                  class="dropdown-content border-base-300 bg-base-100 rounded-box z-10 mt-1 w-80 max-w-[calc(100vw-2rem)] border p-4 text-left text-sm shadow-lg"
+                >
+                  <p class="font-medium">Message prefixes</p>
+                  <dl class="mt-2 space-y-2">
+                    <div>
+                      <dt><code>/skill:name</code></dt>
+                      <dd class="text-quiet">
+                        Expand a saved skill into the message. Use
+                        <code>/skill:scope/name</code> when two skills share a
+                        name.
+                      </dd>
+                    </div>
+                    <div>
+                      <dt><code>/name</code></dt>
+                      <dd class="text-quiet">
+                        Expand a prompt template. Use
+                        <code>/scope/name</code> when two templates share a
+                        name.
+                      </dd>
+                    </div>
+                    <div>
+                      <dt><code>@path</code></dt>
+                      <dd class="text-quiet">
+                        Reference a file or folder. Selection inserts the path
+                        only. It does not upload the file or grant access.
+                      </dd>
+                    </div>
+                    <div>
+                      <dt><code>!command</code></dt>
+                      <dd class="text-quiet">
+                        Run a command now in the selected location. The command
+                        and output join the model context. No provider
+                        connection is needed.
+                      </dd>
+                    </div>
+                    <div>
+                      <dt><code>!!command</code></dt>
+                      <dd class="text-quiet">
+                        Run a command now without adding it to automatic model
+                        context. Other tools can still read the files.
+                      </dd>
+                    </div>
+                  </dl>
+                  <p class="text-quiet mt-3">
+                    Start an ordinary message with a backslash before
+                    <code>/</code> or <code>!</code> to keep the text literal.
+                  </p>
+                  <p class="text-quiet mt-3">
+                    Run must be enabled and the location approved. Commands keep
+                    the current approval and consent requirements.
+                  </p>
+                </div>
+              </details>
+            </section>
             <div class="flex flex-col gap-2">
               {# Explicit ARIA values replace the transport overlay on a retained submitter. #}
               {% if observe_active %}
@@ -1124,12 +1220,13 @@
                 value="{{ self.follow_up_submit_value() }}"
                 aria-label="{{ self.follow_up_submit_label() }}"
                 aria-disabled="{{ self.composer_disabled() }}"
+                data-composer-submit
+                data-default-aria-label="{{ self.follow_up_submit_label() }}"
                 {% if self.composer_disabled() %}disabled{% endif %}
               >
-                {% if self.queue.follow_up && self.revision.is_none() %}Queue{% else %}Send{% endif %}<svg
-                  class="workspace-icon"
-                  aria-hidden="true"
-                >
+                <span data-composer-submit-label
+                  >{% if self.queue.follow_up && self.revision.is_none() %}Queue{% else %}Send{% endif %}</span
+                ><svg class="workspace-icon" aria-hidden="true">
                   <use href="/static/images/workspace-icons.svg#up" />
                 </svg>
               </button>
@@ -1599,35 +1696,63 @@
                 >
 {{ instructions }}</textarea>
               </label>
-              {% for tool in tool_options %}
-                <input
-                  form="{{ self.model_form() }}"
-                  type="checkbox"
-                  name="{{ tool.field_name }}"
-                  value="{{ tool.value }}"
-                  {% if tool.selected %}checked{% endif %}
-                  hidden
-                  data-tool-field
-                />
-              {% endfor %}
-              <label
-                class="setup-check-field my-5 flex items-start gap-[11px] text-xs leading-[1.7]"
+              <fieldset
+                class="space-y-2"
+                {% if job_active %}disabled{% endif %}
               >
-                <input
-                  id="conversation-enable-tools"
-                  class="checkbox checkbox-sm"
-                  type="checkbox"
-                  data-enable-tools
-                  {% if job_active %}disabled{% endif %}
-                />
-                <span
-                  ><strong>Enable tools</strong
-                  ><small
-                    >List, read, edit, write and run. File access still needs
-                    approval.</small
-                  ></span
+                <legend class="text-sm font-medium">Available tools</legend>
+                <p class="text-quiet text-xs">
+                  The agent can use the tools that you select. Tool selection
+                  grants no file access and no command approval.
+                </p>
+                <div class="grid gap-2 sm:grid-cols-2">
+                  {% for tool in tool_options %}
+                    <label
+                      class="border-base-300 flex min-h-16 items-start gap-3 border p-3"
+                    >
+                      <input
+                        form="{{ self.model_form() }}"
+                        type="checkbox"
+                        class="checkbox checkbox-sm mt-0.5"
+                        name="{{ tool.field_name }}"
+                        value="{{ tool.value }}"
+                        {% if tool.selected %}checked{% endif %}
+                        data-tool-field
+                      />
+                      <span>
+                        <span class="block text-sm font-medium"
+                          >{{ tool.label }}</span
+                        >
+                        <span class="text-quiet mt-0.5 block text-xs"
+                          >{% if location_host && tool.value == "run" %}
+                            Run commands on this computer.
+                          {% else %}
+                            {{ tool.detail }}
+                          {% endif %}</span
+                        >
+                      </span>
+                    </label>
+                  {% endfor %}
+                </div>
+                <label
+                  class="setup-check-field flex items-start gap-[11px] text-xs leading-[1.7]"
                 >
-              </label>
+                  <input
+                    id="conversation-enable-tools"
+                    class="checkbox checkbox-sm"
+                    type="checkbox"
+                    data-enable-tools
+                    {% if job_active %}disabled{% endif %}
+                  />
+                  <span
+                    ><strong>Select all tools</strong
+                    ><small
+                      >Checks or clears every tool above. Each tool stays
+                      individually selectable.</small
+                    ></span
+                  >
+                </label>
+              </fieldset>
               <p class="text-quiet text-sm">
                 Without tools, conversation needs no sandbox or environment.
               </p>

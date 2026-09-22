@@ -206,6 +206,8 @@ Queue return restores staged references without deletion. Prompt revision retain
 
 Image blocks reach the provider through the shared request projection. The request validates the capability of the selected model before dispatch. An unknown or unsupported image capability is rejected. Opaque continuation data and duplicates stay out of the projection.
 
+The model picker marks each model with known image-input support and offers an **Images** filter. An incompatible or unknown selection shows a note before submission.
+
 A retained reference survives compaction and a fork. Compaction keeps original image references. A summary request includes the images of each covered chunk, so an image-only turn never reads as empty text. Context estimation uses decoded dimensions, not the encoded byte length.
 
 Image routes are session-scoped. A saved image requires a reference that belongs to its conversation. The response uses the explicit raster media type and `no-store`.
@@ -248,7 +250,7 @@ Positions use one-based indices. A backslash before `$` writes a literal dollar 
 
 `skill:` and application command names are reserved. A malformed name, a reserved name and a case-insensitive duplicate never become selectable. A bad template produces a limitation in the suggestions, not a partial substitution.
 
-A preview binds the template scope, path and body hash. Send rejects a changed preview. An unpreviewed command resolves from one validated source snapshot at submission. The submission freezes the typed text, the expanded text and the provenance. The application rejects a template body above 64 KiB or an expanded message above 32 KiB. Previews and submissions exclude a template that contains a known provider API key. There is no prompt-management page: the user edits the Markdown files directly.
+A preview binds the template scope, path and body hash. Send rejects a changed preview. An unpreviewed command resolves from one validated source snapshot at submission. The submission freezes the typed text, the expanded text and the provenance. The application rejects a template body above 64 KiB or an expanded message above 32 KiB. Previews and submissions exclude a template that contains a known provider API key. The Prompts page provides a catalogue and an editor for global templates. Direct file placement remains supported, and the composer discovers a saved or copied global file without a restart.
 
 ## Direct commands
 

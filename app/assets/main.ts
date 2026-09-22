@@ -15,6 +15,7 @@ import {
 type ComposerModel = {
     id: string;
     favourite: boolean;
+    image_input: boolean;
     default_effort: string;
     efforts: { value: string; label: string }[];
 };
@@ -69,6 +70,9 @@ function renderComposerModels() {
     const favouritesOnly =
         document.getElementById("conversation-model-favourites-filter")
             ?.ariaPressed === "true";
+    const imagesOnly =
+        document.getElementById("conversation-model-images-filter")
+            ?.ariaPressed === "true";
     const matches = Object.entries(composerCatalogue())
         .flatMap(([provider, models]) => {
             const label =
@@ -80,6 +84,7 @@ function renderComposerModels() {
                     (model) =>
                         (!filter.value || filter.value === provider) &&
                         (!favouritesOnly || model.favourite) &&
+                        (!imagesOnly || model.image_input) &&
                         `${model.id} ${label}`
                             .toLocaleLowerCase()
                             .includes(query),
@@ -120,10 +125,18 @@ function renderComposerModels() {
         const name = document.createElement("span");
         name.className = "break-all text-sm";
         name.textContent = item.id;
+        const meta = document.createElement("span");
+        meta.className = "flex flex-wrap items-center gap-2 text-xs text-quiet";
         const provider = document.createElement("span");
-        provider.className = "text-xs text-quiet";
         provider.textContent = item.label;
-        label.append(name, provider);
+        meta.append(provider);
+        if (item.image_input) {
+            const images = document.createElement("span");
+            images.className = "badge badge-ghost badge-xs";
+            images.textContent = "Images";
+            meta.append(images);
+        }
+        label.append(name, meta);
         button.append(label);
         if (button.ariaPressed === "true") button.append(modelIcon("check"));
         const favourite = document.createElement("button");
@@ -144,9 +157,11 @@ function renderComposerModels() {
     if (status)
         status.textContent = matches.length
             ? `${matches.length} ${matches.length === 1 ? "model" : "models"}`
-            : favouritesOnly
-              ? "No favourites match. Turn off Favourites to see all models."
-              : "No models match. Clear the search or change the provider filter.";
+            : imagesOnly
+              ? "No image-capable models match. Turn off Images to see all models."
+              : favouritesOnly
+                ? "No favourites match. Turn off Favourites to see all models."
+                : "No models match. Clear the search or change the provider filter.";
 }
 
 function modelIcon(name: string, filled = false): SVGSVGElement {
@@ -180,6 +195,7 @@ function composerEfforts(saved: string) {
     const label = document.getElementById("conversation-model-value");
     if (label) label.textContent = controls.model.value || "Choose a model";
     syncThinkingChoice();
+    syncImageCompatibility();
 }
 
 function syncThinkingChoice() {
@@ -211,6 +227,39 @@ function syncThinkingChoice() {
             return button;
         }),
     );
+}
+
+// Staged images need a model with known image-input support. The catalogue
+// carries that flag; a missing entry stays unknown and is not treated as
+// supported. The server repeats the check before dispatch.
+const IMAGE_UNSUPPORTED_NOTE =
+    "The selected model does not accept images. Choose a model with image input.";
+const IMAGE_UNKNOWN_NOTE =
+    "Power Plant cannot confirm image input for the selected model. Choose a model with image input.";
+
+function syncImageCompatibility() {
+    const note = document.querySelector<HTMLElement>(
+        "[data-image-compatibility]",
+    );
+    const text = note?.querySelector<HTMLElement>(
+        "[data-image-compatibility-text]",
+    );
+    if (!note || !text) return;
+    const controls = composerControls();
+    const attached = document.querySelectorAll("[data-attachment]").length;
+    let message = "";
+    if (controls && attached > 0 && controls.model.value) {
+        const selected = composerCatalogue()[controls.provider.value]?.find(
+            (item) => item.id === controls.model.value,
+        );
+        message = !selected
+            ? IMAGE_UNKNOWN_NOTE
+            : selected.image_input
+              ? ""
+              : IMAGE_UNSUPPORTED_NOTE;
+    }
+    text.textContent = message;
+    note.hidden = message === "";
 }
 
 let pendingModel:
@@ -423,6 +472,14 @@ document.addEventListener("click", (event) => {
         renderComposerModels();
         return;
     }
+    const imagesFilter = event.target.closest<HTMLButtonElement>(
+        "#conversation-model-images-filter",
+    );
+    if (imagesFilter) {
+        imagesFilter.ariaPressed = String(imagesFilter.ariaPressed !== "true");
+        renderComposerModels();
+        return;
+    }
     const favourite = event.target.closest<HTMLButtonElement>(
         "[data-model-favourite]",
     );
@@ -612,8 +669,15 @@ listenForRequestSettled((detail) => {
     if (
         detail.outcome === "applied-patch" &&
         detail.targetIds.includes("conversation-detail")
-    )
+    ) {
         syncThinkingChoice();
+        syncImageCompatibility();
+    }
+    if (
+        detail.outcome === "applied-patch" &&
+        detail.targetIds.includes("conversation-attachment-controls")
+    )
+        syncImageCompatibility();
     if (pendingFavourite && detail.form.id === "conversation-favourite-form") {
         const pending = pendingFavourite;
         pendingFavourite = undefined;
@@ -2007,6 +2071,7 @@ type CommandSuggestion = {
     command: string;
     name: string;
     scope: string;
+    source_label?: string;
     description: string;
     kind?: string;
     hint?: string;
@@ -2016,6 +2081,7 @@ type CommandPreview = {
     binding: string;
     command: string;
     scope: string;
+    source_label?: string;
     source: string;
     hash: string;
     base: string;
@@ -2257,7 +2323,7 @@ function renderCommandSuggestions(payload: {
             label.textContent = suggestion.command;
             const scope = document.createElement("span");
             scope.className = "text-quiet shrink-0 text-xs";
-            scope.textContent = suggestion.scope;
+            scope.textContent = suggestion.source_label ?? suggestion.scope;
             top.append(label, scope);
             const description = document.createElement("span");
             description.className = "text-quiet line-clamp-2 text-xs";
@@ -2465,6 +2531,7 @@ document.addEventListener("submit", (event) => {
 
 startApp();
 reconcileRevision();
+syncImageCompatibility();
 listenForLivePatches(() => reconcileRevision());
 
 // Link navigation emits no settlement, so the revision target is reconciled

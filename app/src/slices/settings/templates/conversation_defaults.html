@@ -1,0 +1,35 @@
+{% if let Some(message) = defaults_error %}
+  <p class="text-error text-sm" role="alert">{{ message }}</p>
+{% endif %}
+<div class="max-w-[60ch] space-y-2 text-sm">
+  <p>
+    A saved snapshot fills the initial settings for each new conversation.
+    Changes inside a conversation do not update it.
+  </p>
+  <p>
+    Runtime access approval and host consent are never part of the snapshot.
+    Each conversation asks for them again.
+  </p>
+</div>
+{% if defaults_exists %}
+  <dl
+    class="grid max-w-2xl grid-cols-[max-content_1fr] gap-x-4 gap-y-2 text-sm"
+  >
+    {% for field in defaults_fields %}
+      <dt class="text-quiet">{{ field.label }}</dt>
+      <dd class="min-w-0 break-words whitespace-pre-wrap">{{ field.value }}</dd>
+    {% endfor %}
+  </dl>
+  <p class="text-quiet max-w-[60ch] text-sm">
+    Clearing the snapshot changes future drafts only. Existing conversations
+    keep their settings.
+  </p>
+  <button class="btn btn-error btn-sm" type="submit">
+    Clear saved defaults
+  </button>
+{% else %}
+  <p class="text-quiet max-w-[60ch] text-sm">
+    No saved snapshot exists. New conversations fall back to your current
+    provider and model, every available tool and the default environment.
+  </p>
+{% endif %}

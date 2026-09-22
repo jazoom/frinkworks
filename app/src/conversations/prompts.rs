@@ -8,10 +8,14 @@
 
 use std::{collections::BTreeSet, io, path::Path};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::execution::resources::{EffectiveRoot, open_preview_directory, read_preview_file};
 use crate::execution::{DirectoryGrant, ResourceKind, ResourceSource};
+
+mod store;
+
+pub(crate) use store::{PromptRecord, PromptStore, PromptStoreError};
 
 #[cfg(test)]
 mod tests;
@@ -367,12 +371,34 @@ struct PromptDocument {
     body: String,
 }
 
-#[derive(Default, Deserialize)]
+#[derive(Default, Deserialize, Serialize)]
 #[serde(default)]
 struct Frontmatter {
+    #[serde(skip_serializing_if = "String::is_empty")]
     description: String,
-    #[serde(rename = "argument-hint")]
+    #[serde(rename = "argument-hint", skip_serializing_if = "String::is_empty")]
     argument_hint: String,
+}
+
+/// Compose the Markdown file for one prompt template. Empty optional fields are
+/// omitted, so a template with only a body stays an ordinary Markdown file.
+/// The store re-parses the result, so this format and the reader cannot drift.
+pub(crate) fn compose(description: &str, argument_hint: &str, body: &str) -> String {
+    let frontmatter = Frontmatter {
+        description: collapse(description),
+        argument_hint: collapse(argument_hint),
+    };
+    let yaml = if frontmatter.description.is_empty() && frontmatter.argument_hint.is_empty() {
+        String::new()
+    } else {
+        serde_yaml_ng::to_string(&frontmatter).unwrap_or_default()
+    };
+    let body = body.trim();
+    if yaml.is_empty() {
+        format!("{body}\n")
+    } else {
+        format!("---\n{yaml}---\n\n{body}\n")
+    }
 }
 
 fn parse_document(markdown: &str) -> Result<PromptDocument, PromptError> {

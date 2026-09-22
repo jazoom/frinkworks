@@ -37,6 +37,22 @@
 
   <section
     class="catalogue-settings-section"
+    aria-labelledby="settings-conversation-defaults-heading"
+  >
+    <h2 id="settings-conversation-defaults-heading">Conversation defaults</h2>
+    <form
+      id="conversation-defaults-setting"
+      method="post"
+      action="/settings/conversation-defaults/clear"
+      data-graft
+      class="catalogue-settings-stack"
+    >
+      {% include "settings/templates/conversation_defaults.html" %}
+    </form>
+  </section>
+
+  <section
+    class="catalogue-settings-section"
     aria-labelledby="settings-catalogue-heading"
   >
     <h2 id="settings-catalogue-heading">Model catalogue</h2>

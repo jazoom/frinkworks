@@ -173,6 +173,54 @@ async fn an_unknown_theme_is_rejected_without_changing_the_preference() {
     assert!(text.contains("data-active-theme=\"system\""));
 }
 
+#[tokio::test]
+async fn clearing_conversation_defaults_requires_a_command_and_keeps_the_theme() {
+    let state = test_state();
+    state.preferences.set_theme(Theme::Sector7G).expect("theme");
+    state
+        .preferences
+        .set_conversation_defaults(saved_defaults())
+        .expect("defaults");
+    let token = connected(&state);
+
+    let mut native = patch_form(
+        &token,
+        "/settings/conversation-defaults/clear",
+        String::new(),
+    );
+    native.headers_mut().remove(hypergraft::GRAFT_REQUEST);
+    assert_eq!(
+        app(&state).oneshot(native).await.unwrap().status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert!(state.preferences.conversation_defaults().is_some());
+
+    let response = app(&state)
+        .oneshot(patch_form(
+            &token,
+            "/settings/conversation-defaults/clear",
+            String::new(),
+        ))
+        .await
+        .expect("clear");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(state.preferences.conversation_defaults().is_none());
+    assert_eq!(state.preferences.theme(), Theme::Sector7G);
+    let text = body_text(response).await;
+    assert!(text.contains("target=\"conversation-defaults-setting\""));
+}
+
+fn saved_defaults() -> crate::execution::ExecutionSettings {
+    crate::execution::ExecutionSettings::new(
+        crate::providers::ModelSelection::new(ProviderKind::Xai, "grok-4.6".to_owned(), None)
+            .unwrap(),
+        "Use concise explanations.".to_owned(),
+        vec![crate::agents::ToolId::Read],
+        crate::tests::test_environment_id(),
+    )
+    .unwrap()
+}
+
 fn theme_request(token: &str, theme: &str) -> Request<Body> {
     Request::builder()
         .method(Method::POST)

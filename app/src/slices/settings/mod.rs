@@ -24,9 +24,9 @@ use crate::{
 
 use self::page::{
     COMPACTION_FAILED, COMPACTION_MALFORMED, COMPACTION_RANGE, CONFIRMATION_ABSENT,
-    CONFIRMATION_DUPLICATED, CONFIRMATION_MALFORMED, CompactionSetting, LocalDataSection,
-    ModelCatalogueSetting, RECORD_FAILED, ResetStatusPage, SettingsPage, ThemeSetting,
-    WORKFLOW_BUSY,
+    CONFIRMATION_DUPLICATED, CONFIRMATION_MALFORMED, CompactionSetting,
+    ConversationDefaultsSection, DEFAULTS_CLEAR_FAILED, LocalDataSection, ModelCatalogueSetting,
+    RECORD_FAILED, ResetStatusPage, SettingsPage, ThemeSetting, WORKFLOW_BUSY,
 };
 
 pub(super) fn router() -> Router<AppState> {
@@ -34,6 +34,10 @@ pub(super) fn router() -> Router<AppState> {
         .route("/settings", get(show))
         .route("/settings/theme", post(update_theme))
         .route("/settings/compaction", post(update_compaction))
+        .route(
+            "/settings/conversation-defaults/clear",
+            post(clear_conversation_defaults),
+        )
         .route(
             "/settings/model-catalogue/refresh",
             post(refresh_model_catalogue),
@@ -49,7 +53,7 @@ async fn show(
     if state.local_data.is_pending() {
         return render_reset_status_page(&state, graft);
     }
-    let page = SettingsPage::new(state.preferences.theme(), state.preferences.compaction());
+    let page = SettingsPage::new(&state);
     match graft {
         PageGraft::Document => responses::chat_page_response(page::TITLE, &state, &page),
         PageGraft::Navigation => Ok(hypergraft::outcome::page_patch(
@@ -149,6 +153,34 @@ fn compaction_patch(
         status,
         "compaction-setting",
         &CompactionSetting::new(state.preferences.compaction(), error),
+    )?)
+}
+
+async fn clear_conversation_defaults(
+    State(state): State<AppState>,
+    _session: RequiredSession,
+    _graft: PatchGraft,
+) -> AppResult<Response> {
+    if let Err(error) = state.preferences.clear_conversation_defaults() {
+        crate::error::trace_operation_failure("clear conversation defaults", &error);
+        return defaults_patch(
+            PatchStatus::UnprocessableEntity,
+            &state,
+            Some(DEFAULTS_CLEAR_FAILED),
+        );
+    }
+    defaults_patch(PatchStatus::Ok, &state, None)
+}
+
+fn defaults_patch(
+    status: PatchStatus,
+    state: &AppState,
+    error: Option<&'static str>,
+) -> AppResult<Response> {
+    Ok(hypergraft::outcome::children_patch(
+        status,
+        "conversation-defaults-setting",
+        &ConversationDefaultsSection::new(state, error),
     )?)
 }
 

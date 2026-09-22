@@ -898,9 +898,10 @@ async fn explicit_empty_tool_selection_persists_without_default_substitution() {
 
 #[tokio::test]
 async fn partial_tool_selection_survives_an_unrelated_setup_save() {
-    // The Instructions section offers one Enable tools checkbox over four
-    // submitted tool fields. The hidden fields must carry the effective
-    // selection so an unrelated save neither broadens nor narrows it.
+    // The How the agent works section offers five individually selectable
+    // tool checkboxes plus a Select all tools shortcut. The submitted fields
+    // must carry the effective selection so an unrelated save neither broadens
+    // nor narrows it.
     let state = test_state();
     let token = connected(&state);
     super::super::tests::ready_starter_environment(&state).await;

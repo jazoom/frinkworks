@@ -25,6 +25,38 @@ function messageField(root: HTMLElement): HTMLTextAreaElement | null {
     return root.querySelector("#composer-message");
 }
 
+export type ComposerMode =
+    | { kind: "literal" }
+    | { kind: "skill" }
+    | { kind: "prompt" }
+    | { kind: "command"; excluded: boolean };
+
+/** Classify the leading prefix exactly as the server does. A backslash before
+ * `/` or `!` keeps the text literal. */
+export function classifyComposerInput(value: string): ComposerMode {
+    const start = value.search(/\S/);
+    if (start < 0) return { kind: "literal" };
+    const after = value.slice(start);
+    if (after.startsWith("\\") && (after[1] === "/" || after[1] === "!")) {
+        return { kind: "literal" };
+    }
+    if (after.startsWith("!!")) return { kind: "command", excluded: true };
+    if (after.startsWith("!")) return { kind: "command", excluded: false };
+    if (after.startsWith("/skill:") || after === "/skill") {
+        return { kind: "skill" };
+    }
+    if (after.startsWith("/")) return { kind: "prompt" };
+    return { kind: "literal" };
+}
+
+function commandLocationLabel(root: HTMLElement): string {
+    // Setup can contain an unapproved execution switch. Only the server's
+    // applied location describes where a saved conversation runs a command.
+    return root.dataset.commandLocation === "host"
+        ? "This computer"
+        : "Sandbox";
+}
+
 export function initComposer(
     root: HTMLElement,
     { signal }: IslandMountContext,
@@ -88,6 +120,90 @@ export function initComposer(
         root.requestSubmit(submitter);
     };
 
+    const message = messageField(root);
+    const submitLabel = root.querySelector<HTMLElement>(
+        "[data-composer-submit-label]",
+    );
+    const submitButton = root.querySelector<HTMLButtonElement>(
+        "[data-composer-submit]",
+    );
+    const commandStatus = root.querySelector<HTMLElement>(
+        "[data-composer-command-status]",
+    );
+    const defaultLabel = submitLabel?.textContent?.trim() ?? "Send";
+    const defaultAriaLabel =
+        submitButton?.dataset.defaultAriaLabel?.trim() ?? defaultLabel;
+
+    const syncCommandMode = () => {
+        const mode = classifyComposerInput(messageField(root)?.value ?? "");
+        if (mode.kind !== "command" || !message || message.disabled) {
+            if (submitLabel) submitLabel.textContent = defaultLabel;
+            submitButton?.setAttribute("aria-label", defaultAriaLabel);
+            if (commandStatus) {
+                commandStatus.hidden = true;
+                commandStatus.textContent = "";
+            }
+            return;
+        }
+        const label = mode.excluded ? "Run without context" : "Run command";
+        if (submitLabel) submitLabel.textContent = label;
+        submitButton?.setAttribute("aria-label", label);
+        if (commandStatus) {
+            const context = mode.excluded
+                ? "Not added to automatic model context"
+                : "Added to model context";
+            commandStatus.textContent =
+                `Direct command \u00b7 ${commandLocationLabel(root)} \u00b7 ` +
+                `${context} \u00b7 No provider connection is needed.`;
+            commandStatus.hidden = false;
+        }
+    };
+
+    const insertPrefix = (button: HTMLElement) => {
+        const insert = button.dataset.composerInsert ?? "";
+        if (insert === "") return;
+        const field = messageField(root);
+        if (!field || field.disabled) return;
+        let caret: number;
+        if (insert === "/") {
+            const command = /^\s*\/\S*/.exec(field.value);
+            if (command) {
+                caret = command[0].length;
+            } else {
+                // Commands occupy the leading token. Keep the draft as arguments,
+                // even when the user selects text before this action.
+                field.value = field.value ? `/ ${field.value}` : "/";
+                caret = 1;
+            }
+        } else {
+            const start = field.selectionStart ?? field.value.length;
+            const end = field.selectionEnd ?? start;
+            const before = field.value.slice(0, start);
+            const space = before.length > 0 && !/\s$/.test(before) ? " " : "";
+            const text = `${space}${insert}`;
+            field.value = before + text + field.value.slice(end);
+            caret = start + text.length;
+        }
+        field.focus();
+        field.setSelectionRange(caret, caret);
+        field.dispatchEvent(new Event("input", { bubbles: true }));
+        syncCommandMode();
+    };
+
+    const onInsertClick = (event: MouseEvent) => {
+        if (!(event.target instanceof Element)) return;
+        const button = event.target.closest<HTMLElement>(
+            "[data-composer-insert]",
+        );
+        if (!button) return;
+        event.preventDefault();
+        insertPrefix(button);
+    };
+
+    root.addEventListener("input", syncCommandMode, { signal });
+    root.addEventListener("click", onInsertClick, { signal });
+    syncCommandMode();
+
     root.addEventListener("input", captureDraft, { signal });
     root.addEventListener("focusin", captureDraft, { signal });
     root.addEventListener("keyup", captureDraft, { signal });
@@ -96,6 +212,7 @@ export function initComposer(
 
     return {
         reconcile(context) {
+            syncCommandMode();
             if (context.cause === "location") {
                 const nextOwner = conversationIdentity();
                 if (owner && nextOwner === owner) restoreDraft();

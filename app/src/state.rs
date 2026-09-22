@@ -4,7 +4,7 @@ use crate::{
     agents::{AgentLeaseCoordinator, AgentStore},
     assets::AssetPaths,
     config::{RuntimeConfig, StartupConfig},
-    conversations::ConversationStore,
+    conversations::{ConversationStore, prompts::PromptStore},
     environments::{
         EnvironmentCatalogue, EnvironmentPreparationScheduler, EnvironmentSnapshotRepository,
     },
@@ -41,6 +41,7 @@ pub(crate) struct AppState {
     pub(crate) presets: Arc<PresetStore>,
     pub(crate) agents: Arc<AgentStore>,
     pub(crate) skills: Arc<SkillStore>,
+    pub(crate) prompts: Arc<PromptStore>,
     pub(crate) conversations: Arc<ConversationStore>,
     pub(crate) forks: Arc<crate::conversations::ForkDrafts>,
     pub(crate) directory_picker: DirectoryPicker,
@@ -78,6 +79,8 @@ pub(crate) async fn build(
         AgentStore::open(data_dir.join("agents")).map_err(|error| error.message().to_owned())?;
     let skills =
         SkillStore::open(data_dir.join("skills")).map_err(|error| error.message().to_owned())?;
+    let prompts =
+        PromptStore::open(data_dir.join("prompts")).map_err(|error| error.message().to_owned())?;
     let conversations = ConversationStore::open(data_dir.join("conversations"))
         .map_err(|error| error.message().to_owned())?;
     let presets =
@@ -160,6 +163,7 @@ pub(crate) async fn build(
         presets: Arc::new(presets),
         agents: Arc::new(agents),
         skills: Arc::new(skills),
+        prompts: Arc::new(prompts),
         conversations: Arc::new(conversations),
         forks: Arc::new(crate::conversations::ForkDrafts::default()),
         directory_picker: DirectoryPicker::native(),

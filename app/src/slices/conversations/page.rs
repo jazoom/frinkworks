@@ -272,7 +272,7 @@ pub(super) struct CandidateReviewView {
     pub(super) brief: String,
     pub(super) reviewer_summary: String,
     pub(super) model_picker: ModelPicker,
-    pub(super) presets: Vec<PresetOption>,
+    pub(super) reviewer_agents: Vec<PresetOption>,
     pub(super) error: &'static str,
 }
 
@@ -293,7 +293,7 @@ pub(super) struct CandidateReviewContents<'a> {
     pub(super) brief: &'a str,
     pub(super) reviewer_summary: &'a str,
     pub(super) model_picker: &'a ModelPicker,
-    pub(super) presets: &'a [PresetOption],
+    pub(super) reviewer_agents: &'a [PresetOption],
     pub(super) error: &'static str,
 }
 
@@ -311,7 +311,7 @@ impl CandidateReviewView {
             brief: &self.brief,
             reviewer_summary: &self.reviewer_summary,
             model_picker: &self.model_picker,
-            presets: &self.presets,
+            reviewer_agents: &self.reviewer_agents,
             error: self.error,
         }
     }
@@ -985,6 +985,24 @@ impl ConversationDetailView {
             return false;
         }
         !self.model_available && !self.location_host
+    }
+
+    /// Staged images need a model with known image-input support. The server
+    /// rejects the request anyway; this note explains the mismatch before the
+    /// user submits. An unknown capability is not treated as supported.
+    fn image_compatibility_note(&self) -> &'static str {
+        if self.attachments.attachments.is_empty() || self.model_picker.model.is_empty() {
+            return "";
+        }
+        match self.model_picker.selected_image_input {
+            Some(true) => "",
+            Some(false) => {
+                "The selected model does not accept images. Choose a model with image input."
+            }
+            None => {
+                "Power Plant cannot confirm image input for the selected model. Choose a model with image input."
+            }
+        }
     }
 
     fn transcript_empty(&self) -> bool {

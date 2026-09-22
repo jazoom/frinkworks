@@ -174,6 +174,7 @@ async fn saved_lookup_suggests_global_skills() {
     );
     let value: serde_json::Value = serde_json::from_str(&body).expect("json");
     assert!(value["preview"].is_null());
+    assert_eq!(value["suggestions"][0]["source_label"], "Global");
 }
 
 #[tokio::test]
@@ -538,6 +539,7 @@ async fn project_prompt_uses_the_grant_alias_scope() {
     assert_eq!(prompts.len(), 1, "{body}");
     assert_eq!(prompts[0]["command"], "/review");
     assert_eq!(prompts[0]["scope"], grant.alias);
+    assert_eq!(prompts[0]["source_label"], grant.alias);
     assert_eq!(prompts[0]["description"], "Project review.");
 
     let response = app(&state)

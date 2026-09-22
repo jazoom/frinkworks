@@ -1,6 +1,5 @@
 <main
   data-section="runs"
-  data-context-detail
   class="mx-auto w-full max-w-5xl flex-1 px-5 py-8 sm:px-8"
 >
   <div id="run-detail">
@@ -16,7 +15,7 @@
       {% endif %}
 
       <nav aria-label="Run context" class="mb-5 flex flex-wrap gap-4 text-sm">
-        <a href="/conversations" data-graft class="link">History</a>
+        <a href="/runs" data-graft class="link">All runs</a>
         {% if !conversation_href.is_empty() %}
           <a href="{{ conversation_href }}" data-graft class="link"
             >Owning conversation</a

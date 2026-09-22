@@ -4,7 +4,7 @@
 {% block description %}
   <p>
     Agents define reusable model preferences, instructions and authority
-    ceilings.
+    ceilings. Choose a saved agent as the reviewer in a candidate review.
   </p>
 {% endblock %}
 {% block actions %}
@@ -68,6 +68,27 @@
       {% endfor %}
     </ul>
   {% endif %}
+
+  <section class="file-section space-y-3">
+    <h2 class="text-lg font-semibold">Where saved agents apply</h2>
+    <p class="text-quiet max-w-[65ch] text-sm">
+      Choose a saved agent as the reviewer when you start a candidate review.
+      Open a run under
+      <a href="/runs" data-graft class="link link-hover">run history</a>, then
+      choose Start candidate review. The Reviewer agent field lists these saved
+      agents.
+    </p>
+    <p class="text-quiet max-w-[65ch] text-sm">
+      An agent supplies instructions, requested tools and a model preference to
+      that review. The agent grants no directory access and no execution
+      approval. The review keeps its own access limits.
+    </p>
+    <p class="text-quiet max-w-[65ch] text-sm">
+      Conversation presets are a separate resource. A preset stores settings for
+      ordinary conversations. Ordinary conversation setup does not offer saved
+      agents.
+    </p>
+  </section>
 
   {% if !orphans.is_empty() %}
     <section class="file-section space-y-3">

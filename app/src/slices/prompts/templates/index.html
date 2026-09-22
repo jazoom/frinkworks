@@ -1,0 +1,275 @@
+{% extends "layout/catalogue.html" %}
+{% block section %}prompts{% endblock %}
+{% block heading %}Prompts{% endblock %}
+{% block description %}
+  <p>
+    Reusable messages that expand from a short command into a longer
+    instruction. A prompt grants no tool or directory authority.
+  </p>
+{% endblock %}
+{% block actions %}
+  <a href="/prompts" data-graft class="btn btn-ghost btn-sm">Refresh</a>
+  <a href="/prompts?new=1" data-graft class="btn btn-primary btn-sm"
+    >New prompt</a
+  >
+{% endblock %}
+{% block catalogue_content %}
+  {% if !error.is_empty() %}
+    <p role="alert" class="alert alert-error">{{ error }}</p>
+  {% endif %}
+  {% if let Some(form) = editor %}
+    <section
+      class="border-base-300 border-t pt-6"
+      aria-labelledby="prompt-editor-heading"
+    >
+      <h2 id="prompt-editor-heading" class="text-xl font-semibold">
+        {% if form.fingerprint.is_empty() %}New prompt{% else %}Edit prompt{% endif %}
+      </h2>
+      {% if form.fingerprint.is_empty() %}
+        <p class="text-quiet mt-2 text-sm">
+          The name supplies the command and the file name. Use lowercase
+          letters, digits, hyphens, underscores or dots.
+        </p>
+      {% else %}
+        <p class="text-quiet mt-2 font-mono text-sm break-all">
+          {{ global_path }}/{{ form.name }}.md
+        </p>
+      {% endif %}
+      {% if let Some(problem) = form.problem %}
+        <div role="alert" class="alert alert-warning mt-3">
+          <div class="space-y-2">
+            <p>{{ problem.message() }}</p>
+            <p>
+              The body field contains the complete file because its prompt
+              syntax is invalid.
+            </p>
+            <p>
+              Replace the contents with a valid prompt body before you save.
+            </p>
+          </div>
+        </div>
+      {% endif %}
+      <form
+        id="prompt-editor"
+        method="post"
+        action="/prompts/save"
+        data-graft
+        class="mt-5 flex flex-col gap-4"
+      >
+        <input
+          type="hidden"
+          name="fingerprint"
+          value="{{ form.fingerprint }}"
+        />
+        <label for="prompt-name" class="text-sm font-medium">Name</label>
+        <input
+          id="prompt-name"
+          type="text"
+          class="input input-bordered w-full font-mono"
+          name="name"
+          value="{{ form.name }}"
+          maxlength="128"
+          autocomplete="off"
+          spellcheck="false"
+          {% if !form.fingerprint.is_empty() %}readonly{% endif %}
+          required
+        />
+        <label for="prompt-description" class="text-sm font-medium"
+          >Description
+          <span class="text-quiet font-normal">(optional)</span></label
+        >
+        <p id="prompt-description-help" class="text-quiet max-w-prose text-sm">
+          A short summary. The composer shows it in the suggestion list.
+        </p>
+        <input
+          id="prompt-description"
+          type="text"
+          class="input input-bordered w-full"
+          name="description"
+          value="{{ form.description }}"
+          maxlength="4096"
+          aria-describedby="prompt-description-help"
+        />
+        <label for="prompt-argument-hint" class="text-sm font-medium"
+          >Argument guidance
+          <span class="text-quiet font-normal">(optional)</span></label
+        >
+        <p id="prompt-argument-help" class="text-quiet max-w-prose text-sm">
+          A hint for the expected arguments, for example
+          <code>&lt;path&gt; [&lt;ref&gt;]</code>. The composer shows the hint
+          before you send.
+        </p>
+        <input
+          id="prompt-argument-hint"
+          type="text"
+          class="input input-bordered w-full"
+          name="argument_hint"
+          value="{{ form.argument_hint }}"
+          maxlength="256"
+          aria-describedby="prompt-argument-help"
+        />
+        <label for="prompt-body" class="text-sm font-medium">Body</label>
+        <p id="prompt-body-help" class="text-quiet max-w-prose text-sm">
+          The text that replaces the command. Use
+          <code>$1</code>, <code>$2</code> and later positions for one argument,
+          <code>$@</code> or <code>$ARGUMENTS</code> for every argument, and
+          <code>${N:-default}</code> for a fallback. A backslash before
+          <code>$</code> writes a literal dollar sign.
+        </p>
+        <textarea
+          id="prompt-body"
+          class="textarea textarea-bordered min-h-64 w-full font-mono text-base leading-relaxed"
+          name="body"
+          rows="14"
+          spellcheck="false"
+          aria-describedby="prompt-body-help"
+          required
+        >
+{{ form.body }}</textarea>
+        <div class="flex flex-wrap items-center gap-2">
+          <button class="btn btn-primary btn-sm" type="submit">
+            Save prompt
+          </button>
+          <a href="/prompts" data-graft class="btn btn-ghost btn-sm">Cancel</a>
+          {% if !form.fingerprint.is_empty() %}
+            <a
+              href="/prompts?edit={{ form.name }}"
+              data-graft
+              class="link text-sm"
+              >Reload stored file</a
+            >
+          {% endif %}
+        </div>
+      </form>
+    </section>
+  {% endif %}
+  <section
+    aria-labelledby="saved-prompts-heading"
+    class="border-base-300 border-t pt-6"
+  >
+    <h2 id="saved-prompts-heading" class="text-lg font-semibold">
+      Global prompts
+    </h2>
+    <div class="divide-base-300 divide-y">
+      {% for row in rows %}
+        <article class="flex flex-wrap items-start justify-between gap-3 py-4">
+          <div class="min-w-0 flex-1">
+            <div class="flex flex-wrap items-baseline gap-x-2">
+              <a
+                href="/prompts?edit={{ row.name }}"
+                data-graft
+                class="link font-semibold break-words"
+                ><code>/{{ row.name }}</code></a
+              >
+              <span class="text-quiet text-xs">Global</span>
+            </div>
+            {% if !row.description.is_empty() %}
+              <p class="text-quiet text-sm break-words">
+                {{ row.description }}
+              </p>
+            {% endif %}
+            {% if !row.argument_hint.is_empty() %}
+              <p class="text-quiet mt-1 text-xs">
+                Arguments: <code>{{ row.argument_hint }}</code>
+              </p>
+            {% endif %}
+            <p class="text-quiet mt-1 font-mono text-xs break-all">
+              {{ row.name }}.md
+            </p>
+          </div>
+          {% if let Some(problem) = row.problem %}
+            <p class="text-warning w-full text-sm">{{ problem.message() }}</p>
+          {% else %}
+            <a
+              href="/conversations/new?prompt={{ row.name }}"
+              data-graft
+              class="btn btn-ghost btn-sm"
+              >Use in composer</a
+            >
+          {% endif %}
+        </article>
+      {% else %}
+        <p class="text-quiet py-4 text-sm">
+          No prompts to display. Select New prompt, or copy a Markdown file into
+          the global directory.
+        </p>
+      {% endfor %}
+    </div>
+    {% if !unavailable.is_empty() %}
+      <div role="alert" class="alert alert-warning mt-4">
+        <div>
+          <p class="font-medium">Unavailable prompt files</p>
+          <ul class="mt-2 list-disc space-y-1 pl-5 text-sm break-words">
+            {% for problem in unavailable %}
+              <li>{{ problem }}</li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+    {% endif %}
+  </section>
+  <details class="space-y-3">
+    <summary class="cursor-pointer text-lg font-semibold">
+      Use existing files
+    </summary>
+    <p class="max-w-prose text-sm">
+      Global prompts are available across projects in both host and sandbox
+      modes. Place each template directly inside this directory:
+    </p>
+    <p
+      class="border-base-300 bg-base-200 border p-3 font-mono text-sm break-all select-all"
+    >
+      {{ global_path }}
+    </p>
+    <p class="text-quiet text-sm">
+      Example: <code class="break-all">{{ global_path }}/review.md</code>
+    </p>
+    <p class="max-w-prose text-sm">
+      Each template is an ordinary Markdown file. The file name without the
+      <code>.md</code> extension supplies the command name. No Power Plant
+      identifiers or revision fields are required. The composer discovers a
+      copied or saved file on the next lookup without a restart.
+    </p>
+    <p class="max-w-prose text-sm">
+      Frontmatter is optional. It can carry a
+      <code>description</code> and an <code>argument-hint</code>:
+    </p>
+    <pre
+      class="border-base-300 bg-base-200 border p-3 text-xs break-words whitespace-pre-wrap"
+    >
+---
+description: Review a change.
+argument-hint: &lt;path&gt; [&lt;ref&gt;]
+---
+
+Review $1 at ${2:-HEAD}.</pre>
+    <p class="max-w-prose text-sm">
+      To use a prompt in the composer, type
+      <code>/&lt;name&gt;</code> and send the message. The model receives the
+      expanded body instead of the model response to that text. Add arguments
+      after the name, for example <code>/review src/main.rs</code>. Quotes group
+      an argument that contains spaces. There is no shell interpolation.
+    </p>
+    <p class="max-w-prose text-sm">Supported substitution forms:</p>
+    <ul class="list-disc space-y-1 pl-6 text-sm">
+      <li><code>$1</code>, <code>$2</code> and later positions</li>
+      <li><code>$@</code> or <code>$ARGUMENTS</code> for every argument</li>
+      <li><code>${N:-default}</code> for a fallback value</li>
+      <li><code>${@:N}</code> and <code>${@:N:L}</code> for argument ranges</li>
+    </ul>
+    <p class="max-w-prose text-sm">
+      Project prompts belong at
+      <code>&lt;authorised-directory&gt;/.agents/prompts/&lt;name&gt;.md</code>.
+      Power Plant does not search nested project directories. A work location
+      that needs approval does not expose its prompts. The composer reports the
+      limitation instead of reading an unauthorised file, and it labels each
+      suggestion with its source.
+    </p>
+    <p class="max-w-prose text-sm">
+      When a global prompt and a project prompt share a name, choose one with
+      <code>/global/&lt;name&gt;</code> for the global prompt or
+      <code>/&lt;directory&gt;/&lt;name&gt;</code> for the project prompt. The
+      composer also lists both and labels each one.
+    </p>
+  </details>
+{% endblock %}

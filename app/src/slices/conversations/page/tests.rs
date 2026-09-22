@@ -123,6 +123,52 @@ fn network_form_preserves_domains_without_a_live_preset_ceiling() {
 }
 
 #[test]
+fn image_compatibility_explains_mismatch_without_assuming_support() {
+    let state = crate::tests::test_state(RuntimeConfig::development());
+    let record = state
+        .conversations
+        .create("Discussion".to_owned())
+        .expect("record");
+    let mut view = ConversationDetailView::from_record(
+        &record,
+        ModelSources {
+            vault: &state.vault,
+            preferences: &state.preferences,
+            models: &state.models_dev,
+            environments: &state.environments,
+            environment_snapshots: &state.environment_snapshots,
+            presets: &[],
+        },
+        &[],
+        None,
+        &record.title,
+        "",
+        None,
+    );
+    view.attachments.attachments.push(
+        crate::slices::conversations::attachments::page::StagedAttachmentView {
+            id: "0".repeat(32),
+            src: "/conversations/new/attachments/0".to_owned(),
+            remove_action: "/conversations/new/attachments/0/remove".to_owned(),
+            label: "1 by 1 image".to_owned(),
+        },
+    );
+    view.model_picker.model = "example-model".to_owned();
+    view.model_picker.selected_image_input = Some(false);
+    assert!(
+        view.image_compatibility_note()
+            .contains("does not accept images")
+    );
+    view.model_picker.selected_image_input = None;
+    assert!(
+        view.image_compatibility_note()
+            .contains("cannot confirm image input")
+    );
+    view.model_picker.selected_image_input = Some(true);
+    assert_eq!(view.image_compatibility_note(), "");
+}
+
+#[test]
 fn dense_markup_uses_escaped_text_with_bounded_nodes() {
     let text = format!("{}<script>alert(1)</script>", "* item\n".repeat(8192));
     let html = reply_html(&text);

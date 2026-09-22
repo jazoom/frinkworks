@@ -25,6 +25,7 @@ pub(super) struct Suggestion {
     pub(super) command: String,
     pub(super) name: String,
     pub(super) scope: String,
+    pub(super) source_label: String,
     pub(super) description: String,
     pub(super) kind: String,
     pub(super) hint: String,
@@ -35,6 +36,7 @@ pub(super) struct Preview {
     pub(super) binding: String,
     pub(super) command: String,
     pub(super) scope: String,
+    pub(super) source_label: String,
     pub(super) source: String,
     pub(super) hash: String,
     pub(super) base: String,
@@ -172,6 +174,7 @@ pub(super) fn suggest(offers: &[SkillOffer], templates: &[PromptTemplate], query
         suggestions.push(Suggestion {
             command,
             name: offer.name.clone(),
+            source_label: source_label(&offer.scope),
             scope: offer.scope.clone(),
             description: offer.description.clone(),
             kind: "skill".to_owned(),
@@ -205,6 +208,7 @@ pub(super) fn suggest(offers: &[SkillOffer], templates: &[PromptTemplate], query
             suggestions.push(Suggestion {
                 command,
                 name: template.name.clone(),
+                source_label: source_label(&template.source.scope),
                 scope: template.source.scope.clone(),
                 description: template.description.clone(),
                 kind: "prompt".to_owned(),
@@ -258,6 +262,7 @@ fn preview_from(expansion: &InputExpansion, templates: &[PromptTemplate]) -> Opt
     Some(Preview {
         binding: provenance.preview_source(),
         command: provenance.typed.clone(),
+        source_label: source_label(&provenance.source.scope),
         scope: provenance.source.scope.clone(),
         source: provenance.source.path.clone(),
         hash: provenance.source.content_hash.clone(),
@@ -283,6 +288,16 @@ fn query_parts(query: &str) -> (&str, &str) {
     match rest.split_once('/') {
         Some((scope, name)) => (scope.trim(), name.trim_start()),
         None => ("", rest),
+    }
+}
+
+/// A readable source label. Global resources read as `Global`. Project
+/// resources keep their directory alias.
+fn source_label(scope: &str) -> String {
+    if scope.eq_ignore_ascii_case(GLOBAL_SCOPE) {
+        "Global".to_owned()
+    } else {
+        scope.to_owned()
     }
 }
 
@@ -323,6 +338,7 @@ pub(super) struct SuggestionPayload {
     pub(super) command: String,
     pub(super) name: String,
     pub(super) scope: String,
+    pub(super) source_label: String,
     pub(super) description: String,
     pub(super) kind: String,
     pub(super) hint: String,
@@ -333,6 +349,7 @@ pub(super) struct PreviewPayload {
     pub(super) binding: String,
     pub(super) command: String,
     pub(super) scope: String,
+    pub(super) source_label: String,
     pub(super) source: String,
     pub(super) hash: String,
     pub(super) base: String,
@@ -351,6 +368,7 @@ pub(super) struct SuggestionRow {
     pub(super) command: String,
     pub(super) name: String,
     pub(super) scope: String,
+    pub(super) source_label: String,
     pub(super) description: String,
     pub(super) kind: String,
     pub(super) hint: String,
@@ -359,6 +377,7 @@ pub(super) struct SuggestionRow {
 pub(super) struct PreviewRow {
     pub(super) command: String,
     pub(super) scope: String,
+    pub(super) source_label: String,
     pub(super) source: String,
     pub(super) hash: String,
     pub(super) base: String,
@@ -382,6 +401,7 @@ pub(super) fn payload(search: &Search, message: &str) -> SuggestionsPayload {
                 command: suggestion.command.clone(),
                 name: suggestion.name.clone(),
                 scope: suggestion.scope.clone(),
+                source_label: suggestion.source_label.clone(),
                 description: suggestion.description.clone(),
                 kind: suggestion.kind.clone(),
                 hint: suggestion.hint.clone(),
@@ -397,6 +417,7 @@ pub(super) fn payload(search: &Search, message: &str) -> SuggestionsPayload {
             binding: preview.binding.clone(),
             command: preview.command.clone(),
             scope: preview.scope.clone(),
+            source_label: preview.source_label.clone(),
             source: preview.source.clone(),
             hash: preview.hash.clone(),
             base: preview.base.clone(),
@@ -416,6 +437,7 @@ pub(super) fn view(search: &Search, message: &str) -> SuggestionsView {
                 command: suggestion.command.clone(),
                 name: suggestion.name.clone(),
                 scope: suggestion.scope.clone(),
+                source_label: suggestion.source_label.clone(),
                 description: suggestion.description.clone(),
                 kind: suggestion.kind.clone(),
                 hint: suggestion.hint.clone(),
@@ -429,6 +451,7 @@ pub(super) fn view(search: &Search, message: &str) -> SuggestionsView {
         preview: search.preview.as_ref().map(|preview| PreviewRow {
             command: preview.command.clone(),
             scope: preview.scope.clone(),
+            source_label: preview.source_label.clone(),
             source: preview.source.clone(),
             hash: preview.hash.clone(),
             base: preview.base.clone(),

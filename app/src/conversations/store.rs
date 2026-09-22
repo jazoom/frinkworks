@@ -328,7 +328,6 @@ pub(crate) enum ConversationError {
     Entry,
     Active,
     Selection,
-    Network,
     Directories,
     Review,
     Image(AttachmentError),
@@ -353,7 +352,6 @@ impl ConversationError {
             Self::Entry => "That entry is not part of this conversation.",
             Self::Active => "This conversation has an active request. Wait for it to finish.",
             Self::Selection => "Choose an available model before you send a message.",
-            Self::Network => "Choose valid network access for this conversation.",
             Self::Directories => "Choose valid non-overlapping directories for this conversation.",
             Self::Review => "That plan review hand-off is no longer available.",
             Self::Image(error) => error.message(),
@@ -1229,25 +1227,6 @@ impl ConversationStore {
         self.commit_result(*id, database.save_automatic_title(id, revision, &title))?;
         let _ = self.title_updates.send(());
         Ok(())
-    }
-
-    pub(crate) fn set_network(
-        &self,
-        id: &ConversationId,
-        expected_revision: u32,
-        network: crate::agents::NetworkAccess,
-    ) -> Result<ConversationRecord, ConversationError> {
-        let network = network.validate().map_err(|_| ConversationError::Network)?;
-        self.replace(id, expected_revision, |current| {
-            if current.active_job.is_some() {
-                return Err(ConversationError::Active);
-            }
-            current.network = network.clone();
-            if let Some(model) = &mut current.model {
-                model.settings.network = network;
-            }
-            Ok(())
-        })
     }
 
     pub(crate) fn select_model(

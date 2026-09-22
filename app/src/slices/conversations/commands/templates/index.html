@@ -12,6 +12,7 @@
     data-command-hash="{{ preview.hash }}"
     data-command-base="{{ preview.base }}"
     data-command-scope="{{ preview.scope }}"
+    data-command-source-label="{{ preview.source_label }}"
     data-command-kind="{{ preview.kind }}"
   >
     {% if preview.kind == "prompt" %}
@@ -49,12 +50,13 @@
           data-command="{{ suggestion.command }}"
           data-command-name="{{ suggestion.name }}"
           data-command-scope="{{ suggestion.scope }}"
+          data-command-source-label="{{ suggestion.source_label }}"
           data-command-kind="{{ suggestion.kind }}"
         >
           <span class="flex w-full items-center justify-between gap-3">
             <span class="truncate font-medium">{{ suggestion.command }}</span>
             <span class="text-quiet shrink-0 text-xs"
-              >{{ suggestion.scope }}</span
+              >{{ suggestion.source_label }}</span
             >
           </span>
           <span class="text-quiet line-clamp-2 text-xs"

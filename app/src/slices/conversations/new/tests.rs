@@ -5,6 +5,59 @@ use axum::http::StatusCode;
 use tower::ServiceExt;
 
 #[tokio::test]
+async fn prompt_links_prefill_only_a_qualified_global_command_without_execution() {
+    let state = test_state();
+    let token = connected(&state);
+    state
+        .prompts
+        .create("review", "Review $1.".to_owned())
+        .unwrap();
+    for request in [
+        document("/conversations/new?prompt=review", &token),
+        navigation("/conversations/new?prompt=review", &token),
+    ] {
+        let response = app(&state).oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(text(response).await.contains("/global/review "));
+        assert!(state.conversations.list().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn invalid_prompt_links_never_become_composer_commands() {
+    let state = test_state();
+    let token = connected(&state);
+    std::fs::write(
+        state.prompts.host_dir().join("broken.md"),
+        "---\nUnfinished",
+    )
+    .unwrap();
+    for name in ["../outside", "!pwd", "missing", "broken"] {
+        let response = app(&state)
+            .oneshot(document(
+                &format!("/conversations/new?prompt={}", form_value(name)),
+                &token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = text(response).await;
+        let message = body
+            .split("id=\"composer-message\"")
+            .nth(1)
+            .unwrap()
+            .split_once('>')
+            .unwrap()
+            .1
+            .split("</textarea>")
+            .next()
+            .unwrap();
+        assert!(message.trim().is_empty(), "{name}: {message}");
+        assert!(state.conversations.list().is_empty());
+    }
+}
+
+#[tokio::test]
 async fn provider_free_draft_validates_before_it_consumes_consent() {
     let state = test_state();
     let token = connected(&state);
@@ -306,7 +359,6 @@ async fn new_navigation_and_invalid_submissions_leave_no_record_or_file() {
     for request in [
         document("/conversations/new", &token),
         navigation("/conversations/new", &token),
-        command("/conversations", &token, ""),
     ] {
         let response = app(&state).oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
@@ -391,7 +443,8 @@ async fn invalid_first_submissions_preserve_all_local_choices_and_unsent_text() 
             .next()
             .unwrap();
         assert!(option.contains("selected"), "{}", effort.as_str());
-        assert!(!body.contains("location="));
+        let envelope = body.split_once('>').unwrap().0;
+        assert!(!envelope.contains(" location="));
         assert!(state.conversations.list().is_empty());
     }
 }

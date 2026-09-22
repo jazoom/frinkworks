@@ -45,6 +45,7 @@ beforeEach(() => {
             <button id="conversation-model-search-clear" type="button" hidden>Clear model search</button>
             <select id="conversation-model-provider-filter"><option value="">All providers</option><option value="one">One</option><option value="two">Two</option></select>
             <button id="conversation-model-favourites-filter" type="button" aria-pressed="false">Favourites</button>
+            <button id="conversation-model-images-filter" type="button" aria-pressed="false">Images</button>
             <p id="conversation-model-search-status"></p>
             <div id="conversation-model-results"></div>
             <template data-conversation-model-catalogue></template>
@@ -62,15 +63,23 @@ beforeEach(() => {
             {
                 id: "Alpha",
                 favourite: false,
+                image_input: true,
                 default_effort: "high",
                 efforts: [{ value: "high", label: "High" }],
             },
-            { id: "<Beta>", favourite: true, default_effort: "", efforts: [] },
+            {
+                id: "<Beta>",
+                favourite: true,
+                image_input: false,
+                default_effort: "",
+                efforts: [],
+            },
         ],
         two: [
             {
                 id: "Alpha",
                 favourite: false,
+                image_input: false,
                 default_effort: "low",
                 efforts: [{ value: "low", label: "Low" }],
             },
@@ -156,6 +165,23 @@ test("search normalises text without changing the model, effort or message, and 
     expect(value("model")).toBe("Alpha");
     expect(value("thinking")).toBe("high");
     expect(value("message")).toBe("Unsent text");
+});
+
+test("images filter keeps only models with catalogue image support", () => {
+    const filter = document.querySelector<HTMLButtonElement>(
+        "#conversation-model-images-filter",
+    )!;
+    filter.click();
+    expect(filter.ariaPressed).toBe("true");
+    const models = Array.from(
+        document.querySelectorAll<HTMLButtonElement>("[data-composer-model]"),
+    );
+    expect(models.map((model) => model.dataset.composerModel)).toEqual([
+        "Alpha",
+    ]);
+    filter.click();
+    expect(filter.ariaPressed).toBe("false");
+    expect(document.querySelectorAll("[data-composer-model]")).toHaveLength(3);
 });
 
 test("effort choices accept only enabled options and preserve the unsent message", () => {

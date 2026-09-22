@@ -60,6 +60,7 @@ pub(super) struct NewForm {
 #[serde(default)]
 pub(super) struct NewQuery {
     source: String,
+    prompt: String,
 }
 
 pub(super) async fn show(
@@ -133,12 +134,26 @@ pub(super) async fn show(
             super::settings::copy_settings_to_draft(&mut form, &configuration.settings);
         }
     }
+    let mut error = "";
+    if !query.prompt.is_empty() {
+        match state.prompts.get(&query.prompt) {
+            Ok(prompt) => match prompt.problem {
+                Some(problem) => error = problem.message(),
+                None => {
+                    // Qualification binds the command to the global source
+                    // that the user selected in the catalogue.
+                    form.message = format!("/global/{} ", prompt.name);
+                }
+            },
+            Err(problem) => error = problem.message(),
+        }
+    }
     render_detail(
         &state,
         session.0,
         graft,
         PatchStatus::Ok,
-        ConversationDetailView::from_new(&state, session.0, form, ""),
+        ConversationDetailView::from_new(&state, session.0, form, error),
     )
 }
 

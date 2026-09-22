@@ -315,6 +315,10 @@ impl Preferences {
         })
     }
 
+    pub(crate) fn clear_conversation_defaults(&self) -> Result<(), PreferenceError> {
+        self.update(|values| values.conversation_defaults = None)
+    }
+
     pub(crate) fn forget_provider(&self, kind: ProviderKind) -> Result<(), PreferenceError> {
         self.update(|values| {
             values

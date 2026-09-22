@@ -535,61 +535,6 @@
         font-size: 0.74rem;
     }
 
-    .app-context-breadcrumbs {
-        min-width: 0;
-        flex: 1;
-        overflow: hidden;
-    }
-
-    .app-context-breadcrumbs ol {
-        display: flex;
-        min-width: 0;
-        align-items: center;
-        margin: 0;
-        padding: 0;
-        list-style: none;
-    }
-
-    .app-context-breadcrumbs li {
-        display: flex;
-        min-width: 0;
-        align-items: center;
-        color: var(--powerplant-quiet-ink);
-        font-family: var(--font-mono);
-        font-size: 0.68rem;
-        letter-spacing: 0.045em;
-        text-transform: uppercase;
-        white-space: nowrap;
-    }
-
-    .app-context-breadcrumbs li + li::before {
-        margin-inline: 0.55rem;
-        color: var(--powerplant-strong-rule);
-        content: "/";
-    }
-
-    .app-context-breadcrumbs li > :is(a, span) {
-        min-width: 0;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
-
-    .app-context-breadcrumbs a {
-        color: var(--powerplant-ink);
-        text-decoration: none;
-    }
-
-    .app-context-breadcrumbs a:hover {
-        color: var(--powerplant-ink);
-        text-decoration: underline;
-        text-underline-offset: 0.2em;
-    }
-
-    .app-context-breadcrumbs .app-context-current {
-        color: var(--powerplant-ink);
-        font-weight: 600;
-    }
-
     .app-context-status {
         display: inline-flex;
         flex: none;

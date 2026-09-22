@@ -24,6 +24,7 @@ export function initConversation(
         "instructions",
         "tool_list",
         "tool_read",
+        "tool_edit",
         "tool_write",
         "tool_run",
         "environment",
@@ -44,6 +45,7 @@ export function initConversation(
         "instructions",
         "tool_list",
         "tool_read",
+        "tool_edit",
         "tool_write",
         "tool_run",
         "network",
@@ -327,6 +329,11 @@ export function initConversation(
                 queueOrdinarySave();
                 return;
             }
+            if (
+                event.target instanceof HTMLInputElement &&
+                event.target.matches("[data-tool-field]")
+            )
+                syncEnableTools();
             const field = event.target;
             if (
                 (field instanceof HTMLInputElement ||

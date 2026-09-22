@@ -11,6 +11,7 @@ mod environments;
 mod execution_settings;
 mod human_gates;
 mod presets;
+mod prompts;
 mod settings;
 mod skills;
 mod workflow_runs;
@@ -28,6 +29,7 @@ pub(crate) fn router() -> Router<AppState> {
         .merge(chat::router())
         .merge(settings::router())
         .merge(skills::router())
+        .merge(prompts::router())
         .merge(presets::router())
         .merge(workflow_runs::router())
         .merge(human_gates::router())

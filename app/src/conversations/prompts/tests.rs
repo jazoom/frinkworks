@@ -342,3 +342,22 @@ fn project_discovery_rejects_symbolic_links() {
     assert!(templates.is_empty());
     assert_eq!(unavailable, 1);
 }
+
+#[test]
+fn compose_round_trips_through_the_parser_and_omits_empty_optional_fields() {
+    let composed = compose("Review a change.", "<path>", "Review $1.");
+    assert_eq!(
+        composed,
+        "---\ndescription: Review a change.\nargument-hint: <path>\n---\n\nReview $1.\n"
+    );
+    let document = parse_document(&composed).expect("parse");
+    assert_eq!(document.description, "Review a change.");
+    assert_eq!(document.argument_hint, "<path>");
+    assert_eq!(document.body, "Review $1.");
+
+    assert_eq!(compose("", "", "Plain body."), "Plain body.\n");
+    let plain = parse_document(&compose("", "", "Plain body.")).expect("parse");
+    assert_eq!(plain.description, "");
+    assert_eq!(plain.argument_hint, "");
+    assert_eq!(plain.body, "Plain body.");
+}

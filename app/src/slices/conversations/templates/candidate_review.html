@@ -1,7 +1,6 @@
 {% block candidate_review_page %}
   <main
     data-section="conversations"
-    data-context-detail
     class="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-6 px-5 py-8 sm:px-8"
   >
     <section
@@ -131,32 +130,47 @@
               <span class="font-medium">Selected reviewer:</span>
               {{ reviewer_summary }}
             </p>
-            {% if !presets.is_empty() %}
+            {% if !reviewer_agents.is_empty() %}
               <label
                 class="flex max-w-xl flex-col gap-1"
-                for="candidate-review-preset"
+                for="candidate-review-agent"
               >
-                <span class="text-sm">Reviewer preset</span>
+                <span class="text-sm">Reviewer agent</span>
                 <select
-                  id="candidate-review-preset"
+                  id="candidate-review-agent"
                   class="select select-bordered"
                   name="preset"
                 >
                   <option value="">Use direct model</option>
-                  {% for preset in presets %}
+                  {% for agent in reviewer_agents %}
                     <option
-                      value="{{ preset.id }}"
-                      {% if preset.selected %}selected{% endif %}
+                      value="{{ agent.id }}"
+                      {% if agent.selected %}selected{% endif %}
                     >
-                      {{ preset.name }} — {{ preset.description }}
+                      {{ agent.name }} — {{ agent.description }}
                     </option>
                   {% endfor %}
                 </select>
-                <span class="text-quiet text-xs"
-                  >Preset instructions apply to this reviewer only. Directory
-                  settings never grant source access.</span
-                >
+                <span class="text-quiet text-xs">
+                  Choose a saved agent from the
+                  <a href="/agents" data-graft class="link link-hover"
+                    >Agents</a
+                  >
+                  page. Agent instructions and its model preference apply to
+                  this reviewer only. The agent grants no directory access and
+                  no execution approval.
+                </span>
               </label>
+              <p class="text-quiet text-xs">
+                Conversation presets are a separate resource. They store
+                settings for ordinary conversations.
+              </p>
+            {% else %}
+              <p class="text-quiet max-w-[65ch] text-sm">
+                No saved agents exist. Create one on the
+                <a href="/agents" data-graft class="link link-hover">Agents</a>
+                page to use it as a reviewer, or continue with a direct model.
+              </p>
             {% endif %}
             <div class="grid gap-4 sm:grid-cols-3" data-review-model-picker>
               <label class="flex flex-col gap-1" for="candidate-review-provider"

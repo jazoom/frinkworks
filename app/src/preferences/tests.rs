@@ -304,6 +304,46 @@ fn conversation_defaults_keep_theme_and_requested_settings_without_credentials()
 }
 
 #[test]
+fn clearing_conversation_defaults_keeps_other_preferences_and_credentials() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("preferences.json");
+    let vault_path = dir.path().join("providers.json");
+    let vault = ProviderVault::open(vault_path.clone()).unwrap();
+    vault
+        .put(ProviderConnection::with_key(
+            ProviderKind::Xai,
+            "test-secret",
+            "grok-4.6",
+        ))
+        .unwrap();
+    let credential_bytes = fs::read(&vault_path).unwrap();
+    let preferences = Preferences::open(path.clone());
+    preferences.set_theme(Theme::Sector7G).unwrap();
+    preferences
+        .select_settings(ProviderKind::Xai, "grok-custom".to_owned(), None)
+        .unwrap();
+    let settings = crate::execution::ExecutionSettings::new(
+        crate::providers::ModelSelection::new(ProviderKind::Xai, "grok-4.6".to_owned(), None)
+            .unwrap(),
+        "Use concise explanations.".to_owned(),
+        vec![crate::agents::ToolId::Read],
+        crate::tests::test_environment_id(),
+    )
+    .unwrap();
+    preferences.set_conversation_defaults(settings).unwrap();
+    preferences.clear_conversation_defaults().unwrap();
+    assert!(preferences.conversation_defaults().is_none());
+    assert_eq!(preferences.theme(), Theme::Sector7G);
+    assert_eq!(fs::read(&vault_path).unwrap(), credential_bytes);
+    let reader = Preferences::open(path.clone());
+    assert!(reader.conversation_defaults().is_none());
+    assert_eq!(reader.theme(), Theme::Sector7G);
+    assert_eq!(reader.values().selected_provider, Some(ProviderKind::Xai));
+    let persisted: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    assert!(persisted["conversation_defaults"].is_null());
+}
+
+#[test]
 fn compaction_defaults_to_enabled_at_95_percent() {
     let preferences = Preferences::in_memory();
     let default = super::CompactionPreference::default();

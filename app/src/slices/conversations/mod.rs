@@ -65,7 +65,7 @@ const REVISION_MESSAGE: &str = "Reload the conversation and try again.";
 
 pub(super) fn router() -> Router<AppState> {
     Router::new()
-        .route("/conversations", get(catalogue).post(create))
+        .route("/conversations", get(catalogue))
         .route("/conversations/new", get(new::show).post(new::save))
         .route(
             "/conversations/new/attachments",
@@ -307,10 +307,6 @@ pub(super) fn router() -> Router<AppState> {
         )
         .route("/conversations/{conversation_id}/model", post(select_model))
         .route(
-            "/conversations/{conversation_id}/network",
-            post(set_network),
-        )
-        .route(
             "/conversations/{conversation_id}/rename",
             post(rename_conversation),
         )
@@ -452,14 +448,6 @@ struct ModelForm {
     model: String,
     #[serde(default)]
     thinking: String,
-}
-
-#[derive(Deserialize)]
-struct NetworkForm {
-    revision: String,
-    network: String,
-    #[serde(default)]
-    network_domains: String,
 }
 
 #[derive(Default, Deserialize)]
@@ -614,14 +602,6 @@ fn parse_catalogue_cursor(raw: &str) -> Option<(u64, crate::conversations::Conve
     }
     let (updated_at, id) = raw.split_once('-')?;
     Some((updated_at.parse().ok()?, ConversationId::parse(id)?))
-}
-
-async fn create(
-    State(_state): State<AppState>,
-    _session: RequiredSession,
-    _graft: PatchGraft,
-) -> AppResult<Response> {
-    Ok(responses::command_navigation("/conversations/new"))
 }
 
 async fn detail(
@@ -1152,7 +1132,7 @@ fn candidate_review_model(
     } else {
         let preset = AgentId::parse(form.preset.trim())
             .and_then(|id| state.agents.get(&id))
-            .ok_or("Choose an available reviewer preset.")?;
+            .ok_or("Choose an available reviewer agent.")?;
         preset
             .selection
             .clone()
@@ -1178,7 +1158,7 @@ fn candidate_review_model(
     } else {
         let preset = AgentId::parse(form.preset.trim())
             .and_then(|id| state.agents.get(&id))
-            .ok_or("Choose an available reviewer preset.")?;
+            .ok_or("Choose an available reviewer agent.")?;
         Ok(ConversationModelConfiguration::from_agent_snapshot(
             &preset,
             selection,
@@ -1261,7 +1241,7 @@ fn candidate_review_view_model(
         &thinking,
     );
     let selected_preset = form.map(|form| form.preset.trim()).unwrap_or_default();
-    let presets = state
+    let reviewer_agents = state
         .agents
         .list()
         .into_iter()
@@ -1282,8 +1262,8 @@ fn candidate_review_view_model(
             .into_iter()
             .find(|agent| agent.id.as_hex() == form.preset.trim())
             .map_or_else(
-                || "Reviewer preset is unavailable".to_owned(),
-                |agent| format!("Preset: {}", agent.name),
+                || "Reviewer agent is unavailable".to_owned(),
+                |agent| format!("Agent: {}", agent.name),
             )
     } else {
         form.and_then(|form| candidate_submitted_selection(state, form).ok())
@@ -1307,7 +1287,7 @@ fn candidate_review_view_model(
                 },
             )
     };
-    (picker, presets, summary)
+    (picker, reviewer_agents, summary)
 }
 
 fn default_candidate_review_brief() -> &'static str {
@@ -1328,7 +1308,7 @@ fn render_candidate_review(
         .run
         .conversation_id
         .and_then(|id| state.conversations.get(&id));
-    let (model_picker, presets, reviewer_summary) =
+    let (model_picker, reviewer_agents, reviewer_summary) =
         candidate_review_view_model(state, source.as_ref(), form);
     let source_title = source.as_ref().map_or_else(
         || selection.run.pinned.definition.name().to_owned(),
@@ -1346,7 +1326,7 @@ fn render_candidate_review(
         brief: if brief.is_empty() { default_candidate_review_brief().to_owned() } else { brief.to_owned() },
         reviewer_summary,
         model_picker,
-        presets,
+        reviewer_agents,
         error: error.unwrap_or(""),
     };
     match graft {
@@ -2511,67 +2491,6 @@ async fn select_model(
         ),
         Err(error @ (ConversationError::Persist | ConversationError::Corrupt)) => {
             Err(AppError::new("store model selection", error))
-        }
-        Err(error) => render_detail_command(
-            graft,
-            status_for(error),
-            detail_view(&state, session.0, &record, &record.title, error.message()),
-        ),
-    }
-}
-
-async fn set_network(
-    State(state): State<AppState>,
-    session: RequiredSession,
-    graft: PatchGraft,
-    Path(conversation_id): Path<String>,
-    Form(form): Form<NetworkForm>,
-) -> AppResult<Response> {
-    let Some(record) = load_conversation(&state, &conversation_id) else {
-        return Ok(responses::command_navigation("/conversations"));
-    };
-    if conversation_busy(&state, &record) {
-        return render_detail_command(
-            graft,
-            PatchStatus::Conflict,
-            detail_view(
-                &state,
-                session.0,
-                &record,
-                &record.title,
-                "This conversation is reserved. Wait until its operation finishes.",
-            ),
-        );
-    }
-    let Some(revision) = parse_revision(&form.revision) else {
-        return render_detail_command(
-            graft,
-            PatchStatus::UnprocessableEntity,
-            detail_view(&state, session.0, &record, &record.title, REVISION_MESSAGE),
-        );
-    };
-    let network =
-        match crate::agents::NetworkAccess::parse_form(&form.network, &form.network_domains) {
-            Ok(network) => network,
-            Err(error) => {
-                return render_detail_command(
-                    graft,
-                    PatchStatus::UnprocessableEntity,
-                    detail_view(&state, session.0, &record, &record.title, error.message()),
-                );
-            }
-        };
-    match state
-        .conversations
-        .set_network(&record.id, revision, network)
-    {
-        Ok(updated) => render_detail_command(
-            graft,
-            PatchStatus::Ok,
-            detail_view(&state, session.0, &updated, &updated.title, ""),
-        ),
-        Err(error @ (ConversationError::Persist | ConversationError::Corrupt)) => {
-            Err(AppError::new("store conversation network access", error))
         }
         Err(error) => render_detail_command(
             graft,

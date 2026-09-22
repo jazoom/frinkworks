@@ -1,5 +1,4 @@
 use crate::{
-    agents::NetworkAccess,
     providers::{ModelSelection, ProviderKind},
     sessions::JobId,
 };
@@ -678,57 +677,6 @@ fn rename_preserves_timestamp_order_after_clock_regression() {
     drop(store);
     let reopened = ConversationStore::open(dir.path().to_path_buf()).expect("reopen");
     assert_eq!(reopened.get(&record.id), Some(renamed));
-}
-
-#[test]
-fn conversation_network_access_survives_restart() {
-    let dir = tempfile::tempdir().expect("directory");
-    let store = ConversationStore::open(dir.path().to_path_buf()).expect("store");
-    let record = store.create("Discussion".to_owned()).expect("conversation");
-    let updated = store
-        .set_network(
-            &record.id,
-            record.revision,
-            NetworkAccess::Restricted(vec!["example.com".to_owned()]),
-        )
-        .expect("network");
-    drop(store);
-
-    let store = ConversationStore::open(dir.path().to_path_buf()).expect("reopen");
-    assert_eq!(
-        store.get(&record.id).expect("record").network,
-        updated.network
-    );
-}
-
-#[test]
-fn conversation_network_access_rejects_stale_and_active_changes() {
-    let store = ConversationStore::in_memory();
-    let record = store.create("Discussion".to_owned()).expect("conversation");
-    let updated = store
-        .set_network(&record.id, record.revision, NetworkAccess::Public)
-        .expect("network");
-    assert_eq!(
-        store.set_network(&record.id, record.revision, NetworkAccess::None),
-        Err(ConversationError::Conflict)
-    );
-
-    let request = JobId::generate().expect("request");
-    let selection =
-        ModelSelection::new(ProviderKind::Xai, "grok-4.6".to_owned(), None).expect("selection");
-    store
-        .begin_message(
-            &record.id,
-            updated.revision,
-            selection,
-            request,
-            "Question".to_owned(),
-        )
-        .expect("active message");
-    assert_eq!(
-        store.set_network(&record.id, updated.revision + 1, NetworkAccess::None),
-        Err(ConversationError::Active)
-    );
 }
 
 #[test]

@@ -49,6 +49,17 @@
         >&lt;authorised-directory&gt;/.agents/skills/&lt;skill-folder&gt;/SKILL.md</code
       >. Power Plant does not search nested project directories.
     </p>
+    <p class="max-w-prose text-sm">
+      To use a skill in the composer, type
+      <code>/skill:&lt;name&gt;</code> and send the message. The model receives
+      the skill instructions instead of the model response to that text.
+    </p>
+    <p class="max-w-prose text-sm">
+      When a global skill and a project skill share a name, choose one with
+      <code>/skill:global/&lt;name&gt;</code> for the global skill or
+      <code>/skill:&lt;directory&gt;/&lt;name&gt;</code> for the project skill.
+      The composer also lists both and labels each one.
+    </p>
   </details>
   {% if let Some(form) = editor %}
     <section

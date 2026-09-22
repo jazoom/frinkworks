@@ -21,6 +21,7 @@ describe.each(["new", "saved"])("%s conversation settings", (state) => {
                 <input name="thinking" value="high">
                 <textarea name="instructions"></textarea>
                 <input name="tool_read" type="checkbox" value="read">
+                <input name="tool_edit" type="checkbox" value="edit">
                 <input name="network" type="radio" value="none" checked>
                 <input name="network" type="radio" value="restricted">
                 <textarea name="network_domains"></textarea>
@@ -52,6 +53,8 @@ describe.each(["new", "saved"])("%s conversation settings", (state) => {
         const read =
             root.querySelector<HTMLInputElement>('[name="tool_read"]')!;
         read.checked = true;
+        root.querySelector<HTMLInputElement>('[name="tool_edit"]')!.checked =
+            true;
         const network = root.querySelector<HTMLInputElement>(
             '[name="network"][value="restricted"]',
         )!;
@@ -86,6 +89,7 @@ describe.each(["new", "saved"])("%s conversation settings", (state) => {
         reconcile("conversation-rename");
         expect(value("instructions")).toBe("Keep my draft");
         expect(value("tool_read")).toBe("read");
+        expect(value("tool_edit")).toBe("edit");
         expect(value("network")).toBe("restricted");
         expect(value("network_domains")).toBe("example.com");
         root.innerHTML = original;
@@ -147,30 +151,31 @@ describe.each(["new", "saved"])("%s conversation settings", (state) => {
             ).toBe(true);
         });
 
-        test("a queued tool revocation survives the earlier save response", () => {
-            const original = root.innerHTML;
-            const form = root.querySelector<HTMLFormElement>("form")!;
-            const submitted: Array<FormDataEntryValue | null> = [];
-            form.requestSubmit = () =>
-                submitted.push(new FormData(form).get("tool_read"));
-            const read = form.elements.namedItem(
-                "tool_read",
-            ) as HTMLInputElement;
-            read.checked = true;
-            read.dispatchEvent(new Event("change", { bubbles: true }));
-            read.checked = false;
-            read.dispatchEvent(new Event("change", { bubbles: true }));
-            root.innerHTML = original;
-            const updated = root.querySelector<HTMLFormElement>("form")!;
-            (
-                updated.elements.namedItem("tool_read") as HTMLInputElement
-            ).checked = true;
-            updated.requestSubmit = () =>
-                submitted.push(new FormData(updated).get("tool_read"));
-            reconcile("conversation-settings-form");
-            expect(submitted).toEqual(["read", null]);
-            expect(value("tool_read")).toBeNull();
-        });
+        test.each(["read", "edit"])(
+            "a queued %s revocation survives the earlier save response",
+            (tool) => {
+                const name = `tool_${tool}`;
+                const original = root.innerHTML;
+                const form = root.querySelector<HTMLFormElement>("form")!;
+                const submitted: Array<FormDataEntryValue | null> = [];
+                form.requestSubmit = () =>
+                    submitted.push(new FormData(form).get(name));
+                const field = form.elements.namedItem(name) as HTMLInputElement;
+                field.checked = true;
+                field.dispatchEvent(new Event("change", { bubbles: true }));
+                field.checked = false;
+                field.dispatchEvent(new Event("change", { bubbles: true }));
+                root.innerHTML = original;
+                const updated = root.querySelector<HTMLFormElement>("form")!;
+                (updated.elements.namedItem(name) as HTMLInputElement).checked =
+                    true;
+                updated.requestSubmit = () =>
+                    submitted.push(new FormData(updated).get(name));
+                reconcile("conversation-settings-form");
+                expect(submitted).toEqual([tool, null]);
+                expect(value(name)).toBeNull();
+            },
+        );
 
         test("settings patches keep uncommitted execution fields", () => {
             const original = root.innerHTML;
