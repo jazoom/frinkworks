@@ -83,6 +83,8 @@ pub(crate) enum InputError {
     Arguments,
     Credential,
     Changed,
+    /// Direct command syntax is not a model message. The caller must run it.
+    Command,
 }
 
 impl InputError {
@@ -107,6 +109,9 @@ impl InputError {
             Self::Changed => {
                 "That resource changed after the preview. Select it again before you send."
             }
+            Self::Command => {
+                "Direct commands run immediately. They cannot be queued or added as steering."
+            }
         }
     }
 }
@@ -122,6 +127,9 @@ pub(crate) enum InputSyntax {
     },
     /// A global prompt template plus its trailing argument string.
     Prompt { name: String, arguments: String },
+    /// A direct shell command. `excluded` is true for `!!`, which keeps its
+    /// command text and output out of every automatic model context.
+    Command { excluded: bool, command: String },
 }
 
 /// Classify one message. The first non-whitespace character decides the
@@ -131,6 +139,18 @@ pub(crate) fn classify(text: &str) -> InputSyntax {
         return InputSyntax::Literal(literal);
     }
     let trimmed = text.trim_start();
+    if let Some(rest) = trimmed.strip_prefix("!!") {
+        return InputSyntax::Command {
+            excluded: true,
+            command: rest.trim().to_owned(),
+        };
+    }
+    if let Some(rest) = trimmed.strip_prefix('!') {
+        return InputSyntax::Command {
+            excluded: false,
+            command: rest.trim().to_owned(),
+        };
+    }
     if let Some(rest) = trimmed.strip_prefix(SKILL_PREFIX) {
         let (reference, instructions) = split_reference(rest);
         return InputSyntax::Skill {
@@ -163,6 +183,7 @@ pub(crate) fn expand(
             expanded: literal,
             provenance: None,
         }),
+        InputSyntax::Command { .. } => Err(InputError::Command),
         InputSyntax::Skill {
             reference,
             instructions,
@@ -243,6 +264,23 @@ fn expand_prompt(
         expanded,
         provenance: Some(provenance),
     })
+}
+
+/// A direct command parsed from typed input. The caller validates the command
+/// body and the execution authority before it dispatches anything.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct DirectCommand {
+    pub(crate) excluded: bool,
+    pub(crate) command: String,
+}
+
+/// Return the direct command when the first non-whitespace character is `!`
+/// or `!!`. An escaped prefix is literal text, not a command.
+pub(crate) fn direct_command(text: &str) -> Option<DirectCommand> {
+    match classify(text) {
+        InputSyntax::Command { excluded, command } => Some(DirectCommand { excluded, command }),
+        _ => None,
+    }
 }
 
 /// Escape a leading command prefix so restored literal text is never

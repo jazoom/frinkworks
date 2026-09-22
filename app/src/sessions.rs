@@ -38,7 +38,7 @@ pub(crate) const SESSION_LIFETIME: Duration = Duration::from_secs(SESSION_LIFETI
 
 const SESSION_PURGE_INTERVAL: Duration = Duration::from_secs(60);
 
-/// Resolve the provider session before handlers. Invalid cookies are expired.
+/// Sessions own command authority independently of provider credentials.
 pub(crate) async fn resolve_session(
     State(state): State<AppState>,
     mut request: Request,
@@ -46,11 +46,20 @@ pub(crate) async fn resolve_session(
 ) -> Response {
     let read = cookies::read_session(request.headers());
     let mut issued = None;
-    let resolved = match read {
+    let mut resolved = match read {
         CookieRead::Missing => restore_or(ResolvedSession::Anonymous, &state, &mut issued),
         CookieRead::Invalid => restore_or(ResolvedSession::Invalid, &state, &mut issued),
         CookieRead::Valid(token) => existing_or_restore(&state, &token),
     };
+    // This explicit entry point creates a provider-free session. Commands still require a cookie.
+    if !matches!(resolved, ResolvedSession::Present(_))
+        && request.method() == axum::http::Method::GET
+        && request.uri().path() == "/conversations/new"
+        && let Some((id, token)) = issue_session(&state)
+    {
+        issued = Some(token);
+        resolved = ResolvedSession::Present(id);
+    }
     let invalid = matches!(resolved, ResolvedSession::Invalid);
     if let ResolvedSession::Present(id) = &resolved
         && let Some(language) = BrowserLanguage::from_headers(request.headers())
@@ -74,7 +83,12 @@ fn restore_or(
     state: &AppState,
     issued: &mut Option<ValidatedToken>,
 ) -> ResolvedSession {
-    match issue_restored_session(state) {
+    match state
+        .vault
+        .has_providers()
+        .then(|| issue_session(state))
+        .flatten()
+    {
         Some((snapshot, token)) => {
             *issued = Some(token);
             ResolvedSession::Present(snapshot)
@@ -86,23 +100,7 @@ fn restore_or(
 fn existing_or_restore(state: &AppState, token: &ValidatedToken) -> ResolvedSession {
     let id = SessionId::from_validated(token);
     if state.sessions.contains_live(&id) {
-        if state.vault.has_providers() {
-            return ResolvedSession::Present(id);
-        }
-        if crate::workflows::interrupt_session_continuations(state, id).is_err() {
-            return ResolvedSession::Invalid;
-        }
-        state.sessions.remove(&id);
-        state
-            .access_consent
-            .retain_sessions(|session| state.sessions.contains_live(session));
-        state
-            .host_approvals
-            .retain_sessions(|session| state.sessions.contains_live(session));
-        state
-            .conversations
-            .retain_question_sessions(|session| state.sessions.contains_live(session));
-        return ResolvedSession::Invalid;
+        return ResolvedSession::Present(id);
     }
     // A restored cookie starts a new session lifetime, not a renewal of execution consent.
     state
@@ -131,10 +129,7 @@ fn existing_or_restore(state: &AppState, token: &ValidatedToken) -> ResolvedSess
     }
 }
 
-fn issue_restored_session(state: &AppState) -> Option<(SessionId, ValidatedToken)> {
-    if !state.vault.has_providers() {
-        return None;
-    }
+fn issue_session(state: &AppState) -> Option<(SessionId, ValidatedToken)> {
     let token = generate_session_token().ok()?;
     state.sessions.insert(token.id());
     if state.sessions.contains_live(&token.id()) {

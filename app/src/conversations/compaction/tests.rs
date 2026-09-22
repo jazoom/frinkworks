@@ -2,9 +2,11 @@ use crate::providers::{AssistantActivity, AuthMethod, ModelUsage, ProviderKind, 
 
 use super::{CompactionError, CompactionRecord, project, select_boundary, validate_summary};
 use crate::conversations::history::{
-    ConversationMessage, MessageRole, MessageStatus, RequestUsage,
+    CommandEntry, ConversationMessage, MessageRole, MessageStatus, RequestUsage,
 };
 use crate::conversations::{MessageId, RequestId};
+use crate::execution::command::CommandChunk;
+use crate::execution::{CommandResult, CommandStream, CommandTermination};
 
 fn identifier() -> MessageId {
     MessageId::generate().expect("message id")
@@ -44,6 +46,7 @@ fn user(text: &str) -> ConversationMessage {
         role: MessageRole::User,
         text: text.to_owned(),
         input: None,
+        command: None,
         attachments: Vec::new(),
         activity: Vec::new(),
         continuation: Vec::new(),
@@ -53,6 +56,54 @@ fn user(text: &str) -> ConversationMessage {
         completion: None,
         requests: Vec::new(),
     }
+}
+
+fn command(included: bool) -> ConversationMessage {
+    ConversationMessage {
+        parent: None,
+        id: identifier(),
+        response: None,
+        final_phase: false,
+        role: MessageRole::Command,
+        text: "echo boundary".to_owned(),
+        input: None,
+        command: Some(CommandEntry {
+            included,
+            directory: "/workspace".to_owned(),
+            output: Some(CommandResult::new(
+                vec![CommandChunk {
+                    stream: CommandStream::Stdout,
+                    text: "boundary output".to_owned(),
+                }],
+                CommandTermination::Exited(0),
+            )),
+            before: None,
+            after: None,
+        }),
+        attachments: Vec::new(),
+        activity: Vec::new(),
+        continuation: Vec::new(),
+        status: MessageStatus::Complete,
+        error: None,
+        request: None,
+        completion: None,
+        requests: Vec::new(),
+    }
+}
+
+#[test]
+fn a_settled_included_command_is_a_compaction_boundary() {
+    let messages = vec![
+        user("First"),
+        command(true),
+        user("Second"),
+        assistant("Done"),
+    ];
+    let budget = cost(&messages[2..=3]);
+    let (covered, retained) =
+        select_boundary(&messages, None, Some(&selection()), budget).expect("boundary");
+    assert_eq!(covered, messages[1].id);
+    assert_eq!(retained, messages[2].id);
 }
 
 fn assistant(text: &str) -> ConversationMessage {
@@ -65,6 +116,7 @@ fn assistant(text: &str) -> ConversationMessage {
         role: MessageRole::Assistant,
         text: text.to_owned(),
         input: None,
+        command: None,
         attachments: Vec::new(),
         activity: Vec::new(),
         continuation: Vec::new(),
@@ -86,6 +138,7 @@ fn assistant_tool(id: &str, result: Option<ToolOutput>) -> ConversationMessage {
         role: MessageRole::Assistant,
         text: String::new(),
         input: None,
+        command: None,
         attachments: Vec::new(),
         activity: vec![AssistantActivity::ToolCall {
             id: id.to_owned(),

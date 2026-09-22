@@ -110,6 +110,12 @@ pub(super) async fn show(
             .map(|effort| effort.as_str().to_owned())
             .unwrap_or_default();
         form.model = provider.model;
+    } else {
+        // Execution settings retain a model selection even without a provider connection.
+        // Model submission still requires credentials. Direct commands never dispatch this model.
+        let provider = ProviderKind::Xai;
+        form.provider = provider.as_str().to_owned();
+        form.model = provider.default_model().to_owned();
     }
     if let Some(settings) = state.preferences.conversation_defaults() {
         super::settings::copy_settings_to_draft(&mut form, &settings);
@@ -382,16 +388,23 @@ pub(super) async fn save(
             form,
         );
     }
-    let model = match model(&state, session.0, &form) {
+    let direct = crate::conversations::input::direct_command(&form.message);
+    let configuration = if direct.is_some() {
+        settings_snapshot(&state, session.0, &form)
+    } else {
+        model(&state, session.0, &form)
+    };
+    let model = match configuration {
         Ok(model) => model,
         Err(error) => {
             return reject_settings(PatchStatus::UnprocessableEntity, error, form);
         }
     };
-    if model
-        .as_ref()
-        .and_then(|model| state.vault.connection_for(&model.settings.model))
-        .is_none()
+    if direct.is_none()
+        && model
+            .as_ref()
+            .and_then(|model| state.vault.connection_for(&model.settings.model))
+            .is_none()
     {
         return reject_settings(
             PatchStatus::UnprocessableEntity,
@@ -436,15 +449,38 @@ pub(super) async fn save(
         &form.draft_nonce,
         model.settings.location,
     );
+    if let Some(direct) = &direct {
+        let validation = super::commands::run::reject_attachments(&attachments)
+            .and_then(|()| super::commands::run::command_body(&direct.command).map(|_| ()))
+            .and_then(|()| super::commands::run::command_directory(&model).map(|_| ()));
+        if let Err(super::StartMessageError::User(status, error)) = validation {
+            return reject(status, error, form);
+        }
+        if !form.handoff_approval.is_empty() {
+            return reject(
+                PatchStatus::Conflict,
+                "Finish the handoff before a direct command.",
+                form,
+            );
+        }
+    }
     let secret = super::provider_secret(&state, &model.settings.model);
-    let expansion = match super::commands::expand(
-        &form.message,
-        &catalogue,
-        secret.as_deref(),
-        super::commands::preview_binding(&form.command_source, &form.command_hash),
-    ) {
-        Ok(expansion) => expansion,
-        Err(error) => return reject(PatchStatus::UnprocessableEntity, error.message(), form),
+    let expansion = if direct.is_some() {
+        crate::conversations::InputExpansion {
+            typed: form.message.clone(),
+            expanded: String::new(),
+            provenance: None,
+        }
+    } else {
+        match super::commands::expand(
+            &form.message,
+            &catalogue,
+            secret.as_deref(),
+            super::commands::preview_binding(&form.command_source, &form.command_hash),
+        ) {
+            Ok(expansion) => expansion,
+            Err(error) => return reject(PatchStatus::UnprocessableEntity, error.message(), form),
+        }
     };
     if form.pending_directory().is_some() {
         return reject(
@@ -625,6 +661,19 @@ pub(super) async fn save(
         let result = super::handoff::transfer::finish(&state, session.0, record, &form, run);
         drop(permit);
         result.map_err(|error| super::StartMessageError::User(PatchStatus::Conflict, error))
+    } else if let Some(direct) = direct {
+        drop(permit);
+        let revision = record.revision;
+        super::commands::run::start_saved(
+            &state,
+            session.0,
+            &record,
+            revision,
+            model.clone(),
+            direct,
+            attachments,
+        )
+        .await
     } else {
         drop(permit);
         super::start_message(

@@ -250,6 +250,24 @@ Positions use one-based indices. A backslash before `$` writes a literal dollar 
 
 A preview binds the template scope, path and body hash. Send rejects a changed preview. An unpreviewed command resolves from one validated source snapshot at submission. The submission freezes the typed text, the expanded text and the provenance. The application rejects a template body above 64 KiB or an expanded message above 32 KiB. Previews and submissions exclude a template that contains a known provider API key. There is no prompt-management page: the user edits the Markdown files directly.
 
+## Direct commands
+
+A composer message that starts with `!` runs a shell command directly. A message that starts with `!!` runs the same way but excludes the command text and its output from every automatic model context. Neither form starts a model response or a title request.
+
+The first non-whitespace character decides the syntax. Classification runs on the original typed text before resource expansion. A backslash before `!` writes literal text, for example `\!note`. Expansion output never runs command classification again.
+
+A direct command needs host selection, the Run capability and valid consent. It needs no provider connection. The provider page offers **Continue without a provider** for a new session. When the approval policy is Ask each time, the command waits for the same command approval as a model tool command. Typed syntax alone is not approval. The application rejects an empty command and an attached image. A rejected submission leaves the draft intact.
+
+The application persists the pending command entry before it starts a process. The entry records the context inclusion, the command text, the actual directory, the output reference and the termination. A restart marks an unsettled command as interrupted. The application never replays it.
+
+An included `!` entry becomes delimited command evidence in the model projection. An excluded `!!` entry is absent from ordinary context, compaction, titles, workflow context and generated handoff prompts. The `read_output` tool refuses an excluded record even with the exact reference. Local output views remain available.
+
+A command with a named host directory captures a baseline manifest before the process and a final manifest after it. The two manifests stay in the artefact repository. A failed final capture reports the limitation and keeps the captured output. The conversation blocks further execution when the final file snapshot is absent.
+
+Context exclusion does not restrict filesystem access through independently authorised tools.
+
+The application rejects command syntax in the steering and follow-up queues. It rejects command syntax that contains an image attachment. Expanded resource text remains ordinary model input.
+
 ## Ownership and recovery
 
 The existing run record remains the sole ownership authority. Transfer never copies a run or recaptures its baseline.

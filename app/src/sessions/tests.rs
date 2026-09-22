@@ -6,7 +6,6 @@ use axum::{
     middleware::from_fn_with_state,
     routing::get,
 };
-use cookie::Cookie;
 use hypergraft::live::LiveGuard;
 use tower::ServiceExt;
 
@@ -117,7 +116,7 @@ async fn the_live_guard_rejects_anonymous_and_removed_sessions() {
     let token = super::generate_session_token().expect("token");
     let session = token.id();
     state.sessions.insert(session);
-    let guard = super::LiveSessionGuard::new(state.sessions.clone(), state.vault.clone());
+    let guard = super::LiveSessionGuard::new(state.sessions.clone());
 
     assert!(matches!(
         guard.bind(&axum::http::Extensions::new()).await,
@@ -157,8 +156,8 @@ fn request_time_expiry_interrupts_a_gate_before_session_restore() {
 }
 
 #[tokio::test]
-async fn a_live_cookie_after_final_provider_removal_revokes_the_session() {
-    let (state, token, session, run_id) = state_with_gate("Forget");
+async fn a_live_cookie_remains_valid_without_provider_credentials() {
+    let (state, token, session, _) = state_with_gate("Forget");
     state.vault.forget(ProviderKind::Xai).expect("forget");
     assert!(!state.vault.has_providers());
     assert!(state.sessions.contains_live(&session));
@@ -185,25 +184,6 @@ async fn a_live_cookie_after_final_provider_removal_revokes_the_session() {
         .await
         .expect("response");
 
-    assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    assert_eq!(
-        response.headers().get(header::LOCATION).unwrap(),
-        "/connect"
-    );
-    let deletion = response
-        .headers()
-        .get_all(header::SET_COOKIE)
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .filter_map(|value| Cookie::parse(value.to_owned()).ok())
-        .find(|cookie| cookie.name() == "powerplant_session")
-        .expect("session deletion cookie");
-    assert!(deletion.value().is_empty());
-    assert_eq!(deletion.max_age(), Some(cookie::time::Duration::ZERO));
-    assert!(!state.gate_continuations.available(&run_id, &session));
-    assert_eq!(
-        state.workflow_runs.get(&run_id).expect("run").state,
-        crate::workflows::run::RunState::Interrupted
-    );
-    assert!(!state.sessions.contains(&session));
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert!(state.sessions.contains_live(&session));
 }

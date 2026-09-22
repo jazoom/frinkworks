@@ -29,6 +29,7 @@ async fn output_page_supports_document_navigation() {
                 scope: crate::execution::OutputScope::conversation(record.id),
                 job: crate::sessions::JobId::generate().expect("job"),
                 tool_call: "call-1".to_owned(),
+                model_hidden: false,
             },
             &command,
         )
@@ -63,6 +64,7 @@ async fn output_page_rejects_another_conversations_reference() {
                 scope: crate::execution::OutputScope::conversation(owner.id),
                 job: crate::sessions::JobId::generate().expect("job"),
                 tool_call: "call-1".to_owned(),
+                model_hidden: false,
             },
             &CommandResult::new(
                 vec![CommandChunk {

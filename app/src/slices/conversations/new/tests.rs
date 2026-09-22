@@ -5,6 +5,67 @@ use axum::http::StatusCode;
 use tower::ServiceExt;
 
 #[tokio::test]
+async fn provider_free_draft_validates_before_it_consumes_consent() {
+    let state = test_state();
+    let token = connected(&state);
+    state
+        .vault
+        .forget(ProviderKind::Xai)
+        .expect("forget provider");
+    assert!(!state.vault.has_providers());
+    let fields = "action=send&provider=xai&model=grok-4.6&location=host&tool_run=run&host_approval=automatic";
+    let preview = app(&state)
+        .oneshot(command(
+            "/conversations/new/settings/host-consent",
+            &token,
+            fields,
+        ))
+        .await
+        .expect("consent preview");
+    let request = host_consent_request(&text(preview).await);
+    let approved = app(&state)
+        .oneshot(command(
+            "/conversations/new/settings/host-consent/approve",
+            &token,
+            &format!("{fields}&host_consent_request={request}"),
+        ))
+        .await
+        .expect("consent approval");
+    assert_eq!(approved.status(), StatusCode::OK);
+    let body = text(approved).await;
+    let fields = format!(
+        "{fields}&consent_reference={}&draft_nonce={}",
+        hidden_named(&body, "consent_reference"),
+        hidden_named(&body, "draft_nonce")
+    );
+    let rejected = app(&state)
+        .oneshot(command(
+            "/conversations/new",
+            &token,
+            &format!("{fields}&message=%21"),
+        ))
+        .await
+        .expect("empty command");
+    assert_eq!(rejected.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(state.conversations.list().is_empty());
+    let accepted = app(&state)
+        .oneshot(command(
+            "/conversations/new",
+            &token,
+            &format!("{fields}&message=%21printf%20draft-sentinel"),
+        ))
+        .await
+        .expect("direct command");
+    assert_eq!(
+        accepted.status(),
+        StatusCode::OK,
+        "{}",
+        text(accepted).await
+    );
+    assert_eq!(state.conversations.list().len(), 1);
+}
+
+#[tokio::test]
 async fn copied_draft_is_independent_and_navigation_creates_no_record() {
     let state = test_state();
     let token = connected(&state);

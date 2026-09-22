@@ -320,6 +320,10 @@ impl CandidateReviewView {
 pub(super) struct MessageView {
     pub(super) id: String,
     pub(super) user: bool,
+    pub(super) is_command: bool,
+    pub(super) role_label: String,
+    /// True for `!!`, which excludes the command from model context.
+    pub(super) excluded: bool,
     pub(super) html: String,
     /// The original skill command, retained for display beside the expanded
     /// message. A plain or assistant entry leaves this absent.
@@ -970,7 +974,7 @@ impl ConversationDetailView {
         if self.is_new() {
             return false;
         }
-        !self.model_available
+        !self.model_available && !self.location_host
     }
 
     fn transcript_empty(&self) -> bool {
@@ -1112,7 +1116,9 @@ impl ConversationDetailView {
         if let Some(job) = job
             && !job.output.is_empty()
             && let Some(message) = record.messages.iter().rev().find(|message| {
-                message.request == Some(job.id) && message.status == MessageStatus::Pending
+                message.role == MessageRole::Assistant
+                    && message.request == Some(job.id)
+                    && message.status == MessageStatus::Pending
             })
         {
             let anchor = message.response.unwrap_or(message.id);
@@ -2231,14 +2237,27 @@ pub(super) fn message_view_in(
 ) -> MessageView {
     let message = &messages[index];
     let user = message.role == MessageRole::User;
+    let command_entry = message.role == MessageRole::Command;
     let streaming = message.status == MessageStatus::Pending;
     MessageView {
         id: message_id(conversation, message),
         user,
+        is_command: command_entry,
+        role_label: match message.role {
+            MessageRole::User => "You",
+            MessageRole::Assistant => "Power Plant",
+            MessageRole::Command => "Command",
+        }
+        .to_owned(),
+        excluded: command_entry
+            && message
+                .command
+                .as_ref()
+                .is_some_and(|entry| !entry.included),
         command: message.input.as_ref().map(|input| input.typed.clone()),
         // Copy belongs to a settled logical response. An intermediate phase,
-        // an active phase and a user entry never carry it.
-        copy: if user || streaming || !message.final_phase {
+        // an active phase, a user entry and a command entry never carry it.
+        copy: if user || command_entry || streaming || !message.final_phase {
             None
         } else {
             let anchor = message.response.unwrap_or(message.id);
@@ -2246,7 +2265,14 @@ pub(super) fn message_view_in(
                 messages, anchor,
             ))
         },
-        html: if user {
+        html: if command_entry {
+            command_entry_html(
+                conversation,
+                &message_id(conversation, message),
+                message,
+                streaming,
+            )
+        } else if user {
             let mut html = format!(
                 "<p class=\"whitespace-pre-wrap\">{}</p>",
                 ammonia::clean_text(&message.text)
@@ -2272,14 +2298,23 @@ pub(super) fn message_view_in(
                     .is_some_and(crate::providers::CompletionReason::incomplete),
             )
         },
-        status: match message.status {
-            MessageStatus::Complete => "",
-            MessageStatus::Pending => reply_status(&message.activity),
-            MessageStatus::Interrupted => "Interrupted",
-            MessageStatus::Failed => message
-                .completion
-                .and_then(crate::providers::CompletionReason::status_label)
-                .unwrap_or("Failed"),
+        status: if command_entry {
+            match message.status {
+                MessageStatus::Complete => "",
+                MessageStatus::Pending => "Running",
+                MessageStatus::Interrupted => "Interrupted",
+                MessageStatus::Failed => "Failed",
+            }
+        } else {
+            match message.status {
+                MessageStatus::Complete => "",
+                MessageStatus::Pending => reply_status(&message.activity),
+                MessageStatus::Interrupted => "Interrupted",
+                MessageStatus::Failed => message
+                    .completion
+                    .and_then(crate::providers::CompletionReason::status_label)
+                    .unwrap_or("Failed"),
+            }
         },
         error: message_error(message),
         streaming: message.status == MessageStatus::Pending,
@@ -2410,6 +2445,9 @@ pub(super) fn response_view(
     MessageView {
         id,
         user: false,
+        is_command: false,
+        role_label: "Power Plant".to_owned(),
+        excluded: false,
         command: None,
         copy,
         html,
@@ -2507,6 +2545,59 @@ fn command_view(command: &crate::execution::CommandResult) -> CommandView {
         error: command.is_error(),
         reference: command.retained_reference().map(str::to_owned),
     }
+}
+
+/// Render one direct command entry. A settled command shows its output with
+/// the retained-output link. A pending command shows the running state.
+fn command_entry_html(
+    conversation: &ConversationId,
+    id: &str,
+    message: &ConversationMessage,
+    streaming: bool,
+) -> String {
+    let output_base = format!("/conversations/{}/output/", conversation.as_hex());
+    let context_base = format!("/conversations/{}/context/", conversation.as_hex());
+    let block = match message
+        .command
+        .as_ref()
+        .and_then(|entry| entry.output.as_ref())
+    {
+        Some(output) => MessageBlock {
+            kind: "tool",
+            html: String::new(),
+            label: "Command output".to_owned(),
+            output: String::new(),
+            active: false,
+            command: Some(command_view(output)),
+            progress: Vec::new(),
+        },
+        None => MessageBlock {
+            kind: "progress",
+            html: String::new(),
+            label: String::new(),
+            output: String::new(),
+            active: streaming,
+            command: None,
+            progress: Vec::new(),
+        },
+    };
+    let output = MessageContent {
+        id,
+        output_base: &output_base,
+        blocks: vec![block],
+        usage: usage_panel(&[], &context_base),
+    }
+    .render()
+    .expect("command content template");
+    let directory = message
+        .command
+        .as_ref()
+        .map_or("", |entry| entry.directory.as_str());
+    format!(
+        "<pre class=\"whitespace-pre-wrap\"><code>$ {}</code></pre><p class=\"text-quiet text-xs\">Directory: {}</p>{output}",
+        ammonia::clean_text(&message.text),
+        ammonia::clean_text(directory),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]

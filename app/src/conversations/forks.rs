@@ -327,7 +327,31 @@ pub(crate) fn materialise(
                 }
             }
         } else {
-            copied.request = None;
+            copied.request = if copied.role == MessageRole::Command {
+                Some(JobId::generate().map_err(|_| ForkError::Random)?)
+            } else {
+                None
+            };
+            // A copied command keeps its inclusion policy. Its retained output
+            // moves to the destination scope so the fork's local views work.
+            if copied.role == MessageRole::Command
+                && let Some(output) = copied
+                    .command
+                    .as_mut()
+                    .and_then(|entry| entry.output.as_mut())
+                && let Some(retained) = output.retained.as_ref()
+            {
+                let key = OutputKey {
+                    scope: destination_scope.clone(),
+                    job: copied.request.ok_or(ForkError::Random)?,
+                    tool_call: copied.id.as_hex(),
+                    model_hidden: false,
+                };
+                match outputs.rebind(&retained.reference, &source_scope, &key) {
+                    Ok(rebound) => output.retained = Some(rebound),
+                    Err(_) => output.retained = None,
+                }
+            }
         }
         messages.push(copied);
     }
@@ -353,6 +377,7 @@ fn rebind_tool(
         scope: destination.clone(),
         job,
         tool_call: call.to_owned(),
+        model_hidden: false,
     };
     match outputs.rebind(&reference, source, &key) {
         Ok(rebound) => command.retained = Some(rebound),

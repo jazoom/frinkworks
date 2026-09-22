@@ -1419,6 +1419,69 @@ async fn send_message(
             detail_view(&state, session.0, &record, &record.title, REVISION_MESSAGE),
         );
     };
+    // Direct command syntax is classified from the original text before any
+    // resource expansion. It never reaches provider validation.
+    if let Some(direct) = crate::conversations::input::direct_command(&form.message) {
+        if !matches!(form.revision_request(), Ok(None)) {
+            return render_detail_command(
+                graft,
+                PatchStatus::Conflict,
+                detail_view(
+                    &state,
+                    session.0,
+                    &record,
+                    &record.title,
+                    "Cancel prompt revision before a direct command.",
+                ),
+            );
+        }
+        let Some(model) = effective_model(&state, &record) else {
+            return render_detail_command(
+                graft,
+                PatchStatus::UnprocessableEntity,
+                detail_view(
+                    &state,
+                    session.0,
+                    &record,
+                    &record.title,
+                    "Direct commands need conversation execution settings.",
+                ),
+            );
+        };
+        let attachments = match form.attachment_ids() {
+            Ok(attachments) => attachments,
+            Err(error) => {
+                return render_detail_command(
+                    graft,
+                    PatchStatus::UnprocessableEntity,
+                    detail_view(&state, session.0, &record, &record.title, error),
+                );
+            }
+        };
+        return match commands::run::start_saved(
+            &state,
+            session.0,
+            &record,
+            revision,
+            model,
+            direct,
+            attachments,
+        )
+        .await
+        {
+            Ok(started) => render_detail_command(
+                graft,
+                PatchStatus::Ok,
+                detail_view(&state, session.0, &started, &started.title, ""),
+            ),
+            Err(StartMessageError::Internal(error)) => Err(error),
+            Err(StartMessageError::User(status, error)) => render_detail_command(
+                graft,
+                status,
+                detail_view(&state, session.0, &record, &record.title, error),
+            ),
+        };
+    }
     let Some(model) = effective_model(&state, &record) else {
         return render_detail_command(
             graft,
@@ -1533,6 +1596,24 @@ pub(super) async fn preflight_execution(
     conversation: Option<ConversationId>,
     model: &ConversationModelConfiguration,
 ) -> Result<(), StartMessageError> {
+    if conversation
+        .and_then(|id| state.conversations.get(&id))
+        .is_some_and(|record| {
+            record.messages.iter().any(|message| {
+                message.command.as_ref().is_some_and(|entry| {
+                    entry.before.is_some()
+                        && entry.after.is_none()
+                        && (entry.output.is_some()
+                            || message.status == crate::conversations::MessageStatus::Interrupted)
+                })
+            })
+        })
+    {
+        return Err(StartMessageError::User(
+            PatchStatus::Conflict,
+            "A direct command has no final file snapshot. Its effects remain uncertain. Use a separate conversation after local recovery.",
+        ));
+    }
     if conversation.is_some_and(|id| has_pending_review(state, id)) {
         return Err(StartMessageError::User(
             PatchStatus::Conflict,

@@ -118,6 +118,7 @@ async fn slow_commands_publish_replayable_progress_and_retain_cancelled_output()
             scope: scope.clone(),
             job: job.id(),
             tool_call: "slow".to_owned(),
+            model_hidden: false,
         },
     };
     let command = super::run_shell_reported(

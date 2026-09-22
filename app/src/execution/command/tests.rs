@@ -68,6 +68,7 @@ fn partial_output_survives_restart_and_storage_failure_retains_its_reference() {
         scope: scope.clone(),
         job: crate::sessions::JobId::generate().unwrap(),
         tool_call: "call".to_owned(),
+        model_hidden: false,
     };
     let mut capture = CommandCapture::with_output(Some("secret"), &store, &key).unwrap();
     let reference = capture.retained.as_ref().unwrap().reference.clone();

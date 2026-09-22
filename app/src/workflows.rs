@@ -35,10 +35,10 @@ pub(crate) use commit::CommitJournals;
 pub(crate) use evidence::{AttemptEvidenceContext, WorkflowEvidenceStore};
 pub(crate) use execution::{ExecutionGuard, WorkflowExecution};
 pub(crate) use executor::{
-    WorkflowContinuationRegistry, WorkflowJob, drive_ordinary_file_run, execute_run,
-    interrupt_provider_continuations, interrupt_session_continuations, recover_apply_transactions,
-    recover_commit_transactions, settle_cancelled_job, settle_terminal_job,
-    validate_phase_selection,
+    WorkflowContinuationRegistry, WorkflowJob, capture_ordinary_command_evidence,
+    drive_ordinary_file_run, execute_run, interrupt_provider_continuations,
+    interrupt_session_continuations, recover_apply_transactions, recover_commit_transactions,
+    settle_cancelled_job, settle_terminal_job, validate_phase_selection,
 };
 pub(crate) use id::{ArtefactId, AttemptId, GateId, RunId, WorkflowId};
 pub(crate) use quick::{HOST_UNCHANGED, alpine_git_id, pin_agent_work};

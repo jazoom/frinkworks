@@ -3,11 +3,13 @@ use crate::providers::{
 };
 
 use super::{
-    ContinuationBlock, ContinuationMetadata, ConversationMessage, HistoryError, MessageRole,
-    MessageStatus, PriceProvenance, RequestUsage, project, request_cost, total_cost,
+    CommandEntry, ContinuationBlock, ContinuationMetadata, ConversationMessage, HistoryError,
+    MessageRole, MessageStatus, PriceProvenance, RequestUsage, project, request_cost, total_cost,
     validate_exchange,
 };
 use crate::conversations::{MessageId, RequestId};
+use crate::execution::command::CommandChunk;
+use crate::execution::{CommandResult, CommandStream, CommandTermination};
 
 fn identifier() -> MessageId {
     MessageId::generate().expect("message id")
@@ -31,6 +33,82 @@ fn output() -> ToolOutput {
     }
 }
 
+fn command_message(included: bool, termination: CommandTermination) -> ConversationMessage {
+    let id = identifier();
+    let output = CommandResult::new(
+        vec![CommandChunk {
+            stream: CommandStream::Stdout,
+            text: "command output sentinel".to_owned(),
+        }],
+        termination,
+    );
+    ConversationMessage {
+        parent: None,
+        id,
+        response: None,
+        final_phase: false,
+        role: MessageRole::Command,
+        text: "echo sentinel".to_owned(),
+        input: None,
+        command: Some(CommandEntry {
+            included,
+            directory: "/workspace".to_owned(),
+            output: Some(output),
+            before: None,
+            after: None,
+        }),
+        attachments: Vec::new(),
+        activity: Vec::new(),
+        continuation: Vec::new(),
+        status: MessageStatus::Complete,
+        error: None,
+        request: None,
+        completion: None,
+        requests: Vec::new(),
+    }
+}
+
+#[test]
+fn included_command_projects_as_delimited_evidence() {
+    for status in [
+        MessageStatus::Complete,
+        MessageStatus::Failed,
+        MessageStatus::Interrupted,
+    ] {
+        let mut message = command_message(true, CommandTermination::Exited(1));
+        message.status = status;
+        let turns = project(&[message], None).expect("included command projects");
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].role, crate::providers::Role::User);
+        assert!(
+            turns[0].text.contains("[direct command]"),
+            "{}",
+            turns[0].text
+        );
+        assert!(turns[0].text.contains("echo sentinel"));
+        assert!(turns[0].text.contains("command output sentinel"));
+        assert!(turns[0].text.contains("/workspace"));
+    }
+}
+
+#[test]
+fn excluded_command_is_absent_from_projection() {
+    let turns = project(
+        &[command_message(false, CommandTermination::Exited(0))],
+        None,
+    )
+    .expect("excluded command projects nothing");
+    assert!(turns.is_empty());
+}
+
+#[test]
+fn unsettled_included_command_blocks_projection() {
+    assert_eq!(
+        project(&[command_message(true, CommandTermination::Unknown)], None),
+        Err(HistoryError::Unsettled)
+    );
+}
+
 fn assistant(activity: Vec<AssistantActivity>) -> ConversationMessage {
     let id = identifier();
     ConversationMessage {
@@ -41,6 +119,7 @@ fn assistant(activity: Vec<AssistantActivity>) -> ConversationMessage {
         role: MessageRole::Assistant,
         text: String::new(),
         input: None,
+        command: None,
         attachments: Vec::new(),
         activity,
         continuation: Vec::new(),
@@ -63,6 +142,7 @@ fn projection_keeps_tool_exchanges_and_matches_results() {
             role: MessageRole::User,
             text: "Read the file".to_owned(),
             input: None,
+            command: None,
             attachments: Vec::new(),
             activity: Vec::new(),
             continuation: Vec::new(),

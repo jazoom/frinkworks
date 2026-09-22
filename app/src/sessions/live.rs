@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::http::Extensions;
 use hypergraft::live::{AdmissionPermit, GuardFailure, LiveGuard, SocketAdmission};
 
-use crate::{sessions::SessionStore, vault::ProviderVault};
+use crate::sessions::SessionStore;
 
 use super::{ResolvedSession, SessionId};
 
@@ -12,15 +12,13 @@ const MAXIMUM_SOCKETS_PER_SESSION: usize = 8;
 #[derive(Clone)]
 pub(crate) struct LiveSessionGuard {
     sessions: Arc<SessionStore>,
-    vault: Arc<ProviderVault>,
     admission: SocketAdmission<SessionId>,
 }
 
 impl LiveSessionGuard {
-    pub(crate) fn new(sessions: Arc<SessionStore>, vault: Arc<ProviderVault>) -> Self {
+    pub(crate) fn new(sessions: Arc<SessionStore>) -> Self {
         Self {
             sessions,
-            vault,
             admission: SocketAdmission::new(),
         }
     }
@@ -53,7 +51,7 @@ impl LiveGuard for LiveSessionGuard {
         &self,
         connection: &Self::Connection,
     ) -> Result<Self::Context, GuardFailure> {
-        if self.sessions.contains_live(&connection.session) && self.vault.has_providers() {
+        if self.sessions.contains_live(&connection.session) {
             Ok(connection.session)
         } else {
             Err(GuardFailure::Terminal)

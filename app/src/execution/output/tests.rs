@@ -11,6 +11,7 @@ fn key(conversation: ConversationId, tool_call: &str) -> OutputKey {
         scope: OutputScope::conversation(conversation),
         job: JobId::generate().expect("job"),
         tool_call: tool_call.to_owned(),
+        model_hidden: false,
     }
 }
 
@@ -26,6 +27,27 @@ fn result(text: &str) -> CommandResult {
 
 fn first_page() -> crate::tools::read::PageRequest {
     parse_request(None, None).expect("first page")
+}
+
+#[test]
+fn model_access_is_refused_for_a_hidden_record_without_an_explicit_reference() {
+    let store = OutputStore::ephemeral();
+    let conversation = conversation();
+    let mut hidden = key(conversation, "call-1");
+    hidden.model_hidden = true;
+    let retained = store
+        .store(&hidden, &result("excluded sentinel"))
+        .expect("store");
+    let scope = OutputScope::conversation(conversation);
+    // The local view still serves the retained output.
+    store
+        .page(&retained.reference, &scope, first_page())
+        .expect("local page");
+    // The model path refuses it even with the exact reference.
+    assert_eq!(
+        store.model_page(&retained.reference, &scope, first_page()),
+        Err(OutputError::Forbidden)
+    );
 }
 
 #[test]

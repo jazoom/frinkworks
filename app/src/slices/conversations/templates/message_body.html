@@ -1,9 +1,12 @@
 <header class="chat-turn-meta flex items-center gap-2">
   {% if message.user %}
     <span class="user-avatar" aria-hidden="true">Y</span>
-  {% endif %}<strong
-    >{% if message.user %}You{% else %}Power Plant{% endif %}</strong
-  >
+  {% endif %}<strong>{{ message.role_label }}</strong>
+  {% if message.excluded %}
+    <span class="badge badge-ghost badge-sm" title="Excluded from model context"
+      >Context excluded</span
+    >
+  {% endif %}
   {% if message.status != "" && (message.error == "" || message.status != "Failed") %}
     <span class="inline-flex items-center gap-1.5 text-xs" role="status">
       {% if message.streaming %}

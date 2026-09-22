@@ -387,7 +387,10 @@ fn active_response(
         .messages
         .iter()
         .rev()
-        .find(|message| message.request == Some(job.id()))
+        .find(|message| {
+            message.role == crate::conversations::MessageRole::Assistant
+                && message.request == Some(job.id())
+        })
         .map(|message| message.response.unwrap_or(message.id))?;
     let committed = record
         .messages
@@ -528,7 +531,10 @@ fn final_frame(
             .messages
             .iter()
             .rev()
-            .find(|message| message.request == Some(job.id()))
+            .find(|message| {
+                message.role == crate::conversations::MessageRole::Assistant
+                    && message.request == Some(job.id())
+            })
             .map(|message| message.response.unwrap_or(message.id))
     {
         let phases: Vec<&crate::conversations::ConversationMessage> = record

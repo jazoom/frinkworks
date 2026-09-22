@@ -591,7 +591,7 @@ struct MessageFile {
     /// entry starts a path. The store validates it before use.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     parent: Option<String>,
-    /// Logical-response anchor for assistant phases. User entries omit it.
+    /// Logical-response anchor for assistant phases. User and command entries omit it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     response: Option<String>,
     /// Set only on the phase that ended its logical response.
@@ -601,6 +601,8 @@ struct MessageFile {
     text: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     input: Option<super::InputProvenance>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    command: Option<super::history::CommandEntry>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     attachments: Vec<AttachmentFile>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1484,6 +1486,126 @@ impl ConversationStore {
         })
     }
 
+    /// Append a pending direct command entry. The caller persists this intent
+    /// before it starts the process, so restart can distinguish an unsettled
+    /// command from one that never started.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn begin_command(
+        &self,
+        id: &ConversationId,
+        expected_revision: u32,
+        model: Option<ConversationModelConfiguration>,
+        request: JobId,
+        command: String,
+        included: bool,
+        directory: String,
+    ) -> Result<ConversationRecord, ConversationError> {
+        let command = normalise_command(&command)?;
+        if directory.is_empty()
+            || directory.len() > super::history::MAXIMUM_COMMAND_DIRECTORY_BYTES
+            || directory.contains('\0')
+            || directory.chars().any(char::is_control)
+        {
+            return Err(ConversationError::Message);
+        }
+        self.update(id, expected_revision, true, |current| {
+            if current.active_job.is_some()
+                || current.continuation.is_some()
+                || !current.queue.items.is_empty()
+            {
+                return Err(ConversationError::Active);
+            }
+            if let Some(model) = model {
+                current.model = Some(model);
+            }
+            let id = MessageId::generate().map_err(|_| ConversationError::Random)?;
+            current
+                .messages
+                .push(command_message(id, command, included, directory, request));
+            current.active_job = Some(request);
+            Ok(())
+        })
+    }
+
+    pub(crate) fn record_command_baseline(
+        &self,
+        id: &ConversationId,
+        request: JobId,
+        before: String,
+    ) -> Result<(), ConversationError> {
+        self.update(id, 0, false, |current| {
+            if current.active_job != Some(request) {
+                return Err(ConversationError::Conflict);
+            }
+            let entry = current
+                .messages
+                .iter_mut()
+                .rev()
+                .find(|message| {
+                    message.request == Some(request) && message.status == MessageStatus::Pending
+                })
+                .and_then(|message| message.command.as_mut())
+                .ok_or(ConversationError::Conflict)?;
+            entry.before = Some(before);
+            if !entry.valid() {
+                return Err(ConversationError::Message);
+            }
+            Ok(())
+        })
+        .map(|_| ())
+    }
+
+    /// Settle one direct command entry. A failed write leaves the pending
+    /// entry intact, so recovery never replays the command.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn settle_command(
+        &self,
+        id: &ConversationId,
+        request: JobId,
+        output: Option<crate::execution::CommandResult>,
+        status: MessageStatus,
+        error: Option<String>,
+        before: Option<String>,
+        after: Option<String>,
+    ) -> Result<(), ConversationError> {
+        if !matches!(
+            status,
+            MessageStatus::Complete | MessageStatus::Failed | MessageStatus::Interrupted
+        ) || !valid_message_error(status, error.as_deref())
+        {
+            return Err(ConversationError::Message);
+        }
+        self.update(id, 0, false, |current| {
+            if current.active_job != Some(request) {
+                return Err(ConversationError::Conflict);
+            }
+            let message = current
+                .messages
+                .iter_mut()
+                .rev()
+                .find(|message| {
+                    message.request == Some(request) && message.role == MessageRole::Command
+                })
+                .ok_or(ConversationError::Conflict)?;
+            let entry = message.command.as_mut().ok_or(ConversationError::Message)?;
+            if !super::history::valid_command(output.as_ref()) {
+                return Err(ConversationError::Message);
+            }
+            entry.output = output;
+            entry.before = before;
+            entry.after = after;
+            if !entry.valid() {
+                return Err(ConversationError::Message);
+            }
+            message.status = status;
+            message.error = error;
+            current.active_job = None;
+            current.continuation = None;
+            Ok(())
+        })
+        .map(|_| ())
+    }
+
     pub(crate) fn append_output(
         &self,
         id: &ConversationId,
@@ -1532,6 +1654,7 @@ impl ConversationStore {
                 role: MessageRole::Assistant,
                 text: failed.text,
                 input: None,
+                command: None,
                 attachments: Vec::new(),
                 activity: failed.activity,
                 continuation: Vec::new(),
@@ -2422,6 +2545,39 @@ impl ConversationStore {
     }
 }
 
+fn command_message(
+    id: MessageId,
+    text: String,
+    included: bool,
+    directory: String,
+    request: JobId,
+) -> ConversationMessage {
+    ConversationMessage {
+        id,
+        parent: None,
+        response: None,
+        final_phase: false,
+        role: MessageRole::Command,
+        text,
+        input: None,
+        command: Some(super::history::CommandEntry {
+            included,
+            directory,
+            output: None,
+            before: None,
+            after: None,
+        }),
+        attachments: Vec::new(),
+        activity: Vec::new(),
+        continuation: Vec::new(),
+        status: MessageStatus::Pending,
+        error: None,
+        request: Some(request),
+        completion: None,
+        requests: Vec::new(),
+    }
+}
+
 fn user_message(
     id: MessageId,
     text: String,
@@ -2436,6 +2592,7 @@ fn user_message(
         role: MessageRole::User,
         text,
         input,
+        command: None,
         attachments,
         activity: Vec::new(),
         continuation: Vec::new(),
@@ -2456,6 +2613,7 @@ fn pending_phase(id: MessageId, response: MessageId, request: JobId) -> Conversa
         role: MessageRole::Assistant,
         text: String::new(),
         input: None,
+        command: None,
         attachments: Vec::new(),
         activity: Vec::new(),
         continuation: Vec::new(),
@@ -2497,7 +2655,8 @@ fn interrupt_recovered_request(record: &mut ConversationRecord) -> bool {
     {
         settle_interrupted_questions(message);
         message.status = MessageStatus::Interrupted;
-        message.final_phase = true;
+        // A command entry is never a logical response phase.
+        message.final_phase = message.role == MessageRole::Assistant;
     }
     record.active_job = None;
     record.revision = record.revision.saturating_add(1);
@@ -2939,14 +3098,15 @@ fn message_from_file(file: MessageFile) -> Result<ConversationMessage, Conversat
         Some(value) => Some(MessageId::parse(&value).ok_or(ConversationError::Corrupt)?),
         None => None,
     };
-    if (file.role == MessageRole::User) != response.is_none()
-        || (file.role == MessageRole::User && file.final_phase)
+    if (file.role == MessageRole::User || file.role == MessageRole::Command) != response.is_none()
+        || (file.role != MessageRole::Assistant && file.final_phase)
     {
         return Err(ConversationError::Corrupt);
     }
     let limit = match file.role {
         MessageRole::User => MAXIMUM_MESSAGE_BYTES,
         MessageRole::Assistant => MAXIMUM_REPLY_BYTES,
+        MessageRole::Command => crate::tools::MAXIMUM_COMMAND_BYTES,
     };
     if file.text.len() > limit
         || file.text.contains('\0')
@@ -2956,12 +3116,25 @@ fn message_from_file(file: MessageFile) -> Result<ConversationMessage, Conversat
         || !super::history::valid_requests(&file.requests, file.role)
         || (file.role == MessageRole::User
             && (!file.activity.is_empty() || !file.continuation.is_empty()))
+        || (file.role == MessageRole::Command
+            && (!file.activity.is_empty()
+                || !file.continuation.is_empty()
+                || file.input.is_some()
+                || file.completion.is_some()
+                || !file
+                    .command
+                    .as_ref()
+                    .is_some_and(super::history::CommandEntry::valid)
+                || normalise_command(&file.text).as_ref() != Ok(&file.text)))
     {
         return Err(ConversationError::Corrupt);
     }
     let request = file.request.as_deref().and_then(JobId::parse);
     if file.request.is_some() != request.is_some()
         || matches!(file.role, MessageRole::User) != request.is_none()
+        || (file.role == MessageRole::Command
+            && file.status == MessageStatus::Pending
+            && request.is_none())
         || (file.role == MessageRole::User
             && (file.status != MessageStatus::Complete
                 || file.completion.is_some()
@@ -2980,7 +3153,7 @@ fn message_from_file(file: MessageFile) -> Result<ConversationMessage, Conversat
         .into_iter()
         .map(attachment_from_file)
         .collect::<Result<Vec<_>, _>>()?;
-    if (file.role == MessageRole::Assistant && !attachments.is_empty())
+    if (file.role != MessageRole::User && !attachments.is_empty())
         || !super::history::valid_attachments(&attachments)
     {
         return Err(ConversationError::Corrupt);
@@ -2993,6 +3166,7 @@ fn message_from_file(file: MessageFile) -> Result<ConversationMessage, Conversat
         role: file.role,
         text: file.text,
         input: file.input,
+        command: file.command,
         attachments,
         activity: file.activity,
         continuation: file.continuation,
@@ -3041,6 +3215,7 @@ fn message_to_file(message: &ConversationMessage) -> MessageFile {
         role: message.role,
         text: message.text.clone(),
         input: message.input.clone(),
+        command: message.command.clone(),
         attachments: message.attachments.iter().map(attachment_to_file).collect(),
         activity: message.activity.clone(),
         continuation: message.continuation.clone(),
@@ -3317,6 +3492,21 @@ pub(crate) fn normalise_title(raw: &str) -> Result<String, ConversationError> {
 
 pub(crate) fn normalise_message(raw: &str) -> Result<String, ConversationError> {
     normalise_message_optional(raw, false)
+}
+
+/// Normalise one direct command body. Newlines and tabs are valid inside a
+/// shell command; every other control character is rejected.
+pub(crate) fn normalise_command(raw: &str) -> Result<String, ConversationError> {
+    let text = raw.trim();
+    if text.is_empty()
+        || text.len() > crate::tools::MAXIMUM_COMMAND_BYTES
+        || text
+            .chars()
+            .any(|character| character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
+    {
+        return Err(ConversationError::Message);
+    }
+    Ok(text.to_owned())
 }
 
 /// An image-only turn can omit text. Every other bound still applies.

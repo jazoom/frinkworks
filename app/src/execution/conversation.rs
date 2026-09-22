@@ -24,6 +24,8 @@ use super::{
 #[cfg(test)]
 mod tests;
 
+pub(crate) mod command;
+
 const RUNTIME_RECORD_VERSION: u32 = 1;
 const MAXIMUM_RUNTIME_RECORD_BYTES: usize = 4096;
 

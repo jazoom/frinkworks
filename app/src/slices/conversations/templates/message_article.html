@@ -1,7 +1,7 @@
 <article
   id="{{ message.id }}"
   data-graft-enter="message"
-  class="chat-turn conversation-turn {% if message.user %}chat-turn-user{% else %}chat-turn-agent{% endif %}"
+  class="chat-turn conversation-turn {% if message.user %}chat-turn-user{% else if message.is_command %}chat-turn-command{% else %}chat-turn-agent{% endif %}"
   {% if message.streaming %}data-streaming="true"{% endif %}
 >
   {% include "conversations/templates/message_body.html" %}

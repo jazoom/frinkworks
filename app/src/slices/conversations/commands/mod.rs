@@ -6,6 +6,7 @@
 //! submission, so a preview and a send agree on the source identity.
 
 pub(super) mod page;
+pub(super) mod run;
 
 #[cfg(test)]
 mod tests;

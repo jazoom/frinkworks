@@ -488,6 +488,7 @@ fn role_label(role: MessageRole) -> &'static str {
     match role {
         MessageRole::User => "You",
         MessageRole::Assistant => "Assistant",
+        MessageRole::Command => "Command",
     }
 }
 

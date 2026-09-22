@@ -27,6 +27,7 @@ fn message(
         final_phase: role == MessageRole::Assistant,
         text: text.to_owned(),
         input: None,
+        command: None,
         attachments: Vec::new(),
         activity,
         continuation: Vec::new(),
@@ -244,6 +245,7 @@ fn materialise_rebinds_retained_output_to_the_destination() {
                 scope: OutputScope::conversation(source),
                 job,
                 tool_call: "call-1".to_owned(),
+                model_hidden: false,
             },
             &command,
         )
@@ -306,6 +308,57 @@ fn materialise_rebinds_retained_output_to_the_destination() {
                 request
             )
             .is_err()
+    );
+}
+
+#[test]
+fn a_fork_with_excluded_commands_remains_durable() {
+    let mut command = message(
+        MessageRole::Command,
+        "printf excluded",
+        Vec::new(),
+        Some(JobId::generate().expect("job")),
+    );
+    command.response = None;
+    command.final_phase = false;
+    command.command = Some(crate::conversations::history::CommandEntry {
+        included: false,
+        directory: "/".to_owned(),
+        output: Some(CommandResult::new(
+            Vec::new(),
+            CommandTermination::Exited(0),
+        )),
+        before: None,
+        after: None,
+    });
+    let reply = assistant("Settled reply", Vec::new());
+    let source = record(vec![command, user("Continue"), reply.clone()]);
+    let snapshot = snapshot(&source, reply.id).expect("snapshot");
+    let destination = crate::conversations::ConversationId::generate().expect("destination");
+    let messages =
+        materialise(&snapshot, destination, &OutputStore::ephemeral()).expect("materialise");
+    let directory = tempfile::tempdir().expect("store directory");
+    let store = crate::conversations::ConversationStore::open(directory.path().to_path_buf())
+        .expect("store");
+    store
+        .create_fork(destination, None, None, Vec::new(), messages, &snapshot)
+        .expect("persist fork");
+    drop(store);
+    let store = crate::conversations::ConversationStore::open(directory.path().to_path_buf())
+        .expect("reload");
+    let loaded = store.get(&destination).expect("fork");
+    assert!(
+        !loaded.messages[0]
+            .command
+            .as_ref()
+            .expect("command")
+            .included
+    );
+    assert!(
+        crate::conversations::history::project(&loaded.messages, None)
+            .expect("projection")
+            .iter()
+            .all(|turn| !turn.text.contains("excluded"))
     );
 }
 

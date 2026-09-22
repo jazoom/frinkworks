@@ -1795,6 +1795,7 @@ fn parse_role(value: &str) -> Result<MessageRole, ConversationError> {
     match value {
         "user" => Ok(MessageRole::User),
         "assistant" => Ok(MessageRole::Assistant),
+        "command" => Ok(MessageRole::Command),
         _ => Err(ConversationError::Corrupt),
     }
 }

@@ -92,7 +92,7 @@ fn build_router(state: AppState, static_dir: std::path::PathBuf) -> Router {
     let live_endpoint =
         hypergraft::live::LiveEndpoint::with_default_path(state.config.public_origin())
             .expect("the public origin is a canonical HTTP origin");
-    let live_guard = sessions::LiveSessionGuard::new(state.sessions.clone(), state.vault.clone());
+    let live_guard = sessions::LiveSessionGuard::new(state.sessions.clone());
     let live = hypergraft::live::service(
         live_endpoint,
         hypergraft::live::LiveSocketConfig::default(),

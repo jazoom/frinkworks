@@ -22,6 +22,8 @@ use crate::workflows::{AttemptId, RunId};
 use super::id::{CheckpointId, MessageId, RequestId};
 use super::input::InputProvenance;
 
+pub(crate) const MAXIMUM_COMMAND_DIRECTORY_BYTES: usize = 4096;
+pub(crate) const MAXIMUM_COMMAND_MANIFEST_BYTES: usize = 128;
 pub(crate) const MAXIMUM_ACTIVITY_ITEMS: usize = 256;
 pub(crate) const MAXIMUM_ACTIVITY_BYTES: usize = 256 * 1024;
 pub(crate) const MAXIMUM_CALL_IDENTIFIER_BYTES: usize = 512;
@@ -37,6 +39,9 @@ const MICROS_PER_MILLION: u64 = 1_000_000;
 pub(crate) enum MessageRole {
     User,
     Assistant,
+    /// A user-submitted direct shell command. It is not a model message and
+    /// never carries a synthetic assistant tool call.
+    Command,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -46,6 +51,24 @@ pub(crate) enum MessageStatus {
     Pending,
     Interrupted,
     Failed,
+}
+
+/// Durable metadata for one direct command entry. `included` records whether
+/// the model projection can see the command and its output. The directory is
+/// the resolved working directory that the process actually used.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub(crate) struct CommandEntry {
+    pub(crate) included: bool,
+    pub(crate) directory: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) output: Option<crate::execution::CommandResult>,
+    /// Direct-write baseline manifest. A directory-backed host command only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) before: Option<String>,
+    /// Direct-write final manifest. A directory-backed host command only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) after: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -66,6 +89,8 @@ pub(crate) struct ConversationMessage {
     /// Frozen command provenance for a skill-expanded user turn. The expanded
     /// text stays in `text`. A plain turn leaves this absent.
     pub(crate) input: Option<InputProvenance>,
+    /// Direct command metadata. Only a `Command` entry sets this.
+    pub(crate) command: Option<CommandEntry>,
     /// Immutable image references for a user turn. Reasoning and tool output
     /// never carry references.
     pub(crate) attachments: Vec<AttachmentRef>,
@@ -424,7 +449,7 @@ fn priced_tokens(tokens: Option<u64>, price: Option<u64>) -> Result<Option<u64>,
 }
 
 pub(crate) fn valid_requests(requests: &[RequestUsage], role: MessageRole) -> bool {
-    if role == MessageRole::User {
+    if role != MessageRole::Assistant {
         return requests.is_empty();
     }
     if requests.len() > MAXIMUM_REQUEST_USAGE {
@@ -539,6 +564,42 @@ pub(crate) fn valid_command(command: Option<&crate::execution::CommandResult>) -
     command.is_none_or(crate::execution::CommandResult::is_bounded)
 }
 
+/// A direct command manifest is an opaque artefact hash, not a path. The
+/// repository formats object hashes as `sha256:<hex>`.
+fn valid_manifest(hash: &str) -> bool {
+    let digest = hash.strip_prefix("sha256:").unwrap_or(hash);
+    hash.len() <= MAXIMUM_COMMAND_MANIFEST_BYTES
+        && digest.len() == 64
+        && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+impl CommandEntry {
+    pub(crate) fn valid(&self) -> bool {
+        !self.directory.is_empty()
+            && self.directory.len() <= MAXIMUM_COMMAND_DIRECTORY_BYTES
+            && !self.directory.contains('\0')
+            && !self.directory.chars().any(char::is_control)
+            && valid_command(self.output.as_ref())
+            && self.before.as_deref().is_none_or(valid_manifest)
+            && self.after.as_deref().is_none_or(valid_manifest)
+            && (self.after.is_none() || self.before.is_some())
+    }
+}
+
+/// Command output remains untrusted evidence, not execution authority.
+pub(crate) fn command_evidence(command: &str, entry: &CommandEntry) -> Option<String> {
+    let output = entry.output.as_ref()?;
+    let mut evidence = String::new();
+    evidence.push_str("[direct command]\n$ ");
+    evidence.push_str(command.trim());
+    evidence.push_str("\nDirectory: ");
+    evidence.push_str(&entry.directory);
+    evidence.push('\n');
+    evidence.push_str(&output.report());
+    evidence.push_str("\n[/direct command]");
+    Some(evidence)
+}
+
 pub(crate) fn valid_message_error(status: MessageStatus, error: Option<&str>) -> bool {
     error.is_none_or(|text| {
         status == MessageStatus::Failed
@@ -642,6 +703,26 @@ pub(crate) fn project_with_attachments(
                     }
                 }
                 history.push(turn);
+            }
+            MessageRole::Command => {
+                let Some(entry) = message.command.as_ref().filter(|entry| entry.valid()) else {
+                    return Err(HistoryError::Bound);
+                };
+                // Failed and cancelled processes can leave effects that later requests need.
+                if !entry.included || message.status == MessageStatus::Pending {
+                    continue;
+                }
+                if !valid_command(entry.output.as_ref()) {
+                    return Err(HistoryError::Bound);
+                }
+                if entry.output.as_ref().is_some_and(|output| {
+                    output.termination == crate::execution::CommandTermination::Unknown
+                }) {
+                    return Err(HistoryError::Unsettled);
+                }
+                if let Some(evidence) = command_evidence(&message.text, entry) {
+                    history.push(ChatTurn::user(evidence));
+                }
             }
             MessageRole::Assistant => {
                 if message.status == MessageStatus::Pending {
@@ -821,6 +902,9 @@ pub(crate) fn validate_exchange(messages: &[ConversationMessage]) -> Result<(), 
             } else {
                 HistoryError::Usage
             });
+        }
+        if message.role != MessageRole::Assistant && !message.activity.is_empty() {
+            return Err(HistoryError::OrphanResult);
         }
         for activity in &message.activity {
             match activity {

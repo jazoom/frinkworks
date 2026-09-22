@@ -549,11 +549,27 @@ fn complete_ends(messages: &[ConversationMessage]) -> Result<Vec<usize>, Compact
         if message.status == MessageStatus::Pending {
             return Err(CompactionError::Unsettled);
         }
-        if message.role == MessageRole::Assistant && message.status == MessageStatus::Complete {
+        if (message.role == MessageRole::Assistant && message.status == MessageStatus::Complete)
+            || settled_command(message)
+        {
             ends.push(index);
         }
     }
     Ok(ends)
+}
+
+/// A settled included command is a complete exchange end without a synthetic
+/// assistant response. An excluded `!!` entry never enters model context, so it
+/// is not a boundary.
+fn settled_command(message: &ConversationMessage) -> bool {
+    message.role == MessageRole::Command
+        && message.status != MessageStatus::Pending
+        && message.command.as_ref().is_some_and(|entry| {
+            entry.included
+                && entry.output.as_ref().is_some_and(|output| {
+                    output.termination != crate::execution::CommandTermination::Unknown
+                })
+        })
 }
 
 fn first_message_after(messages: &[ConversationMessage], covered: usize) -> Option<MessageId> {
@@ -567,9 +583,10 @@ fn split_index(messages: &[ConversationMessage], compaction: &CompactionRecord) 
     // Coverage follows immutable ancestors. The selected path can have a different
     // child, or end at the covered entry before the next Send.
     let retained = covered.checked_add(1)?;
-    if messages[covered].role != MessageRole::Assistant
-        || messages[covered].status != MessageStatus::Complete
-    {
+    let boundary = (messages[covered].role == MessageRole::Assistant
+        && messages[covered].status == MessageStatus::Complete)
+        || settled_command(&messages[covered]);
+    if !boundary {
         return None;
     }
     complete_ends(&messages[..=covered])

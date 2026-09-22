@@ -755,6 +755,7 @@ async fn brief_defaults_to_the_conversation_request_not_sample_text() {
         role: crate::conversations::MessageRole::User,
         text: "  Make errors helpful.  ".to_owned(),
         input: None,
+        command: None,
         attachments: Vec::new(),
         activity: Vec::new(),
         status: crate::conversations::MessageStatus::Complete,

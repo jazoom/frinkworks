@@ -567,7 +567,7 @@ fn read_output(context: &AgentToolContext<'_>, arguments: &serde_json::Value) ->
             return plain_failure(READ_OUTPUT, message, ToolFailureKind::Ordinary);
         }
     };
-    match outputs.page(reference, &scope, request) {
+    match outputs.model_page(reference, &scope, request) {
         Ok(page) => {
             let mut output = String::new();
             for chunk in &page.chunks {
@@ -1000,6 +1000,7 @@ async fn dispatch_host_command(
             scope: host_output_scope(host, request),
             job: job.id(),
             tool_call: visible_call_id.clone(),
+            model_hidden: false,
         },
     };
     let require_success = host.run.is_some();
@@ -1082,6 +1083,7 @@ pub(crate) fn retain_command(
         scope,
         job,
         tool_call: tool_call.to_owned(),
+        model_hidden: false,
     };
     match state.outputs.store(&key, &command) {
         Ok(retained) => command.retain(retained),
@@ -1668,6 +1670,7 @@ async fn capture(
                 scope: scope.clone(),
                 job: context.job.id(),
                 tool_call: visible_call_id.clone(),
+                model_hidden: false,
             },
         )
         .map_err(|error| command_not_dispatched(error.message()))?,

@@ -96,6 +96,9 @@ pub(crate) struct OutputKey {
     pub(crate) scope: OutputScope,
     pub(crate) job: JobId,
     pub(crate) tool_call: String,
+    /// True when the model must not read this record, even with the exact
+    /// reference. Local output views remain available.
+    pub(crate) model_hidden: bool,
 }
 
 /// Reference and truncation facts that travel with a command result.
@@ -129,6 +132,8 @@ struct OutputRecord {
     attempt: Option<String>,
     job: String,
     tool_call: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    model_hidden: bool,
     chunks: Vec<CommandChunk>,
     truncated: bool,
 }
@@ -201,6 +206,7 @@ impl OutputStore {
             attempt: key.scope.attempt.map(|id| id.to_string()),
             job: key.job.to_string(),
             tool_call: key.tool_call.clone(),
+            model_hidden: key.model_hidden,
             chunks,
             truncated,
         };
@@ -256,6 +262,8 @@ impl OutputStore {
             attempt: destination.scope.attempt.map(|id| id.to_string()),
             job: destination.job.to_string(),
             tool_call: destination.tool_call.clone(),
+            // A rebind preserves the source access policy.
+            model_hidden: record.model_hidden || destination.model_hidden,
             chunks,
             truncated,
         };
@@ -299,6 +307,33 @@ impl OutputStore {
         };
         inner.records.insert(reference.to_owned(), record);
         Ok(retained)
+    }
+
+    /// One bounded page of retained output for the model. A record that was
+    /// excluded from model context is refused even with the exact reference.
+    pub(crate) fn model_page(
+        &self,
+        reference: &str,
+        scope: &OutputScope,
+        request: crate::tools::read::PageRequest,
+    ) -> Result<OutputPage, OutputError> {
+        let inner = self.lock();
+        let record = inner.records.get(reference).ok_or(OutputError::Missing)?;
+        if !scope.matches(record) {
+            return Err(OutputError::Forbidden);
+        }
+        if record.model_hidden {
+            return Err(OutputError::Forbidden);
+        }
+        match crate::tools::read::page_chunks(&record.chunks, request) {
+            Ok((chunks, next, line_truncated)) => Ok(OutputPage {
+                chunks,
+                next,
+                truncated: record.truncated,
+                line_truncated,
+            }),
+            Err(_) => Err(OutputError::Cursor),
+        }
     }
 
     pub(crate) fn has_scope(&self, scope: &OutputScope) -> bool {

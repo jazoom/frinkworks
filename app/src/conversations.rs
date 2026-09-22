@@ -20,7 +20,7 @@ pub(crate) use history::{
     MessageRole, MessageStatus, PausedOutputDraft, PriceProvenance, RequestUsage,
 };
 pub(crate) use id::{CheckpointId, ConversationId, MessageId, RequestId};
-pub(crate) use input::{InputError, InputExpansion, InputProvenance, SkillOffer};
+pub(crate) use input::{DirectCommand, InputError, InputExpansion, InputProvenance, SkillOffer};
 pub(crate) use prompts::PromptTemplate;
 pub(crate) use questions::{PendingQuestion, QuestionAnswer, QuestionError};
 pub(crate) use queue::{ConversationQueue, QueueDelivery, QueueItemId};
@@ -28,5 +28,6 @@ pub(crate) use store::{
     CandidateReviewContext, CandidateReviewCreation, CandidateReviewLink, ConversationError,
     ConversationMetadata, ConversationModelConfiguration, ConversationRecord, ConversationStore,
     DirectoryApproval, MAXIMUM_MESSAGE_BYTES, MAXIMUM_TITLE_BYTES, RevisionRequest, RevisionSource,
-    TranscriptCursor, TranscriptWindow, TreeWindow, normalise_message, normalise_title,
+    TranscriptCursor, TranscriptWindow, TreeWindow, normalise_command, normalise_message,
+    normalise_title,
 };

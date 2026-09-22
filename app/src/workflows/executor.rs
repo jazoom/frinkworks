@@ -4982,5 +4982,33 @@ fn publish_recovered_commit(
         .map_err(|_| "Power Plant could not recover a commit transaction.")
 }
 
+/// Capture the named host directories for one direct command. The returned
+/// object hash is a durable baseline or final manifest. A host command without
+/// named directories returns no evidence. The command action is the first
+/// consumer of this shared capture.
+pub(crate) fn capture_ordinary_command_evidence(
+    state: &AppState,
+    settings: &crate::execution::ExecutionSettings,
+) -> Result<Option<String>, &'static str> {
+    if settings.location != crate::execution::ToolLocation::Host || settings.directories.is_empty()
+    {
+        return Ok(None);
+    }
+    let candidate = crate::workflows::artefacts::CandidateCapture::capture_set(
+        &settings.directories,
+        state.local_data.root(),
+        &state.workflow_artefacts,
+    )
+    .map_err(|_| "Power Plant cannot capture the named directories for direct-command evidence.")?;
+    let bytes = candidate
+        .manifest_bytes()
+        .map_err(|_| "Power Plant cannot encode the direct-command evidence.")?;
+    state
+        .workflow_artefacts
+        .publish(&bytes)
+        .map(|hash| Some(hash.as_str()))
+        .map_err(|_| "Power Plant cannot store the direct-command evidence.")
+}
+
 #[cfg(test)]
 mod tests;

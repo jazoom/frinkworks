@@ -7,10 +7,12 @@ use axum::{
 use tower::ServiceExt;
 
 use super::super::tests::{
-    app, connected, document, form_value, session_id, state_with_prompts, test_state, text,
+    app, command, connected, document, form_value, session_id, state_with_prompts, test_state, text,
 };
 use crate::{
-    conversations::{ConversationId, ConversationModelConfiguration, ConversationRecord},
+    conversations::{
+        ConversationId, ConversationModelConfiguration, ConversationRecord, MessageRole,
+    },
     execution::{DirectoryGrant, ExecutionSettings, ToolLocation},
     providers::{ModelSelection, ProviderKind},
     state::AppState,
@@ -647,4 +649,210 @@ async fn duplicate_global_and_project_prompt_names_require_a_scope() {
             .contains("More than one resource"),
         "{value}"
     );
+}
+
+fn host_conversation(state: &AppState, session: crate::sessions::SessionId) -> ConversationRecord {
+    let settings = ExecutionSettings::new(
+        ModelSelection::new(ProviderKind::Deepseek, "deepseek-chat".to_owned(), None)
+            .expect("model"),
+        String::new(),
+        vec![crate::agents::ToolId::Run],
+        crate::tests::test_environment_id(),
+    )
+    .expect("settings")
+    .with_location(ToolLocation::Host)
+    .with_host_approval(crate::execution::HostApprovalPolicy::Automatic);
+    let record = state
+        .conversations
+        .create_saved(
+            ConversationId::generate().expect("id"),
+            Some("Host command".to_owned()),
+            Some(ConversationModelConfiguration {
+                settings: settings.clone(),
+                preset: None,
+            }),
+            Vec::new(),
+        )
+        .expect("create");
+    let request = state
+        .access_consent
+        .request_host_conversation(session, record.id, &settings)
+        .expect("host request");
+    state
+        .access_consent
+        .approve_host_conversation(&request, session, record.id, &settings)
+        .expect("host approval");
+    record
+}
+
+#[tokio::test]
+async fn queue_rejects_direct_command_syntax() {
+    let state = test_state();
+    let token = connected(&state);
+    let record = conversation_with_grants(&state, Vec::new(), ToolLocation::Sandbox);
+    let response = app(&state)
+        .oneshot(command(
+            &format!("/conversations/{}/queue", record.id),
+            &token,
+            &format!(
+                "queue_revision={}&message={}",
+                record.queue.revision,
+                form_value("!echo hi")
+            ),
+        ))
+        .await
+        .expect("queue");
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(
+        text(response)
+            .await
+            .contains("Direct commands run immediately"),
+    );
+    assert!(
+        state
+            .conversations
+            .get(&record.id)
+            .expect("conversation")
+            .queue
+            .items
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn empty_command_is_rejected_without_an_entry() {
+    let state = test_state();
+    let token = connected(&state);
+    let record = host_conversation(&state, session_id(&token));
+    let response = app(&state)
+        .oneshot(command(
+            &format!("/conversations/{}/messages", record.id),
+            &token,
+            &format!("revision={}&message={}", record.revision, form_value("!")),
+        ))
+        .await
+        .expect("send");
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let reloaded = state.conversations.get(&record.id).expect("conversation");
+    assert!(reloaded.messages.is_empty());
+    assert!(reloaded.active_job.is_none());
+}
+
+#[tokio::test]
+async fn direct_command_runs_without_a_provider_connection() {
+    let state = test_state();
+    let token = connected(&state);
+    let record = host_conversation(&state, session_id(&token));
+    state
+        .vault
+        .forget(ProviderKind::Xai)
+        .expect("forget provider");
+    assert!(!state.vault.has_providers());
+    let response = app(&state)
+        .oneshot(command(
+            &format!("/conversations/{}/messages", record.id),
+            &token,
+            &format!(
+                "revision={}&message={}",
+                record.revision,
+                form_value("!echo direct-sentinel")
+            ),
+        ))
+        .await
+        .expect("send");
+    assert_eq!(response.status(), StatusCode::OK);
+    for _ in 0..200 {
+        let current = state.conversations.get(&record.id).expect("conversation");
+        if current.active_job.is_none()
+            && current
+                .messages
+                .iter()
+                .any(|message| message.role == MessageRole::Command)
+        {
+            let entry = current
+                .messages
+                .iter()
+                .find(|message| message.role == MessageRole::Command)
+                .expect("command entry");
+            assert!(
+                entry
+                    .command
+                    .as_ref()
+                    .and_then(|command| command.output.as_ref())
+                    .is_some_and(|output| output
+                        .chunks
+                        .iter()
+                        .any(|chunk| chunk.text.contains("direct-sentinel")))
+            );
+            return;
+        }
+        tokio::task::yield_now().await;
+    }
+    panic!("direct command did not settle");
+}
+
+#[tokio::test]
+async fn a_direct_command_cannot_silently_replace_prompt_revision() {
+    let state = test_state();
+    let token = connected(&state);
+    let record = host_conversation(&state, session_id(&token));
+    let response = app(&state)
+        .oneshot(command(
+            &format!("/conversations/{}/messages", record.id),
+            &token,
+            &format!(
+                "revision={}&revise_source=invalid&message={}",
+                record.revision,
+                form_value("!!echo excluded-sentinel")
+            ),
+        ))
+        .await
+        .expect("send");
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        state.conversations.get(&record.id).expect("conversation"),
+        record
+    );
+}
+
+#[tokio::test]
+async fn direct_command_rejects_a_second_submission_while_active() {
+    let state = test_state();
+    let token = connected(&state);
+    let session = session_id(&token);
+    let record = host_conversation(&state, session);
+    let job = state
+        .sessions
+        .begin_conversation_job(&session, record.id)
+        .expect("job");
+    state
+        .conversations
+        .begin_command(
+            &record.id,
+            record.revision,
+            None,
+            job.id(),
+            "echo first".to_owned(),
+            true,
+            "/".to_owned(),
+        )
+        .expect("first command");
+    let revision = state
+        .conversations
+        .get(&record.id)
+        .expect("current")
+        .revision;
+    let response = app(&state)
+        .oneshot(command(
+            &format!("/conversations/{}/messages", record.id),
+            &token,
+            &format!(
+                "revision={}&message={}",
+                revision,
+                form_value("!echo second")
+            ),
+        ))
+        .await
+        .expect("send");
+    assert_eq!(response.status(), StatusCode::CONFLICT);
 }
