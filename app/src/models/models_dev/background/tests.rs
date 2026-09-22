@@ -8,7 +8,10 @@ fn model(id: &str, date: &str, input: f64) -> Model {
         efforts: Vec::new(),
         attachment: false,
         supports_tools: true,
-        limit: ModelLimit { context: 4096 },
+        limit: ModelLimit {
+            context: 4096,
+            output: 128,
+        },
         background: Some(BackgroundMetadata {
             release_date: date.to_owned(),
             input_cost: input,

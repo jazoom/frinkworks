@@ -10,6 +10,9 @@ use futures_util::Stream;
 use rig_core::completion::{Message, ToolDefinition};
 use serde::{Deserialize, Serialize};
 
+/// Shared provider-bound projection. See `rig::project_messages`.
+pub(crate) use rig::{project_messages, projected_token_text};
+
 pub(crate) const SYNTHETIC_BASE_URL: &str = "https://api.synthetic.new/openai/v1";
 pub(crate) const OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
 pub(crate) const DEEPSEEK_BASE_URL: &str = "https://api.deepseek.com";

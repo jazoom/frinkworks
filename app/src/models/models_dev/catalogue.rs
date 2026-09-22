@@ -34,6 +34,9 @@ pub(super) struct Source {
 #[serde(deny_unknown_fields)]
 pub(super) struct ModelLimit {
     pub(super) context: u64,
+    /// Published maximum output tokens. Zero means the source did not publish it.
+    #[serde(default)]
+    pub(super) output: u64,
 }
 
 /// Millionths of a US dollar per million tokens. Absent fields stay unknown.
@@ -208,6 +211,7 @@ pub(super) fn filter_source(bytes: &[u8], etag: &str, now: u64) -> Result<Snapsh
                 supports_tools: model.tool_call,
                 limit: ModelLimit {
                     context: model.limit.context,
+                    output: model.limit.output,
                 },
                 background,
                 prices: model_prices(model.cost.as_ref()),

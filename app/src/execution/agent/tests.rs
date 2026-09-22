@@ -268,8 +268,8 @@ async fn automatic_compaction_fits_a_smaller_model_without_deleting_local_tool_r
     state.chat = std::sync::Arc::new(ChatBackend::Scripted(backend.clone()));
     let (record, job) = conversation_job(&state);
     for (id, output) in [
-        ("first", "x".repeat(15_000)),
-        ("latest", "Retained file result".to_owned()),
+        ("first", "x".repeat(100_000)),
+        ("latest", "Retained file result".repeat(1_600)),
     ] {
         let mut reply = AssistantReply::default();
         reply.start_tool(
@@ -302,7 +302,7 @@ async fn automatic_compaction_fits_a_smaller_model_without_deleting_local_tool_r
     let before = turns.clone();
     let mut attempts = 0;
     let result = super::fit_context(&state, &spec, &job, &mut turns, &[], &[], &mut attempts).await;
-    assert!(matches!(result, Ok(estimate) if estimate.fits() && estimate.fallback_limit()));
+    assert!(matches!(result, Ok(estimate) if estimate.fits() && estimate.unknown_capacity()));
     assert_eq!(backend.turn_count(), 1);
     assert_eq!(
         turns

@@ -159,7 +159,7 @@ pub(crate) async fn run_agent_action(
                     return with_reply(error, reply);
                 }
             }
-            let output_allowance = match fit_context(
+            let (output_allowance, mut context_estimate) = match fit_context(
                 state,
                 &spec,
                 &job,
@@ -170,7 +170,7 @@ pub(crate) async fn run_agent_action(
             )
             .await
             {
-                Ok(estimate) => Some(estimate.output_allowance),
+                Ok(estimate) => (Some(estimate.output_allowance), estimate),
                 Err(end) => return with_reply(end, reply),
             };
             if job.cancel_requested() {
@@ -512,6 +512,11 @@ pub(crate) async fn run_agent_action(
                                     reply,
                                     budget: None,
                                 };
+                            }
+                            if let Some(input_tokens) = request.usage.input_tokens {
+                                context_estimate =
+                                    context_estimate.with_measured_input(input_tokens);
+                                job.set_context(context_estimate);
                             }
                             if let Some(evidence) = &spec.evidence
                                 && evidence.usage(request).is_err()
@@ -1704,6 +1709,11 @@ async fn fit_context(
         tools,
         turns,
         extra,
+        provider: spec.connection.kind,
+        model: &spec.connection.model,
+        output_limit: state
+            .models_dev
+            .output_limit(spec.connection.kind, &spec.connection.model),
     };
     let catalogue = state
         .models_dev
@@ -1738,6 +1748,11 @@ async fn compact_if_needed(
         tools,
         turns,
         extra,
+        provider: spec.connection.kind,
+        model: &spec.connection.model,
+        output_limit: state
+            .models_dev
+            .output_limit(spec.connection.kind, &spec.connection.model),
     };
     let catalogue = state
         .models_dev

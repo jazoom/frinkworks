@@ -6,16 +6,36 @@
       aria-labelledby="conversation-context-heading"
     >
       <h3 id="conversation-context-heading" class="text-lg font-semibold">
-        Estimated context
+        Context estimate
       </h3>
       <p class="text-quiet text-sm">{{ estimate.label }}</p>
-      <p class="text-quiet text-sm">
-        This estimate is separate from provider-reported usage.
-      </p>
-      {% if estimate.fallback %}
+      {% if !estimate.measured %}
+        <p class="text-quiet text-sm">
+          This estimate is separate from provider-reported usage.
+        </p>
+      {% endif %}
+      {% if estimate.partial %}
+        <p class="text-quiet text-sm">
+          Partial estimate. Runtime project instructions and discovered tools
+          are not included, so the next request can differ.
+        </p>
+      {% endif %}
+      {% if estimate.approximate %}
+        <p class="text-quiet text-sm">
+          Approximate token count. This model has no supported tokenizer
+          mapping.
+        </p>
+      {% endif %}
+      {% if estimate.unknown_capacity %}
         <p class="text-quiet text-sm">
           Catalogue capacity is unavailable. Power Plant uses a conservative
-          limit.
+          operational limit, not an advertised model window.
+        </p>
+      {% endif %}
+      {% if estimate.measured %}
+        <p class="text-quiet text-sm">
+          The provider reported this input count for the latest request, not for
+          the next request.
         </p>
       {% endif %}
       {% if estimate.compacting %}

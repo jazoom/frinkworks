@@ -94,6 +94,24 @@ fn future_attempt_does_not_suppress_refresh() {
 }
 
 #[test]
+fn output_limit_is_exposed_separately_from_context_capacity() {
+    let catalogue = ModelsDevCatalogue::bundled();
+    let metadata = catalogue
+        .model(ProviderKind::Xai, "grok-4.6")
+        .expect("model");
+    assert!(metadata.output_limit > 0);
+    assert_eq!(
+        catalogue.output_limit(ProviderKind::Xai, "grok-4.6"),
+        Some(metadata.output_limit)
+    );
+    assert!(
+        catalogue
+            .output_limit(ProviderKind::Xai, "missing-model")
+            .is_none()
+    );
+}
+
+#[test]
 fn prices_do_not_require_title_or_tool_eligibility() {
     let catalogue = ModelsDevCatalogue::bundled();
     assert!(

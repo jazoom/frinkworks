@@ -607,7 +607,14 @@ pub(super) struct ForkNotice {
 
 pub(super) struct ContextView {
     pub(super) label: String,
-    pub(super) fallback: bool,
+    /// Catalogue capacity is unknown, so the limit is an operational fallback.
+    pub(super) unknown_capacity: bool,
+    /// The count came from an approximation instead of a model tokenizer.
+    pub(super) approximate: bool,
+    /// Runtime instructions or tools were unavailable for this estimate.
+    pub(super) partial: bool,
+    /// A provider-reported count replaced tokenisation for this request.
+    pub(super) measured: bool,
     pub(super) compacting: bool,
 }
 
@@ -2443,7 +2450,10 @@ fn context_view(
     if let Some(estimate) = job.and_then(|job| job.context) {
         return Some(ContextView {
             label: estimate.label(),
-            fallback: estimate.fallback_limit(),
+            unknown_capacity: estimate.unknown_capacity(),
+            approximate: estimate.approximate(),
+            partial: false,
+            measured: estimate.measured,
             compacting: job.is_some_and(|job| job.compacting),
         });
     }
@@ -2461,6 +2471,9 @@ fn context_view(
         tools: &tools,
         turns: &turns,
         extra: &[],
+        provider: selection.provider,
+        model: &selection.model,
+        output_limit: models.output_limit(selection.provider, &selection.model),
     };
     let estimate = crate::execution::context::inspect(
         request,
@@ -2469,7 +2482,12 @@ fn context_view(
     .ok()?;
     Some(ContextView {
         label: estimate.label(),
-        fallback: estimate.fallback_limit(),
+        unknown_capacity: estimate.unknown_capacity(),
+        approximate: estimate.approximate(),
+        // Idle estimates omit the runtime project instructions and discovered
+        // tools, so they are partial and not dispatch-equivalent.
+        partial: true,
+        measured: false,
         compacting: job.is_some_and(|job| job.compacting),
     })
 }

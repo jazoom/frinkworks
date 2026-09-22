@@ -1,30 +1,48 @@
 //! Bounded model-request projection and capacity.
+//!
+//! Dispatch and estimation share the projection in `providers::rig`. Token
+//! counts come from a supported model tokenizer or an explicit approximation.
+//! Request byte bounds stay separate from token estimates.
 
 use rig_core::completion::{Message, ToolDefinition};
 
 use crate::execution::resources::{InstructionSource, ResourceSource, SkillAdvertisement};
-use crate::providers::ChatTurn;
+use crate::providers::{ChatTurn, ProviderKind};
 
 #[cfg(test)]
 mod tests;
 
-/// Conservative limit when the catalogue does not publish capacity.
+/// Conservative operational limit when the catalogue does not publish capacity.
+/// It is not an advertised model window and never drives a percentage.
 pub(crate) const FALLBACK_CONTEXT_TOKENS: u64 = 32_768;
 const MAXIMUM_REQUEST_BYTES: usize = 2 * 1024 * 1024;
-const RESERVED_OUTPUT_BYTES: usize = 64 * 1024;
-const RESERVED_TOOL_BYTES: usize = 64 * 1024;
+/// Minimum output headroom the fit check reserves. It is an operational bound,
+/// not a model fact. The published output limit caps the actual allowance.
+const MINIMUM_OUTPUT_TOKENS: u64 = 4_096;
 const COMPACTION_NUMERATOR: u64 = 3;
 const COMPACTION_DENOMINATOR: u64 = 4;
+
+/// How the input token count was produced.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TokenPrecision {
+    /// A supported model tokenizer mapping produced the count.
+    Exact,
+    /// No supported mapping exists, so the count is a bounded approximation.
+    Approximate,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ContextEstimate {
     pub(crate) input_tokens: u64,
     pub(crate) reserved_output_tokens: u64,
-    pub(crate) reserved_tool_tokens: u64,
     pub(crate) total_tokens: u64,
     pub(crate) limit: u64,
     pub(crate) catalogue_limit: Option<u64>,
     pub(crate) output_allowance: u64,
+    pub(crate) precision: TokenPrecision,
+    /// A provider-reported count for this exact in-flight request replaced
+    /// tokenisation. Prefix-plus-new-content totals stay `false`.
+    pub(crate) measured: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -33,6 +51,7 @@ pub(crate) enum ContextError {
     Untrusted,
     Overflow,
     Orphan,
+    Continuation,
 }
 
 impl ContextError {
@@ -46,13 +65,18 @@ impl ContextError {
             Self::Orphan => {
                 "A tool result is missing its originating call. Compact cannot drop it."
             }
+            Self::Continuation => {
+                "The model request contains continuation data from another model."
+            }
         }
     }
 }
 
 impl ContextEstimate {
     pub(crate) fn fits(self) -> bool {
-        self.total_tokens <= self.limit
+        self.input_tokens
+            .checked_add(self.reserved_output_tokens)
+            .is_some_and(|total| total <= self.limit)
     }
 
     pub(crate) fn needs_compaction(self, compactable: bool) -> bool {
@@ -60,22 +84,45 @@ impl ContextEstimate {
     }
 
     fn compaction_trigger(self) -> bool {
-        self.input_tokens
-            .saturating_add(self.reserved_output_tokens)
-            .saturating_mul(COMPACTION_DENOMINATOR)
-            >= self.limit.saturating_mul(COMPACTION_NUMERATOR)
+        self.catalogue_limit.is_some_and(|limit| {
+            u128::from(self.total_tokens) * u128::from(COMPACTION_DENOMINATOR)
+                >= u128::from(limit) * u128::from(COMPACTION_NUMERATOR)
+        })
     }
 
-    pub(crate) fn fallback_limit(self) -> bool {
+    /// The catalogue does not publish a context window for this model.
+    pub(crate) fn unknown_capacity(self) -> bool {
         self.catalogue_limit.is_none()
     }
 
+    /// The count is a bounded approximation, not a tokenizer result.
+    pub(crate) fn approximate(self) -> bool {
+        self.precision == TokenPrecision::Approximate
+    }
+
+    /// Replace the estimated input count with a provider-reported count for the
+    /// same request prefix and model. The output allowance is unchanged, so the
+    /// total stays capacity-checked with the same reserve.
+    pub(crate) fn with_measured_input(mut self, input_tokens: u64) -> Self {
+        self.input_tokens = input_tokens;
+        self.total_tokens = input_tokens.saturating_add(self.reserved_output_tokens);
+        self.precision = TokenPrecision::Exact;
+        self.measured = true;
+        self
+    }
+
     pub(crate) fn label(self) -> String {
-        format!(
-            "{} of {} tokens",
-            format_count(self.total_tokens),
-            format_count(self.limit)
-        )
+        match self.catalogue_limit {
+            Some(limit) => format!(
+                "{} input tokens · {} context capacity",
+                format_count(self.input_tokens),
+                format_count(limit)
+            ),
+            None => format!(
+                "{} input tokens · unknown context capacity",
+                format_count(self.input_tokens)
+            ),
+        }
     }
 }
 
@@ -85,6 +132,10 @@ pub(crate) struct ContextRequest<'a> {
     pub(crate) tools: &'a [ToolDefinition],
     pub(crate) turns: &'a [ChatTurn],
     pub(crate) extra: &'a [Message],
+    pub(crate) provider: ProviderKind,
+    pub(crate) model: &'a str,
+    /// Published maximum output tokens for the selected model, when known.
+    pub(crate) output_limit: Option<u64>,
 }
 
 /// The composed preamble with the resource identities that produced it.
@@ -144,12 +195,32 @@ pub(crate) fn effective_limit(catalogue_limit: Option<u64>) -> u64 {
         .unwrap_or(FALLBACK_CONTEXT_TOKENS)
 }
 
+/// Approximate token count from a serialised byte length. The workflow packet
+/// budget still uses this byte-level estimator; conversation requests use
+/// [`measure`] with model tokenisation.
 pub(crate) fn estimate_tokens(bytes: usize) -> Option<u64> {
-    // Byte-level tokens bound arbitrary text without an English-only ratio.
     u64::try_from(bytes).ok()
 }
 
 pub(crate) fn measure(
+    request: ContextRequest<'_>,
+    catalogue_limit: Option<u64>,
+) -> Result<ContextEstimate, ContextError> {
+    let estimate = compose_estimate(request, catalogue_limit)?;
+    if !estimate.fits() {
+        return Err(ContextError::Overflow);
+    }
+    Ok(estimate)
+}
+
+pub(crate) fn inspect(
+    request: ContextRequest<'_>,
+    catalogue_limit: Option<u64>,
+) -> Result<ContextEstimate, ContextError> {
+    compose_estimate(request, catalogue_limit)
+}
+
+fn compose_estimate(
     request: ContextRequest<'_>,
     catalogue_limit: Option<u64>,
 ) -> Result<ContextEstimate, ContextError> {
@@ -174,76 +245,91 @@ pub(crate) fn measure(
             return Err(ContextError::Orphan);
         }
     }
-    let input_bytes = request_bytes(request)?;
+    let messages = crate::providers::project_messages(
+        request.provider,
+        request.model,
+        request.turns,
+        request.extra,
+    )
+    .map_err(|_| ContextError::Continuation)?;
+    let input_bytes = request_bytes(request, &messages)?;
     if input_bytes > MAXIMUM_REQUEST_BYTES {
         return Err(ContextError::Bound);
     }
+    let mut text = String::new();
+    text.push_str(request.preamble);
+    text.push('\n');
+    for tool in request.tools {
+        let encoded = serde_json::to_string(tool).map_err(|_| ContextError::Bound)?;
+        text.push_str(&encoded);
+        text.push('\n');
+    }
+    text.push_str(&crate::providers::projected_token_text(&messages));
+    let (input_tokens, precision) = count_tokens(request.model, &text);
+    let catalogue_limit = catalogue_limit.filter(|limit| *limit > 0);
     let limit = effective_limit(catalogue_limit);
-    let (reserved_output_bytes, reserved_tool_bytes) = reserved_bytes(limit);
-    let total_bytes = input_bytes
-        .checked_add(reserved_output_bytes)
-        .and_then(|bytes| bytes.checked_add(reserved_tool_bytes))
-        .ok_or(ContextError::Bound)?;
-    let input_tokens = estimate_tokens(input_bytes).ok_or(ContextError::Bound)?;
+    let output_limit = request.output_limit.filter(|value| *value > 0);
     let reserved_output_tokens =
-        estimate_tokens(reserved_output_bytes).ok_or(ContextError::Bound)?;
-    let reserved_tool_tokens = estimate_tokens(reserved_tool_bytes).ok_or(ContextError::Bound)?;
-    let total_tokens = estimate_tokens(total_bytes).ok_or(ContextError::Bound)?;
-    let output_allowance = reserved_output_tokens.max(1).min(limit);
-    let estimate = ContextEstimate {
+        operational_output_reserve(limit).min(output_limit.unwrap_or(u64::MAX));
+    let remaining = limit.saturating_sub(input_tokens).max(1);
+    let output_allowance = output_limit
+        .unwrap_or(reserved_output_tokens)
+        .min(remaining)
+        .max(1);
+    let total_tokens = input_tokens.saturating_add(reserved_output_tokens);
+    Ok(ContextEstimate {
         input_tokens,
         reserved_output_tokens,
-        reserved_tool_tokens,
         total_tokens,
         limit,
         catalogue_limit,
         output_allowance,
-    };
-    if !estimate.fits() {
-        return Err(ContextError::Overflow);
-    }
-    Ok(estimate)
-}
-
-pub(crate) fn inspect(
-    request: ContextRequest<'_>,
-    catalogue_limit: Option<u64>,
-) -> Result<ContextEstimate, ContextError> {
-    match measure(request, catalogue_limit) {
-        Ok(estimate) => Ok(estimate),
-        Err(ContextError::Overflow) => overflow_estimate(request, catalogue_limit),
-        Err(error) => Err(error),
-    }
-}
-
-fn overflow_estimate(
-    request: ContextRequest<'_>,
-    catalogue_limit: Option<u64>,
-) -> Result<ContextEstimate, ContextError> {
-    let input_bytes = request_bytes(request)?;
-    let limit = effective_limit(catalogue_limit);
-    let (reserved_output_bytes, reserved_tool_bytes) = reserved_bytes(limit);
-    let total_bytes = input_bytes
-        .saturating_add(reserved_output_bytes)
-        .saturating_add(reserved_tool_bytes);
-    Ok(ContextEstimate {
-        input_tokens: estimate_tokens(input_bytes).unwrap_or(u64::MAX),
-        reserved_output_tokens: estimate_tokens(reserved_output_bytes).unwrap_or(u64::MAX),
-        reserved_tool_tokens: estimate_tokens(reserved_tool_bytes).unwrap_or(u64::MAX),
-        total_tokens: estimate_tokens(total_bytes).unwrap_or(u64::MAX),
-        limit,
-        catalogue_limit,
-        output_allowance: 1,
+        precision,
+        measured: false,
     })
 }
 
-fn reserved_bytes(limit: u64) -> (usize, usize) {
-    let output = (limit / 8).clamp(1, RESERVED_OUTPUT_BYTES as u64 / 4) as usize;
-    let tools = (limit / 4).clamp(1, RESERVED_TOOL_BYTES as u64 / 4) as usize;
-    (output, tools)
+/// Count tokens for a model. Supported mappings use the provider tokenizer.
+/// An OpenRouter-style `vendor/model` identifier falls back to the bare model
+/// name before approximation. Every other model uses a bounded approximation
+/// that treats ASCII text as roughly four characters per token and each
+/// non-ASCII character as one.
+fn count_tokens(model: &str, text: &str) -> (u64, TokenPrecision) {
+    if let Some(bpe) = supported_tokenizer(model) {
+        return (
+            bpe.encode_ordinary(text).len() as u64,
+            TokenPrecision::Exact,
+        );
+    }
+    (approximate_tokens(text), TokenPrecision::Approximate)
 }
 
-fn request_bytes(request: ContextRequest<'_>) -> Result<usize, ContextError> {
+fn supported_tokenizer(model: &str) -> Option<&'static tiktoken_rs::CoreBPE> {
+    if let Ok(bpe) = tiktoken_rs::bpe_for_model(model) {
+        return Some(bpe);
+    }
+    let base = model.rsplit_once('/').map(|(_, base)| base)?;
+    tiktoken_rs::bpe_for_model(base).ok()
+}
+
+fn approximate_tokens(text: &str) -> u64 {
+    let mut ascii = 0u64;
+    let mut non_ascii = 0u64;
+    for character in text.chars() {
+        if character.is_ascii() {
+            ascii += 1;
+        } else {
+            non_ascii += 1;
+        }
+    }
+    ascii.div_ceil(4).saturating_add(non_ascii)
+}
+
+fn operational_output_reserve(limit: u64) -> u64 {
+    (limit / 8).clamp(1, MINIMUM_OUTPUT_TOKENS)
+}
+
+fn request_bytes(request: ContextRequest<'_>, messages: &[Message]) -> Result<usize, ContextError> {
     let mut total = request
         .preamble
         .len()
@@ -254,12 +340,7 @@ fn request_bytes(request: ContextRequest<'_>) -> Result<usize, ContextError> {
             .checked_add(json_byte_len(tool)?)
             .ok_or(ContextError::Bound)?;
     }
-    for turn in request.turns {
-        total = total
-            .checked_add(json_byte_len(turn)?)
-            .ok_or(ContextError::Bound)?;
-    }
-    for message in request.extra {
+    for message in messages {
         total = total
             .checked_add(json_byte_len(message)?)
             .ok_or(ContextError::Bound)?;

@@ -2,7 +2,8 @@ use std::time::{Duration, Instant};
 
 use super::{
     MAXIMUM_PROVIDER_DETAIL_BYTES, ModelEvent, ProviderConnection, ProviderError, ProviderKind,
-    SecretString, ThinkingEffort, classify_failure_status, classify_verify_status, provider_detail,
+    SecretString, ThinkingEffort, classify_failure_status, classify_verify_status,
+    project_messages, projected_token_text, provider_detail,
     rig::{VERIFY_TIMEOUT, map_finish_reason, reported_usage, thinking_parameters, verify_at},
     with_json_detail, with_provider_detail,
 };
@@ -122,6 +123,37 @@ fn raw_usage_retains_zero_and_does_not_infer_missing_output() {
         reported_usage(&terminal),
         Some(ModelEvent::Usage {
             output_tokens: Some(0),
+            ..
+        })
+    ));
+}
+
+#[test]
+fn cached_input_is_a_subset_and_malformed_counts_stay_unknown() {
+    let mut terminal =
+        rig_core::streaming::StreamFinal::new("deepseek", rig_core::completion::Usage::new());
+    terminal.raw = serde_json::json!({"usage": {
+        "prompt_tokens": 100,
+        "prompt_cache_hit_tokens": 60,
+        "completion_tokens": 2
+    }});
+    assert!(matches!(
+        reported_usage(&terminal),
+        Some(ModelEvent::Usage {
+            input_tokens: Some(100),
+            cache_read_tokens: Some(60),
+            output_tokens: Some(2),
+            ..
+        })
+    ));
+    terminal.raw["usage"]["prompt_tokens"] = serde_json::json!(-1);
+    terminal.raw["usage"]["prompt_cache_hit_tokens"] = serde_json::json!("60");
+    assert!(matches!(
+        reported_usage(&terminal),
+        Some(ModelEvent::Usage {
+            input_tokens: None,
+            cache_read_tokens: None,
+            output_tokens: Some(2),
             ..
         })
     ));
@@ -883,6 +915,143 @@ mod scripted_fixture {
 }
 
 pub(crate) use scripted_fixture::ScriptedBackend;
+
+#[tokio::test]
+async fn output_allowance_does_not_change_reasoning_selection() {
+    use rig_core::client::CompletionClient;
+    let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+    let router = axum::Router::new().route(
+        "/chat/completions",
+        axum::routing::post(move |axum::Json(body): axum::Json<serde_json::Value>| {
+            let sender = sender.clone();
+            async move {
+                sender.send(body).await.unwrap();
+                ([("content-type", "text/event-stream")], "data: [DONE]\n\n")
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let client = rig_core::providers::deepseek::Client::builder()
+        .api_key("key")
+        .base_url(format!("http://{address}"))
+        .build()
+        .unwrap();
+    let mut connection =
+        ProviderConnection::with_key(ProviderKind::Deepseek, "key", "deepseek-v4-flash");
+    connection.thinking = Some(ThinkingEffort::new("high".to_owned()).unwrap());
+    for allowance in [None, Some(512)] {
+        let stream = super::rig::stream_messages(
+            client.completion_model(&connection.model),
+            &[super::ChatTurn::user("こんにちは".to_owned())],
+            &[],
+            &[],
+            "Help.",
+            &connection,
+            allowance,
+        )
+        .await
+        .unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            futures_util::StreamExt::collect::<Vec<_>>(stream),
+        )
+        .await
+        .expect("bounded response");
+        let body = tokio::time::timeout(Duration::from_secs(5), receiver.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(body["thinking"]["type"], "enabled");
+        assert_eq!(body["reasoning_effort"], "high");
+        assert_eq!(body["max_tokens"].as_u64(), allowance);
+    }
+    server.abort();
+}
+
+#[test]
+fn projection_keeps_tool_exchanges_and_drops_opaque_continuation() {
+    use crate::conversations::{ContinuationBlock, ContinuationMetadata};
+    use crate::providers::{AssistantReply, ChatTurn, ToolOutput};
+
+    let mut reply = AssistantReply::default();
+    reply.push_response("used read");
+    reply.start_tool(
+        "call-1".to_owned(),
+        "read".to_owned(),
+        serde_json::json!({"path": "src/main.rs"}),
+    );
+    reply.finish_tool(
+        "call-1",
+        ToolOutput {
+            resource: None,
+            label: "read src/main.rs".to_owned(),
+            output: "fn main() {}".to_owned(),
+            command: None,
+        },
+    );
+    reply.continuation.push(ContinuationMetadata {
+        provider: ProviderKind::Deepseek,
+        model: "deepseek-v4-flash".to_owned(),
+        reasoning_id: None,
+        blocks: vec![ContinuationBlock::Encrypted {
+            data: "foreign-opaque".to_owned(),
+        }],
+    });
+    reply.continuation.push(ContinuationMetadata {
+        provider: ProviderKind::Xai,
+        model: "grok-4.6".to_owned(),
+        reasoning_id: None,
+        blocks: vec![ContinuationBlock::Encrypted {
+            data: "selected-opaque".to_owned(),
+        }],
+    });
+    let assistant = ChatTurn::assistant(reply);
+    let messages =
+        project_messages(ProviderKind::Xai, "grok-4.6", &[assistant], &[]).expect("projection");
+    assert_eq!(messages.len(), 2);
+    let text = projected_token_text(&messages);
+    assert!(text.contains("fn main() {}"));
+    assert!(text.contains("src/main.rs"));
+    assert!(!text.contains("foreign-opaque"));
+    assert!(!text.contains("selected-opaque"));
+}
+
+#[test]
+fn projection_rejects_foreign_model_and_unsettled_calls() {
+    use crate::conversations::{ContinuationBlock, ContinuationMetadata};
+    use crate::providers::{AssistantReply, ChatToolCall, ChatTurn, Role};
+
+    let mut reply = AssistantReply::default();
+    reply.continuation.push(ContinuationMetadata {
+        provider: ProviderKind::Xai,
+        model: "other-model".to_owned(),
+        reasoning_id: None,
+        blocks: vec![ContinuationBlock::Encrypted {
+            data: "opaque".to_owned(),
+        }],
+    });
+    let foreign = ChatTurn::assistant(reply);
+    assert!(project_messages(ProviderKind::Xai, "grok-4.6", &[foreign], &[]).is_err());
+
+    let unsettled = ChatTurn {
+        role: Role::Assistant,
+        text: String::new(),
+        thinking: String::new(),
+        tools: Vec::new(),
+        activity: Vec::new(),
+        usage: Vec::new(),
+        calls: vec![ChatToolCall {
+            id: "call-1".to_owned(),
+            name: "read".to_owned(),
+            arguments: serde_json::json!({"path": "src/main.rs"}),
+            result: None,
+        }],
+        continuation: Vec::new(),
+    };
+    assert!(project_messages(ProviderKind::Xai, "grok-4.6", &[unsettled], &[]).is_err());
+}
 
 #[test]
 fn assistant_turn_carries_call_arguments_and_matching_results() {

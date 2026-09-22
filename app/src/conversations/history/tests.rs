@@ -354,6 +354,17 @@ fn cost_does_not_double_count_cache_tokens_included_in_input() {
 }
 
 #[test]
+fn cache_tokens_above_input_stay_incomplete() {
+    let mut usage = ModelUsage::new(ProviderKind::Xai, "grok-4");
+    usage.input_tokens = Some(10);
+    usage.output_tokens = Some(1);
+    usage.cache_read_tokens = Some(40);
+    let recorded = request(RequestId::generate().expect("request"), usage);
+    let cost = request_cost(&recorded);
+    assert!(cost.incomplete);
+}
+
+#[test]
 fn plan_authentication_does_not_use_api_prices() {
     let mut usage = ModelUsage::new(ProviderKind::Xai, "grok-4");
     usage.input_tokens = Some(100);

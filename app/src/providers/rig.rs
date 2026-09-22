@@ -5,7 +5,7 @@ use rig_core::{
     client::CompletionClient,
     completion::{
         AssistantContent, CompletionError, CompletionModel, FinishReason, Message, ToolDefinition,
-        message::ReasoningContent,
+        message::{ReasoningContent, ToolResultContent, UserContent},
     },
     providers::{chatgpt, deepseek, openai, openrouter, xai},
     streaming::StreamedAssistantContent,
@@ -315,23 +315,20 @@ fn retry_after_from_completion(error: &CompletionError) -> Option<&str> {
         .ok()
 }
 
-async fn stream_messages<M>(
-    model: M,
+/// Dispatch and context estimation share this projection to exclude local
+/// metadata and duplicate activity from both requests.
+pub(crate) fn project_messages(
+    kind: ProviderKind,
+    model: &str,
     history: &[ChatTurn],
     extra: &[Message],
-    tools: &[ToolDefinition],
-    preamble: &str,
-    connection: &ProviderConnection,
-    max_tokens: Option<u64>,
-) -> Result<ModelStream, ProviderError>
-where
-    M: CompletionModel + Clone,
-{
+) -> Result<Vec<Message>, ProviderError> {
     for turn in history {
         if !crate::conversations::history::valid_continuation(&turn.continuation)
-            || turn.continuation.iter().any(|metadata| {
-                metadata.provider == connection.kind && metadata.model != connection.model
-            })
+            || turn
+                .continuation
+                .iter()
+                .any(|metadata| metadata.provider == kind && metadata.model != model)
         {
             return Err(ProviderError::Detail(
                 crate::conversations::history::HistoryError::Continuation
@@ -357,7 +354,7 @@ where
                     content.push(AssistantContent::text(turn.text.clone()));
                 }
                 for metadata in &turn.continuation {
-                    if metadata.provider != connection.kind {
+                    if metadata.provider != kind {
                         continue;
                     }
                     let blocks = metadata
@@ -396,6 +393,91 @@ where
         })
         .collect::<Vec<_>>();
     messages.extend(extra.iter().cloned());
+    Ok(messages)
+}
+
+/// Collect the text that a tokenizer can count from a projected request.
+/// Visible text, tool arguments and tool-result text contribute. Local usage
+/// records and duplicated `activity` never reach the projection. Opaque
+/// continuation encodings have no known text token count.
+pub(crate) fn projected_token_text(messages: &[Message]) -> String {
+    let mut text = String::new();
+    for message in messages {
+        match message {
+            Message::System { content } => push_line(&mut text, content),
+            Message::User { content } => {
+                for item in content {
+                    match item {
+                        UserContent::Text(value) => push_line(&mut text, &value.text),
+                        UserContent::ToolResult(result) => {
+                            for part in &result.content {
+                                match part {
+                                    ToolResultContent::Text(value) => {
+                                        push_line(&mut text, &value.text);
+                                    }
+                                    ToolResultContent::Json { value } => {
+                                        if let Ok(encoded) = serde_json::to_string(value) {
+                                            push_line(&mut text, &encoded);
+                                        }
+                                    }
+                                    ToolResultContent::Image(_) => {}
+                                }
+                            }
+                        }
+                        UserContent::Image(_)
+                        | UserContent::Audio(_)
+                        | UserContent::Video(_)
+                        | UserContent::Document(_) => {}
+                    }
+                }
+            }
+            Message::Assistant { content, .. } => {
+                for item in content {
+                    match item {
+                        AssistantContent::Text(value) => push_line(&mut text, &value.text),
+                        AssistantContent::ToolCall(call) => {
+                            push_line(&mut text, &call.function.name);
+                            if let Ok(arguments) = serde_json::to_string(&call.function.arguments) {
+                                push_line(&mut text, &arguments);
+                            }
+                        }
+                        AssistantContent::Reasoning(reasoning) => {
+                            for part in &reasoning.content {
+                                if let ReasoningContent::Text { text: value, .. } = part {
+                                    push_line(&mut text, value);
+                                }
+                            }
+                        }
+                        AssistantContent::Image(_) => {}
+                    }
+                }
+            }
+        }
+    }
+    text
+}
+
+fn push_line(text: &mut String, value: &str) {
+    if value.is_empty() {
+        return;
+    }
+    text.push_str(value);
+    text.push('\n');
+}
+
+pub(super) async fn stream_messages<M>(
+    model: M,
+    history: &[ChatTurn],
+    extra: &[Message],
+    tools: &[ToolDefinition],
+    preamble: &str,
+    connection: &ProviderConnection,
+    max_tokens: Option<u64>,
+) -> Result<ModelStream, ProviderError>
+where
+    M: CompletionModel + Clone,
+{
+    let mut messages = project_messages(connection.kind, &connection.model, history, extra)?;
     let Some(prompt) = messages.pop() else {
         return Err(ProviderError::EmptyReply);
     };
@@ -403,16 +485,9 @@ where
         .completion_request(prompt)
         .preamble(preamble.to_owned())
         .messages(messages);
-    let parameters = if max_tokens.is_some() {
-        match connection.kind {
-            ProviderKind::Deepseek => Some(serde_json::json!({"thinking": {"type": "disabled"}})),
-            ProviderKind::Openrouter => Some(serde_json::json!({"reasoning": {"enabled": false}})),
-            _ => thinking_parameters(connection),
-        }
-    } else {
-        thinking_parameters(connection)
-    };
-    if let Some(parameters) = parameters {
+    // Reasoning selection follows the saved thinking effort only. An output
+    // allowance is a capacity bound and never changes the reasoning decision.
+    if let Some(parameters) = thinking_parameters(connection) {
         request = request.additional_params(parameters);
     }
     if let Some(limit) = max_tokens {

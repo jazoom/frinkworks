@@ -1,6 +1,6 @@
 use rig_core::completion::ToolDefinition;
 
-use crate::providers::{ChatToolCall, ChatTurn, ToolOutput};
+use crate::providers::{ChatToolCall, ChatTurn, ProviderKind, ToolOutput};
 
 use super::{ContextError, ContextRequest, FALLBACK_CONTEXT_TOKENS, inspect, measure};
 
@@ -14,6 +14,9 @@ fn request<'a>(
         tools,
         turns,
         extra: &[],
+        provider: ProviderKind::Xai,
+        model: "uncatalogued-model",
+        output_limit: None,
     }
 }
 
@@ -50,7 +53,7 @@ fn unknown_catalogue_capacity_uses_the_conservative_fallback() {
     let turns = [user("Hello")];
     let estimate = measure(request("Help.", &[], &turns), None).expect("fits fallback");
     assert_eq!(estimate.limit, FALLBACK_CONTEXT_TOKENS);
-    assert!(estimate.fallback_limit());
+    assert!(estimate.unknown_capacity());
     assert!(estimate.fits());
     assert!(estimate.output_allowance > 0);
 }
@@ -64,6 +67,123 @@ fn a_known_model_limit_is_enforced() {
     assert!(!estimate.fits());
     assert_eq!(estimate.catalogue_limit, Some(100));
     assert_eq!(estimate.limit, 100);
+}
+
+#[test]
+fn supported_models_use_a_tokenizer_and_other_models_use_an_approximation() {
+    let turns = [user("Hello, world. こんにちは世界。")];
+    let supported = ContextRequest {
+        model: "gpt-4o",
+        ..request("Help.", &[], &turns)
+    };
+    let estimate = inspect(supported, Some(128_000)).expect("inspect");
+    assert!(!estimate.approximate());
+
+    let vendor = ContextRequest {
+        model: "openai/gpt-4o",
+        ..request("Help.", &[], &turns)
+    };
+    let estimate = inspect(vendor, Some(128_000)).expect("inspect");
+    assert!(!estimate.approximate());
+
+    let fallback = inspect(request("Help.", &[], &turns), Some(128_000)).expect("inspect");
+    assert!(fallback.approximate());
+}
+
+#[test]
+fn token_counts_are_not_serialised_byte_lengths() {
+    let turns = [user("alpha beta gamma delta epsilon")];
+    let estimate = measure(request("Help.", &[], &turns), Some(8_000)).expect("fits");
+    let text = "alpha beta gamma delta epsilon";
+    assert!(estimate.input_tokens < text.len() as u64);
+}
+
+#[test]
+fn a_known_output_limit_caps_the_allowance_and_unknown_stays_operational() {
+    let turns = [user("Hello")];
+    let known = ContextRequest {
+        output_limit: Some(512),
+        ..request("Help.", &[], &turns)
+    };
+    let estimate = inspect(known, Some(128_000)).expect("inspect");
+    assert_eq!(estimate.output_allowance, 512);
+
+    let unknown = inspect(request("Help.", &[], &turns), Some(128_000)).expect("inspect");
+    assert!(unknown.output_allowance > 0);
+    assert!(unknown.output_allowance < 128_000);
+}
+
+#[test]
+fn usage_never_carries_over_to_a_new_request() {
+    use crate::conversations::RequestUsage;
+    use crate::providers::ModelUsage;
+    let mut turns = [user("x".repeat(400))];
+    let original = inspect(request("Help.", &[], &turns), Some(128_000)).unwrap();
+    let maximum_capacity = inspect(request("Help.", &[], &turns), Some(u64::MAX)).unwrap();
+    let measured = maximum_capacity.with_measured_input(u64::MAX);
+    assert!(!measured.fits());
+    assert!(measured.needs_compaction(true));
+    let mut usage = ModelUsage::new(ProviderKind::Xai, "another-model");
+    usage.input_tokens = Some(u64::MAX);
+    turns[0].usage.push(RequestUsage {
+        usage,
+        id: crate::conversations::RequestId::generate().unwrap(),
+        auth: crate::providers::AuthMethod::ApiKey,
+        prices: None,
+        sources: Vec::new(),
+        advertised: Vec::new(),
+    });
+    let next = inspect(request("Help.", &[], &turns), Some(128_000)).unwrap();
+    assert_eq!(next, original);
+    assert!(!next.measured);
+}
+
+#[test]
+fn unknown_capacity_never_uses_a_percentage_trigger() {
+    let turns = [user("x".repeat(100_000))];
+    for capacity in [None, Some(0)] {
+        let estimate = inspect(request("Help.", &[], &turns), capacity).unwrap();
+        assert!(estimate.unknown_capacity());
+        assert!(estimate.fits());
+        assert!(!estimate.needs_compaction(true));
+    }
+}
+
+#[test]
+fn small_output_limits_do_not_reserve_impossible_headroom() {
+    let turns = [user("x".repeat(3_400))];
+    let request = ContextRequest {
+        output_limit: Some(64),
+        ..request("Help.", &[], &turns)
+    };
+    let estimate = measure(request, Some(1_000)).unwrap();
+    assert_eq!(estimate.reserved_output_tokens, 64);
+    assert_eq!(estimate.output_allowance, 64);
+}
+
+#[test]
+fn stale_continuation_from_another_model_is_rejected() {
+    use crate::conversations::{ContinuationBlock, ContinuationMetadata};
+    use crate::providers::Role;
+    let mut turn = user("Hello");
+    turn.role = Role::Assistant;
+    turn.continuation.push(ContinuationMetadata {
+        provider: ProviderKind::Xai,
+        model: "grok-3".to_owned(),
+        reasoning_id: None,
+        blocks: vec![ContinuationBlock::Encrypted {
+            data: "opaque".to_owned(),
+        }],
+    });
+    let turns = [turn];
+    let stale = ContextRequest {
+        model: "grok-4.6",
+        ..request("Help.", &[], &turns)
+    };
+    assert_eq!(
+        measure(stale, Some(128_000)),
+        Err(ContextError::Continuation)
+    );
 }
 
 #[test]
@@ -113,11 +233,24 @@ fn a_complete_tool_exchange_counts_toward_capacity() {
     ];
     measure(request("Help.", &[], &turns), Some(32_768)).expect("fits");
     let mut larger = turns.clone();
-    larger[1].calls[0].result.as_mut().unwrap().output = "x".repeat(32_768);
+    larger[1].calls[0].result.as_mut().unwrap().output = "x".repeat(200_000);
     assert_eq!(
         measure(request("Help.", &[], &larger), Some(32_768)),
         Err(ContextError::Overflow)
     );
+}
+
+#[test]
+fn tool_declarations_contribute_to_input_tokens_once() {
+    let turns = [user("Hello")];
+    let without = inspect(request("Help.", &[], &turns), Some(128_000)).expect("inspect");
+    let tools = [ToolDefinition {
+        name: "read".to_owned(),
+        description: "Read a file from an approved root.".to_owned(),
+        parameters: serde_json::json!({"type": "object", "properties": {"path": {"type": "string"}}}),
+    }];
+    let with = inspect(request("Help.", &tools, &turns), Some(128_000)).expect("inspect");
+    assert!(with.input_tokens > without.input_tokens);
 }
 
 #[test]

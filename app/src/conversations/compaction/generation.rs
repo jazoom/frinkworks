@@ -29,6 +29,11 @@ pub(crate) async fn generate(
             tools: &[],
             turns: &history,
             extra: &[],
+            provider: connection.kind,
+            model: &connection.model,
+            output_limit: state
+                .models_dev
+                .output_limit(connection.kind, &connection.model),
         },
         state
             .models_dev

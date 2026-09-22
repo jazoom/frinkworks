@@ -150,7 +150,10 @@ fn source_filter_uses_fallback_identifiers_and_deduplicates_efforts() {
             .iter()
             .find(|model| model.id == ProviderKind::parse(&provider.id).unwrap().default_model())
             .expect("default model");
-        model.efforts == ["high"] && model.attachment && model.limit.context == 128_000
+        model.efforts == ["high"]
+            && model.attachment
+            && model.limit.context == 128_000
+            && model.limit.output == 8_000
     }));
     let openai = snapshot
         .providers
@@ -169,7 +172,9 @@ fn source_filter_uses_fallback_identifiers_and_deduplicates_efforts() {
     let stored = serde_json::to_value(&snapshot).expect("stored snapshot");
     let model = &stored["providers"][0]["models"][0];
     assert!(model.get("agent_compatible").is_none());
-    assert_eq!(model["limit"].as_object().expect("limit").len(), 1);
+    let limit = model["limit"].as_object().expect("limit");
+    assert_eq!(limit.len(), 2);
+    assert_eq!(limit["output"], serde_json::json!(8_000));
 }
 
 #[test]

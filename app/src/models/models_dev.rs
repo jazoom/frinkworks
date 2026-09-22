@@ -48,6 +48,8 @@ pub(crate) struct ModelMetadata {
     pub(crate) id: String,
     pub(crate) attachment: bool,
     pub(crate) context_limit: u64,
+    /// Published maximum output tokens. Zero means the catalogue is silent.
+    pub(crate) output_limit: u64,
 }
 
 /// Millionths of a US dollar per million tokens. Missing categories stay unknown.
@@ -186,6 +188,14 @@ impl ModelsDevCatalogue {
     pub(crate) fn context_limit(&self, kind: ProviderKind, id: &str) -> Option<u64> {
         self.model(kind, id)
             .map(|model| model.context_limit)
+            .filter(|limit| *limit > 0)
+    }
+
+    /// Published maximum output tokens for a model. Unknown capacity stays
+    /// `None` so callers do not turn it into a percentage or a budget.
+    pub(crate) fn output_limit(&self, kind: ProviderKind, id: &str) -> Option<u64> {
+        self.model(kind, id)
+            .map(|model| model.output_limit)
             .filter(|limit| *limit > 0)
     }
 
@@ -376,6 +386,7 @@ fn model_metadata(model: &catalogue::Model) -> ModelMetadata {
         id: model.id.clone(),
         attachment: model.attachment,
         context_limit: model.limit.context,
+        output_limit: model.limit.output,
     }
 }
 
