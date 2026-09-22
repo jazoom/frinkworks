@@ -61,6 +61,23 @@ CREATE TABLE IF NOT EXISTS summary_requests (
     UNIQUE (conversation_id, id),
     FOREIGN KEY (conversation_id) REFERENCES conversations(id)
 );
+CREATE TABLE IF NOT EXISTS attachments (
+    id TEXT PRIMARY KEY NOT NULL,
+    sha256 TEXT NOT NULL,
+    format TEXT NOT NULL,
+    width INTEGER NOT NULL,
+    height INTEGER NOT NULL,
+    byte_length INTEGER NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    session TEXT,
+    scope TEXT NOT NULL DEFAULT '',
+    conversation_id TEXT,
+    message_id TEXT,
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS attachment_sha ON attachments(sha256);
+CREATE INDEX IF NOT EXISTS attachment_conversation ON attachments(conversation_id);
+CREATE INDEX IF NOT EXISTS attachment_session ON attachments(session);
 ";
 
 // Strict append order bounds the walk without cumulative ancestor strings.
@@ -1067,6 +1084,325 @@ impl Database {
         transaction.commit().map_err(map_error)
     }
 
+    /// Commit one conversation and its staged attachment claims together.
+    /// Every claim row must still be session-owned and unclaimed, or the
+    /// whole transaction rolls back.
+    pub(crate) fn save_with_attachments(
+        &mut self,
+        previous: Option<&ConversationRecord>,
+        record: &ConversationRecord,
+        claim: Option<&super::AttachmentClaim>,
+    ) -> Result<(), ConversationError> {
+        let transaction = self.connection.transaction().map_err(map_error)?;
+        write_conversation(&transaction, previous, record)?;
+        if let Some(claim) = claim {
+            let session = claim.session.ok_or(ConversationError::Image(
+                crate::conversations::attachments::AttachmentError::Foreign,
+            ))?;
+            for id in &claim.ids {
+                if claim.restage {
+                    let changed = transaction.execute(
+                        "UPDATE attachments SET session = ?2, scope = ?3, conversation_id = NULL, message_id = NULL, created_at_ms = ?4
+                         WHERE id = ?1 AND conversation_id = ?5 AND message_id IS NULL",
+                        params![id.as_hex(), session.as_hex(), claim.scope, i64::try_from(now_ms()).unwrap_or(i64::MAX), claim.conversation.as_hex()],
+                    ).map_err(map_error)?;
+                    if changed != 1 {
+                        return Err(ConversationError::Image(
+                            crate::conversations::attachments::AttachmentError::Consumed,
+                        ));
+                    }
+                    continue;
+                }
+                let changed = transaction
+                    .execute(
+                        "UPDATE attachments SET session = NULL, conversation_id = ?2, message_id = ?3
+                         WHERE id = ?1 AND session = ?4 AND scope = ?5
+                         AND conversation_id IS NULL AND message_id IS NULL AND created_at_ms >= ?6",
+                        params![
+                            id.as_hex(),
+                            claim.conversation.as_hex(),
+                            claim.message.map(|message| message.as_hex()),
+                            session.as_hex(),
+                            claim.scope,
+                            staging_cutoff(),
+                        ],
+                    )
+                    .map_err(map_error)?;
+                if changed != 1 {
+                    return Err(ConversationError::Image(
+                        crate::conversations::attachments::AttachmentError::Consumed,
+                    ));
+                }
+            }
+        }
+        transaction.commit().map_err(map_error)
+    }
+
+    /// Bind inherited references to a fork without copying object bytes.
+    pub(crate) fn clone_attachments(
+        &mut self,
+        record: &ConversationRecord,
+        references: &[crate::conversations::attachments::AttachmentRef],
+    ) -> Result<(), ConversationError> {
+        let transaction = self.connection.transaction().map_err(map_error)?;
+        write_conversation(&transaction, None, record)?;
+        for reference in references {
+            transaction
+                .execute(
+                    "INSERT INTO attachments
+                        (id, sha256, format, width, height, byte_length, created_at_ms,
+                         session, scope, conversation_id, message_id)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, '', ?8, NULL)",
+                    params![
+                        reference.id.as_hex(),
+                        reference.sha256,
+                        reference.format.as_str(),
+                        i64::from(reference.width),
+                        i64::from(reference.height),
+                        i64::try_from(reference.byte_length).unwrap_or(i64::MAX),
+                        i64::try_from(now_ms()).unwrap_or(i64::MAX),
+                        record.id.as_hex(),
+                    ],
+                )
+                .map_err(map_error)?;
+        }
+        transaction.commit().map_err(map_error)
+    }
+
+    pub(crate) fn insert_attachment(
+        &mut self,
+        session: crate::sessions::SessionId,
+        scope: &str,
+        reference: &crate::conversations::attachments::AttachmentRef,
+    ) -> Result<(), ConversationError> {
+        let inserted = self
+            .connection
+            .execute(
+                "INSERT INTO attachments
+                    (id, sha256, format, width, height, byte_length, created_at_ms, session, scope)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    reference.id.as_hex(),
+                    reference.sha256,
+                    reference.format.as_str(),
+                    i64::from(reference.width),
+                    i64::from(reference.height),
+                    i64::try_from(reference.byte_length).unwrap_or(i64::MAX),
+                    i64::try_from(now_ms()).unwrap_or(i64::MAX),
+                    session.as_hex(),
+                    scope,
+                ],
+            )
+            .map_err(map_error)?;
+        if inserted != 1 {
+            return Err(ConversationError::Conflict);
+        }
+        Ok(())
+    }
+
+    /// Remove one staged row. Returns the object digest only when no other row
+    /// references it, so shared objects survive a single removal.
+    pub(crate) fn delete_staged_attachment(
+        &mut self,
+        session: crate::sessions::SessionId,
+        scope: &str,
+        id: crate::conversations::AttachmentId,
+    ) -> Result<Option<String>, ConversationError> {
+        let transaction = self.connection.transaction().map_err(map_error)?;
+        let digest: Option<String> = transaction
+            .query_row(
+                "SELECT sha256 FROM attachments
+                 WHERE id = ?1 AND session = ?2 AND scope = ?3
+                 AND conversation_id IS NULL AND message_id IS NULL",
+                params![id.as_hex(), session.as_hex(), scope],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(map_error)?;
+        let Some(digest) = digest else {
+            return Err(ConversationError::Image(
+                crate::conversations::attachments::AttachmentError::Foreign,
+            ));
+        };
+        transaction
+            .execute("DELETE FROM attachments WHERE id = ?1", [id.as_hex()])
+            .map_err(map_error)?;
+        let orphan = unreferenced_digest(&transaction, &digest)?;
+        transaction.commit().map_err(map_error)?;
+        Ok(orphan)
+    }
+
+    /// Delete one queue-owned reference and report its object digest only when
+    /// no other row references it.
+    pub(super) fn delete_owned_attachment(
+        &mut self,
+        conversation: &ConversationId,
+        id: crate::conversations::AttachmentId,
+    ) -> Result<Option<String>, ConversationError> {
+        let transaction = self.connection.transaction().map_err(map_error)?;
+        let digest: Option<String> = transaction
+            .query_row(
+                "SELECT sha256 FROM attachments
+                 WHERE conversation_id = ?1 AND id = ?2 AND message_id IS NULL",
+                params![conversation.as_hex(), id.as_hex()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(map_error)?;
+        let Some(digest) = digest else {
+            return Ok(None);
+        };
+        transaction
+            .execute("DELETE FROM attachments WHERE id = ?1", [id.as_hex()])
+            .map_err(map_error)?;
+        let orphan = unreferenced_digest(&transaction, &digest)?;
+        transaction.commit().map_err(map_error)?;
+        Ok(orphan)
+    }
+
+    /// Expire unclaimed rows and return digests with no remaining owner.
+    pub(crate) fn expire_staging(&mut self, ttl_ms: u64) -> Result<Vec<String>, ConversationError> {
+        let cutoff = now_ms().saturating_sub(ttl_ms);
+        let transaction = self.connection.transaction().map_err(map_error)?;
+        let mut digests = Vec::new();
+        {
+            let mut statement = transaction
+                .prepare(
+                    "SELECT DISTINCT sha256 FROM attachments
+                     WHERE conversation_id IS NULL AND created_at_ms <= ?1 AND (scope NOT LIKE 'fork-%' OR ?2)",
+                )
+                .map_err(map_error)?;
+            let rows = statement
+                .query_map(
+                    params![i64::try_from(cutoff).unwrap_or(i64::MAX), ttl_ms == 0],
+                    |row| row.get::<_, String>(0),
+                )
+                .map_err(map_error)?;
+            for row in rows {
+                digests.push(row.map_err(map_error)?);
+            }
+        }
+        transaction
+            .execute(
+                "DELETE FROM attachments WHERE conversation_id IS NULL AND created_at_ms <= ?1 AND (scope NOT LIKE 'fork-%' OR ?2)",
+                params![i64::try_from(cutoff).unwrap_or(i64::MAX), ttl_ms == 0],
+            )
+            .map_err(map_error)?;
+        let mut orphans = Vec::new();
+        for digest in digests {
+            if let Some(digest) = unreferenced_digest(&transaction, &digest)? {
+                orphans.push(digest);
+            }
+        }
+        transaction.commit().map_err(map_error)?;
+        Ok(orphans)
+    }
+
+    pub(super) fn staged_attachment_for_session(
+        &self,
+        session: crate::sessions::SessionId,
+        scope: &str,
+        id: crate::conversations::AttachmentId,
+    ) -> Result<crate::conversations::attachments::AttachmentRef, ConversationError> {
+        let reference: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT sha256 || '|' || format || '|' || width || '|' || height || '|' || byte_length
+                 FROM attachments
+                 WHERE id = ?1 AND session = ?2 AND scope = ?3
+                 AND conversation_id IS NULL AND message_id IS NULL AND created_at_ms >= ?4",
+                params![id.as_hex(), session.as_hex(), scope, staging_cutoff()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(map_error)?;
+        match reference {
+            Some(encoded) => attachment_ref(id.as_hex(), encoded),
+            None => Err(ConversationError::Image(
+                crate::conversations::attachments::AttachmentError::Foreign,
+            )),
+        }
+    }
+
+    /// List the staged references for one session and scope in claim order.
+    pub(super) fn staged_attachments_for_scope(
+        &self,
+        session: crate::sessions::SessionId,
+        scope: &str,
+    ) -> Result<Vec<crate::conversations::attachments::AttachmentRef>, ConversationError> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT sha256, format, width, height, byte_length, id FROM attachments
+                 WHERE session = ?1 AND scope = ?2 AND conversation_id IS NULL AND created_at_ms >= ?3
+                 ORDER BY created_at_ms, rowid",
+            )
+            .map_err(map_error)?;
+        let rows = statement
+            .query_map(params![session.as_hex(), scope, staging_cutoff()], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, String>(5)?,
+                ))
+            })
+            .map_err(map_error)?;
+        let mut references = Vec::new();
+        for row in rows {
+            let (sha256, format, width, height, byte_length, id) = row.map_err(map_error)?;
+            references.push(attachment_ref(
+                id,
+                format!("{sha256}|{format}|{width}|{height}|{byte_length}"),
+            )?);
+        }
+        Ok(references)
+    }
+
+    pub(crate) fn staged_attachments(
+        &self,
+        session: Option<crate::sessions::SessionId>,
+        scope: &str,
+        ids: &[crate::conversations::AttachmentId],
+    ) -> Result<Vec<crate::conversations::attachments::AttachmentRef>, ConversationError> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let session = session.ok_or(ConversationError::Image(
+            crate::conversations::attachments::AttachmentError::Foreign,
+        ))?;
+        let mut references = Vec::with_capacity(ids.len());
+        for id in ids {
+            references.push(self.staged_attachment_for_session(session, scope, *id)?);
+        }
+        Ok(references)
+    }
+
+    pub(super) fn attachment_for_conversation(
+        &self,
+        conversation: &ConversationId,
+        id: crate::conversations::AttachmentId,
+    ) -> Result<crate::conversations::attachments::AttachmentRef, ConversationError> {
+        let reference: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT sha256 || '|' || format || '|' || width || '|' || height || '|' || byte_length
+                 FROM attachments WHERE conversation_id = ?1 AND id = ?2",
+                params![conversation.as_hex(), id.as_hex()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(map_error)?;
+        match reference {
+            Some(encoded) => attachment_ref(id.as_hex(), encoded),
+            None => Err(ConversationError::Image(
+                crate::conversations::attachments::AttachmentError::Foreign,
+            )),
+        }
+    }
+
     /// Commit two conversation projections in one transaction. Ownership
     /// transfer needs both rows before the run journal can be cleared.
     pub(crate) fn save_pair(
@@ -1082,9 +1418,24 @@ impl Database {
         transaction.commit().map_err(map_error)
     }
 
-    pub(crate) fn remove(&mut self, id: &ConversationId) -> Result<(), ConversationError> {
+    /// Delete one conversation and its references. Returns every object
+    /// digest that no remaining row references; the caller removes those
+    /// files after the commit.
+    pub(crate) fn remove(&mut self, id: &ConversationId) -> Result<Vec<String>, ConversationError> {
         let transaction = self.connection.transaction().map_err(map_error)?;
         let hex = id.as_hex();
+        let mut digests = Vec::new();
+        {
+            let mut statement = transaction
+                .prepare("SELECT DISTINCT sha256 FROM attachments WHERE conversation_id = ?1")
+                .map_err(map_error)?;
+            let rows = statement
+                .query_map([&hex], |row| row.get::<_, String>(0))
+                .map_err(map_error)?;
+            for row in rows {
+                digests.push(row.map_err(map_error)?);
+            }
+        }
         transaction
             .execute("DELETE FROM messages WHERE conversation_id = ?1", [&hex])
             .map_err(map_error)?;
@@ -1095,10 +1446,88 @@ impl Database {
             )
             .map_err(map_error)?;
         transaction
+            .execute("DELETE FROM attachments WHERE conversation_id = ?1", [&hex])
+            .map_err(map_error)?;
+        transaction
             .execute("DELETE FROM conversations WHERE id = ?1", [&hex])
             .map_err(map_error)?;
-        transaction.commit().map_err(map_error)
+        let mut orphans = Vec::new();
+        for digest in digests {
+            if let Some(digest) = unreferenced_digest(&transaction, &digest)? {
+                orphans.push(digest);
+            }
+        }
+        transaction.commit().map_err(map_error)?;
+        Ok(orphans)
     }
+}
+
+fn unreferenced_digest(
+    transaction: &Transaction<'_>,
+    sha256: &str,
+) -> Result<Option<String>, ConversationError> {
+    let referenced: bool = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM attachments WHERE sha256 = ?1)",
+            [sha256],
+            |row| row.get(0),
+        )
+        .map_err(map_error)?;
+    Ok((!referenced).then(|| sha256.to_owned()))
+}
+
+fn attachment_ref(
+    id: String,
+    encoded: String,
+) -> Result<crate::conversations::attachments::AttachmentRef, ConversationError> {
+    let mut fields = encoded.split('|');
+    let sha256 = fields.next().ok_or(ConversationError::Corrupt)?.to_owned();
+    let format = match fields.next().ok_or(ConversationError::Corrupt)? {
+        "png" => crate::conversations::AttachmentFormat::Png,
+        "jpeg" => crate::conversations::AttachmentFormat::Jpeg,
+        "webp" => crate::conversations::AttachmentFormat::Webp,
+        _ => return Err(ConversationError::Corrupt),
+    };
+    let width = fields
+        .next()
+        .and_then(|value| value.parse().ok())
+        .ok_or(ConversationError::Corrupt)?;
+    let height = fields
+        .next()
+        .and_then(|value| value.parse().ok())
+        .ok_or(ConversationError::Corrupt)?;
+    let byte_length = fields
+        .next()
+        .and_then(|value| value.parse().ok())
+        .ok_or(ConversationError::Corrupt)?;
+    if fields.next().is_some() {
+        return Err(ConversationError::Corrupt);
+    }
+    let reference = crate::conversations::attachments::AttachmentRef {
+        id: crate::conversations::attachments::AttachmentId::parse(&id)
+            .ok_or(ConversationError::Corrupt)?,
+        sha256,
+        format,
+        width,
+        height,
+        byte_length,
+    };
+    reference
+        .valid()
+        .then_some(reference)
+        .ok_or(ConversationError::Corrupt)
+}
+
+fn staging_cutoff() -> i64 {
+    i64::try_from(now_ms().saturating_sub(crate::conversations::attachments::STAGING_TTL_MS))
+        .unwrap_or(i64::MAX)
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or(0)
 }
 
 type MetadataRow = (String, String, Option<String>);

@@ -228,7 +228,16 @@ pub(crate) fn count_turns(
     let messages = crate::providers::project_messages(provider, model, turns, &[])
         .map_err(|_| ContextError::Continuation)?;
     let text = crate::providers::projected_token_text(&messages);
-    Ok(count_tokens(model, &text).0)
+    let image_tokens = turns
+        .iter()
+        .flat_map(|turn| &turn.images)
+        .fold(0u64, |total, image| {
+            total.saturating_add(crate::conversations::attachments::estimated_image_tokens(
+                image.width,
+                image.height,
+            ))
+        });
+    Ok(count_tokens(model, &text).0.saturating_add(image_tokens))
 }
 
 /// Count tokens for plain text with the same tokenizer mapping as dispatch.
@@ -300,10 +309,30 @@ fn compose_estimate(
         request.extra,
     )
     .map_err(|_| ContextError::Continuation)?;
+    let projected = crate::providers::projected_token_text(&messages);
     let input_bytes = request_bytes(request, &messages)?;
     if input_bytes > MAXIMUM_REQUEST_BYTES {
         return Err(ContextError::Bound);
     }
+    // Image bytes are bounded by the per-message attachment total, not by the
+    // text request bound. They contribute dimension-based token estimates.
+    let image_bytes: u64 = request
+        .turns
+        .iter()
+        .flat_map(|turn| &turn.images)
+        .map(|image| image.bytes.len() as u64)
+        .sum();
+    if image_bytes > crate::conversations::attachments::MAXIMUM_MESSAGE_ATTACHMENT_BYTES {
+        return Err(ContextError::Bound);
+    }
+    let image_tokens: u64 = request
+        .turns
+        .iter()
+        .flat_map(|turn| &turn.images)
+        .map(|image| {
+            crate::conversations::attachments::estimated_image_tokens(image.width, image.height)
+        })
+        .sum();
     let mut text = String::new();
     text.push_str(request.preamble);
     text.push('\n');
@@ -312,8 +341,14 @@ fn compose_estimate(
         text.push_str(&encoded);
         text.push('\n');
     }
-    text.push_str(&crate::providers::projected_token_text(&messages));
-    let (input_tokens, precision) = count_tokens(request.model, &text);
+    text.push_str(&projected);
+    let (text_tokens, precision) = count_tokens(request.model, &text);
+    let input_tokens = text_tokens.saturating_add(image_tokens);
+    let precision = if image_tokens > 0 {
+        TokenPrecision::Approximate
+    } else {
+        precision
+    };
     let catalogue_limit = catalogue_limit.filter(|limit| *limit > 0);
     let limit = effective_limit(catalogue_limit);
     let output_limit = request.output_limit.filter(|value| *value > 0);
@@ -377,11 +412,13 @@ fn operational_output_reserve(limit: u64) -> u64 {
     (limit / 8).clamp(1, MINIMUM_OUTPUT_TOKENS)
 }
 
+/// Text-only request bytes. Decoded image bytes are excluded here and bounded
+/// separately, so a valid image never trips the text request bound.
 fn request_bytes(request: ContextRequest<'_>, messages: &[Message]) -> Result<usize, ContextError> {
     let mut total = request
         .preamble
         .len()
-        .checked_add(1024)
+        .checked_add(1024 + 4096)
         .ok_or(ContextError::Bound)?;
     for tool in request.tools {
         total = total
@@ -389,8 +426,14 @@ fn request_bytes(request: ContextRequest<'_>, messages: &[Message]) -> Result<us
             .ok_or(ContextError::Bound)?;
     }
     for message in messages {
+        let mut text_message = message.clone();
+        if let Message::User { content } = &mut text_message {
+            content.retain(|item| {
+                !matches!(item, rig_core::completion::message::UserContent::Image(_))
+            });
+        }
         total = total
-            .checked_add(json_byte_len(message)?)
+            .checked_add(json_byte_len(&text_message)?)
             .ok_or(ContextError::Bound)?;
     }
     Ok(total)

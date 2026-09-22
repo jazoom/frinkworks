@@ -180,6 +180,36 @@ Retained command output references move to the destination scope. The applicatio
 
 Prepared changes remain with the original run. A fork never transfers ownership. A later handoff remains the only explicit ownership transfer.
 
+## Image attachments
+
+A conversation message can reference immutable images. Supported formats are PNG, JPEG and static WebP. SVG, animated PNG, animated WebP, GIF and every other format are rejected.
+
+These upload bounds apply to one staged image and one message:
+
+- Input bytes: at most 8 MiB for one file, before decode.
+- Decoded size: at most 40 megapixels and 12,000 pixels on either edge.
+- Count: at most 8 images for one message.
+- Aggregate normalised bytes: at most 24 MiB for one message.
+- Multipart request: at most 65 MiB, including form overhead.
+
+The application decodes each upload and re-encodes it without source metadata. It never trusts a filename or a client MIME header. A rejected upload adds no reference and keeps the composer draft.
+
+A staged image belongs to one browser session and one composer scope. Each new draft uses its nonce. A saved conversation uses its identifier. The upload route creates no conversation.
+
+Send or queue submission claims staged references in the same transaction as the message or queue item. A foreign, consumed or stale reference aborts the whole append. A failed commit can leave an unreferenced object, never a committed reference to absent bytes.
+
+Image bytes live in a content-addressed object directory. The database holds only reference metadata. Several messages or forks can share one object. The application removes an object only after no reference row remains.
+
+Unclaimed uploads expire after one hour. Startup removes all unclaimed uploads because sessions do not survive a restart. Fork drafts retain separate references until release or restart.
+
+Queue return restores staged references without deletion. Prompt revision retains the source images. Saved messages display retained images through scoped routes.
+
+Image blocks reach the provider through the shared request projection. The request validates the capability of the selected model before dispatch. An unknown or unsupported image capability is rejected. Opaque continuation data and duplicates stay out of the projection.
+
+A retained reference survives compaction and a fork. Compaction keeps original image references. A summary request includes the images of each covered chunk, so an image-only turn never reads as empty text. Context estimation uses decoded dimensions, not the encoded byte length.
+
+Image routes are session-scoped. A saved image requires a reference that belongs to its conversation. The response uses the explicit raster media type and `no-store`.
+
 ## Ownership and recovery
 
 The existing run record remains the sole ownership authority. Transfer never copies a run or recaptures its baseline.

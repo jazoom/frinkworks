@@ -1,4 +1,5 @@
 mod activity;
+mod attachments;
 mod compaction;
 mod context;
 mod continuation;
@@ -29,7 +30,7 @@ mod tests;
 
 use axum::{
     Form, Router,
-    extract::{Path, Query, State},
+    extract::{DefaultBodyLimit, Path, Query, State},
     response::Response,
     routing::{get, post},
 };
@@ -64,6 +65,32 @@ pub(super) fn router() -> Router<AppState> {
     Router::new()
         .route("/conversations", get(catalogue).post(create))
         .route("/conversations/new", get(new::show).post(new::save))
+        .route(
+            "/conversations/new/attachments",
+            post(attachments::upload_new)
+                .layer(DefaultBodyLimit::max(attachments::UPLOAD_BODY_LIMIT)),
+        )
+        .route(
+            "/conversations/new/attachments/{attachment_id}/remove",
+            post(attachments::remove_new),
+        )
+        .route(
+            "/conversations/new/attachments/{attachment_id}",
+            get(attachments::serve_new),
+        )
+        .route(
+            "/conversations/{conversation_id}/attachments",
+            post(attachments::upload_saved)
+                .layer(DefaultBodyLimit::max(attachments::UPLOAD_BODY_LIMIT)),
+        )
+        .route(
+            "/conversations/{conversation_id}/attachments/{attachment_id}/remove",
+            post(attachments::remove_saved),
+        )
+        .route(
+            "/conversations/{conversation_id}/attachments/{attachment_id}",
+            get(attachments::serve_saved),
+        )
         .route(
             "/conversations/models/favourite",
             post(model_favourites::toggle),
@@ -302,6 +329,49 @@ struct MessageForm {
     revise_parent: String,
     #[serde(default)]
     revise_active_leaf: String,
+    #[serde(default, rename = "attachment_0")]
+    attachment_0: String,
+    #[serde(default, rename = "attachment_1")]
+    attachment_1: String,
+    #[serde(default, rename = "attachment_2")]
+    attachment_2: String,
+    #[serde(default, rename = "attachment_3")]
+    attachment_3: String,
+    #[serde(default, rename = "attachment_4")]
+    attachment_4: String,
+    #[serde(default, rename = "attachment_5")]
+    attachment_5: String,
+    #[serde(default, rename = "attachment_6")]
+    attachment_6: String,
+    #[serde(default, rename = "attachment_7")]
+    attachment_7: String,
+}
+
+impl MessageForm {
+    fn attachment_ids(&self) -> Result<Vec<crate::conversations::AttachmentId>, &'static str> {
+        let mut ids = Vec::new();
+        for value in [
+            &self.attachment_0,
+            &self.attachment_1,
+            &self.attachment_2,
+            &self.attachment_3,
+            &self.attachment_4,
+            &self.attachment_5,
+            &self.attachment_6,
+            &self.attachment_7,
+        ] {
+            if value.trim().is_empty() {
+                continue;
+            }
+            let id = crate::conversations::attachments::parse_attachment_id(value)
+                .ok_or("That staged image is not valid. Add it again.")?;
+            if ids.contains(&id) {
+                return Err("That staged image is not valid. Add it again.");
+            }
+            ids.push(id);
+        }
+        Ok(ids)
+    }
 }
 
 impl MessageForm {
@@ -892,6 +962,8 @@ async fn create_candidate_review(
         review.revision,
         model,
         form.brief,
+        Vec::new(),
+        String::new(),
     )
     .await
     {
@@ -1352,6 +1424,16 @@ async fn send_message(
             );
         }
     };
+    let attachments = match form.attachment_ids() {
+        Ok(attachments) => attachments,
+        Err(error) => {
+            return render_detail_command(
+                graft,
+                PatchStatus::UnprocessableEntity,
+                detail_view(&state, session.0, &record, &record.title, error),
+            );
+        }
+    };
     let result = match revise {
         Some(revise) => {
             start_revision(
@@ -1362,6 +1444,7 @@ async fn send_message(
                 model,
                 form.message,
                 revise,
+                attachments,
             )
             .await
         }
@@ -1373,6 +1456,8 @@ async fn send_message(
                 revision,
                 model,
                 form.message,
+                attachments,
+                record.id.as_hex(),
             )
             .await
         }
@@ -1503,6 +1588,7 @@ pub(super) async fn preflight_execution(
     .map_err(|error| StartMessageError::User(PatchStatus::UnprocessableEntity, error.message()))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn start_message(
     state: &AppState,
     session: crate::sessions::SessionId,
@@ -1510,6 +1596,8 @@ pub(super) async fn start_message(
     revision: u32,
     model: ConversationModelConfiguration,
     text: String,
+    attachments: Vec<crate::conversations::AttachmentId>,
+    attachment_scope: String,
 ) -> Result<ConversationRecord, StartMessageError> {
     start_message_mode(
         state,
@@ -1518,6 +1606,8 @@ pub(super) async fn start_message(
         revision,
         model,
         text,
+        attachments,
+        attachment_scope,
         MessageAppend::Ordinary,
     )
     .await
@@ -1533,6 +1623,7 @@ enum MessageAppend {
 /// Append a replacement prompt as a new branch through the ordinary model
 /// path. Preflight, workflow selection and settlement are shared with an
 /// ordinary send; only the durable append differs.
+#[allow(clippy::too_many_arguments)]
 async fn start_revision(
     state: &AppState,
     session: crate::sessions::SessionId,
@@ -1541,7 +1632,9 @@ async fn start_revision(
     model: ConversationModelConfiguration,
     text: String,
     revise: RevisionRequest,
+    attachments: Vec<crate::conversations::AttachmentId>,
 ) -> Result<ConversationRecord, StartMessageError> {
+    let scope = record.id.as_hex();
     start_message_mode(
         state,
         session,
@@ -1549,11 +1642,14 @@ async fn start_revision(
         revision,
         model,
         text,
+        attachments,
+        scope,
         MessageAppend::Revision(revise),
     )
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn start_message_mode(
     state: &AppState,
     session: crate::sessions::SessionId,
@@ -1561,6 +1657,8 @@ async fn start_message_mode(
     revision: u32,
     model: ConversationModelConfiguration,
     text: String,
+    attachments: Vec<crate::conversations::AttachmentId>,
+    attachment_scope: String,
     append: MessageAppend,
 ) -> Result<ConversationRecord, StartMessageError> {
     let persisted_model = model.clone();
@@ -1605,6 +1703,27 @@ async fn start_message_mode(
             "Choose a stored provider.",
         ));
     };
+    if !attachments.is_empty() {
+        let selection = &model.settings.model;
+        match state
+            .models_dev
+            .supports_images(selection.provider, &selection.model)
+        {
+            Some(true) => {}
+            Some(false) => {
+                return Err(StartMessageError::User(
+                    PatchStatus::UnprocessableEntity,
+                    "The selected model does not accept images. Choose a model with image input.",
+                ));
+            }
+            None => {
+                return Err(StartMessageError::User(
+                    PatchStatus::UnprocessableEntity,
+                    "Power Plant cannot confirm image input for the selected model. Choose a model with image input.",
+                ));
+            }
+        }
+    }
     let ordinary = crate::execution::ordinary_kind(&model.settings);
     let workflow = if ordinary == Some(crate::execution::OrdinaryKind::FileChange) {
         let project_free =
@@ -1662,6 +1781,8 @@ async fn start_message_mode(
             Some(persisted_model),
             job.id(),
             text,
+            session,
+            attachments,
         ),
         MessageAppend::FollowUp(item_id, queue_revision) => state.conversations.begin_follow_up(
             &record.id,
@@ -1671,12 +1792,15 @@ async fn start_message_mode(
             job.id(),
             Some(persisted_model),
         ),
-        MessageAppend::Ordinary => state.conversations.begin_message_with_model(
+        MessageAppend::Ordinary => state.conversations.begin_message_with_attachments(
             &record.id,
             revision,
             Some(persisted_model),
             job.id(),
             text,
+            Some(session),
+            &attachment_scope,
+            attachments,
         ),
     };
     let started = match started {
@@ -1895,6 +2019,8 @@ pub(crate) async fn continue_follow_ups(
         revision,
         model,
         item.text,
+        Vec::new(),
+        String::new(),
         MessageAppend::FollowUp(item.id, queue_revision),
     )
     .await;
@@ -2610,6 +2736,7 @@ fn detail_view_with_transcript(
         pending_gate,
         source_candidate_review,
         linked_candidate_reviews,
+        attachments::page::view(state, session, &record.id.as_hex()),
         transcript,
         leaf,
     )

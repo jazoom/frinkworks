@@ -1346,6 +1346,31 @@ listenForRequestSettled((detail) => {
     reconcileRevision();
 });
 
+listenForRequestSettled((detail) => {
+    if (
+        detail.outcome !== "applied-patch" ||
+        !detail.form.matches("[data-attachment-upload]")
+    )
+        return;
+    const form = document.querySelector<HTMLFormElement>(
+        "[data-attachment-upload]",
+    );
+    if (form?.action !== detail.form.action) return;
+    const input = form.querySelector<HTMLInputElement>(
+        "[data-attachment-input]",
+    );
+    if (input) input.value = "";
+});
+
+document.addEventListener("change", (event) => {
+    const input = (event.target as Element | null)?.closest<HTMLInputElement>(
+        "[data-attachment-input]",
+    );
+    if (!input || (input.files?.length ?? 0) === 0) return;
+    const form = input.closest("form");
+    if (form) form.requestSubmit();
+});
+
 startApp();
 reconcileRevision();
 listenForLivePatches(() => reconcileRevision());

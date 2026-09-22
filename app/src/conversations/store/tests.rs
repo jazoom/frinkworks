@@ -74,6 +74,7 @@ impl ConversationStore {
     pub(crate) fn in_memory() -> Self {
         Self {
             database: std::sync::Mutex::new(super::sqlite::Database::in_memory().unwrap()),
+            attachments: crate::conversations::attachments::AttachmentStore::in_memory(),
             uncertain: std::sync::Mutex::new(std::collections::BTreeSet::new()),
             title_updates: tokio::sync::broadcast::channel(16).0,
             questions: super::super::questions::QuestionWaiters::new(),
@@ -276,6 +277,7 @@ fn history_beyond_former_message_byte_and_catalogue_limits_survives_restart() {
                     } else {
                         "x".repeat(120 * 1024)
                     },
+                    attachments: Vec::new(),
                     activity: Vec::new(),
                     continuation: Vec::new(),
                     status: MessageStatus::Complete,

@@ -1134,6 +1134,7 @@ async fn a_resumed_phase_keeps_its_tool_results_and_excludes_conversation_histor
     let retained = crate::providers::ChatTurn {
         role: crate::providers::Role::Assistant,
         text: "The command already ran.".to_owned(),
+        images: Vec::new(),
         thinking: String::new(),
         tools: Vec::new(),
         activity: Vec::new(),

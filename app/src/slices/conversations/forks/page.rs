@@ -107,7 +107,7 @@ pub(crate) async fn create(
             ForkError::Missing.message(),
         );
     };
-    let snapshot = match crate::conversations::forks::snapshot(&record, boundary) {
+    let mut snapshot = match crate::conversations::forks::snapshot(&record, boundary) {
         Ok(snapshot) => snapshot,
         Err(error) => return reject(PatchStatus::UnprocessableEntity, error.message()),
     };
@@ -118,6 +118,9 @@ pub(crate) async fn create(
             std::io::Error::other("system random source unavailable"),
         )
     })?;
+    if let Err(error) = snapshot.retain_images(state.conversations.clone(), session.0, &nonce) {
+        return reject(PatchStatus::Conflict, error.message());
+    }
     if let Err(error) =
         state
             .forks

@@ -397,6 +397,7 @@ fn configured_step_history_stays_within_its_attempt() {
     let turn = ChatTurn {
         role: Role::Assistant,
         text: "Reading".to_owned(),
+        images: Vec::new(),
         thinking: String::new(),
         tools: Vec::new(),
         activity: Vec::new(),

@@ -35,6 +35,7 @@ fn assistant_with_call(text: &str, id: &str, output: &str) -> ChatTurn {
     ChatTurn {
         role: crate::providers::Role::Assistant,
         text: text.to_owned(),
+        images: Vec::new(),
         thinking: String::new(),
         tools: vec![result.clone()],
         activity: Vec::new(),

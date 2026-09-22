@@ -60,6 +60,8 @@ pub(super) struct Model {
     pub(super) reasoning: bool,
     pub(super) efforts: Vec<String>,
     pub(super) attachment: bool,
+    #[serde(default)]
+    pub(super) image_input: bool,
     pub(super) supports_tools: bool,
     pub(super) limit: ModelLimit,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -208,6 +210,11 @@ pub(super) fn filter_source(bytes: &[u8], etag: &str, now: u64) -> Result<Snapsh
                 reasoning: model.reasoning,
                 efforts,
                 attachment: model.attachment,
+                image_input: model
+                    .modalities
+                    .input
+                    .iter()
+                    .any(|modality| modality == "image"),
                 supports_tools: model.tool_call,
                 limit: ModelLimit {
                     context: model.limit.context,

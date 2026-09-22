@@ -340,6 +340,7 @@ fn valid_queue_rejects_duplicate_identifiers() {
     let item = super::QueueItem {
         id,
         text: "once".to_owned(),
+        attachments: Vec::new(),
         delivery: QueueDelivery::FollowUp,
         settings_digest: super::launch_digest(
             &crate::execution::ExecutionSettings::new(

@@ -1,11 +1,12 @@
 use std::{collections::HashSet, time::Duration};
 
+use base64::Engine;
 use futures_util::StreamExt;
 use rig_core::{
     client::CompletionClient,
     completion::{
         AssistantContent, CompletionError, CompletionModel, FinishReason, Message, ToolDefinition,
-        message::{ReasoningContent, ToolResultContent, UserContent},
+        message::{ImageMediaType, ReasoningContent, ToolResultContent, UserContent},
     },
     providers::{chatgpt, deepseek, openai, openrouter, xai},
     streaming::StreamedAssistantContent,
@@ -347,7 +348,24 @@ pub(crate) fn project_messages(
     let mut messages = history
         .iter()
         .flat_map(|turn| match turn.role {
-            Role::User => vec![Message::user(turn.text.clone())],
+            Role::User => {
+                if turn.images.is_empty() {
+                    vec![Message::user(turn.text.clone())]
+                } else {
+                    let mut content = Vec::new();
+                    if !turn.text.is_empty() {
+                        content.push(UserContent::text(turn.text.clone()));
+                    }
+                    for image in &turn.images {
+                        content.push(UserContent::image_base64(
+                            base64::engine::general_purpose::STANDARD.encode(&image.bytes),
+                            Some(image_media_type(image.format)),
+                            None,
+                        ));
+                    }
+                    vec![Message::User { content }]
+                }
+            }
             Role::Assistant => {
                 let mut content = Vec::new();
                 if !turn.text.is_empty() {
@@ -655,6 +673,14 @@ pub(super) fn map_finish_reason(reason: Option<&FinishReason>) -> CompletionReas
         Some(FinishReason::Length) => CompletionReason::Length,
         Some(FinishReason::ContentFilter) => CompletionReason::Refusal,
         Some(FinishReason::Other(_)) | None => CompletionReason::Unknown,
+    }
+}
+
+fn image_media_type(format: crate::conversations::AttachmentFormat) -> ImageMediaType {
+    match format {
+        crate::conversations::AttachmentFormat::Png => ImageMediaType::PNG,
+        crate::conversations::AttachmentFormat::Jpeg => ImageMediaType::JPEG,
+        crate::conversations::AttachmentFormat::Webp => ImageMediaType::WEBP,
     }
 }
 

@@ -210,9 +210,11 @@ fn apply_handoff(
         }
         let user_id = MessageId::generate().map_err(|_| ConversationError::Random)?;
         let assistant_id = MessageId::generate().map_err(|_| ConversationError::Random)?;
-        destination
-            .messages
-            .push(super::user_message(user_id, pending.prompt.clone()));
+        destination.messages.push(super::user_message(
+            user_id,
+            pending.prompt.clone(),
+            Vec::new(),
+        ));
         destination
             .messages
             .push(super::pending_phase(assistant_id, assistant_id, job));

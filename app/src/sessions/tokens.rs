@@ -52,6 +52,11 @@ impl SessionId {
             digest: Sha256::digest(token.as_str().as_bytes()).into(),
         }
     }
+
+    /// Stable opaque key for staging ownership. It never exposes the token.
+    pub(crate) fn as_hex(&self) -> String {
+        crate::hex::encode(&self.digest)
+    }
 }
 
 impl std::fmt::Debug for SessionId {

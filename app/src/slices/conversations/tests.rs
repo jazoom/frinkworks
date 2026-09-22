@@ -359,6 +359,8 @@ async fn candidate_review_uses_immutable_selection_without_source_approval() {
         follow_up.revision,
         follow_up.model.expect("model"),
         "Read the host worktree instead.".to_owned(),
+        Vec::new(),
+        String::new(),
     )
     .await;
     assert!(matches!(result, Err(super::StartMessageError::User(

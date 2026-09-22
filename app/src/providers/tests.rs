@@ -1067,6 +1067,7 @@ fn projection_rejects_foreign_model_and_unsettled_calls() {
     let unsettled = ChatTurn {
         role: Role::Assistant,
         text: String::new(),
+        images: Vec::new(),
         thinking: String::new(),
         tools: Vec::new(),
         activity: Vec::new(),
@@ -1109,6 +1110,142 @@ fn assistant_turn_carries_call_arguments_and_matching_results() {
     );
     assert!(turn.calls[0].result.is_some());
     assert!(turn.continuation.is_empty());
+}
+
+#[tokio::test]
+async fn image_projection_survives_metadata_reload_and_rejects_a_model_change() {
+    use crate::conversations::attachments::{
+        AttachmentFormat, AttachmentId, AttachmentRef, prepare_turns,
+    };
+    use crate::providers::{ChatImage, ChatTurn};
+    use rig_core::completion::{
+        Message,
+        message::{DocumentSourceKind, UserContent},
+    };
+    let state = crate::tests::test_state(crate::config::RuntimeConfig::development());
+    let mut bytes = Vec::new();
+    image::RgbImage::new(2, 2)
+        .write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .expect("png");
+    let normalised = state
+        .conversations
+        .attachment_store()
+        .normalise(&bytes)
+        .expect("normalise");
+    let reference = AttachmentRef {
+        id: AttachmentId::generate().expect("id"),
+        sha256: normalised.sha256(),
+        format: AttachmentFormat::Png,
+        width: 2,
+        height: 2,
+        byte_length: normalised.bytes.len() as u64,
+    };
+    state
+        .conversations
+        .stage_attachment(
+            crate::sessions::generate_session_token()
+                .expect("session")
+                .id(),
+            "draft",
+            reference.clone(),
+            &normalised.bytes,
+        )
+        .expect("stage");
+    let mut turn = ChatTurn::user(String::new());
+    turn.images.push(ChatImage {
+        reference,
+        format: AttachmentFormat::Png,
+        width: 2,
+        height: 2,
+        bytes: normalised.bytes.clone(),
+    });
+    let stored = serde_json::to_vec(&turn).expect("metadata");
+    let mut turns = [serde_json::from_slice::<ChatTurn>(&stored).expect("reload")];
+    assert!(turns[0].images[0].bytes.is_empty());
+    let connection = ProviderConnection::with_key(ProviderKind::Xai, "key", "grok-4.6");
+    prepare_turns(&state, &connection, &mut turns).expect("hydrate");
+    let projected =
+        project_messages(connection.kind, &connection.model, &turns, &[]).expect("projection");
+    let Message::User { content } = &projected[0] else {
+        panic!("user image")
+    };
+    assert_eq!(content.len(), 1);
+    let UserContent::Image(image) = &content[0] else {
+        panic!("image block")
+    };
+    assert_eq!(
+        image.data,
+        DocumentSourceKind::Base64(
+            base64::engine::general_purpose::STANDARD.encode(&normalised.bytes)
+        )
+    );
+    use rig_core::client::CompletionClient;
+    let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+    let router = axum::Router::new().route(
+        "/v1/responses",
+        axum::routing::post(move |axum::Json(body): axum::Json<serde_json::Value>| {
+            let sender = sender.clone();
+            async move {
+                sender.send(body).await.expect("capture");
+                ([("content-type", "text/event-stream")], "data: [DONE]\n\n")
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener");
+    let address = listener.local_addr().expect("address");
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.expect("server") });
+    let client = rig_core::providers::xai::Client::builder()
+        .api_key("key")
+        .base_url(format!("http://{address}"))
+        .build()
+        .expect("client");
+    let stream = super::rig::stream_messages(
+        client.completion_model(&connection.model),
+        &turns,
+        &[],
+        &[],
+        "Describe the image.",
+        &connection,
+        None,
+    )
+    .await
+    .expect("stream");
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        futures_util::StreamExt::collect::<Vec<_>>(stream),
+    )
+    .await
+    .expect("response");
+    let body = tokio::time::timeout(Duration::from_secs(5), receiver.recv())
+        .await
+        .expect("request")
+        .expect("body");
+    server.abort();
+    let user = body["input"]
+        .as_array()
+        .expect("input")
+        .iter()
+        .find(|message| message["role"] == "user")
+        .expect("user");
+    assert_eq!(user["content"][0]["type"], "input_image");
+    use base64::Engine;
+    assert_eq!(
+        user["content"][0]["image_url"],
+        format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(&normalised.bytes)
+        )
+    );
+    let incompatible =
+        ProviderConnection::with_key(ProviderKind::Deepseek, "key", "deepseek-v4-pro");
+    assert!(prepare_turns(&state, &incompatible, &mut turns).is_err());
+    let unknown = ProviderConnection::with_key(ProviderKind::Xai, "key", "unknown-image-model");
+    assert!(prepare_turns(&state, &unknown, &mut turns).is_err());
 }
 
 #[test]

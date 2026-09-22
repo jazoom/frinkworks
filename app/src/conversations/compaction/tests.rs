@@ -43,6 +43,7 @@ fn user(text: &str) -> ConversationMessage {
         final_phase: false,
         role: MessageRole::User,
         text: text.to_owned(),
+        attachments: Vec::new(),
         activity: Vec::new(),
         continuation: Vec::new(),
         status: MessageStatus::Complete,
@@ -62,6 +63,7 @@ fn assistant(text: &str) -> ConversationMessage {
         final_phase: true,
         role: MessageRole::Assistant,
         text: text.to_owned(),
+        attachments: Vec::new(),
         activity: Vec::new(),
         continuation: Vec::new(),
         status: MessageStatus::Complete,
@@ -81,6 +83,7 @@ fn assistant_tool(id: &str, result: Option<ToolOutput>) -> ConversationMessage {
         final_phase: true,
         role: MessageRole::Assistant,
         text: String::new(),
+        attachments: Vec::new(),
         activity: vec![AssistantActivity::ToolCall {
             id: id.to_owned(),
             name: "read".to_owned(),

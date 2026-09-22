@@ -104,11 +104,12 @@ pub(super) async fn compact(
         Ok(boundary) => boundary,
         Err(error) => return reject(PatchStatus::UnprocessableEntity, error.message()),
     };
-    let covered = match compaction::covered_turns(
+    let covered = match compaction::covered_turns_with_attachments(
         &record.messages,
         Some(&model.settings.model),
         covered_through,
         record.compaction.as_ref(),
+        Some(state.conversations.attachment_store()),
     ) {
         Ok(turns) => turns,
         Err(error) => return reject(PatchStatus::UnprocessableEntity, error.message()),
@@ -172,9 +173,13 @@ pub(super) async fn compact(
                 created_at_ms: crate::workflows::now_ms(),
             };
             // The replacement request must fit before the checkpoint commits.
-            let replacement =
-                compaction::project(&record.messages, Some(&selection), Some(&candidate))
-                    .map_err(|error| error.message())?;
+            let replacement = compaction::project_with_attachments(
+                &record.messages,
+                Some(&selection),
+                Some(&candidate),
+                Some(state.conversations.attachment_store()),
+            )
+            .map_err(|error| error.message())?;
             let request = crate::execution::ContextRequest {
                 preamble: &instructions,
                 tools: &[],

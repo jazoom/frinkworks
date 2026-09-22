@@ -491,11 +491,28 @@ pub(crate) struct ChatToolCall {
     pub(crate) result: Option<ToolOutput>,
 }
 
+/// One decoded image block in a user turn. The bytes are the normalised
+/// immutable object, never a client filename or an encoded base64 string.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ChatImage {
+    pub(crate) reference: crate::conversations::AttachmentRef,
+    pub(crate) format: crate::conversations::AttachmentFormat,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    #[serde(skip)]
+    pub(crate) bytes: Vec<u8>,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub(crate) struct ChatTurn {
     pub(crate) role: Role,
     pub(crate) text: String,
+    /// Immutable image references are resolved to bytes only for a request
+    /// projection. Local metadata and serialisation never carry the bytes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) images: Vec<ChatImage>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub(crate) thinking: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -517,6 +534,7 @@ impl ChatTurn {
         Self {
             role: Role::User,
             text,
+            images: Vec::new(),
             thinking: String::new(),
             tools: Vec::new(),
             activity: Vec::new(),
@@ -548,6 +566,7 @@ impl ChatTurn {
         Self {
             role: Role::Assistant,
             text: reply.text,
+            images: Vec::new(),
             thinking: reply.thinking,
             tools: reply.tools,
             activity: reply.activity,

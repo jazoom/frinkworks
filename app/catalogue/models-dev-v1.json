@@ -2,12 +2,12 @@
     "version": 1,
     "source": {
         "url": "https://models.dev/api.json",
-        "etag": "W/\"fcfd222ee609f678ebfc30dc8ed7fc26\"",
-        "sha256": "fcfd222ee609f678ebfc30dc8ed7fc269f6f34ef6898f060dfad08714bcaf76d",
+        "etag": "W/\"f3db610ed23ba4c901ad3fb9315f5cef\"",
+        "sha256": "f3db610ed23ba4c901ad3fb9315f5cef83ec1589ca9ee0be8718da1d6e139636",
         "origin": "models.dev"
     },
-    "checked_at_unix_seconds": 1790036251,
-    "last_attempt_at_unix_seconds": 1790036251,
+    "checked_at_unix_seconds": 1790046906,
+    "last_attempt_at_unix_seconds": 1790046906,
     "providers": [
         {
             "id": "deepseek",
@@ -18,6 +18,7 @@
                     "reasoning": true,
                     "efforts": ["low", "high", "max"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -40,6 +41,7 @@
                     "reasoning": true,
                     "efforts": ["low", "high", "max"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -62,6 +64,7 @@
                     "reasoning": true,
                     "efforts": ["low", "high", "max"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -84,6 +87,7 @@
                     "reasoning": true,
                     "efforts": ["low", "high", "max"],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -112,6 +116,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1047576,
@@ -134,6 +139,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1047576,
@@ -156,6 +162,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 128000,
@@ -178,6 +185,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 128000,
@@ -200,6 +208,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 128000,
@@ -222,6 +231,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 128000,
@@ -244,6 +254,7 @@
                     "reasoning": true,
                     "efforts": ["minimal", "low", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 400000,
@@ -266,6 +277,7 @@
                     "reasoning": true,
                     "efforts": ["minimal", "low", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 400000,
@@ -288,6 +300,7 @@
                     "reasoning": true,
                     "efforts": ["minimal", "low", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 400000,
@@ -310,6 +323,7 @@
                     "reasoning": true,
                     "efforts": ["high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 400000,
@@ -331,6 +345,7 @@
                     "reasoning": true,
                     "efforts": ["none", "low", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 400000,
@@ -353,6 +368,7 @@
                     "reasoning": true,
                     "efforts": ["none", "low", "medium", "high", "xhigh"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 400000,
@@ -375,6 +391,7 @@
                     "reasoning": true,
                     "efforts": ["medium", "high", "xhigh"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 400000,
@@ -396,6 +413,7 @@
                     "reasoning": true,
                     "efforts": ["none", "low", "medium", "high", "xhigh"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 400000,
@@ -418,6 +436,7 @@
                     "reasoning": true,
                     "efforts": ["none", "low", "medium", "high", "xhigh"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 128000,
@@ -440,6 +459,7 @@
                     "reasoning": true,
                     "efforts": ["none", "low", "medium", "high", "xhigh"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1050000,
@@ -462,6 +482,7 @@
                     "reasoning": true,
                     "efforts": ["none", "low", "medium", "high", "xhigh"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 400000,
@@ -484,6 +505,7 @@
                     "reasoning": true,
                     "efforts": ["none", "low", "medium", "high", "xhigh"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 400000,
@@ -506,6 +528,7 @@
                     "reasoning": true,
                     "efforts": ["medium", "high", "xhigh"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1050000,
@@ -527,6 +550,7 @@
                     "reasoning": true,
                     "efforts": ["none", "low", "medium", "high", "xhigh"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1050000,
@@ -549,6 +573,7 @@
                     "reasoning": true,
                     "efforts": ["medium", "high", "xhigh"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1050000,
@@ -577,6 +602,7 @@
                         "max"
                     ],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1050000,
@@ -607,6 +633,7 @@
                         "max"
                     ],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1050000,
@@ -637,6 +664,7 @@
                         "max"
                     ],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1050000,
@@ -667,6 +695,7 @@
                         "max"
                     ],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1050000,
@@ -690,6 +719,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high", "xhigh", "max"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1050000,
@@ -713,6 +743,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 200000,
@@ -735,6 +766,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 200000,
@@ -762,6 +794,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 131072,
@@ -784,6 +817,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 131072,
@@ -806,6 +840,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 131072,
@@ -828,6 +863,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 32768,
@@ -849,6 +885,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -870,6 +907,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 300000,
@@ -891,6 +929,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 128000,
@@ -912,6 +951,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -934,6 +974,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 300000,
@@ -955,6 +996,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 32768,
@@ -976,6 +1018,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 200000,
@@ -999,6 +1042,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high", "xhigh", "max"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -1022,6 +1066,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high", "xhigh", "max"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -1045,6 +1090,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 200000,
@@ -1068,6 +1114,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 200000,
@@ -1091,6 +1138,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 200000,
@@ -1114,6 +1162,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high", "max"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -1137,6 +1186,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high", "xhigh", "max"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -1160,6 +1210,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high", "xhigh", "max"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -1183,6 +1234,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high", "xhigh", "max"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -1206,6 +1258,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 200000,
@@ -1229,6 +1282,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -1252,6 +1306,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high", "max"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -1275,6 +1330,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high", "xhigh", "max"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -1298,6 +1354,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -1320,6 +1377,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": false,
                     "limit": {
                         "context": 123000,
@@ -1341,6 +1399,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -1362,6 +1421,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -1383,6 +1443,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -1404,6 +1465,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -1425,6 +1487,7 @@
                     "reasoning": true,
                     "efforts": ["minimal", "low", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -1446,6 +1509,7 @@
                     "reasoning": true,
                     "efforts": ["minimal", "low", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -1467,6 +1531,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": false,
                     "limit": {
                         "context": 128000,
@@ -1489,6 +1554,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 128000,
@@ -1510,6 +1576,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 256000,
@@ -1531,6 +1598,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 128000,
@@ -1552,6 +1620,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 128000,
@@ -1573,6 +1642,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 128000,
@@ -1594,6 +1664,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 256000,
@@ -1609,6 +1680,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 163840,
@@ -1630,6 +1702,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 163840,
@@ -1651,6 +1724,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 163840,
@@ -1673,6 +1747,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 64000,
@@ -1694,6 +1769,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 163840,
@@ -1716,6 +1792,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 8192,
@@ -1737,6 +1814,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 163840,
@@ -1759,6 +1837,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 163840,
@@ -1781,6 +1860,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 163840,
@@ -1802,6 +1882,7 @@
                     "reasoning": true,
                     "efforts": ["high", "xhigh"],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -1809,14 +1890,14 @@
                     },
                     "background": {
                         "release_date": "2026-04-24",
-                        "input_cost": 0.05544,
-                        "output_cost": 0.11088,
+                        "input_cost": 0.088606,
+                        "output_cost": 0.177212,
                         "output_limit": 384000
                     },
                     "prices": {
-                        "input": 55440,
-                        "output": 110880,
-                        "cache_read": 11088
+                        "input": 88606,
+                        "output": 177212,
+                        "cache_read": 17721
                     }
                 },
                 {
@@ -1824,6 +1905,7 @@
                     "reasoning": true,
                     "efforts": ["low", "high", "max"],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 1310720,
@@ -1846,6 +1928,7 @@
                     "reasoning": true,
                     "efforts": ["low", "high", "max"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -1868,6 +1951,7 @@
                     "reasoning": true,
                     "efforts": ["high", "xhigh"],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -1875,14 +1959,14 @@
                     },
                     "background": {
                         "release_date": "2026-04-24",
-                        "input_cost": 0.883746,
-                        "output_cost": 1.767492,
+                        "input_cost": 0.95526,
+                        "output_cost": 1.91052,
                         "output_limit": 384000
                     },
                     "prices": {
-                        "input": 883746,
-                        "output": 1767492,
-                        "cache_read": 73646
+                        "input": 955260,
+                        "output": 1910520,
+                        "cache_read": 79605
                     }
                 },
                 {
@@ -1890,6 +1974,7 @@
                     "reasoning": true,
                     "efforts": ["low", "high", "max"],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -1897,14 +1982,14 @@
                     },
                     "background": {
                         "release_date": "2026-08-12",
-                        "input_cost": 0.66,
-                        "output_cost": 1.98,
+                        "input_cost": 1.32,
+                        "output_cost": 3.96,
                         "output_limit": 384000
                     },
                     "prices": {
-                        "input": 660000,
-                        "output": 1980000,
-                        "cache_read": 22000
+                        "input": 1320000,
+                        "output": 3960000,
+                        "cache_read": 44000
                     }
                 },
                 {
@@ -1912,6 +1997,7 @@
                     "reasoning": true,
                     "efforts": ["low", "high", "max"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -1919,14 +2005,14 @@
                     },
                     "background": {
                         "release_date": "2026-09-10",
-                        "input_cost": 0.15,
-                        "output_cost": 0.6,
+                        "input_cost": 0.3,
+                        "output_cost": 1.2,
                         "output_limit": 384000
                     },
                     "prices": {
-                        "input": 150000,
-                        "output": 600000,
-                        "cache_read": 3000
+                        "input": 300000,
+                        "output": 1200000,
+                        "cache_read": 6000
                     }
                 },
                 {
@@ -1934,6 +2020,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 512000,
@@ -1949,6 +2036,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -1972,6 +2060,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -1995,6 +2084,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -2018,6 +2108,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -2035,6 +2126,7 @@
                     "reasoning": true,
                     "efforts": ["minimal", "low", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -2052,6 +2144,7 @@
                     "reasoning": true,
                     "efforts": ["minimal", "low", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -2075,6 +2168,7 @@
                     "reasoning": true,
                     "efforts": ["minimal", "low", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -2092,6 +2186,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -2109,6 +2204,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -2126,6 +2222,7 @@
                     "reasoning": true,
                     "efforts": ["minimal", "low", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -2149,6 +2246,7 @@
                     "reasoning": true,
                     "efforts": ["minimal", "low", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -2172,6 +2270,7 @@
                     "reasoning": true,
                     "efforts": ["minimal", "low", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -2195,6 +2294,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -2218,6 +2318,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -2241,6 +2342,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 8192,
@@ -2262,6 +2364,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 131072,
@@ -2283,6 +2386,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 131072,
@@ -2305,6 +2409,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": false,
                     "limit": {
                         "context": 131072,
@@ -2326,6 +2431,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -2348,6 +2454,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -2363,6 +2470,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -2385,6 +2493,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -2400,6 +2509,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 8192,
@@ -2421,6 +2531,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 131000,
@@ -2442,6 +2553,7 @@
                     "reasoning": true,
                     "efforts": ["none", "low", "high"],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 131072,
@@ -2464,6 +2576,7 @@
                     "reasoning": true,
                     "efforts": ["none", "low", "medium", "high"],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 128000,
@@ -2486,6 +2599,7 @@
                     "reasoning": true,
                     "efforts": ["none", "low", "medium", "high"],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 260000,
@@ -2508,6 +2622,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -2530,6 +2645,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -2552,6 +2668,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -2567,6 +2684,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -2582,6 +2700,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 131072,
@@ -2604,6 +2723,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -2619,6 +2739,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 128000,
@@ -2641,6 +2762,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 128000,
@@ -2663,6 +2785,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -2685,6 +2808,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -2707,6 +2831,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 65536,
@@ -2722,6 +2847,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 8000,
@@ -2743,6 +2869,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048756,
@@ -2765,6 +2892,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 131072,
@@ -2786,6 +2914,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 131072,
@@ -2808,6 +2937,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 60000,
@@ -2829,6 +2959,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 131072,
@@ -2850,6 +2981,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 131072,
@@ -2871,6 +3003,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -2892,6 +3025,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1310720,
@@ -2913,6 +3047,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high", "xhigh"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 131072,
@@ -2935,6 +3070,7 @@
                     "reasoning": true,
                     "efforts": ["minimal", "low", "medium", "high", "xhigh"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -2957,6 +3093,7 @@
                     "reasoning": true,
                     "efforts": ["minimal", "low", "medium", "high", "xhigh"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -2979,6 +3116,7 @@
                     "reasoning": true,
                     "efforts": ["minimal", "low", "medium", "high", "xhigh"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -3008,6 +3146,7 @@
                         "max"
                     ],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -3037,6 +3176,7 @@
                         "max"
                     ],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -3059,6 +3199,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 16384,
@@ -3080,6 +3221,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 65535,
@@ -3101,6 +3243,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": false,
                     "limit": {
                         "context": 1000192,
@@ -3122,6 +3265,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -3143,6 +3287,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 204800,
@@ -3164,6 +3309,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 65536,
@@ -3186,6 +3332,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 204800,
@@ -3208,6 +3355,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 204800,
@@ -3230,6 +3378,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 204800,
@@ -3252,6 +3401,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -3274,6 +3424,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 256000,
@@ -3296,6 +3447,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -3318,6 +3470,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -3340,6 +3493,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 131072,
@@ -3362,6 +3516,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -3384,6 +3539,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 128000,
@@ -3406,6 +3562,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 131072,
@@ -3428,6 +3585,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 131072,
@@ -3450,6 +3608,7 @@
                     "reasoning": true,
                     "efforts": ["none", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -3471,6 +3630,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 131072,
@@ -3493,6 +3653,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 131072,
@@ -3514,6 +3675,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 32768,
@@ -3536,6 +3698,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 32768,
@@ -3557,6 +3720,7 @@
                     "reasoning": true,
                     "efforts": ["none", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -3579,6 +3743,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 128000,
@@ -3600,6 +3765,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 256000,
@@ -3621,6 +3787,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 65536,
@@ -3643,6 +3810,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 32768,
@@ -3665,6 +3833,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 131072,
@@ -3686,6 +3855,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -3707,6 +3877,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -3729,6 +3900,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -3751,6 +3923,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -3773,6 +3946,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -3795,6 +3969,7 @@
                     "reasoning": true,
                     "efforts": ["low", "high", "max"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -3817,6 +3992,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 81920,
@@ -3838,6 +4014,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 262144,
@@ -3859,6 +4036,7 @@
                     "reasoning": true,
                     "efforts": ["none", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -3874,6 +4052,7 @@
                     "reasoning": true,
                     "efforts": ["none", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -3889,6 +4068,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 131072,
@@ -3910,6 +4090,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 131072,
@@ -3931,6 +4112,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 131072,
@@ -3952,6 +4134,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -3974,6 +4157,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 256000,
@@ -3989,6 +4173,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium"],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -4010,6 +4195,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium"],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -4025,6 +4211,7 @@
                     "reasoning": true,
                     "efforts": ["medium", "high"],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -4047,6 +4234,7 @@
                     "reasoning": true,
                     "efforts": ["medium", "high"],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -4062,6 +4250,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": false,
                     "limit": {
                         "context": 131072,
@@ -4083,6 +4272,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -4105,6 +4295,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -4120,6 +4311,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 16385,
@@ -4141,6 +4333,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 4095,
@@ -4162,6 +4355,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 16385,
@@ -4183,6 +4377,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 4095,
@@ -4204,6 +4399,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 8191,
@@ -4225,6 +4421,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 128000,
@@ -4246,6 +4443,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1047576,
@@ -4268,6 +4466,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1047576,
@@ -4290,6 +4489,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1047576,
@@ -4312,6 +4512,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 128000,
@@ -4334,6 +4535,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 128000,
@@ -4355,6 +4557,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 128000,
@@ -4377,6 +4580,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 128000,
@@ -4399,6 +4603,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 128000,
@@ -4421,6 +4626,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 128000,
@@ -4443,6 +4649,7 @@
                     "reasoning": true,
                     "efforts": ["minimal", "low", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 400000,
@@ -4465,6 +4672,7 @@
                     "reasoning": true,
                     "efforts": ["minimal", "low", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 400000,
@@ -4487,6 +4695,7 @@
                     "reasoning": true,
                     "efforts": ["minimal", "low", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 400000,
@@ -4509,6 +4718,7 @@
                     "reasoning": true,
                     "efforts": ["high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 400000,
@@ -4530,6 +4740,7 @@
                     "reasoning": true,
                     "efforts": ["none", "low", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 400000,
@@ -4552,6 +4763,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 400000,
@@ -4574,6 +4786,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high", "xhigh"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 400000,
@@ -4596,6 +4809,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 400000,
@@ -4618,6 +4832,7 @@
                     "reasoning": true,
                     "efforts": ["none", "low", "medium", "high", "xhigh"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 400000,
@@ -4640,6 +4855,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 128000,
@@ -4662,6 +4878,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high", "xhigh"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 400000,
@@ -4684,6 +4901,7 @@
                     "reasoning": true,
                     "efforts": ["medium", "high", "xhigh"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 400000,
@@ -4705,6 +4923,7 @@
                     "reasoning": true,
                     "efforts": ["none", "low", "medium", "high", "xhigh"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 400000,
@@ -4727,6 +4946,7 @@
                     "reasoning": true,
                     "efforts": ["none", "low", "medium", "high", "xhigh"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1050000,
@@ -4749,6 +4969,7 @@
                     "reasoning": true,
                     "efforts": ["none", "low", "medium", "high", "xhigh"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 400000,
@@ -4771,6 +4992,7 @@
                     "reasoning": true,
                     "efforts": ["none", "low", "medium", "high", "xhigh"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 400000,
@@ -4793,6 +5015,7 @@
                     "reasoning": true,
                     "efforts": ["medium", "high", "xhigh"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1050000,
@@ -4814,6 +5037,7 @@
                     "reasoning": true,
                     "efforts": ["none", "low", "medium", "high", "xhigh"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1050000,
@@ -4836,6 +5060,7 @@
                     "reasoning": true,
                     "efforts": ["medium", "high", "xhigh"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1050000,
@@ -4864,6 +5089,7 @@
                         "max"
                     ],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1050000,
@@ -4894,6 +5120,7 @@
                         "max"
                     ],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1050000,
@@ -4924,6 +5151,7 @@
                         "max"
                     ],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1050000,
@@ -4954,6 +5182,7 @@
                         "max"
                     ],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1050000,
@@ -4984,6 +5213,7 @@
                         "max"
                     ],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1050000,
@@ -5014,6 +5244,7 @@
                         "max"
                     ],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1050000,
@@ -5037,6 +5268,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high", "xhigh", "max"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1050000,
@@ -5060,6 +5292,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high", "xhigh", "max"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1050000,
@@ -5083,6 +5316,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 400000,
@@ -5105,6 +5339,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high"],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 131072,
@@ -5127,6 +5362,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high"],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 131072,
@@ -5149,6 +5385,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high"],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 131072,
@@ -5165,6 +5402,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 200000,
@@ -5187,6 +5425,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": false,
                     "limit": {
                         "context": 200000,
@@ -5208,6 +5447,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 200000,
@@ -5230,6 +5470,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 200000,
@@ -5252,6 +5493,7 @@
                     "reasoning": true,
                     "efforts": ["high"],
                     "attachment": true,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 200000,
@@ -5274,6 +5516,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 200000,
@@ -5295,6 +5538,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 200000,
@@ -5317,6 +5561,7 @@
                     "reasoning": true,
                     "efforts": ["high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 200000,
@@ -5339,6 +5584,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 200000,
@@ -5354,6 +5600,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": false,
                     "limit": {
                         "context": 32768,
@@ -5375,6 +5622,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": false,
                     "limit": {
                         "context": 127072,
@@ -5396,6 +5644,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": false,
                     "limit": {
                         "context": 200000,
@@ -5417,6 +5666,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": false,
                     "limit": {
                         "context": 200000,
@@ -5438,6 +5688,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": false,
                     "limit": {
                         "context": 128000,
@@ -5459,6 +5710,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -5481,6 +5733,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -5496,6 +5749,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -5518,6 +5772,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -5533,6 +5788,7 @@
                     "reasoning": true,
                     "efforts": ["medium", "xhigh"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -5554,6 +5810,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 32768,
@@ -5575,6 +5832,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 32768,
@@ -5596,6 +5854,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 32768,
@@ -5617,6 +5876,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -5640,6 +5900,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -5661,6 +5922,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": false,
                     "limit": {
                         "context": 128000,
@@ -5683,6 +5945,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 131072,
@@ -5704,6 +5967,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 131072,
@@ -5725,6 +5989,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -5747,6 +6012,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 131072,
@@ -5768,6 +6034,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 131072,
@@ -5789,6 +6056,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -5810,6 +6078,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 81920,
@@ -5831,6 +6100,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 131072,
@@ -5852,6 +6122,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 131072,
@@ -5873,6 +6144,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -5895,6 +6167,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -5916,6 +6189,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -5939,6 +6213,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -5961,6 +6236,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -5984,6 +6260,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -6007,6 +6284,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -6028,6 +6306,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -6049,6 +6328,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -6070,6 +6350,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -6092,6 +6373,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 131072,
@@ -6113,6 +6395,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -6134,6 +6417,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -6155,6 +6439,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 131072,
@@ -6176,6 +6461,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -6197,6 +6483,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 131072,
@@ -6218,6 +6505,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -6239,6 +6527,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -6260,6 +6549,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -6282,6 +6572,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -6304,6 +6595,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -6325,6 +6617,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -6346,6 +6639,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -6367,6 +6661,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -6389,6 +6684,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -6411,6 +6707,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -6433,6 +6730,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -6455,6 +6753,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -6471,6 +6770,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -6493,6 +6793,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -6516,6 +6817,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -6539,6 +6841,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -6562,6 +6865,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "xhigh"],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -6584,6 +6888,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "xhigh"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -6606,6 +6911,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "xhigh"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -6621,6 +6927,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -6644,6 +6951,7 @@
                     "reasoning": true,
                     "efforts": ["minimal", "low", "medium", "high", "xhigh"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -6667,6 +6975,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 16384,
@@ -6688,6 +6997,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 65536,
@@ -6709,6 +7019,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 256000,
@@ -6730,6 +7041,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 256000,
@@ -6751,6 +7063,7 @@
                     "reasoning": true,
                     "efforts": ["high", "xhigh", "max"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -6773,6 +7086,7 @@
                     "reasoning": true,
                     "efforts": ["high", "xhigh", "max"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -6795,6 +7109,7 @@
                     "reasoning": true,
                     "efforts": ["high", "xhigh", "max"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -6817,6 +7132,7 @@
                     "reasoning": true,
                     "efforts": ["none", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -6839,6 +7155,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 8192,
@@ -6860,6 +7177,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 131072,
@@ -6881,6 +7199,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 131072,
@@ -6902,6 +7221,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -6923,6 +7243,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -6945,6 +7266,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 131072,
@@ -6966,6 +7288,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 8192,
@@ -6987,6 +7310,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 8192,
@@ -7008,6 +7332,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 8192,
@@ -7029,6 +7354,7 @@
                     "reasoning": true,
                     "efforts": ["none", "low", "high"],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -7036,14 +7362,14 @@
                     },
                     "background": {
                         "release_date": "2026-07-06",
-                        "input_cost": 0.0825,
-                        "output_cost": 0.33,
+                        "input_cost": 0.132,
+                        "output_cost": 0.528,
                         "output_limit": 128000
                     },
                     "prices": {
-                        "input": 82500,
-                        "output": 330000,
-                        "cache_read": 20625
+                        "input": 132000,
+                        "output": 528000,
+                        "cache_read": 33000
                     }
                 },
                 {
@@ -7051,6 +7377,7 @@
                     "reasoning": true,
                     "efforts": ["none", "low", "high"],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -7067,6 +7394,7 @@
                     "reasoning": true,
                     "efforts": ["none", "low", "high"],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -7083,6 +7411,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 131072,
@@ -7105,6 +7434,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 32768,
@@ -7127,6 +7457,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 1024000,
@@ -7155,6 +7486,7 @@
                         "max"
                     ],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -7184,6 +7516,7 @@
                         "max"
                     ],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -7213,6 +7546,7 @@
                         "max"
                     ],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -7235,6 +7569,7 @@
                         "max"
                     ],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -7250,6 +7585,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -7272,6 +7608,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 6144,
@@ -7293,6 +7630,7 @@
                     "reasoning": true,
                     "efforts": ["none", "minimal", "low", "medium", "high"],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 131072,
@@ -7323,6 +7661,7 @@
                         "max"
                     ],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 524288,
@@ -7345,6 +7684,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": false,
                     "limit": {
                         "context": 1040000,
@@ -7366,6 +7706,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 2000000,
@@ -7388,6 +7729,7 @@
                     "reasoning": true,
                     "efforts": ["none", "low", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -7410,6 +7752,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 500000,
@@ -7432,6 +7775,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high", "xhigh"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 500000,
@@ -7454,6 +7798,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high", "xhigh"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 500000,
@@ -7476,6 +7821,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 256000,
@@ -7498,6 +7844,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1050000,
@@ -7520,6 +7867,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 1050000,
@@ -7542,6 +7890,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -7564,6 +7913,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -7586,6 +7936,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -7608,6 +7959,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 131072,
@@ -7630,6 +7982,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 131072,
@@ -7652,6 +8005,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 65536,
@@ -7674,6 +8028,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 204800,
@@ -7696,6 +8051,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 131072,
@@ -7718,6 +8074,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 204800,
@@ -7740,6 +8097,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 200000,
@@ -7761,6 +8119,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 204800,
@@ -7783,6 +8142,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 202752,
@@ -7805,6 +8165,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 204800,
@@ -7827,6 +8188,7 @@
                     "reasoning": true,
                     "efforts": ["high", "xhigh"],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -7849,6 +8211,7 @@
                     "reasoning": true,
                     "efforts": ["low", "high", "max"],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 1310720,
@@ -7856,14 +8219,14 @@
                     },
                     "background": {
                         "release_date": "2026-08-14",
-                        "input_cost": 0.91,
-                        "output_cost": 2.86,
+                        "input_cost": 0.7,
+                        "output_cost": 2.2,
                         "output_limit": 131072
                     },
                     "prices": {
-                        "input": 910000,
-                        "output": 2860000,
-                        "cache_read": 169000
+                        "input": 700000,
+                        "output": 2200000,
+                        "cache_read": 130000
                     }
                 },
                 {
@@ -7871,6 +8234,7 @@
                     "reasoning": true,
                     "efforts": ["low", "high", "max"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1310720,
@@ -7893,6 +8257,7 @@
                     "reasoning": true,
                     "efforts": ["low", "high", "max"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -7915,6 +8280,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 202752,
@@ -7937,6 +8303,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high", "xhigh", "max"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -7960,6 +8327,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 200000,
@@ -7983,6 +8351,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high", "xhigh", "max"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -8006,6 +8375,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high", "xhigh", "max"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -8029,6 +8399,7 @@
                     "reasoning": true,
                     "efforts": ["low", "high", "max"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -8051,21 +8422,22 @@
                     "reasoning": true,
                     "efforts": ["low", "high", "max"],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
-                        "output": 393216
+                        "output": 384000
                     },
                     "background": {
                         "release_date": "2026-09-14",
-                        "input_cost": 0.53196,
-                        "output_cost": 1.59588,
-                        "output_limit": 393216
+                        "input_cost": 0.558624,
+                        "output_cost": 1.675872,
+                        "output_limit": 384000
                     },
                     "prices": {
-                        "input": 531960,
-                        "output": 1595880,
-                        "cache_read": 16926
+                        "input": 558624,
+                        "output": 1675872,
+                        "cache_read": 18621
                     }
                 },
                 {
@@ -8073,6 +8445,7 @@
                     "reasoning": true,
                     "efforts": ["low", "high", "max"],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 1310720,
@@ -8080,14 +8453,14 @@
                     },
                     "background": {
                         "release_date": "2026-08-01",
-                        "input_cost": 0.04,
-                        "output_cost": 0.4,
+                        "input_cost": 0.03,
+                        "output_cost": 0.8,
                         "output_limit": 943718
                     },
                     "prices": {
-                        "input": 40000,
-                        "output": 400000,
-                        "cache_read": 10000
+                        "input": 30000,
+                        "output": 800000,
+                        "cache_read": 8000
                     }
                 },
                 {
@@ -8095,6 +8468,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -8118,6 +8492,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -8141,6 +8516,7 @@
                     "reasoning": true,
                     "efforts": ["low", "high", "max"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1048576,
@@ -8163,6 +8539,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high", "xhigh", "max"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1050000,
@@ -8193,6 +8570,7 @@
                         "max"
                     ],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1050000,
@@ -8216,6 +8594,7 @@
                     "reasoning": true,
                     "efforts": ["none", "low", "medium", "high", "xhigh"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 400000,
@@ -8245,6 +8624,7 @@
                         "max"
                     ],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1050000,
@@ -8275,6 +8655,7 @@
                         "max"
                     ],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1050000,
@@ -8298,6 +8679,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high", "xhigh"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 500000,
@@ -8320,6 +8702,7 @@
                     "reasoning": true,
                     "efforts": ["low", "high", "max"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1310720,
@@ -8342,6 +8725,7 @@
                     "reasoning": true,
                     "efforts": ["low", "high", "max"],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 1310720,
@@ -8349,14 +8733,14 @@
                     },
                     "background": {
                         "release_date": "2026-08-19",
-                        "input_cost": 0.7728,
-                        "output_cost": 2.4288,
+                        "input_cost": 0.7,
+                        "output_cost": 2.2,
                         "output_limit": 131072
                     },
                     "prices": {
-                        "input": 772800,
-                        "output": 2428800,
-                        "cache_read": 143520
+                        "input": 700000,
+                        "output": 2200000,
+                        "cache_read": 130000
                     }
                 }
             ]
@@ -8370,6 +8754,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 524288,
@@ -8392,6 +8777,7 @@
                     "reasoning": true,
                     "efforts": ["none", "low", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -8414,6 +8800,7 @@
                     "reasoning": true,
                     "efforts": ["none", "low", "high", "xhigh", "max"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 524288,
@@ -8436,6 +8823,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -8458,6 +8846,7 @@
                     "reasoning": true,
                     "efforts": ["low", "high", "max"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 524288,
@@ -8480,6 +8869,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high"],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 262144,
@@ -8502,6 +8892,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high"],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 131072,
@@ -8524,6 +8915,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 196608,
@@ -8546,6 +8938,7 @@
                     "reasoning": true,
                     "efforts": ["none", "high", "xhigh"],
                     "attachment": false,
+                    "image_input": false,
                     "supports_tools": true,
                     "limit": {
                         "context": 524288,
@@ -8568,6 +8961,7 @@
                     "reasoning": true,
                     "efforts": ["low", "high", "max"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 524288,
@@ -8596,6 +8990,7 @@
                     "reasoning": false,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -8618,6 +9013,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -8640,6 +9036,7 @@
                     "reasoning": true,
                     "efforts": ["none", "low", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 1000000,
@@ -8662,6 +9059,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 500000,
@@ -8684,6 +9082,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high", "xhigh"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 500000,
@@ -8706,6 +9105,7 @@
                     "reasoning": true,
                     "efforts": ["low", "medium", "high", "xhigh"],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 500000,
@@ -8728,6 +9128,7 @@
                     "reasoning": true,
                     "efforts": [],
                     "attachment": true,
+                    "image_input": true,
                     "supports_tools": true,
                     "limit": {
                         "context": 256000,

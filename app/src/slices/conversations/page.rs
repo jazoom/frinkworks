@@ -591,6 +591,9 @@ pub(super) struct ConversationDetailView {
     pub(super) compaction: Option<super::compaction::CompactionView>,
     summary_usage: Option<UsagePanelView>,
     pub(super) queue: super::queue::QueueView,
+    /// Session-staged images for this composer scope. The composer submits
+    /// their references and never the bytes.
+    pub(super) attachments: super::attachments::AttachmentsView,
     /// A new draft that continues copied context. It is a context alternative,
     /// not a file rollback and not a permission transfer.
     pub(super) fork: Option<ForkNotice>,
@@ -785,7 +788,7 @@ impl ConversationDetailView {
             consent_direct,
             consent_sensitive,
             consent_reviewed,
-            draft_nonce: form.draft_nonce,
+            draft_nonce: form.draft_nonce.clone(),
             prepared_run: form.prepared_run,
             fork_source: form.fork_source,
             handoff_settings,
@@ -834,6 +837,11 @@ impl ConversationDetailView {
                 &crate::conversations::ConversationQueue::default(),
                 false,
                 false,
+            ),
+            attachments: super::attachments::page::view(
+                state,
+                session,
+                &super::attachments::page::draft_scope(&form.draft_nonce),
             ),
             fork,
             revision: None,
@@ -991,6 +999,7 @@ impl ConversationDetailView {
             None,
             None,
             Vec::new(),
+            super::attachments::AttachmentsView::empty(String::new()),
             transcript,
             None,
         )
@@ -1008,6 +1017,7 @@ impl ConversationDetailView {
 
         source_candidate_review: Option<CandidateReviewLinkView>,
         linked_candidate_reviews: Vec<CandidateReviewLinkView>,
+        attachments: super::attachments::AttachmentsView,
         transcript: Option<&crate::conversations::TranscriptWindow>,
         inspection_leaf: Option<MessageId>,
     ) -> Self {
@@ -1332,6 +1342,7 @@ impl ConversationDetailView {
                 job_active || pending_gate.is_some() || record.continuation.is_some(),
                 job.is_some_and(|job| job.status == JobStatus::Running),
             ),
+            attachments,
             fork: None,
             revision: None,
             state: ConversationPageState::Saved(Box::new(SavedConversationState {
@@ -2226,10 +2237,17 @@ pub(super) fn message_view_in(
             ))
         },
         html: if user {
-            format!(
+            let mut html = format!(
                 "<p class=\"whitespace-pre-wrap\">{}</p>",
                 ammonia::clean_text(&message.text)
-            )
+            );
+            for reference in &message.attachments {
+                html.push_str(&format!(
+                    "<a href=\"/conversations/{conversation}/attachments/{id}\" target=\"_blank\" rel=\"noopener\"><img src=\"/conversations/{conversation}/attachments/{id}\" alt=\"Attached image\" loading=\"lazy\" class=\"max-h-64 max-w-full object-contain\"></a>",
+                    id = reference.id,
+                ));
+            }
+            html
         } else {
             activity_html(
                 conversation,

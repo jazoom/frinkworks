@@ -325,6 +325,13 @@ fn turns_tokens(selection: Option<&ModelSelection>, turns: &[ChatTurn]) -> u64 {
 
 fn turn_text_bytes(turn: &ChatTurn) -> usize {
     let mut bytes = turn.text.len();
+    for image in &turn.images {
+        bytes = bytes.saturating_add(
+            crate::conversations::attachments::estimated_image_tokens(image.width, image.height)
+                as usize
+                * 4,
+        );
+    }
     for call in &turn.calls {
         bytes = bytes
             .saturating_add(call.arguments.to_string().len())
@@ -342,14 +349,27 @@ pub(crate) fn project(
     selection: Option<&ModelSelection>,
     compaction: Option<&CompactionRecord>,
 ) -> Result<Vec<ChatTurn>, HistoryError> {
+    project_with_attachments(messages, selection, compaction, None)
+}
+
+/// Project a compacted path and resolve the images that the request includes.
+/// A summary request uses the same projection so covered images are not
+/// silently dropped.
+pub(crate) fn project_with_attachments(
+    messages: &[ConversationMessage],
+    selection: Option<&ModelSelection>,
+    compaction: Option<&CompactionRecord>,
+    attachments: Option<&super::attachments::AttachmentStore>,
+) -> Result<Vec<ChatTurn>, HistoryError> {
     let Some(compaction) = compaction else {
-        return super::history::project(messages, selection);
+        return super::history::project_with_attachments(messages, selection, attachments);
     };
     if !compaction.valid(messages) {
         return Err(HistoryError::Bound);
     }
     let split = split_index(messages, compaction).ok_or(HistoryError::Bound)?;
-    let mut retained = super::history::project(&messages[split..], selection)?;
+    let mut retained =
+        super::history::project_with_attachments(&messages[split..], selection, attachments)?;
     let mut summary = summary_turn(&compaction.text);
     summary.usage.extend(compaction.requests.iter().cloned());
     let mut projected = vec![summary];
@@ -475,6 +495,10 @@ pub(crate) fn chunk_prompt(
             body.push_str(&turn.text);
             body.push('\n');
         }
+        if !turn.images.is_empty() {
+            // An image-only turn must not read as empty text in the summary.
+            body.push_str(&format!("[{} image attachment(s)]\n", turn.images.len()));
+        }
         for call in &turn.calls {
             let Some(result) = &call.result else {
                 return Err(CompactionError::Unsettled);
@@ -560,11 +584,24 @@ fn exchange_end(turns: &[ChatTurn], index: usize) -> bool {
         && turns[index].calls.iter().all(|call| call.result.is_some())
 }
 
+#[cfg(test)]
 pub(crate) fn covered_turns(
     messages: &[ConversationMessage],
     selection: Option<&ModelSelection>,
     covered_through: MessageId,
     current: Option<&CompactionRecord>,
+) -> Result<Vec<ChatTurn>, CompactionError> {
+    covered_turns_with_attachments(messages, selection, covered_through, current, None)
+}
+
+/// Build the covered turns for a summary request and resolve their images so
+/// an image-only exchange never reads as empty text.
+pub(crate) fn covered_turns_with_attachments(
+    messages: &[ConversationMessage],
+    selection: Option<&ModelSelection>,
+    covered_through: MessageId,
+    current: Option<&CompactionRecord>,
+    attachments: Option<&super::attachments::AttachmentStore>,
 ) -> Result<Vec<ChatTurn>, CompactionError> {
     let covered = messages
         .iter()
@@ -581,8 +618,12 @@ pub(crate) fn covered_turns(
         turns.push(summary_turn(&record.text));
     }
     turns.extend(
-        super::history::project(&messages[start..=covered], selection)
-            .map_err(|_| CompactionError::Unsettled)?,
+        super::history::project_with_attachments(
+            &messages[start..=covered],
+            selection,
+            attachments,
+        )
+        .map_err(|_| CompactionError::Unsettled)?,
     );
     Ok(turns)
 }

@@ -1,0 +1,7 @@
+{% for attachment in view.attachments %}
+  <input
+    type="hidden"
+    name="attachment_{{ loop.index0 }}"
+    value="{{ attachment.id }}"
+  />
+{% endfor %}

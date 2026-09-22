@@ -135,10 +135,11 @@ pub(crate) fn history_with_review(
     secret: Option<&str>,
 ) -> Result<Vec<ChatTurn>, &'static str> {
     let selection = record.model.as_ref().map(|model| &model.settings.model);
-    let mut history = crate::conversations::compaction::project(
+    let mut history = crate::conversations::compaction::project_with_attachments(
         &record.messages,
         selection,
         record.compaction.as_ref(),
+        Some(state.conversations.attachment_store()),
     )
     .map_err(|error| error.message())?;
     if let Some(context) = &record.candidate_review_context {

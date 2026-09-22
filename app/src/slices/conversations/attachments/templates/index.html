@@ -1,0 +1,60 @@
+{% if view.error != "" %}
+  <p class="text-error text-sm" role="alert">{{ view.error }}</p>
+{% endif %}
+{% if !view.attachments.is_empty() %}
+  <ul class="flex flex-wrap gap-2" aria-label="Attached images">
+    {% for attachment in view.attachments %}
+      <li class="relative" data-attachment="{{ attachment.id }}">
+        <img
+          src="{{ attachment.src }}"
+          alt="Attached image, {{ attachment.label }}"
+          class="rounded-box h-16 w-16 object-cover"
+          width="64"
+          height="64"
+        />
+        <form
+          data-graft
+          method="post"
+          action="{{ attachment.remove_action }}"
+          class="absolute end-0 top-0"
+        >
+          <input
+            type="hidden"
+            name="attachment_id"
+            value="{{ attachment.id }}"
+          />
+          <button
+            class="btn btn-circle btn-xs"
+            type="submit"
+            aria-label="Remove attached image"
+          >
+            ×
+          </button>
+        </form>
+      </li>
+    {% endfor %}
+  </ul>
+{% endif %}
+{% if view.has_room %}
+  <form
+    data-graft
+    enctype="multipart/form-data"
+    method="post"
+    action="{{ view.upload_action }}"
+    class="flex flex-wrap items-center gap-2"
+    data-attachment-upload
+  >
+    <label class="btn btn-outline btn-sm min-h-11 cursor-pointer">
+      Add images
+      <input
+        type="file"
+        name="image"
+        accept="image/png,image/jpeg,image/webp"
+        multiple
+        class="sr-only"
+        data-attachment-input
+      />
+    </label>
+    <button type="submit" class="btn btn-ghost btn-sm min-h-11">Upload</button>
+  </form>
+{% endif %}

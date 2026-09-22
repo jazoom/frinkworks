@@ -31,6 +31,49 @@ pub(super) struct EnqueueForm {
     message: String,
     #[serde(default)]
     delivery: String,
+    #[serde(default, rename = "attachment_0")]
+    attachment_0: String,
+    #[serde(default, rename = "attachment_1")]
+    attachment_1: String,
+    #[serde(default, rename = "attachment_2")]
+    attachment_2: String,
+    #[serde(default, rename = "attachment_3")]
+    attachment_3: String,
+    #[serde(default, rename = "attachment_4")]
+    attachment_4: String,
+    #[serde(default, rename = "attachment_5")]
+    attachment_5: String,
+    #[serde(default, rename = "attachment_6")]
+    attachment_6: String,
+    #[serde(default, rename = "attachment_7")]
+    attachment_7: String,
+}
+
+impl EnqueueForm {
+    fn attachment_ids(&self) -> Result<Vec<crate::conversations::AttachmentId>, &'static str> {
+        let mut ids = Vec::new();
+        for value in [
+            &self.attachment_0,
+            &self.attachment_1,
+            &self.attachment_2,
+            &self.attachment_3,
+            &self.attachment_4,
+            &self.attachment_5,
+            &self.attachment_6,
+            &self.attachment_7,
+        ] {
+            if value.trim().is_empty() {
+                continue;
+            }
+            let id = crate::conversations::attachments::parse_attachment_id(value)
+                .ok_or("That staged image is not valid. Add it again.")?;
+            if ids.contains(&id) {
+                return Err("That staged image is not valid. Add it again.");
+            }
+            ids.push(id);
+        }
+        Ok(ids)
+    }
 }
 
 #[derive(Deserialize)]
@@ -98,10 +141,34 @@ pub(super) async fn enqueue(
             ),
         );
     }
-    match state
-        .conversations
-        .enqueue(&record.id, queue_revision, form.message, delivery, job)
-    {
+    let attachments = match form.attachment_ids() {
+        Ok(attachments) => attachments,
+        Err(error) => {
+            return render_detail_command(
+                graft,
+                PatchStatus::UnprocessableEntity,
+                detail_view(&state, session.0, &record, &record.title, error),
+            );
+        }
+    };
+    let scope = record.id.as_hex();
+    let queued = if attachments.is_empty() {
+        state
+            .conversations
+            .enqueue(&record.id, queue_revision, form.message, delivery, job)
+    } else {
+        state.conversations.enqueue_with_attachments(
+            &record.id,
+            queue_revision,
+            form.message,
+            Some(session.0),
+            &scope,
+            attachments,
+            delivery,
+            job,
+        )
+    };
+    match queued {
         Ok(updated) => render_detail_command(
             graft,
             PatchStatus::Ok,
@@ -219,11 +286,19 @@ async fn mutate_item(
             ),
         );
     }
-    match state
-        .conversations
-        .remove_queue_item(&record.id, queue_revision, item_id)
-    {
-        Ok((updated, _)) => render_detail_command(
+    let result = match action {
+        ItemAction::ReturnToEditor => {
+            state
+                .conversations
+                .return_queue_item(&record.id, queue_revision, item_id, session.0)
+        }
+        ItemAction::Remove => state
+            .conversations
+            .remove_queue_item(&record.id, queue_revision, item_id)
+            .map(|(record, _)| record),
+    };
+    match result {
+        Ok(updated) => render_detail_command(
             graft,
             PatchStatus::Ok,
             detail_view(&state, session.0, &updated, &updated.title, ""),

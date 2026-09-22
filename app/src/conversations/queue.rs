@@ -79,6 +79,8 @@ impl QueueDelivery {
 pub(crate) struct QueueItem {
     pub(crate) id: QueueItemId,
     pub(crate) text: String,
+    /// Immutable image references that the delivery moves to its message.
+    pub(crate) attachments: Vec<super::AttachmentRef>,
     pub(crate) delivery: QueueDelivery,
     pub(crate) settings_digest: [u8; 32],
     pub(crate) job: Option<JobId>,
@@ -139,8 +141,10 @@ pub(crate) fn valid_queue(queue: &ConversationQueue) -> bool {
     let mut total = 0usize;
     let mut seen = Vec::new();
     for item in &queue.items {
+        let empty_with_images = item.text.trim().is_empty() && !item.attachments.is_empty();
         if seen.contains(&item.id)
-            || item.text.is_empty()
+            || (!empty_with_images && item.text.is_empty())
+            || !super::history::valid_attachments(&item.attachments)
             || item.text.len() > MAXIMUM_QUEUE_ITEM_BYTES
             || item
                 .text

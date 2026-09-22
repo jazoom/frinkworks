@@ -8,8 +8,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::execution::BudgetSnapshot;
 use crate::providers::{
-    AssistantActivity, AuthMethod, ChatToolCall, ChatTurn, CompletionReason, ModelSelection,
-    ModelUsage, ToolOutput,
+    AssistantActivity, AuthMethod, ChatImage, ChatToolCall, ChatTurn, CompletionReason,
+    ModelSelection, ModelUsage, ToolOutput,
+};
+
+use super::attachments::{
+    AttachmentRef, AttachmentStore, MAXIMUM_ATTACHMENTS_PER_MESSAGE,
+    MAXIMUM_MESSAGE_ATTACHMENT_BYTES,
 };
 use crate::sessions::JobId;
 use crate::workflows::{AttemptId, RunId};
@@ -57,6 +62,9 @@ pub(crate) struct ConversationMessage {
     pub(crate) final_phase: bool,
     pub(crate) role: MessageRole,
     pub(crate) text: String,
+    /// Immutable image references for a user turn. Reasoning and tool output
+    /// never carry references.
+    pub(crate) attachments: Vec<AttachmentRef>,
     pub(crate) activity: Vec<AssistantActivity>,
     pub(crate) continuation: Vec<ContinuationMetadata>,
     pub(crate) status: MessageStatus,
@@ -191,6 +199,7 @@ pub(crate) enum HistoryError {
     Continuation,
     Unsettled,
     Usage,
+    Attachment,
 }
 
 impl HistoryError {
@@ -205,6 +214,7 @@ impl HistoryError {
                 "A stored tool call has no trustworthy outcome. Resolve recovery before further work."
             }
             Self::Usage => "Stored history contains invalid request usage.",
+            Self::Attachment => "A message has image references that are not available.",
         }
     }
 }
@@ -500,6 +510,27 @@ pub(crate) fn valid_activity(activity: &[AssistantActivity], text: &str) -> bool
     response == text
 }
 
+/// Bound one message's image references. Order is significant because it
+/// fixes the projection order, so duplicates are rejected rather than merged.
+pub(crate) fn valid_attachments(references: &[AttachmentRef]) -> bool {
+    if references.len() > MAXIMUM_ATTACHMENTS_PER_MESSAGE {
+        return false;
+    }
+    let mut total = 0u64;
+    let mut seen = Vec::with_capacity(references.len());
+    for reference in references {
+        if !reference.valid() || seen.contains(&reference.id) {
+            return false;
+        }
+        total = total.saturating_add(reference.byte_length);
+        if total > MAXIMUM_MESSAGE_ATTACHMENT_BYTES {
+            return false;
+        }
+        seen.push(reference.id);
+    }
+    true
+}
+
 pub(crate) fn valid_command(command: Option<&crate::execution::CommandResult>) -> bool {
     command.is_none_or(crate::execution::CommandResult::is_bounded)
 }
@@ -571,15 +602,42 @@ pub(crate) fn project(
     messages: &[ConversationMessage],
     selection: Option<&ModelSelection>,
 ) -> Result<Vec<ChatTurn>, HistoryError> {
+    project_with_attachments(messages, selection, None)
+}
+
+/// Project the active path and resolve the image references that the actual
+/// request includes. Text-only consumers pass no store and never read bytes.
+pub(crate) fn project_with_attachments(
+    messages: &[ConversationMessage],
+    selection: Option<&ModelSelection>,
+    attachments: Option<&AttachmentStore>,
+) -> Result<Vec<ChatTurn>, HistoryError> {
     validate_exchange(messages)?;
     let mut history = Vec::new();
     for message in messages {
         match message.role {
             MessageRole::User => {
-                if message.text.contains('\0') {
+                if message.text.contains('\0') || !valid_attachments(&message.attachments) {
                     return Err(HistoryError::Bound);
                 }
-                history.push(ChatTurn::user(message.text.clone()));
+                let mut turn = ChatTurn::user(message.text.clone());
+                if !message.attachments.is_empty() {
+                    for reference in &message.attachments {
+                        let bytes = attachments
+                            .map(|store| store.load(reference))
+                            .transpose()
+                            .map_err(|_| HistoryError::Attachment)?
+                            .unwrap_or_default();
+                        turn.images.push(ChatImage {
+                            reference: reference.clone(),
+                            format: reference.format,
+                            width: reference.width,
+                            height: reference.height,
+                            bytes,
+                        });
+                    }
+                }
+                history.push(turn);
             }
             MessageRole::Assistant => {
                 if message.status == MessageStatus::Pending {
@@ -614,6 +672,7 @@ pub(crate) fn project(
                 history.push(ChatTurn {
                     role: crate::providers::Role::Assistant,
                     text,
+                    images: Vec::new(),
                     thinking: String::new(),
                     tools,
                     activity: message.activity.clone(),

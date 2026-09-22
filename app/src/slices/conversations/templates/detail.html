@@ -866,6 +866,14 @@
         </div>
         <div class="mx-auto w-full max-w-3xl">
           {% include "conversations/queue/templates/index.html" %}
+          {% let view = &self.attachments %}
+          <div
+            id="conversation-attachment-controls"
+            class="border-base-300 bg-base-200 rounded-box col-span-2 flex flex-col gap-2 border px-3 py-2"
+            data-attachments
+          >
+            {% include "conversations/attachments/templates/index.html" %}
+          </div>
           <form
             id="conversation-composer"
             data-island="composer"
@@ -1019,6 +1027,9 @@
                 >
               </div>
             {% endif %}
+            <div id="conversation-attachment-refs">
+              {% include "conversations/attachments/templates/refs.html" %}
+            </div>
             <label class="sr-only" for="composer-message">Message</label>
             <textarea
               id="composer-message"
@@ -1026,7 +1037,6 @@
               class="textarea textarea-bordered field-sizing-content max-h-[min(12rem,24dvh)] min-h-16 w-full min-w-0 resize-y text-base leading-relaxed"
               placeholder="Ask a question or describe a change…"
               rows="2"
-              {% if !self.is_new() %}required{% endif %}
               maxlength="32768"
               {% if self.composer_disabled() %}disabled{% endif %}
             >

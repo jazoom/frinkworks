@@ -143,6 +143,11 @@ pub(crate) async fn run_agent_action(
     let mut overflow_compacted = false;
 
     'round: loop {
+        if let Err(error) =
+            crate::conversations::attachments::prepare_turns(state, &spec.connection, &mut turns)
+        {
+            return context_blocked(reply, error);
+        }
         if let Some(reason) = budget.next_request_block() {
             return pause_action(&job, reply, budget.snapshot(reason));
         }
@@ -1072,6 +1077,7 @@ pub(crate) async fn run_agent_action(
         let completed_turn = crate::providers::ChatTurn {
             role: crate::providers::Role::Assistant,
             text: text.clone(),
+            images: Vec::new(),
             thinking: String::new(),
             tools: Vec::new(),
             activity: Vec::new(),
@@ -1964,11 +1970,12 @@ async fn compact_history_inner(
             budget,
         )
         .map_err(|error| context_blocked(AssistantReply::default(), error.message()))?;
-        let covered = crate::conversations::compaction::covered_turns(
+        let covered = crate::conversations::compaction::covered_turns_with_attachments(
             &record.messages,
             selection.as_ref(),
             covered_through,
             record.compaction.as_ref(),
+            Some(state.conversations.attachment_store()),
         )
         .map_err(|error| context_blocked(AssistantReply::default(), error.message()))?;
         let outcome = generate_summary(state, spec, job, &covered, None).await?;
@@ -1983,10 +1990,11 @@ async fn compact_history_inner(
             preserve: None,
             created_at_ms: crate::workflows::now_ms(),
         };
-        let replacement = crate::conversations::compaction::project(
+        let replacement = crate::conversations::compaction::project_with_attachments(
             &record.messages,
             selection.as_ref(),
             Some(&compaction),
+            Some(state.conversations.attachment_store()),
         )
         .map_err(|error| context_blocked(AssistantReply::default(), error.message()))?;
         let replacement_tokens = measure_replacement(state, spec, job, &replacement, extra, tools)

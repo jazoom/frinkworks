@@ -10,6 +10,7 @@ use crate::workflows::{ArtefactId, RunId};
 use crate::providers::ModelSelection;
 use crate::sessions::JobId;
 
+use super::attachments::{AttachmentError, AttachmentId, AttachmentRef, STAGING_TTL_MS};
 use super::history::{
     ConversationMessage, MessageRole, MessageStatus, settle_interrupted_questions, valid_activity,
     valid_continuation, valid_message_error,
@@ -330,6 +331,7 @@ pub(crate) enum ConversationError {
     Network,
     Directories,
     Review,
+    Image(AttachmentError),
 }
 
 impl ConversationError {
@@ -354,6 +356,7 @@ impl ConversationError {
             Self::Network => "Choose valid network access for this conversation.",
             Self::Directories => "Choose valid non-overlapping directories for this conversation.",
             Self::Review => "That plan review hand-off is no longer available.",
+            Self::Image(error) => error.message(),
         }
     }
 }
@@ -369,10 +372,27 @@ impl std::error::Error for ConversationError {}
 pub(crate) struct ConversationStore {
     // This lock also protects ownership validation through the authoritative run commit.
     database: Mutex<Database>,
+    // Immutable image bytes live here. The database owns the references.
+    attachments: super::attachments::AttachmentStore,
     // A commit I/O failure can leave the outcome unknown. Block new work until restart.
     uncertain: Mutex<std::collections::BTreeSet<ConversationId>>,
     title_updates: tokio::sync::broadcast::Sender<()>,
     questions: QuestionWaiters,
+}
+
+/// One atomic binding of staged references to a committed user message.
+#[derive(Clone)]
+struct AttachmentClaim {
+    restage: bool,
+    conversation: ConversationId,
+    session: Option<crate::sessions::SessionId>,
+    /// The staging scope used at upload time. A new draft stages under an
+    /// empty scope before its conversation identifier exists.
+    scope: String,
+    /// The owning user message. A queue item binds the reference to the
+    /// conversation before the message exists, so it stays `None`.
+    message: Option<MessageId>,
+    ids: Vec<AttachmentId>,
 }
 
 /// The durable, message-free projection of one conversation. Messages and
@@ -476,6 +496,8 @@ struct PausedDraftFile {
 struct QueueItemFile {
     id: String,
     text: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    attachments: Vec<AttachmentFile>,
     delivery: String,
     settings_digest: String,
     #[serde(deserialize_with = "crate::storage::required_option")]
@@ -576,6 +598,8 @@ struct MessageFile {
     role: MessageRole,
     text: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    attachments: Vec<AttachmentFile>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     activity: Vec<crate::providers::AssistantActivity>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     continuation: Vec<super::history::ContinuationMetadata>,
@@ -590,17 +614,66 @@ struct MessageFile {
     requests: Vec<super::history::RequestUsage>,
 }
 
+/// Immutable attachment reference metadata. Bytes never enter this record.
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+struct AttachmentFile {
+    id: String,
+    sha256: String,
+    format: crate::conversations::AttachmentFormat,
+    width: u32,
+    height: u32,
+    byte_length: u64,
+}
+
+fn attachment_from_file(
+    file: AttachmentFile,
+) -> Result<crate::conversations::AttachmentRef, ConversationError> {
+    let reference = crate::conversations::AttachmentRef {
+        id: crate::conversations::AttachmentId::parse(&file.id)
+            .ok_or(ConversationError::Corrupt)?,
+        sha256: file.sha256,
+        format: file.format,
+        width: file.width,
+        height: file.height,
+        byte_length: file.byte_length,
+    };
+    reference
+        .valid()
+        .then_some(reference)
+        .ok_or(ConversationError::Corrupt)
+}
+
+fn attachment_to_file(reference: &crate::conversations::AttachmentRef) -> AttachmentFile {
+    AttachmentFile {
+        id: reference.id.as_hex(),
+        sha256: reference.sha256.clone(),
+        format: reference.format,
+        width: reference.width,
+        height: reference.height,
+        byte_length: reference.byte_length,
+    }
+}
+
 impl ConversationStore {
     pub(crate) fn open(dir: PathBuf) -> Result<Self, ConversationError> {
         let database = Database::open(&dir)?;
+        let attachments = super::attachments::AttachmentStore::open(dir.join("attachments"))
+            .map_err(ConversationError::Image)?;
         let store = Self {
             database: Mutex::new(database),
+            attachments,
             uncertain: Mutex::new(std::collections::BTreeSet::new()),
             title_updates: tokio::sync::broadcast::channel(16).0,
             questions: QuestionWaiters::new(),
         };
+        store.clear_staging()?;
         store.interrupt_requests()?;
         Ok(store)
+    }
+
+    pub(crate) fn attachment_store(&self) -> &super::attachments::AttachmentStore {
+        &self.attachments
     }
 
     pub(crate) fn metadata(&self) -> Vec<ConversationMetadata> {
@@ -751,6 +824,7 @@ impl ConversationStore {
     /// new exchange in one transaction, so the original entry and every
     /// descendant stay retained as an independent branch. The source entry,
     /// its parent and the expected active leaf are validated before any write.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn revise_message_with_model(
         &self,
         id: &ConversationId,
@@ -759,8 +833,9 @@ impl ConversationStore {
         model: Option<ConversationModelConfiguration>,
         request: JobId,
         text: String,
+        session: crate::sessions::SessionId,
+        attachment_ids: Vec<AttachmentId>,
     ) -> Result<ConversationRecord, ConversationError> {
-        let text = normalise_message(&text)?;
         let mut database = self.database();
         self.require_durable(id)?;
         let Some(shell) = database.load_shell(id)? else {
@@ -788,6 +863,16 @@ impl ConversationStore {
         if source.role != MessageRole::User {
             return Err(ConversationError::Entry);
         }
+        let mut attachments = source.attachments.clone();
+        attachments.extend(database.staged_attachments(
+            Some(session),
+            &id.as_hex(),
+            &attachment_ids,
+        )?);
+        if !super::history::valid_attachments(&attachments) {
+            return Err(ConversationError::Image(AttachmentError::Aggregate));
+        }
+        let text = normalise_message_optional(&text, !attachments.is_empty())?;
         let parent_path = messages[..messages.len() - 1].to_vec();
         let parent = parent_path.last().map(|message| message.id);
         if parent != revision.parent {
@@ -810,7 +895,9 @@ impl ConversationStore {
         }
         let user_id = MessageId::generate().map_err(|_| ConversationError::Random)?;
         let assistant_id = MessageId::generate().map_err(|_| ConversationError::Random)?;
-        updated.messages.push(user_message(user_id, text));
+        updated
+            .messages
+            .push(user_message(user_id, text, attachments));
         updated
             .messages
             .push(pending_phase(assistant_id, assistant_id, request));
@@ -833,7 +920,18 @@ impl ConversationStore {
         if access_digest(&shell) != access_digest(&updated) {
             updated.directory_approvals.clear();
         }
-        self.persist(&mut database, Some(&previous), &updated)?;
+        let claim = AttachmentClaim {
+            restage: false,
+            conversation: *id,
+            session: Some(session),
+            scope: id.as_hex(),
+            message: Some(user_id),
+            ids: attachment_ids,
+        };
+        self.commit_result(
+            *id,
+            database.save_with_attachments(Some(&previous), &updated, Some(&claim)),
+        )?;
         database.load(id)?.ok_or(ConversationError::Missing)
     }
 
@@ -912,6 +1010,21 @@ impl ConversationStore {
             .as_ref()
             .map(|model| model.settings.network.clone())
             .unwrap_or_default();
+        // A fork shares immutable object bytes but needs its own references.
+        // New reference identifiers keep serving scoped to the destination
+        // conversation while the object files stay shared.
+        let mut messages = messages;
+        let mut inherited = Vec::new();
+        for message in &mut messages {
+            for reference in &mut message.attachments {
+                let copied = AttachmentRef {
+                    id: AttachmentId::generate().map_err(|_| ConversationError::Random)?,
+                    ..reference.clone()
+                };
+                inherited.push(copied.clone());
+                *reference = copied;
+            }
+        }
         let mut database = self.database();
         if database.contains(&id)? {
             return Err(ConversationError::Conflict);
@@ -948,7 +1061,13 @@ impl ConversationStore {
             updated_at_ms: now,
         };
         project_active_path(&mut record);
-        self.persist(&mut database, None, &record)?;
+        for reference in &inherited {
+            self.attachments
+                .load(reference)
+                .map_err(ConversationError::Image)?;
+        }
+        self.commit_result(id, database.clone_attachments(&record, &inherited))?;
+        drop(database);
         Ok(record)
     }
 
@@ -1283,22 +1402,63 @@ impl ConversationStore {
         request: JobId,
         text: String,
     ) -> Result<ConversationRecord, ConversationError> {
-        let text = normalise_message(&text)?;
+        self.begin_message_with_attachments(
+            id,
+            expected_revision,
+            model,
+            request,
+            text,
+            None,
+            "",
+            Vec::new(),
+        )
+    }
+
+    /// Append a user turn and atomically claim its staged image references.
+    /// The message and the reference rows commit in one transaction, so a
+    /// rejected claim never creates a partial message.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn begin_message_with_attachments(
+        &self,
+        id: &ConversationId,
+        expected_revision: u32,
+        model: Option<ConversationModelConfiguration>,
+        request: JobId,
+        text: String,
+        session: Option<crate::sessions::SessionId>,
+        scope: &str,
+        attachment_ids: Vec<AttachmentId>,
+    ) -> Result<ConversationRecord, ConversationError> {
+        if attachment_ids.len() > super::attachments::MAXIMUM_ATTACHMENTS_PER_MESSAGE {
+            return Err(ConversationError::Image(AttachmentError::Count));
+        }
+        let has_attachments = !attachment_ids.is_empty();
+        let text = normalise_message_optional(&text, has_attachments)?;
         let user_id = MessageId::generate().map_err(|_| ConversationError::Random)?;
         let assistant_id = MessageId::generate().map_err(|_| ConversationError::Random)?;
-        self.replace(id, expected_revision, |current| {
+        self.update_with_attachment_claim(id, expected_revision, true, |current, database| {
             if current.active_job.is_some() {
                 return Err(ConversationError::Active);
             }
+            let references = database.staged_attachments(session, scope, &attachment_ids)?;
             if let Some(model) = model {
                 current.model = Some(model);
             }
-            current.messages.push(user_message(user_id, text));
+            current
+                .messages
+                .push(user_message(user_id, text, references));
             current
                 .messages
                 .push(pending_phase(assistant_id, assistant_id, request));
             current.active_job = Some(request);
-            Ok(())
+            Ok(has_attachments.then(|| AttachmentClaim {
+                restage: false,
+                conversation: *id,
+                session,
+                scope: scope.to_owned(),
+                message: Some(user_id),
+                ids: attachment_ids,
+            }))
         })
     }
 
@@ -1349,6 +1509,7 @@ impl ConversationStore {
                 final_phase: active.final_phase,
                 role: MessageRole::Assistant,
                 text: failed.text,
+                attachments: Vec::new(),
                 activity: failed.activity,
                 continuation: Vec::new(),
                 status: MessageStatus::Failed,
@@ -1605,10 +1766,40 @@ impl ConversationStore {
         delivery: super::queue::QueueDelivery,
         job: Option<JobId>,
     ) -> Result<ConversationRecord, ConversationError> {
-        let text = normalise_message(&text)?;
+        self.enqueue_with_attachments(
+            id,
+            expected_queue_revision,
+            text,
+            None,
+            "",
+            Vec::new(),
+            delivery,
+            job,
+        )
+    }
+
+    /// Queue a message and claim its staged images into the conversation. A
+    /// queue item owns the references before its delivery creates the message.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn enqueue_with_attachments(
+        &self,
+        id: &ConversationId,
+        expected_queue_revision: u32,
+        text: String,
+        session: Option<crate::sessions::SessionId>,
+        scope: &str,
+        attachment_ids: Vec<AttachmentId>,
+        delivery: super::queue::QueueDelivery,
+        job: Option<JobId>,
+    ) -> Result<ConversationRecord, ConversationError> {
+        let has_attachments = !attachment_ids.is_empty();
+        if attachment_ids.len() > super::attachments::MAXIMUM_ATTACHMENTS_PER_MESSAGE {
+            return Err(ConversationError::Image(AttachmentError::Count));
+        }
+        let text = normalise_message_optional(&text, has_attachments)?;
         let item_id =
             super::queue::QueueItemId::generate().map_err(|_| ConversationError::Random)?;
-        self.update(id, 0, false, |current| {
+        self.update_with_attachment_claim(id, 0, false, |current, database| {
             if current.queue.revision != expected_queue_revision {
                 return Err(ConversationError::Conflict);
             }
@@ -1634,9 +1825,11 @@ impl ConversationStore {
             {
                 return Err(ConversationError::Conflict);
             }
+            let references = database.staged_attachments(session, scope, &attachment_ids)?;
             current.queue.items.push(super::queue::QueueItem {
                 id: item_id,
                 text,
+                attachments: references,
                 delivery,
                 settings_digest,
                 job,
@@ -1649,7 +1842,57 @@ impl ConversationStore {
             if !super::queue::valid_queue(&current.queue) {
                 return Err(ConversationError::Message);
             }
-            Ok(())
+            Ok(has_attachments.then(|| AttachmentClaim {
+                restage: false,
+                conversation: *id,
+                session,
+                scope: scope.to_owned(),
+                message: None,
+                ids: attachment_ids,
+            }))
+        })
+    }
+
+    pub(crate) fn return_queue_item(
+        &self,
+        id: &ConversationId,
+        expected_queue_revision: u32,
+        item_id: super::queue::QueueItemId,
+        session: crate::sessions::SessionId,
+    ) -> Result<ConversationRecord, ConversationError> {
+        self.update_with_attachment_claim(id, 0, false, |current, database| {
+            if current.queue.revision != expected_queue_revision {
+                return Err(ConversationError::Conflict);
+            }
+            let index = current
+                .queue
+                .items
+                .iter()
+                .position(|item| item.id == item_id)
+                .ok_or(ConversationError::Conflict)?;
+            let item = current.queue.items.remove(index);
+            let mut references = database.staged_attachments_for_scope(session, &id.as_hex())?;
+            references.extend(item.attachments.clone());
+            if !super::history::valid_attachments(&references) {
+                return Err(ConversationError::Image(AttachmentError::Aggregate));
+            }
+            current.queue.revision = current
+                .queue
+                .revision
+                .checked_add(1)
+                .ok_or(ConversationError::Revision)?;
+            Ok(Some(AttachmentClaim {
+                restage: true,
+                conversation: *id,
+                session: Some(session),
+                scope: id.as_hex(),
+                message: None,
+                ids: item
+                    .attachments
+                    .iter()
+                    .map(|reference| reference.id)
+                    .collect(),
+            }))
         })
     }
 
@@ -1678,7 +1921,17 @@ impl ConversationStore {
                 .ok_or(ConversationError::Revision)?;
             Ok(())
         })?;
-        Ok((record, removed.expect("removed queued item")))
+        let removed = removed.expect("removed queued item");
+        // Release references that no delivered message or branch owns.
+        if !removed.attachments.is_empty() {
+            let mut database = self.database();
+            for reference in &removed.attachments {
+                if let Some(digest) = database.delete_owned_attachment(id, reference.id)? {
+                    self.attachments.remove_object(&digest);
+                }
+            }
+        }
+        Ok((record, removed))
     }
 
     pub(crate) fn begin_follow_up(
@@ -1724,7 +1977,9 @@ impl ConversationStore {
                 .revision
                 .checked_add(1)
                 .ok_or(ConversationError::Revision)?;
-            current.messages.push(user_message(user_id, item.text));
+            current
+                .messages
+                .push(user_message(user_id, item.text, item.attachments));
             current
                 .messages
                 .push(pending_phase(assistant_id, assistant_id, request));
@@ -1791,7 +2046,7 @@ impl ConversationStore {
                 .ok_or(ConversationError::Revision)?;
             current
                 .messages
-                .push(user_message(user_id, item.text.clone()));
+                .push(user_message(user_id, item.text.clone(), item.attachments));
             current
                 .messages
                 .push(pending_phase(assistant_id, assistant_id, request));
@@ -1872,7 +2127,12 @@ impl ConversationStore {
         if current.active_job.is_some() {
             return Err(ConversationError::Active);
         }
-        self.commit_result(*id, database.remove(id))
+        let orphans = database.remove(id);
+        let orphans = self.commit_result(*id, orphans)?;
+        for digest in orphans {
+            self.attachments.remove_object(&digest);
+        }
+        Ok(())
     }
 
     fn replace(
@@ -1923,6 +2183,149 @@ impl ConversationStore {
         Ok(updated)
     }
 
+    /// Append with an atomic attachment claim. The message body and the
+    /// reference rows commit in one transaction; a consumed or foreign
+    /// reference aborts both.
+    fn update_with_attachment_claim(
+        &self,
+        id: &ConversationId,
+        expected_revision: u32,
+        advance_revision: bool,
+        edit: impl FnOnce(
+            &mut ConversationRecord,
+            &Database,
+        ) -> Result<Option<AttachmentClaim>, ConversationError>,
+    ) -> Result<ConversationRecord, ConversationError> {
+        let mut database = self.database();
+        let Some(current) = database.load(id)? else {
+            return Err(ConversationError::Missing);
+        };
+        if expected_revision != 0 && current.revision != expected_revision {
+            return Err(ConversationError::Conflict);
+        }
+        self.require_durable(id)?;
+        let mut updated = current.clone();
+        let claim = edit(&mut updated, &database)?;
+        project_active_path(&mut updated);
+        let access_digest = |record: &ConversationRecord| {
+            record
+                .model
+                .as_ref()
+                .map(|model| crate::execution::settings_digest(&model.settings))
+        };
+        if access_digest(&current) != access_digest(&updated) {
+            updated.directory_approvals.clear();
+        }
+        if advance_revision {
+            updated.revision = current
+                .revision
+                .checked_add(1)
+                .ok_or(ConversationError::Revision)?;
+        }
+        updated.updated_at_ms = now_ms().max(current.updated_at_ms);
+        let result = database.save_with_attachments(Some(&current), &updated, claim.as_ref());
+        self.commit_result(*id, result)?;
+        Ok(updated)
+    }
+
+    /// Persist bytes before ownership metadata. A failed insert leaves only
+    /// an unreferenced object.
+    pub(crate) fn stage_attachment(
+        &self,
+        session: crate::sessions::SessionId,
+        scope: &str,
+        reference: AttachmentRef,
+        bytes: &[u8],
+    ) -> Result<(), ConversationError> {
+        if !reference.valid() || bytes.len() as u64 != reference.byte_length {
+            return Err(ConversationError::Image(AttachmentError::Malformed));
+        }
+        let mut database = self.database();
+        for digest in database.expire_staging(STAGING_TTL_MS)? {
+            self.attachments.remove_object(&digest);
+        }
+        let mut references = database.staged_attachments_for_scope(session, scope)?;
+        if references.len() >= super::attachments::MAXIMUM_ATTACHMENTS_PER_MESSAGE {
+            return Err(ConversationError::Image(AttachmentError::Count));
+        }
+        references.push(reference.clone());
+        if !super::history::valid_attachments(&references) {
+            return Err(ConversationError::Image(AttachmentError::Aggregate));
+        }
+        // The same lock protects object creation, ownership and orphan removal.
+        self.attachments
+            .write_object(&reference.sha256, bytes)
+            .map_err(ConversationError::Image)?;
+        database.insert_attachment(session, scope, &reference)
+    }
+
+    /// Staged references for one composer scope, in add order.
+    pub(crate) fn staged_attachments(
+        &self,
+        session: crate::sessions::SessionId,
+        scope: &str,
+    ) -> Result<Vec<AttachmentRef>, ConversationError> {
+        self.database().staged_attachments_for_scope(session, scope)
+    }
+
+    /// Drop one session-owned staged row. The object is removed only when no
+    /// other row, including a claimed branch or queue item, references it.
+    pub(crate) fn release_attachment(
+        &self,
+        session: crate::sessions::SessionId,
+        scope: &str,
+        id: AttachmentId,
+    ) -> Result<(), ConversationError> {
+        let mut database = self.database();
+        let orphan = database.delete_staged_attachment(session, scope, id)?;
+        if let Some(digest) = orphan {
+            self.attachments.remove_object(&digest);
+        }
+        Ok(())
+    }
+
+    // Sessions and fork drafts do not survive a restart.
+    fn clear_staging(&self) -> Result<(), ConversationError> {
+        let mut database = self.database();
+        for digest in database.expire_staging(0)? {
+            self.attachments.remove_object(&digest);
+        }
+        Ok(())
+    }
+
+    /// Load one retained reference and its bytes for a session-owned route.
+    pub(crate) fn load_attachment(
+        &self,
+        conversation: &ConversationId,
+        id: AttachmentId,
+    ) -> Result<(AttachmentRef, Vec<u8>), ConversationError> {
+        let database = self.database();
+        let reference = database.attachment_for_conversation(conversation, id)?;
+        drop(database);
+        let bytes = self
+            .attachments
+            .load(&reference)
+            .map_err(ConversationError::Image)?;
+        Ok((reference, bytes))
+    }
+
+    /// Load one staged reference and its bytes for a draft route.
+    pub(crate) fn load_staged_attachment(
+        &self,
+        session: crate::sessions::SessionId,
+        scope: &str,
+        id: AttachmentId,
+    ) -> Result<(AttachmentRef, Vec<u8>), ConversationError> {
+        let database = self.database();
+        let reference = database.staged_attachment_for_session(session, scope, id)?;
+        drop(database);
+        let bytes = self
+            .attachments
+            .load(&reference)
+            .map_err(ConversationError::Image)?;
+        Ok((reference, bytes))
+    }
+
     /// Commit one conversation. An uncertain replacement blocks later work.
     fn persist(
         &self,
@@ -1947,12 +2350,12 @@ impl ConversationStore {
         self.commit_result(second_record.id, result)
     }
 
-    fn commit_result(
+    fn commit_result<T>(
         &self,
         id: ConversationId,
-        result: Result<(), ConversationError>,
-    ) -> Result<(), ConversationError> {
-        if result == Err(ConversationError::Unsettled) {
+        result: Result<T, ConversationError>,
+    ) -> Result<T, ConversationError> {
+        if matches!(&result, Err(ConversationError::Unsettled)) {
             self.uncertain
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
@@ -1981,7 +2384,11 @@ impl ConversationStore {
     }
 }
 
-fn user_message(id: MessageId, text: String) -> ConversationMessage {
+fn user_message(
+    id: MessageId,
+    text: String,
+    attachments: Vec<AttachmentRef>,
+) -> ConversationMessage {
     ConversationMessage {
         id,
         parent: None,
@@ -1989,6 +2396,7 @@ fn user_message(id: MessageId, text: String) -> ConversationMessage {
         final_phase: false,
         role: MessageRole::User,
         text,
+        attachments,
         activity: Vec::new(),
         continuation: Vec::new(),
         status: MessageStatus::Complete,
@@ -2007,6 +2415,7 @@ fn pending_phase(id: MessageId, response: MessageId, request: JobId) -> Conversa
         final_phase: false,
         role: MessageRole::Assistant,
         text: String::new(),
+        attachments: Vec::new(),
         activity: Vec::new(),
         continuation: Vec::new(),
         status: MessageStatus::Pending,
@@ -2515,7 +2924,18 @@ fn message_from_file(file: MessageFile) -> Result<ConversationMessage, Conversat
         || (file.role == MessageRole::User
             && (file.status != MessageStatus::Complete
                 || file.completion.is_some()
-                || normalise_message(&file.text).as_ref() != Ok(&file.text)))
+                || normalise_message_optional(&file.text, !file.attachments.is_empty()).as_ref()
+                    != Ok(&file.text)))
+    {
+        return Err(ConversationError::Corrupt);
+    }
+    let attachments = file
+        .attachments
+        .into_iter()
+        .map(attachment_from_file)
+        .collect::<Result<Vec<_>, _>>()?;
+    if (file.role == MessageRole::Assistant && !attachments.is_empty())
+        || !super::history::valid_attachments(&attachments)
     {
         return Err(ConversationError::Corrupt);
     }
@@ -2526,6 +2946,7 @@ fn message_from_file(file: MessageFile) -> Result<ConversationMessage, Conversat
         final_phase: file.final_phase,
         role: file.role,
         text: file.text,
+        attachments,
         activity: file.activity,
         continuation: file.continuation,
         status: file.status,
@@ -2572,6 +2993,7 @@ fn message_to_file(message: &ConversationMessage) -> MessageFile {
         final_phase: message.final_phase,
         role: message.role,
         text: message.text.clone(),
+        attachments: message.attachments.iter().map(attachment_to_file).collect(),
         activity: message.activity.clone(),
         continuation: message.continuation.clone(),
         status: message.status,
@@ -2790,9 +3212,15 @@ fn queue_from_file(
             None => None,
             Some(value) => Some(JobId::parse(value).ok_or(ConversationError::Corrupt)?),
         };
+        let attachments = item
+            .attachments
+            .into_iter()
+            .map(attachment_from_file)
+            .collect::<Result<Vec<_>, _>>()?;
         queue.items.push(super::queue::QueueItem {
             id,
             text: item.text,
+            attachments,
             delivery,
             settings_digest,
             job,
@@ -2808,6 +3236,7 @@ fn queue_item_to_file(item: &super::queue::QueueItem) -> QueueItemFile {
     QueueItemFile {
         id: item.id.as_hex(),
         text: item.text.clone(),
+        attachments: item.attachments.iter().map(attachment_to_file).collect(),
         delivery: item.delivery.as_str().to_owned(),
         settings_digest: crate::hex::encode(&item.settings_digest),
         job: item.job.map(|job| job.as_hex()),
@@ -2837,8 +3266,13 @@ pub(crate) fn normalise_title(raw: &str) -> Result<String, ConversationError> {
 }
 
 pub(crate) fn normalise_message(raw: &str) -> Result<String, ConversationError> {
+    normalise_message_optional(raw, false)
+}
+
+/// An image-only turn can omit text. Every other bound still applies.
+fn normalise_message_optional(raw: &str, allow_empty: bool) -> Result<String, ConversationError> {
     let text = raw.trim();
-    if text.is_empty()
+    if (!allow_empty && text.is_empty())
         || text.len() > MAXIMUM_MESSAGE_BYTES
         || text
             .chars()

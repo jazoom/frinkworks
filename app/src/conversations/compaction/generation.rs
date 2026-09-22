@@ -102,6 +102,10 @@ pub(crate) async fn generate(
             return Err(CompactionError::Oversized.message());
         }
         let range = start_turn..=groups[end].1;
+        let images: Vec<crate::providers::ChatImage> = source[range.clone()]
+            .iter()
+            .flat_map(|turn| turn.images.iter().cloned())
+            .collect();
         let body = super::chunk_prompt(cumulative.as_deref(), &source[range])
             .map_err(|error| error.message())?;
         let mut request =
@@ -113,6 +117,7 @@ pub(crate) async fn generate(
             connection,
             &preamble,
             body,
+            images,
             secret,
             &mut request,
             job,
@@ -146,7 +151,12 @@ fn chunk_fits(
         Err(CompactionError::Bound) => return Ok(false),
         Err(error) => return Err(error.message()),
     };
-    let history = [ChatTurn::user(body)];
+    let images: Vec<crate::providers::ChatImage> = source[start..=end]
+        .iter()
+        .flat_map(|turn| turn.images.iter().cloned())
+        .collect();
+    let mut history = [ChatTurn::user(body)];
+    history[0].images = images;
     let request = crate::execution::ContextRequest {
         preamble,
         tools: &[],
@@ -193,16 +203,20 @@ fn request_usage(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn generate_chunk(
     state: &AppState,
     connection: &ProviderConnection,
     preamble: &str,
     body: String,
+    images: Vec<crate::providers::ChatImage>,
     secret: Option<&str>,
     request: &mut RequestUsage,
     job: &Job,
 ) -> Result<String, &'static str> {
-    let history = [ChatTurn::user(body)];
+    let mut history = [ChatTurn::user(body)];
+    history[0].images = images;
+    crate::conversations::attachments::prepare_turns(state, connection, &mut history)?;
     let generate = async {
         let mut events = state
             .chat

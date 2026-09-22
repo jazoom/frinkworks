@@ -1,4 +1,5 @@
 mod access;
+pub(crate) mod attachments;
 pub(crate) mod compaction;
 pub(crate) mod forks;
 pub(crate) mod history;
@@ -9,6 +10,7 @@ mod store;
 pub(crate) mod titles;
 
 pub(crate) use access::apply_settings_ceiling;
+pub(crate) use attachments::{AttachmentFormat, AttachmentId, AttachmentRef};
 pub(crate) use compaction::CompactionRecord;
 pub(crate) use forks::ForkDrafts;
 pub(crate) use history::{

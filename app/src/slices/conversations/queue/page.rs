@@ -12,6 +12,7 @@ pub(crate) struct QueueView {
 pub(crate) struct QueueItemView {
     pub(crate) id: String,
     pub(crate) text: String,
+    pub(crate) images: usize,
     pub(crate) delivery: &'static str,
     pub(crate) confirm_replace: bool,
 }
@@ -26,6 +27,7 @@ impl QueueView {
                 .map(|item| QueueItemView {
                     id: item.id.as_hex(),
                     text: item.text.clone(),
+                    images: item.attachments.len(),
                     delivery: match item.delivery {
                         QueueDelivery::FollowUp => "Follow-up",
                         QueueDelivery::Steering => "Steering",

@@ -42,6 +42,14 @@ pub(super) struct NewForm {
     pub(super) title: String,
     pub(super) message: String,
     pub(super) action: String,
+    pub(super) attachment_0: String,
+    pub(super) attachment_1: String,
+    pub(super) attachment_2: String,
+    pub(super) attachment_3: String,
+    pub(super) attachment_4: String,
+    pub(super) attachment_5: String,
+    pub(super) attachment_6: String,
+    pub(super) attachment_7: String,
 }
 
 #[derive(Default, Deserialize)]
@@ -154,6 +162,33 @@ impl NewForm {
             self.draft_nonce,
             crate::hex::encode(&digest.finalize())
         )
+    }
+
+    pub(super) fn attachment_ids(
+        &self,
+    ) -> Result<Vec<crate::conversations::AttachmentId>, &'static str> {
+        let mut ids = Vec::new();
+        for value in [
+            &self.attachment_0,
+            &self.attachment_1,
+            &self.attachment_2,
+            &self.attachment_3,
+            &self.attachment_4,
+            &self.attachment_5,
+            &self.attachment_6,
+            &self.attachment_7,
+        ] {
+            if value.trim().is_empty() {
+                continue;
+            }
+            let id = crate::conversations::attachments::parse_attachment_id(value)
+                .ok_or("That staged image is not valid. Add it again.")?;
+            if ids.contains(&id) {
+                return Err("That staged image is not valid. Add it again.");
+            }
+            ids.push(id);
+        }
+        Ok(ids)
     }
 
     pub(super) fn tool_values(&self) -> Vec<String> {
@@ -361,8 +396,13 @@ pub(super) async fn save(
         );
     };
     // No identity, reservation or store mutation precedes input validation.
+    let attachments = match form.attachment_ids() {
+        Ok(ids) => ids,
+        Err(error) => return reject(PatchStatus::UnprocessableEntity, error, form),
+    };
     if form.message.len() > crate::conversations::MAXIMUM_MESSAGE_BYTES
-        || crate::conversations::normalise_message(&form.message).is_err()
+        || ((!form.message.trim().is_empty() || attachments.is_empty())
+            && crate::conversations::normalise_message(&form.message).is_err())
     {
         return reject(
             PatchStatus::UnprocessableEntity,
@@ -565,7 +605,17 @@ pub(super) async fn save(
         result.map_err(|error| super::StartMessageError::User(PatchStatus::Conflict, error))
     } else {
         drop(permit);
-        super::start_message(&state, session.0, record, 1, model, form.message.clone()).await
+        super::start_message(
+            &state,
+            session.0,
+            record,
+            1,
+            model,
+            form.message.clone(),
+            attachments,
+            super::attachments::page::draft_scope(&form.draft_nonce),
+        )
+        .await
     };
     let record = match start {
         Ok(record) => record,

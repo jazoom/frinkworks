@@ -7,6 +7,7 @@ fn model(id: &str, date: &str, input: f64) -> Model {
         reasoning: false,
         efforts: Vec::new(),
         attachment: false,
+        image_input: false,
         supports_tools: true,
         limit: ModelLimit {
             context: 4096,

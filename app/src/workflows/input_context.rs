@@ -474,6 +474,7 @@ impl AttemptContextPacket {
                 } => crate::providers::ChatTurn {
                     role: crate::providers::Role::Assistant,
                     text: text.clone(),
+                    images: Vec::new(),
                     thinking: String::new(),
                     tools: calls
                         .iter()

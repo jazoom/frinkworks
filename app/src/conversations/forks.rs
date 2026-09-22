@@ -74,6 +74,54 @@ pub(crate) struct ForkSnapshot {
     /// authority and no candidate ownership.
     pub(crate) candidate_review: bool,
     pub(crate) review_context: Option<super::store::CandidateReviewContext>,
+    attachment_lease: Option<std::sync::Arc<ForkAttachmentLease>>,
+}
+
+struct ForkAttachmentLease {
+    store: std::sync::Arc<super::ConversationStore>,
+    session: SessionId,
+    references: Vec<(String, super::AttachmentId)>,
+}
+
+impl Drop for ForkAttachmentLease {
+    fn drop(&mut self) {
+        for (scope, id) in &self.references {
+            let _ = self.store.release_attachment(self.session, scope, *id);
+        }
+    }
+}
+
+impl ForkSnapshot {
+    pub(crate) fn retain_images(
+        &mut self,
+        store: std::sync::Arc<super::ConversationStore>,
+        session: SessionId,
+        nonce: &str,
+    ) -> Result<(), super::ConversationError> {
+        let mut lease = ForkAttachmentLease {
+            store,
+            session,
+            references: Vec::new(),
+        };
+        for message in &mut self.messages {
+            let scope = format!("fork-{nonce}-{}", message.id);
+            for reference in &mut message.attachments {
+                let bytes = lease
+                    .store
+                    .attachment_store()
+                    .load(reference)
+                    .map_err(super::ConversationError::Image)?;
+                reference.id = super::AttachmentId::generate()
+                    .map_err(|_| super::ConversationError::Random)?;
+                lease
+                    .store
+                    .stage_attachment(session, &scope, reference.clone(), &bytes)?;
+                lease.references.push((scope.clone(), reference.id));
+            }
+        }
+        self.attachment_lease = Some(std::sync::Arc::new(lease));
+        Ok(())
+    }
 }
 
 pub(crate) struct ForkClaim<'a> {
@@ -187,6 +235,7 @@ pub(crate) fn snapshot(
         }
     });
     Ok(ForkSnapshot {
+        attachment_lease: None,
         source: record.id,
         source_revision: record.revision,
         boundary,

@@ -47,6 +47,7 @@ pub(crate) struct ModelsDevCatalogue {
 pub(crate) struct ModelMetadata {
     pub(crate) id: String,
     pub(crate) attachment: bool,
+    pub(crate) image_input: bool,
     pub(crate) context_limit: u64,
     /// Published maximum output tokens. Zero means the catalogue is silent.
     pub(crate) output_limit: u64,
@@ -197,6 +198,13 @@ impl ModelsDevCatalogue {
         self.model(kind, id)
             .map(|model| model.output_limit)
             .filter(|limit| *limit > 0)
+    }
+
+    /// Whether the model accepts image input. `None` means the catalogue has
+    /// no entry for the model, so the capability is unknown and must not be
+    /// treated as supported.
+    pub(crate) fn supports_images(&self, kind: ProviderKind, id: &str) -> Option<bool> {
+        self.model(kind, id).map(|model| model.image_input)
     }
 
     /// Prices are independent of title-model eligibility and tool support.
@@ -385,6 +393,7 @@ fn model_metadata(model: &catalogue::Model) -> ModelMetadata {
     ModelMetadata {
         id: model.id.clone(),
         attachment: model.attachment,
+        image_input: model.image_input,
         context_limit: model.limit.context,
         output_limit: model.limit.output,
     }
