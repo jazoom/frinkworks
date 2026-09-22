@@ -336,6 +336,48 @@ async fn invalid_first_submissions_preserve_all_local_choices_and_unsent_text() 
 }
 
 #[tokio::test]
+async fn template_first_send_rejects_invalid_arguments_before_creation() {
+    let (state, _directory) = state_with_prompts();
+    ready_starter_environment(&state).await;
+    let token = connected(&state);
+    let effort = state
+        .models_dev
+        .effective_effort(ProviderKind::Xai, "grok-4.6", None)
+        .unwrap();
+    let fields = format!(
+        "action=send&provider=xai&model=grok-4.6&thinking={}",
+        effort.as_str()
+    );
+    let response = app(&state)
+        .oneshot(command(
+            "/conversations/new",
+            &token,
+            &format!("{fields}&message={}", form_value("/review \"open")),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(state.conversations.list().is_empty());
+
+    let typed = "/review \"a b\"";
+    let response = app(&state)
+        .oneshot(command(
+            "/conversations/new",
+            &token,
+            &format!("{fields}&message={}", form_value(typed)),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let record = state.conversations.list().pop().unwrap();
+    let message = &record.messages[0];
+    assert_eq!(message.text, "Review a b at HEAD.");
+    let provenance = message.input.as_ref().expect("frozen input");
+    assert_eq!(provenance.typed, typed);
+    assert_eq!(provenance.expanded, message.text);
+}
+
+#[tokio::test]
 async fn first_send_persists_message_and_model_then_replaces_location() {
     let state = test_state();
     ready_starter_environment(&state).await;

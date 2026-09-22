@@ -12,24 +12,32 @@
     data-command-hash="{{ preview.hash }}"
     data-command-base="{{ preview.base }}"
     data-command-scope="{{ preview.scope }}"
+    data-command-kind="{{ preview.kind }}"
   >
-    <span class="text-quiet" role="status">Skill expanded</span>
+    {% if preview.kind == "prompt" %}
+      <span class="text-quiet" role="status">Prompt expanded</span>
+    {% else %}
+      <span class="text-quiet" role="status">Skill expanded</span>
+    {% endif %}
     <span class="truncate font-medium">{{ preview.command }}</span>
     <span class="text-quiet truncate">{{ preview.source }}</span>
+    {% if !preview.hint.is_empty() %}
+      <span class="text-quiet">Hint: {{ preview.hint }}</span>
+    {% endif %}
     <pre class="break-words whitespace-pre-wrap">{{ preview.expanded }}</pre>
   </div>
 {% endif %}
 {% if view.suggestions.is_empty() %}
   {% if view.message.is_empty() && view.preview.is_none() %}
     <p class="text-quiet px-3 py-2 text-xs" data-command-status role="status">
-      No matching skills.
+      No matching commands.
     </p>
   {% endif %}
 {% else %}
   <ul
     class="menu menu-sm max-h-[min(18rem,40dvh)] w-full flex-nowrap overflow-y-auto"
     role="listbox"
-    aria-label="Skill suggestions"
+    aria-label="Command suggestions"
     data-command-suggestion-list
   >
     {% for suggestion in view.suggestions %}
@@ -41,6 +49,7 @@
           data-command="{{ suggestion.command }}"
           data-command-name="{{ suggestion.name }}"
           data-command-scope="{{ suggestion.scope }}"
+          data-command-kind="{{ suggestion.kind }}"
         >
           <span class="flex w-full items-center justify-between gap-3">
             <span class="truncate font-medium">{{ suggestion.command }}</span>
@@ -51,6 +60,9 @@
           <span class="text-quiet line-clamp-2 text-xs"
             >{{ suggestion.description }}</span
           >
+          {% if !suggestion.hint.is_empty() %}
+            <span class="text-quiet text-xs">Hint: {{ suggestion.hint }}</span>
+          {% endif %}
         </button>
       </li>
     {% endfor %}

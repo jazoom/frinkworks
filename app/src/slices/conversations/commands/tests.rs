@@ -6,7 +6,9 @@ use axum::{
 };
 use tower::ServiceExt;
 
-use super::super::tests::{app, connected, document, form_value, session_id, test_state, text};
+use super::super::tests::{
+    app, connected, document, form_value, session_id, state_with_prompts, test_state, text,
+};
 use crate::{
     conversations::{ConversationId, ConversationModelConfiguration, ConversationRecord},
     execution::{DirectoryGrant, ExecutionSettings, ToolLocation},
@@ -191,7 +193,7 @@ async fn saved_preview_binds_source_hash_and_rejects_unknown() {
         value["message"]
             .as_str()
             .expect("message")
-            .contains("No skill matches"),
+            .contains("No available skill or template matches"),
         "{body}"
     );
 }
@@ -431,4 +433,64 @@ async fn lookup_supports_patch_and_document_representations() {
         .await
         .expect("document");
     assert!(response.status().is_redirection());
+}
+
+#[tokio::test]
+async fn saved_lookup_suggests_and_previews_prompt_templates() {
+    let (state, _directory) = state_with_prompts();
+    let token = connected(&state);
+    let record = conversation_with_grants(&state, Vec::new(), ToolLocation::Sandbox);
+
+    let response = app(&state)
+        .oneshot(json_request(
+            &format!("/conversations/{}/commands?q=/re", record.id),
+            &token,
+        ))
+        .await
+        .expect("lookup");
+    let body = text(response).await;
+    assert!(commands(&body).contains(&"/review".to_owned()), "{body}");
+    let value: serde_json::Value = serde_json::from_str(&body).expect("json");
+    assert_eq!(value["suggestions"][0]["kind"], "prompt");
+    assert_eq!(value["suggestions"][0]["hint"], "<path> [<ref>]");
+
+    let response = app(&state)
+        .oneshot(json_request(
+            &format!(
+                "/conversations/{}/commands?q=/review&mode=preview",
+                record.id
+            ),
+            &token,
+        ))
+        .await
+        .expect("preview");
+    let value: serde_json::Value = serde_json::from_str(&text(response).await).expect("json");
+    assert_eq!(value["preview"]["kind"], "prompt");
+    assert_eq!(value["preview"]["hint"], "<path> [<ref>]");
+    assert_eq!(value["preview"]["source"], "prompts/review.md");
+    assert_eq!(value["preview"]["base"], "");
+    assert!(
+        value["preview"]["hash"]
+            .as_str()
+            .expect("hash")
+            .starts_with("sha256:")
+    );
+}
+
+#[tokio::test]
+async fn new_draft_lookup_suggests_prompt_templates() {
+    let (state, _directory) = state_with_prompts();
+    let token = connected(&state);
+    let response = app(&state)
+        .oneshot(json_request(
+            &format!(
+                "/conversations/new/commands?q=/re&draft_nonce={}",
+                "a".repeat(64)
+            ),
+            &token,
+        ))
+        .await
+        .expect("lookup");
+    let body = text(response).await;
+    assert!(commands(&body).contains(&"/review".to_owned()), "{body}");
 }

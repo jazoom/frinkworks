@@ -993,6 +993,40 @@ test("skill preview survives trailing edits, caret movement and a pointer Send",
     expect(fetchMock).toHaveBeenCalledOnce();
 });
 
+test("template preview includes arguments and refreshes after argument edits", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+        const query = new URL(url, "http://localhost").searchParams.get("q");
+        return {
+            json: async () => ({
+                preview: {
+                    command: query,
+                    kind: "prompt",
+                    binding: "prompt-source",
+                    hash: "prompt-hash",
+                    source: "prompts/review.md",
+                    expanded: query,
+                    base: "",
+                    scope: "Global prompts",
+                },
+            }),
+        } as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const field = commandMarkup();
+    for (const typed of ['/review "a b"', '/review "c d"']) {
+        field.value = typed;
+        field.setSelectionRange(typed.length, typed.length);
+        field.dispatchEvent(new Event("input", { bubbles: true }));
+        await settle();
+        expect(
+            document.querySelector("[data-command-suggestions] pre")
+                ?.textContent,
+        ).toBe(typed);
+        expect(value("command_hash")).toBe("prompt-hash");
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+});
+
 test("skill preview discards a response from another draft scope", async () => {
     let complete!: (response: Response) => void;
     vi.stubGlobal(

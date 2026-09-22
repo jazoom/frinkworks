@@ -224,6 +224,28 @@ A preview binds the source scope, path, relative-path base and body hash. Send r
 
 The application rejects a skill body above 1 MiB or an expanded message above 32 KiB. Previews and submissions exclude skills that contain a known provider API key. Unknown slash commands leave the draft intact.
 
+## Prompt templates
+
+A composer message can start with `/template-name`. The resolver reads global templates directly inside `<data_root>/prompts`. An absent folder produces no templates. Session submission and unsaved drafts use the same catalogue builder, so a preview and a send agree on the source.
+
+Frontmatter is optional. It carries `description` and `argument-hint`. The template body is the Markdown after the closing delimiter. A file that starts a frontmatter block must close it. The template name is the file stem without the `.md` extension.
+
+The template name and the trailing arguments use the format `/name argument-one "argument two"`. Quotes group one argument that contains spaces. There is no shell interpolation.
+
+Substitution is non-recursive and non-executable. The supported forms are:
+
+- `$1`, `$2` and later positions.
+- `$@` and `$ARGUMENTS` for every argument joined with spaces.
+- `${N:-default}`, `${@:-default}` and `${ARGUMENTS:-default}` for an absent or empty value.
+- `${@:N}` for the arguments from position N.
+- `${@:N:L}` for at most L arguments from position N.
+
+Positions use one-based indices. A backslash before `$` writes a literal dollar sign. `$(` and backticks stay literal text. Expanded text never runs command classification again, so a leading `!`, `!!` or `/` in a body stays literal.
+
+`skill:` and application command names are reserved. A malformed name, a reserved name and a case-insensitive duplicate never become selectable. A bad template produces a limitation in the suggestions, not a partial substitution.
+
+A preview binds the template scope, path and body hash. Send rejects a changed preview. An unpreviewed command resolves from one validated source snapshot at submission. The submission freezes the typed text, the expanded text and the provenance. The application rejects a template body above 64 KiB or an expanded message above 32 KiB. Previews and submissions exclude a template that contains a known provider API key. There is no prompt-management page: the user edits the Markdown files directly.
+
 ## Ownership and recovery
 
 The existing run record remains the sole ownership authority. Transfer never copies a run or recaptures its baseline.

@@ -7,6 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::prompts::{self, PromptError, PromptTemplate};
 use crate::execution::resources::MAXIMUM_RESOURCE_PATH_BYTES;
 use crate::execution::{ResourceKind, ResourceSource};
 
@@ -59,8 +60,8 @@ impl InputProvenance {
             && self.expanded.len() <= super::MAXIMUM_MESSAGE_BYTES
             && !self.expanded.contains('\0')
             && self.source.valid()
-            && self.source.kind == ResourceKind::Skill
-            && !self.relative_base.is_empty()
+            && matches!(self.source.kind, ResourceKind::Skill | ResourceKind::Prompt)
+            && (self.source.kind != ResourceKind::Skill || !self.relative_base.is_empty())
             && self.relative_base.len() <= MAXIMUM_RESOURCE_PATH_BYTES
             && !self.relative_base.chars().any(char::is_control)
     }
@@ -79,6 +80,7 @@ pub(crate) enum InputError {
     Ambiguous,
     Empty,
     Bound,
+    Arguments,
     Credential,
     Changed,
 }
@@ -86,15 +88,24 @@ pub(crate) enum InputError {
 impl InputError {
     pub(crate) fn message(self) -> &'static str {
         match self {
-            Self::Unknown => "No skill matches that command. Check the name and try again.",
+            Self::Unknown => {
+                "No available skill or template matches that command. Check the name and try again."
+            }
             Self::Ambiguous => {
                 "More than one skill uses that name. Use /skill:scope/name to choose one."
             }
-            Self::Empty => "Enter a skill name after /skill:.",
-            Self::Bound => "The expanded message is too large. Use a smaller skill or message.",
-            Self::Credential => "That skill contains a provider credential and cannot be used.",
+            Self::Empty => "Enter a command name after / or a skill name after /skill:.",
+            Self::Bound => {
+                "The expanded message is empty or too large. Change the resource or arguments."
+            }
+            Self::Arguments => {
+                "The template arguments are not valid. Check the quotes and try again."
+            }
+            Self::Credential => {
+                "That resource or expansion contains a provider credential and cannot be used."
+            }
             Self::Changed => {
-                "That skill changed after the preview. Select it again before you send."
+                "That resource changed after the preview. Select it again before you send."
             }
         }
     }
@@ -109,6 +120,8 @@ pub(crate) enum InputSyntax {
         reference: String,
         instructions: String,
     },
+    /// A global prompt template plus its trailing argument string.
+    Prompt { name: String, arguments: String },
 }
 
 /// Classify one message. The first non-whitespace character decides the
@@ -125,6 +138,13 @@ pub(crate) fn classify(text: &str) -> InputSyntax {
             instructions: instructions.to_owned(),
         };
     }
+    if let Some(rest) = trimmed.strip_prefix('/') {
+        let (name, arguments) = split_reference(rest);
+        return InputSyntax::Prompt {
+            name: name.to_owned(),
+            arguments: arguments.to_owned(),
+        };
+    }
     InputSyntax::Literal(text.to_owned())
 }
 
@@ -134,11 +154,9 @@ pub(crate) fn classify(text: &str) -> InputSyntax {
 pub(crate) fn expand(
     text: &str,
     offers: &[SkillOffer],
+    templates: &[PromptTemplate],
     secret: Option<&str>,
 ) -> Result<InputExpansion, InputError> {
-    if text.trim_start().starts_with('/') && !text.trim_start().starts_with(SKILL_PREFIX) {
-        return Err(InputError::Unknown);
-    }
     match classify(text) {
         InputSyntax::Literal(literal) => Ok(InputExpansion {
             typed: text.to_owned(),
@@ -148,29 +166,89 @@ pub(crate) fn expand(
         InputSyntax::Skill {
             reference,
             instructions,
-        } => {
-            let offer = select(&reference, offers)?;
-            validate_offer(offer, secret)?;
-            let expanded = compose(&offer.body, &instructions, &offer.relative_base);
-            if expanded.is_empty() || expanded.len() > super::MAXIMUM_MESSAGE_BYTES {
-                return Err(InputError::Bound);
-            }
-            let provenance = InputProvenance {
-                typed: text.to_owned(),
-                expanded: expanded.clone(),
-                source: offer.source.clone(),
-                relative_base: offer.relative_base.clone(),
-            };
-            if !provenance.valid() {
-                return Err(InputError::Bound);
-            }
-            Ok(InputExpansion {
-                typed: text.to_owned(),
-                expanded,
-                provenance: Some(provenance),
-            })
+        } => expand_skill(text, &reference, &instructions, offers, secret),
+        InputSyntax::Prompt { name, arguments } => {
+            expand_prompt(text, &name, &arguments, templates, secret)
         }
     }
+}
+
+fn expand_skill(
+    text: &str,
+    reference: &str,
+    instructions: &str,
+    offers: &[SkillOffer],
+    secret: Option<&str>,
+) -> Result<InputExpansion, InputError> {
+    let offer = select(reference, offers)?;
+    validate_offer(offer, secret)?;
+    let expanded = compose(&offer.body, instructions, &offer.relative_base);
+    if expanded.is_empty() || expanded.len() > super::MAXIMUM_MESSAGE_BYTES {
+        return Err(InputError::Bound);
+    }
+    let provenance = InputProvenance {
+        typed: text.to_owned(),
+        expanded: expanded.clone(),
+        source: offer.source.clone(),
+        relative_base: offer.relative_base.clone(),
+    };
+    if !provenance.valid() {
+        return Err(InputError::Bound);
+    }
+    Ok(InputExpansion {
+        typed: text.to_owned(),
+        expanded,
+        provenance: Some(provenance),
+    })
+}
+
+fn expand_prompt(
+    text: &str,
+    name: &str,
+    arguments: &str,
+    templates: &[PromptTemplate],
+    secret: Option<&str>,
+) -> Result<InputExpansion, InputError> {
+    if name.is_empty() {
+        return Err(InputError::Empty);
+    }
+    if prompts::reserved_name(name) {
+        return Err(InputError::Unknown);
+    }
+    let template = templates
+        .iter()
+        .find(|template| template.name.eq_ignore_ascii_case(name))
+        .ok_or(InputError::Unknown)?;
+    validate_prompt(template, secret)?;
+    let expanded = prompts::render(&template.body, arguments).map_err(|error| match error {
+        PromptError::Malformed => InputError::Arguments,
+        PromptError::Bound => InputError::Bound,
+    })?;
+    // The store normalises the committed message, so trim the frozen expansion
+    // to keep the provenance exactly equal to the persisted text.
+    let expanded = expanded.trim().to_owned();
+    if let Some(secret) = secret.filter(|secret| !secret.is_empty())
+        && expanded.contains(secret)
+    {
+        return Err(InputError::Credential);
+    }
+    if expanded.is_empty() || expanded.len() > super::MAXIMUM_MESSAGE_BYTES {
+        return Err(InputError::Bound);
+    }
+    let provenance = InputProvenance {
+        typed: text.to_owned(),
+        expanded: expanded.clone(),
+        source: template.source.clone(),
+        relative_base: String::new(),
+    };
+    if !provenance.valid() {
+        return Err(InputError::Bound);
+    }
+    Ok(InputExpansion {
+        typed: text.to_owned(),
+        expanded,
+        provenance: Some(provenance),
+    })
 }
 
 /// Escape a leading command prefix so restored literal text is never
@@ -198,10 +276,11 @@ pub(crate) fn escape_leading(text: &str) -> String {
 pub(crate) fn expand_checked(
     text: &str,
     offers: &[SkillOffer],
+    templates: &[PromptTemplate],
     secret: Option<&str>,
     preview: Option<(&str, &str)>,
 ) -> Result<InputExpansion, InputError> {
-    let expansion = expand(text, offers, secret)?;
+    let expansion = expand(text, offers, templates, secret)?;
     let Some((path, hash)) = preview else {
         return Ok(expansion);
     };
@@ -268,6 +347,26 @@ fn select<'a>(reference: &str, offers: &'a [SkillOffer]) -> Result<&'a SkillOffe
             }
         }
     }
+}
+
+fn validate_prompt(template: &PromptTemplate, secret: Option<&str>) -> Result<(), InputError> {
+    if template.source.kind != ResourceKind::Prompt || !template.source.valid() {
+        return Err(InputError::Unknown);
+    }
+    if template.body.len() > prompts::MAXIMUM_PROMPT_BODY_BYTES {
+        return Err(InputError::Bound);
+    }
+    if let Some(secret) = secret.filter(|secret| !secret.is_empty())
+        && (template.source.path.contains(secret)
+            || template.source.scope.contains(secret)
+            || template.name.contains(secret)
+            || template.description.contains(secret)
+            || template.argument_hint.contains(secret)
+            || template.body.contains(secret))
+    {
+        return Err(InputError::Credential);
+    }
+    Ok(())
 }
 
 fn validate_offer(offer: &SkillOffer, secret: Option<&str>) -> Result<(), InputError> {

@@ -5,6 +5,7 @@ pub(crate) mod forks;
 pub(crate) mod history;
 mod id;
 pub(crate) mod input;
+pub(crate) mod prompts;
 pub(crate) mod questions;
 pub(crate) mod queue;
 mod store;
@@ -20,6 +21,7 @@ pub(crate) use history::{
 };
 pub(crate) use id::{CheckpointId, ConversationId, MessageId, RequestId};
 pub(crate) use input::{InputError, InputExpansion, InputProvenance, SkillOffer};
+pub(crate) use prompts::PromptTemplate;
 pub(crate) use questions::{PendingQuestion, QuestionAnswer, QuestionError};
 pub(crate) use queue::{ConversationQueue, QueueDelivery, QueueItemId};
 pub(crate) use store::{

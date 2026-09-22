@@ -70,6 +70,7 @@ head -c 16384 -- "$file" | awk '{ print; if (NR > 1 && $0 ~ /^---\r?$/) exit }'
 pub(crate) enum ResourceKind {
     Instruction,
     Skill,
+    Prompt,
 }
 
 impl ResourceKind {
@@ -77,6 +78,7 @@ impl ResourceKind {
         match self {
             Self::Instruction => "Instructions",
             Self::Skill => "Skill",
+            Self::Prompt => "Prompt",
         }
     }
 }

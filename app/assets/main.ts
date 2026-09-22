@@ -2008,6 +2008,8 @@ type CommandSuggestion = {
     name: string;
     scope: string;
     description: string;
+    kind?: string;
+    hint?: string;
 };
 
 type CommandPreview = {
@@ -2018,6 +2020,8 @@ type CommandPreview = {
     hash: string;
     base: string;
     expanded: string;
+    kind?: string;
+    hint?: string;
 };
 
 type CommandPlan = { mode: "suggest" | "preview"; query: string };
@@ -2070,7 +2074,11 @@ function commandPlan(): CommandPlan | null {
     const token = commandLeadingToken(field.value);
     if (!token || !token.text.startsWith("/")) return null;
     if (caret <= token.end) return { mode: "suggest", query: token.text };
-    return { mode: "preview", query: token.text };
+    return { mode: "preview", query: commandPreviewQuery(field.value, token) };
+}
+
+function commandPreviewQuery(value: string, token: CommandToken): string {
+    return token.text.startsWith("/skill:") ? token.text : value;
 }
 
 function commandLookupUrl(plan: CommandPlan): string | null {
@@ -2130,13 +2138,13 @@ function setCommandPreview(preview: CommandPreview | null) {
 }
 
 function reconcileCommandPreview() {
-    const token = commandLeadingToken(commandField()?.value ?? "");
-    const url = token
-        ? commandLookupUrl({ mode: "preview", query: token.text })
-        : null;
+    const value = commandField()?.value ?? "";
+    const token = commandLeadingToken(value);
+    const query = token ? commandPreviewQuery(value, token) : null;
+    const url = query ? commandLookupUrl({ mode: "preview", query }) : null;
     if (
         !token ||
-        token.text !== commandBoundPreview?.command ||
+        query !== commandBoundPreview?.command ||
         url !== commandBoundUrl
     ) {
         commandBoundPreview = null;
@@ -2183,15 +2191,23 @@ function renderCommandSuggestions(payload: {
     }
     const nodes: Node[] = [];
     if (payload.preview) {
+        const prompt = payload.preview.kind === "prompt";
         const status = document.createElement("p");
         status.className = "text-quiet px-3 py-2 text-xs";
         status.setAttribute("role", "status");
-        status.textContent = `Skill ready: ${payload.preview.source}`;
+        status.textContent = `${prompt ? "Prompt" : "Skill"} ready: ${payload.preview.source}`;
         nodes.push(status);
+        if (payload.preview.hint) {
+            const hint = document.createElement("p");
+            hint.className = "text-quiet px-3 text-xs";
+            hint.setAttribute("role", "status");
+            hint.textContent = `Hint: ${payload.preview.hint}`;
+            nodes.push(hint);
+        }
         const details = document.createElement("details");
         details.className = "px-3 pb-2 text-xs";
         const summary = document.createElement("summary");
-        summary.textContent = "Skill preview";
+        summary.textContent = prompt ? "Prompt preview" : "Skill preview";
         const body = document.createElement("pre");
         body.className = "max-h-64 overflow-auto whitespace-pre-wrap";
         body.textContent = payload.preview.expanded;
@@ -2209,7 +2225,7 @@ function renderCommandSuggestions(payload: {
             const status = document.createElement("p");
             status.className = "text-quiet px-3 py-2 text-xs";
             status.setAttribute("role", "status");
-            status.textContent = "No matching skills.";
+            status.textContent = "No matching commands.";
             nodes.push(status);
         }
     } else {
@@ -2218,7 +2234,7 @@ function renderCommandSuggestions(payload: {
         list.className =
             "menu menu-sm max-h-[min(18rem,40dvh)] w-full flex-nowrap overflow-y-auto";
         list.setAttribute("role", "listbox");
-        list.setAttribute("aria-label", "Skill suggestions");
+        list.setAttribute("aria-label", "Command suggestions");
         commandSuggestions.forEach((suggestion, index) => {
             const item = document.createElement("li");
             item.id = `conversation-command-option-${index}`;
@@ -2233,6 +2249,7 @@ function renderCommandSuggestions(payload: {
                 "flex w-full min-w-0 flex-col items-start gap-1 text-left";
             button.dataset.commandSuggestion = "";
             button.dataset.command = suggestion.command;
+            button.dataset.commandKind = suggestion.kind ?? "skill";
             const top = document.createElement("span");
             top.className = "flex w-full items-center justify-between gap-3";
             const label = document.createElement("span");
@@ -2246,6 +2263,12 @@ function renderCommandSuggestions(payload: {
             description.className = "text-quiet line-clamp-2 text-xs";
             description.textContent = suggestion.description;
             button.append(top, description);
+            if (suggestion.hint) {
+                const hint = document.createElement("span");
+                hint.className = "text-quiet text-xs";
+                hint.textContent = `Hint: ${suggestion.hint}`;
+                button.append(hint);
+            }
             item.append(button);
             list.append(item);
         });

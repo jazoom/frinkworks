@@ -19,7 +19,7 @@ use hypergraft::{GraftRequest, PatchStatus};
 use serde::Deserialize;
 
 use crate::{
-    conversations::{ConversationId, ConversationModelConfiguration, SkillOffer},
+    conversations::{ConversationId, ConversationModelConfiguration, PromptTemplate, SkillOffer},
     error::AppResult,
     execution::{
         DirectoryGrant, ProjectFreeAuthority, ToolLocation, resources::CandidateRoot,
@@ -36,6 +36,7 @@ use self::page::Search;
 #[derive(Default)]
 pub(super) struct Catalogue {
     pub(super) offers: Vec<SkillOffer>,
+    pub(super) templates: Vec<PromptTemplate>,
     pub(super) unavailable: usize,
     pub(super) restricted: bool,
     pub(super) no_roots: bool,
@@ -70,15 +71,29 @@ impl Catalogue {
                 .iter()
                 .any(|value| value.contains(&secret))
             });
-            self.unavailable += before - self.offers.len();
+            let before_templates = self.templates.len();
+            self.templates.retain(|template| {
+                ![
+                    &template.name,
+                    &template.description,
+                    &template.argument_hint,
+                    &template.body,
+                    &template.source.scope,
+                    &template.source.path,
+                ]
+                .iter()
+                .any(|value| value.contains(&secret))
+            });
+            self.unavailable +=
+                (before - self.offers.len()) + (before_templates - self.templates.len());
         }
         self
     }
 
     fn search(&self, query: &str, mode: &str, secret: Option<&str>) -> Search {
         match mode.trim() {
-            "preview" => page::preview(&self.offers, query, secret),
-            "" | "suggest" => page::suggest(&self.offers, query),
+            "preview" => page::preview(&self.offers, &self.templates, query, secret),
+            "" | "suggest" => page::suggest(&self.offers, &self.templates, query),
             _ => Search {
                 message: "The command lookup mode is not valid.".to_owned(),
                 ..Search::default()
@@ -149,10 +164,11 @@ pub(super) fn catalogue_for_record(
     model: Option<&ConversationModelConfiguration>,
 ) -> Catalogue {
     let mut catalogue = Catalogue::default();
+    fill_templates(&mut catalogue, state);
     let Some(model) = model else {
         let (offers, unavailable) = page::global_offers(state, ToolLocation::Sandbox);
         catalogue.offers = offers;
-        catalogue.unavailable = unavailable;
+        catalogue.unavailable += unavailable;
         catalogue.no_roots = true;
         return catalogue.without_credentials(state);
     };
@@ -181,7 +197,7 @@ pub(super) fn catalogue_for_record(
         Err(()) => {
             let (offers, unavailable) = page::global_offers(state, settings.location);
             catalogue.offers = offers;
-            catalogue.unavailable = unavailable + 1;
+            catalogue.unavailable += unavailable + 1;
             return catalogue.without_credentials(state);
         }
     };
@@ -207,6 +223,7 @@ pub(super) fn catalogue_for_draft(
     location: ToolLocation,
 ) -> Catalogue {
     let mut catalogue = Catalogue::default();
+    fill_templates(&mut catalogue, state);
     let grants = grants
         .iter()
         .filter(|grant| {
@@ -230,6 +247,12 @@ pub(super) fn catalogue_for_draft(
         .collect::<Vec<_>>();
     fill(&mut catalogue, state, location, 0, &grants, &[]);
     catalogue.without_credentials(state)
+}
+
+fn fill_templates(catalogue: &mut Catalogue, state: &AppState) {
+    let (templates, unavailable) = page::global_templates(state);
+    catalogue.templates = templates;
+    catalogue.unavailable += unavailable;
 }
 
 fn fill(
@@ -273,7 +296,13 @@ pub(super) fn expand(
     secret: Option<&str>,
     preview: Option<(&str, &str)>,
 ) -> Result<crate::conversations::InputExpansion, crate::conversations::InputError> {
-    crate::conversations::input::expand_checked(message, &catalogue.offers, secret, preview)
+    crate::conversations::input::expand_checked(
+        message,
+        &catalogue.offers,
+        &catalogue.templates,
+        secret,
+        preview,
+    )
 }
 
 /// Read the frozen preview binding from a submitted form. The binding is

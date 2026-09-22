@@ -17,6 +17,22 @@ pub(super) fn test_state() -> AppState {
     crate::tests::test_state(RuntimeConfig::development())
 }
 
+/// A test state whose private data root holds global prompt templates. The
+/// returned directory must stay alive for the duration of the test.
+pub(super) fn state_with_prompts() -> (AppState, tempfile::TempDir) {
+    let directory = tempfile::tempdir().expect("data root");
+    let mut state = test_state();
+    state.local_data = crate::local_data::LocalDataReset::for_test(directory.path().to_path_buf());
+    let prompts = directory.path().join("prompts");
+    std::fs::create_dir_all(&prompts).expect("prompts directory");
+    std::fs::write(
+        prompts.join("review.md"),
+        "---\ndescription: Review a change.\nargument-hint: <path> [<ref>]\n---\nReview $1 at ${2:-HEAD}.",
+    )
+    .expect("prompt template");
+    (state, directory)
+}
+
 pub(super) fn app(state: &AppState) -> axum::Router {
     crate::slices::router()
         .layer(from_fn_with_state(
@@ -1175,6 +1191,63 @@ async fn send_persists_a_project_free_reply() {
         tokio::task::yield_now().await;
     }
     panic!("reply did not settle");
+}
+
+#[tokio::test]
+async fn saved_prompt_template_expands_arguments_on_send() {
+    let (state, _directory) = state_with_prompts();
+    let token = connected(&state);
+    let record = state
+        .conversations
+        .create("Discussion".to_owned())
+        .expect("conversation");
+    let model = "grok-4.6".to_owned();
+    let effort = state
+        .models_dev
+        .effective_effort(ProviderKind::Xai, &model, None);
+    let selection = ModelSelection::new(ProviderKind::Xai, model, effort).expect("selection");
+    let record = state
+        .conversations
+        .select_model(
+            &record.id,
+            record.revision,
+            selection,
+            crate::tests::test_environment_id(),
+        )
+        .expect("selection saved");
+    let path = format!("/conversations/{}/messages", record.id.as_hex());
+    let response = app(&state)
+        .oneshot(command(
+            &path,
+            &token,
+            &format!(
+                "revision={}&message={}",
+                record.revision,
+                form_value("/review \"src/main.rs\" \"feature branch\"")
+            ),
+        ))
+        .await
+        .expect("send");
+    assert_eq!(response.status(), StatusCode::OK);
+    for _ in 0..20 {
+        let current = state.conversations.get(&record.id).expect("conversation");
+        if current.active_job.is_none() {
+            let user = &current.messages[0];
+            assert_eq!(user.text, "Review src/main.rs at feature branch.");
+            let provenance = user.input.as_ref().expect("provenance");
+            assert_eq!(
+                provenance.source.kind,
+                crate::execution::ResourceKind::Prompt
+            );
+            assert_eq!(
+                provenance.typed,
+                "/review \"src/main.rs\" \"feature branch\""
+            );
+            return;
+        }
+        tokio::task::yield_now().await;
+    }
+    panic!("template reply did not settle");
 }
 
 #[tokio::test]
