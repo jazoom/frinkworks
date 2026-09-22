@@ -812,3 +812,145 @@ test("escape closes suggestions without changing the draft", async () => {
         document.querySelector<HTMLElement>("[data-file-suggestions]")!.hidden,
     ).toBe(true);
 });
+
+function completionResponse(path: string, directory: boolean): Response {
+    return {
+        json: async () => ({
+            suggestions: [{ path, scope: "project", directory }],
+            message: "",
+        }),
+    } as unknown as Response;
+}
+
+function composerMarkup(value: string, caret: number): HTMLTextAreaElement {
+    document.body.innerHTML = `
+        <template data-conversation-state="new"></template>
+        <div data-file-suggestions hidden></div>
+        <form id="conversation-composer">
+            <input type="hidden" name="draft_nonce" value="${"a".repeat(64)}">
+            <textarea id="composer-message"></textarea>
+        </form>`;
+    const field =
+        document.querySelector<HTMLTextAreaElement>("#composer-message")!;
+    field.value = value;
+    field.focus();
+    field.setSelectionRange(caret, caret);
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    return field;
+}
+
+function press(field: HTMLTextAreaElement, key: string, shiftKey = false) {
+    const event = new KeyboardEvent("keydown", {
+        key,
+        shiftKey,
+        bubbles: true,
+        cancelable: true,
+    });
+    field.dispatchEvent(event);
+    return event;
+}
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 200));
+
+test("tab completes only the token at the caret", async () => {
+    vi.stubGlobal(
+        "fetch",
+        vi.fn(async () =>
+            completionResponse("/access/project/src/main.rs", false),
+        ),
+    );
+    const field = composerMarkup(
+        "before @src/ma after",
+        "before @src/ma".length,
+    );
+    await settle();
+    const event = press(field, "Tab");
+    expect(event.defaultPrevented).toBe(true);
+    expect(field.value).toBe("before /access/project/src/main.rs  after");
+});
+
+test("completion replaces a quoted token without touching its suffix", async () => {
+    vi.stubGlobal(
+        "fetch",
+        vi.fn(async () =>
+            completionResponse("/access/project/src/main.rs", false),
+        ),
+    );
+    const value = 'see @"/access/project/src/main old file" tail';
+    const caret = value.indexOf("main") + 2;
+    const field = composerMarkup(value, caret);
+    await settle();
+    const event = press(field, "Tab");
+    expect(event.defaultPrevented).toBe(true);
+    expect(field.value).toBe("see /access/project/src/main.rs  tail");
+    const url = new URL(
+        vi.mocked(fetch).mock.calls[0][0] as string,
+        "http://localhost",
+    );
+    expect(url.searchParams.get("q")).toBe("/access/project/src/ma");
+    expect(url.searchParams.get("mode")).toBe("complete");
+});
+
+test("an unclosed path quote does not consume the next line", async () => {
+    vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => completionResponse("/access/project/my dir/", true)),
+    );
+    const field = composerMarkup(
+        'open @"my dir\nkeep this line',
+        'open @"my dir'.length,
+    );
+    await settle();
+    press(field, "Tab");
+    expect(field.value).toBe('open @"/access/project/my dir/"\nkeep this line');
+    await settle();
+});
+
+test("tab completes a directory and keeps the caret inside the quotes", async () => {
+    vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => completionResponse("/access/project/my dir/", true)),
+    );
+    const value = 'open @"my ';
+    const field = composerMarkup(value, value.length);
+    await settle();
+    press(field, "Tab");
+    const insert = '"/access/project/my dir/"';
+    expect(field.value).toBe(`open @${insert}`);
+    expect(field.selectionStart).toBe("open ".length + insert.length);
+    await settle();
+});
+
+test("shift+tab keeps ordinary focus traversal", async () => {
+    vi.stubGlobal(
+        "fetch",
+        vi.fn(async () =>
+            completionResponse("/access/project/src/main.rs", false),
+        ),
+    );
+    const field = composerMarkup("see @src/ma", "see @src/ma".length);
+    await settle();
+    const event = press(field, "Tab", true);
+    expect(event.defaultPrevented).toBe(false);
+    expect(field.value).toBe("see @src/ma");
+});
+
+test("tab without a completion keeps ordinary focus traversal", async () => {
+    vi.stubGlobal(
+        "fetch",
+        vi.fn(
+            async () =>
+                ({
+                    json: async () => ({
+                        suggestions: [],
+                        message: "",
+                    }),
+                }) as unknown as Response,
+        ),
+    );
+    const field = composerMarkup("see @src/ma", "see @src/ma".length);
+    await settle();
+    const event = press(field, "Tab");
+    expect(event.defaultPrevented).toBe(false);
+    expect(field.value).toBe("see @src/ma");
+});

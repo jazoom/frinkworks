@@ -11,8 +11,8 @@ use askama::Template;
 use serde::Serialize;
 
 use crate::execution::resources::{
-    EffectiveRoot, MAXIMUM_FILE_DEPTH, MAXIMUM_FILE_PATH_BYTES, MAXIMUM_FILE_RESULTS,
-    MAXIMUM_FILE_TRAVERSAL_ENTRIES,
+    EffectiveRoot, MAXIMUM_FILE_DEPTH, MAXIMUM_FILE_PATH_BYTES, MAXIMUM_FILE_QUERY_BYTES,
+    MAXIMUM_FILE_RESULTS, MAXIMUM_FILE_TRAVERSAL_ENTRIES,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -28,6 +28,7 @@ pub(super) struct Search {
     pub(super) partial: bool,
     pub(super) truncated: bool,
     pub(super) unavailable: usize,
+    pub(super) foreign: bool,
 }
 
 /// Search every effective root within one traversal and result budget.
@@ -94,6 +95,245 @@ pub(super) fn search(
         .map(|(_, suggestion)| suggestion)
         .collect();
     result
+}
+
+/// Absolute prefixes must match a selected model-visible root, not a host substitute.
+pub(super) fn complete(
+    roots: &[EffectiveRoot],
+    query: &str,
+    data_root: &Path,
+    grants: &[crate::execution::DirectoryGrant],
+) -> Result<Search, &'static str> {
+    if query.len() > MAXIMUM_FILE_QUERY_BYTES {
+        return Err("The file path is too long.");
+    }
+    if query.chars().any(char::is_control) {
+        return Err("The file path is not valid.");
+    }
+    // A parent component can leave the selected root and is never completed.
+    if query.split('/').any(|part| part == "..") {
+        return Err("The file path is not valid.");
+    }
+    // Reject empty components so filesystem joins cannot reinterpret a relative suffix as absolute.
+    if query.contains("//") {
+        return Err("The file path is not valid.");
+    }
+    let mut result = Search::default();
+    let mut budget = 0usize;
+    if query.starts_with('/') {
+        // Match the most specific selected root. A string prefix that does not
+        // end on a path component must not select a different root.
+        let mut matched: Option<(&EffectiveRoot, String)> = None;
+        for root in roots {
+            let model = root.model_path.trim_end_matches('/');
+            let relative = if query == model {
+                String::new()
+            } else if let Some(rest) = query.strip_prefix(&format!("{model}/")) {
+                rest.to_owned()
+            } else {
+                continue;
+            };
+            let more_specific = matched
+                .as_ref()
+                .is_none_or(|(current, _)| current.model_path.len() < root.model_path.len());
+            if more_specific {
+                matched = Some((root, relative));
+            }
+        }
+        let Some((root, relative)) = matched else {
+            result.foreign = true;
+            return Ok(result);
+        };
+        complete_root(root, &relative, data_root, grants, &mut budget, &mut result);
+    } else {
+        for root in roots {
+            complete_root(root, query, data_root, grants, &mut budget, &mut result);
+        }
+    }
+    result.suggestions.sort_by(|left, right| {
+        right
+            .directory
+            .cmp(&left.directory)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    result
+        .suggestions
+        .dedup_by(|left, right| left.path == right.path);
+    if result.suggestions.len() > MAXIMUM_FILE_RESULTS {
+        result.truncated = true;
+        result.suggestions.truncate(MAXIMUM_FILE_RESULTS);
+    }
+    Ok(result)
+}
+
+fn complete_root(
+    root: &EffectiveRoot,
+    relative: &str,
+    data_root: &Path,
+    grants: &[crate::execution::DirectoryGrant],
+    budget: &mut usize,
+    result: &mut Search,
+) {
+    let (directory, prefix) = match relative.rfind('/') {
+        Some(index) => (&relative[..=index], &relative[index + 1..]),
+        None => ("", relative),
+    };
+    if directory.split('/').any(|part| part == "." || part == "..") {
+        return;
+    }
+    if root.candidate() {
+        complete_candidate(root, directory, prefix, data_root, grants, budget, result);
+    } else if let Some(path) = root.host_path.as_deref() {
+        let Some(grant) = grants.iter().find(|grant| grant.host_path == path) else {
+            result.unavailable += 1;
+            return;
+        };
+        complete_host(grant, root, directory, prefix, data_root, budget, result);
+    }
+}
+
+fn complete_candidate(
+    root: &EffectiveRoot,
+    directory: &str,
+    prefix: &str,
+    data_root: &Path,
+    grants: &[crate::execution::DirectoryGrant],
+    budget: &mut usize,
+    result: &mut Search,
+) {
+    for entry in &root.candidate_paths {
+        *budget += 1;
+        if *budget > MAXIMUM_FILE_TRAVERSAL_ENTRIES {
+            result.partial = true;
+            return;
+        }
+        let Some((path, is_directory)) = candidate_entry(entry) else {
+            continue;
+        };
+        let (entry_directory, name) = match path.rfind('/') {
+            Some(index) => (&path[..=index], &path[index + 1..]),
+            None => ("", path),
+        };
+        if entry_directory != directory || !name_starts_with(name, prefix) {
+            continue;
+        }
+        if grants.iter().any(|grant| {
+            grant.alias == root.scope && overlaps(&grant.host_path.join(path), data_root)
+        }) {
+            continue;
+        }
+        push_completion(result, root, directory, name, is_directory);
+    }
+}
+
+fn complete_host(
+    grant: &crate::execution::DirectoryGrant,
+    root: &EffectiveRoot,
+    directory: &str,
+    prefix: &str,
+    data_root: &Path,
+    budget: &mut usize,
+    result: &mut Search,
+) {
+    let root_path = &grant.host_path;
+    let Ok(root_directory) =
+        cap_std::fs::Dir::open_ambient_dir(root_path, cap_std::ambient_authority())
+    else {
+        result.unavailable += 1;
+        return;
+    };
+    use cap_std::fs::MetadataExt;
+    let identity_matches = root_directory.dir_metadata().is_ok_and(|metadata| {
+        metadata.dev() == grant.identity.device && metadata.ino() == grant.identity.inode
+    });
+    if !identity_matches || grant.revalidate().is_err() {
+        result.unavailable += 1;
+        return;
+    }
+    let mut current = root_directory;
+    let mut current_path = root_path.clone();
+    for component in directory.trim_end_matches('/').split('/') {
+        if component.is_empty() {
+            continue;
+        }
+        if !valid_component(component) || component == ".git" {
+            return;
+        }
+        current_path = current_path.join(component);
+        // Private Power Plant data stays out of previews even below a grant.
+        if overlaps(&current_path, data_root) {
+            return;
+        }
+        let mut options = cap_std::fs::OpenOptions::new();
+        options.read(true);
+        use cap_std::fs::OpenOptionsExt;
+        // O_NOFOLLOW and O_DIRECTORY prevent traversal through a symlink or non-directory.
+        options.custom_flags(0o200000 | 0o400000);
+        match current.open_with(component, &options) {
+            Ok(file) => current = cap_std::fs::Dir::from_std_file(file.into_std()),
+            Err(_) => return,
+        }
+    }
+    let Ok(entries) = current.entries() else {
+        result.unavailable += 1;
+        return;
+    };
+    for entry in entries {
+        *budget += 1;
+        if *budget > MAXIMUM_FILE_TRAVERSAL_ENTRIES {
+            result.partial = true;
+            return;
+        }
+        let Ok(entry) = entry else {
+            result.unavailable += 1;
+            continue;
+        };
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
+        if !valid_component(&name) || name == ".git" || !name_starts_with(&name, prefix) {
+            continue;
+        }
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
+            let path = root_path.join(directory).join(&name);
+            if overlaps(path.as_path(), data_root) {
+                continue;
+            }
+            push_completion(result, root, directory, &name, true);
+        } else if file_type.is_file() {
+            push_completion(result, root, directory, &name, false);
+        }
+    }
+}
+
+fn name_starts_with(name: &str, prefix: &str) -> bool {
+    prefix.is_empty() || name.to_lowercase().starts_with(&prefix.to_lowercase())
+}
+
+fn push_completion(
+    result: &mut Search,
+    root: &EffectiveRoot,
+    directory: &str,
+    name: &str,
+    is_directory: bool,
+) {
+    let model_path = root.model_path.trim_end_matches('/');
+    let path = if is_directory {
+        format!("{model_path}/{directory}{name}/")
+    } else {
+        format!("{model_path}/{directory}{name}")
+    };
+    result.suggestions.push(Suggestion {
+        path,
+        scope: root.scope.clone(),
+        directory: is_directory,
+    });
 }
 
 fn traverse(
@@ -332,7 +572,7 @@ pub(super) fn view(search: &Search, message: &str) -> SuggestionsView {
             .suggestions
             .iter()
             .map(|suggestion| SuggestionRow {
-                display: if suggestion.directory {
+                display: if suggestion.directory && !suggestion.path.ends_with('/') {
                     format!("{}/", suggestion.path)
                 } else {
                     suggestion.path.clone()
@@ -349,6 +589,9 @@ pub(super) fn view(search: &Search, message: &str) -> SuggestionsView {
 pub(super) fn explanation(search: &Search, restricted: bool, no_roots: bool) -> &'static str {
     if no_roots {
         return "No authorised directory is available for file search.";
+    }
+    if search.foreign {
+        return "That path is outside the authorised directories.";
     }
     if search.partial {
         return "The search reached its work limit. Results are partial.";

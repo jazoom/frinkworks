@@ -331,3 +331,208 @@ async fn replaced_root_does_not_reuse_its_grant() {
         .expect("lookup");
     assert!(suggestions(&text(response).await).is_empty());
 }
+
+#[tokio::test]
+async fn prefix_completion_returns_files_and_directories_with_separators() {
+    let state = test_state();
+    let token = connected(&state);
+    let root = fixture();
+    std::fs::create_dir_all(root.path().join("src/nested")).expect("nested");
+    std::fs::write(root.path().join("src/nested/deep.rs"), b"").expect("deep");
+    std::fs::write(root.path().join("src/nested/my file.rs"), b"").expect("spaced file");
+    std::fs::write(root.path().join("src/nested/myother.rs"), b"").expect("other file");
+    let (record, grant) = conversation_with_grant(&state, root.path(), ToolLocation::Sandbox);
+    let base = format!("/access/{}", grant.alias);
+    for (query, expected) in [
+        ("src/ma", vec![format!("{base}/src/main.rs")]),
+        ("src/MA", vec![format!("{base}/src/main.rs")]),
+        (
+            "src/",
+            vec![
+                format!("{base}/src/lib.rs"),
+                format!("{base}/src/main.rs"),
+                format!("{base}/src/nested/"),
+            ],
+        ),
+        ("src/ne", vec![format!("{base}/src/nested/")]),
+        (
+            "src/nested/my ",
+            vec![format!("{base}/src/nested/my file.rs")],
+        ),
+    ] {
+        let response = app(&state)
+            .oneshot(json_request(
+                &format!(
+                    "/conversations/{}/files?q={}&mode=complete",
+                    record.id,
+                    form_value(query)
+                ),
+                &token,
+            ))
+            .await
+            .expect("lookup");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = text(response).await;
+        let mut paths = suggestions(&body)
+            .iter()
+            .map(|value| value["path"].as_str().expect("path").to_owned())
+            .collect::<Vec<_>>();
+        paths.sort();
+        assert_eq!(paths, expected, "query {query}");
+    }
+}
+
+#[tokio::test]
+async fn completion_rejects_parent_traversal_and_foreign_roots() {
+    let state = test_state();
+    let token = connected(&state);
+    let root = fixture();
+    let (record, grant) = conversation_with_grant(&state, root.path(), ToolLocation::Sandbox);
+
+    for query in [
+        "../",
+        "src/../../etc",
+        "/access/parent/../other",
+        "src//",
+        &format!("/access/{}//", grant.alias),
+    ] {
+        let response = app(&state)
+            .oneshot(json_request(
+                &format!(
+                    "/conversations/{}/files?q={}&mode=complete",
+                    record.id,
+                    form_value(query)
+                ),
+                &token,
+            ))
+            .await
+            .expect("lookup");
+        assert_eq!(
+            response.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{query}"
+        );
+    }
+
+    // A string prefix that changes the root identity must not match the grant.
+    let foreign = format!("/access/{}-other/src/", grant.alias);
+    let response = app(&state)
+        .oneshot(json_request(
+            &format!(
+                "/conversations/{}/files?q={}&mode=complete",
+                record.id,
+                form_value(&foreign)
+            ),
+            &token,
+        ))
+        .await
+        .expect("lookup");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = text(response).await;
+    assert!(suggestions(&body).is_empty(), "{body}");
+    let value: serde_json::Value = serde_json::from_str(&body).expect("json");
+    assert!(
+        value["message"]
+            .as_str()
+            .expect("message")
+            .contains("outside"),
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn completion_of_a_missing_directory_is_empty_without_an_error() {
+    let state = test_state();
+    let token = connected(&state);
+    let root = fixture();
+    let (record, _) = conversation_with_grant(&state, root.path(), ToolLocation::Sandbox);
+    let response = app(&state)
+        .oneshot(json_request(
+            &format!(
+                "/conversations/{}/files?q={}&mode=complete",
+                record.id,
+                form_value("src/missing/ma")
+            ),
+            &token,
+        ))
+        .await
+        .expect("lookup");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = text(response).await;
+    assert!(suggestions(&body).is_empty(), "{body}");
+    let value: serde_json::Value = serde_json::from_str(&body).expect("json");
+    assert_eq!(value["message"], "");
+}
+
+#[tokio::test]
+async fn completion_maps_absolute_host_paths_to_the_selected_root() {
+    let state = test_state();
+    let token = connected(&state);
+    let root = fixture();
+    let (record, _) = conversation_with_grant(&state, root.path(), ToolLocation::Host);
+    let canonical = root.path().canonicalize().expect("canonical");
+    let query = format!("{}/src/ma", canonical.display());
+    let response = app(&state)
+        .oneshot(json_request(
+            &format!(
+                "/conversations/{}/files?q={}&mode=complete",
+                record.id,
+                form_value(&query)
+            ),
+            &token,
+        ))
+        .await
+        .expect("lookup");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = text(response).await;
+    let suggestions = suggestions(&body);
+    assert_eq!(suggestions.len(), 1);
+    assert_eq!(
+        suggestions[0]["path"],
+        format!("{}/src/main.rs", canonical.display())
+    );
+}
+
+#[test]
+fn candidate_completion_returns_directories_and_rejects_parent() {
+    use crate::execution::resources::EffectiveRoot;
+    let root = EffectiveRoot {
+        scope: "project".into(),
+        model_path: "/access/project".into(),
+        host_path: None,
+        candidate_paths: vec![
+            "src/main.rs".into(),
+            "src/nested/".into(),
+            "src/other.rs".into(),
+        ],
+    };
+    let data = Path::new("/private-data");
+    let result =
+        super::page::complete(std::slice::from_ref(&root), "src/ne", data, &[]).expect("complete");
+    assert_eq!(result.suggestions.len(), 1);
+    assert_eq!(result.suggestions[0].path, "/access/project/src/nested/");
+    assert!(result.suggestions[0].directory);
+
+    let result = super::page::complete(
+        std::slice::from_ref(&root),
+        "/access/project/src/ma",
+        data,
+        &[],
+    )
+    .expect("complete");
+    assert_eq!(result.suggestions.len(), 1);
+    assert_eq!(result.suggestions[0].path, "/access/project/src/main.rs");
+    assert!(!result.suggestions[0].directory);
+
+    let result = super::page::complete(
+        std::slice::from_ref(&root),
+        "/access/project-other/src/ma",
+        data,
+        &[],
+    )
+    .expect("complete");
+    assert!(result.foreign);
+    assert!(result.suggestions.is_empty());
+
+    assert!(super::page::complete(&[root], "src/../other", data, &[]).is_err());
+}

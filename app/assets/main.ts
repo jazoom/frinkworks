@@ -1618,6 +1618,7 @@ function fileState(): string | null {
         field.value,
         token.start,
         token.end,
+        field.selectionStart,
         fileLookupUrl(token),
         document.querySelector<HTMLInputElement>(
             '#conversation-composer input[name="revision"]',
@@ -1638,26 +1639,84 @@ function fileTokenAt(field: HTMLTextAreaElement): FileToken | null {
     const caret = field.selectionStart ?? 0;
     if (field.selectionEnd !== caret) return null;
     const value = field.value;
-    let index = -1;
-    for (let position = caret - 1; position >= 0; position -= 1) {
-        const character = value[position];
-        if (character === "@") {
-            index = position;
-            break;
+    let index = 0;
+    while (index < value.length) {
+        while (index < value.length && /\s/.test(value[index])) index += 1;
+        if (index >= value.length) break;
+        const start = index;
+        let quoted = false;
+        let escaped = false;
+        while (index < value.length) {
+            const character = value[index];
+            if (character === "\n" || character === "\r") break;
+            if (escaped) {
+                escaped = false;
+                index += 1;
+                continue;
+            }
+            if (character === "\\") {
+                escaped = true;
+                index += 1;
+                continue;
+            }
+            if (character === '"') {
+                quoted = !quoted;
+                index += 1;
+                continue;
+            }
+            if (!quoted && /\s/.test(character)) break;
+            index += 1;
         }
-        if (/\s/.test(character)) return null;
+        const end = index;
+        if (caret >= start && caret <= end) {
+            const raw = value.slice(start, end);
+            if (!raw.startsWith("@")) return null;
+            if (caret <= start) return null;
+            return {
+                start,
+                end,
+                text: decodeFileToken(value.slice(start + 1, caret)),
+            };
+        }
     }
-    if (index < 0) return null;
-    if (index > 0 && !/\s/.test(value[index - 1])) return null;
-    return { start: index, end: caret, text: value.slice(index + 1, caret) };
+    return null;
 }
 
-function fileInsert(path: string, directory: boolean): string {
-    const withSeparator = directory ? `${path}/` : path;
-    const quoted = /[\s"\\]/.test(path)
-        ? JSON.stringify(withSeparator)
-        : withSeparator;
-    return `${quoted} `;
+function decodeFileToken(raw: string): string {
+    let text = raw;
+    if (text.startsWith('"')) {
+        text = text.slice(1);
+        if (text.endsWith('"')) text = text.slice(0, -1);
+    }
+    let decoded = "";
+    let escaped = false;
+    for (const character of text) {
+        if (escaped) {
+            decoded += character;
+            escaped = false;
+        } else if (character === "\\") {
+            escaped = true;
+        } else {
+            decoded += character;
+        }
+    }
+    if (escaped) decoded += "\\";
+    return decoded;
+}
+
+// Directory completion keeps the caret before the closing quote for the next segment.
+function fileInsert(
+    path: string,
+    directory: boolean,
+): { text: string; caret: number } {
+    const base = directory && !path.endsWith("/") ? `${path}/` : path;
+    if (!/[\s"\\]/.test(base)) {
+        const text = directory ? `@${base}` : `${base} `;
+        return { text, caret: text.length };
+    }
+    const quoted = JSON.stringify(base);
+    if (directory) return { text: `@${quoted}`, caret: quoted.length };
+    return { text: `${quoted} `, caret: quoted.length + 1 };
 }
 
 function closeFileSuggestions() {
@@ -1727,9 +1786,10 @@ function renderFileSuggestions(payload: {
             button.dataset.fileDirectory = String(suggestion.directory);
             const label = document.createElement("span");
             label.className = "truncate";
-            label.textContent = suggestion.directory
-                ? `${suggestion.path}/`
-                : suggestion.path;
+            label.textContent =
+                suggestion.directory && !suggestion.path.endsWith("/")
+                    ? `${suggestion.path}/`
+                    : suggestion.path;
             const scope = document.createElement("span");
             scope.className = "text-quiet shrink-0 text-xs";
             scope.textContent = suggestion.scope;
@@ -1773,13 +1833,14 @@ function chooseFileSuggestion(path: string, directory: boolean) {
     const insert = fileInsert(path, directory);
     field.value =
         field.value.slice(0, token.start) +
-        insert +
+        insert.text +
         field.value.slice(token.end);
-    const caret = token.start + insert.length;
+    const caret = token.start + insert.caret;
     field.focus();
     field.setSelectionRange(caret, caret);
     field.dispatchEvent(new Event("input", { bubbles: true }));
-    closeFileSuggestions();
+    // The input event schedules the next segment after directory selection.
+    if (!directory) closeFileSuggestions();
 }
 
 function fileLookupUrl(token: FileToken): string | null {
@@ -1788,6 +1849,7 @@ function fileLookupUrl(token: FileToken): string | null {
             .conversationUrl ?? "";
     const params = new URLSearchParams();
     params.set("q", token.text);
+    if (token.text.includes("/")) params.set("mode", "complete");
     if (owner !== "") return `${owner}/files?${params.toString()}`;
     const state = document.querySelector<HTMLElement>(
         "[data-conversation-state]",
@@ -1888,6 +1950,11 @@ document.addEventListener(
             if (selected) {
                 chooseFileSuggestion(selected.path, selected.directory);
             }
+        } else if (event.key === "Tab") {
+            if (event.shiftKey) return;
+            const selected = fileSuggestions[fileSelection];
+            if (!selected) return;
+            chooseFileSuggestion(selected.path, selected.directory);
         } else if (event.key === "Escape") {
             closeFileSuggestions();
         } else {

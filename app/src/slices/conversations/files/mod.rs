@@ -36,6 +36,7 @@ use self::page::Search;
 #[serde(default)]
 pub(super) struct FilesQuery {
     q: String,
+    mode: String,
 }
 
 /// The draft lookup carries only the fields that resolve roots. The composer
@@ -44,6 +45,7 @@ pub(super) struct FilesQuery {
 #[serde(default)]
 pub(super) struct DraftFilesQuery {
     q: String,
+    mode: String,
     draft_nonce: String,
     consent_reference: String,
     location: String,
@@ -167,7 +169,10 @@ pub(super) async fn lookup_saved(
     };
     let roots = effective_roots(&authority.policy, &candidates, state.local_data.root());
     let no_roots = roots.is_empty();
-    let search = page::search(&roots, q, state.local_data.root(), &grants);
+    let search = match resolve_search(&query.mode, &roots, q, state.local_data.root(), &grants) {
+        Ok(search) => search,
+        Err(message) => return invalid(graft, wants_json(&headers), &destination, message),
+    };
     respond(
         graft,
         wants_json(&headers),
@@ -230,7 +235,10 @@ pub(super) async fn lookup_new(
     };
     let roots = effective_roots(&authority.policy, &[], state.local_data.root());
     let no_roots = roots.is_empty();
-    let search = page::search(&roots, q, state.local_data.root(), &grants);
+    let search = match resolve_search(&query.mode, &roots, q, state.local_data.root(), &grants) {
+        Ok(search) => search,
+        Err(message) => return invalid(graft, wants_json(&headers), destination, message),
+    };
     respond(
         graft,
         wants_json(&headers),
@@ -239,6 +247,20 @@ pub(super) async fn lookup_new(
         restricted,
         no_roots,
     )
+}
+
+fn resolve_search(
+    mode: &str,
+    roots: &[crate::execution::resources::EffectiveRoot],
+    query: &str,
+    data_root: &std::path::Path,
+    grants: &[DirectoryGrant],
+) -> Result<page::Search, &'static str> {
+    match mode.trim() {
+        "complete" => page::complete(roots, query, data_root, grants),
+        "" | "search" => Ok(page::search(roots, query, data_root, grants)),
+        _ => Err("The file lookup mode is not valid."),
+    }
 }
 
 /// A missing candidate must not cause a fallback to newer host files.
@@ -305,7 +327,6 @@ fn candidate_roots(
 }
 
 fn validated_query(value: &str) -> Result<&str, &'static str> {
-    let value = value.trim();
     if value.len() > crate::execution::resources::MAXIMUM_FILE_QUERY_BYTES {
         return Err("The file search text is too long.");
     }
