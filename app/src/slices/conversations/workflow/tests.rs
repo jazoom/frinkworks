@@ -749,6 +749,8 @@ async fn brief_defaults_to_the_conversation_request_not_sample_text() {
     conversation.messages = vec![crate::conversations::ConversationMessage {
         parent: None,
         id: crate::conversations::MessageId::generate().expect("message id"),
+        response: None,
+        final_phase: false,
         continuation: Vec::new(),
         role: crate::conversations::MessageRole::User,
         text: "  Make errors helpful.  ".to_owned(),

@@ -1092,25 +1092,37 @@ impl ConversationDetailView {
         // The escaped model catalogue shares the transcript envelope.
         let message_budget =
             (672_usize * 1024).saturating_sub(ammonia::clean_text(&model_picker.catalogue).len());
-        let mut messages = match transcript {
+        let (mut messages, rendered) = match transcript {
             Some(window) => message_views(record, message_budget, window.messages.len()),
-            None => visible_messages(record, message_budget),
+            None => message_views(record, message_budget, 64),
         };
         if let Some(job) = job
             && !job.output.is_empty()
             && let Some(message) = record.messages.iter().rev().find(|message| {
                 message.request == Some(job.id) && message.status == MessageStatus::Pending
             })
-            && let Some(view) = messages
-                .iter_mut()
-                .find(|view| view.id == message_id(&record.id, message))
         {
-            *view = reply_view(
-                &record.id,
-                message.id,
-                &job.output,
-                job.status == JobStatus::Running,
-            );
+            let anchor = message.response.unwrap_or(message.id);
+            let committed: Vec<&ConversationMessage> = record
+                .messages
+                .iter()
+                .filter(|message| {
+                    message.role == MessageRole::Assistant
+                        && message.response.unwrap_or(message.id) == anchor
+                        && message.status != MessageStatus::Pending
+                })
+                .collect();
+            if let Some(view) = messages
+                .iter_mut()
+                .find(|view| view.id == reply_id(&record.id, anchor))
+            {
+                *view = response_view(
+                    &record.id,
+                    anchor,
+                    &committed,
+                    Some((&job.output, job.status == JobStatus::Running)),
+                );
+            }
         }
         if job.is_some_and(|job| job.status == JobStatus::AwaitingQuestion) {
             for message in messages.iter_mut().filter(|message| message.streaming) {
@@ -1131,7 +1143,7 @@ impl ConversationDetailView {
             }
         }
         let retained = transcript.map_or(record.messages.len(), |window| window.total);
-        let omitted_messages = retained.saturating_sub(messages.len());
+        let omitted_messages = retained.saturating_sub(rendered);
         let latest_href = format!("/conversations/{}", record.id.as_hex());
         let leaf_query = inspection_leaf
             .map(|leaf| format!("&leaf={}", leaf.as_hex()))
@@ -2099,39 +2111,77 @@ fn candidate_file_name(path: &str) -> String {
 }
 
 // The transcript uses the durable message identity so projection never depends on position.
+#[cfg(test)]
 fn visible_messages(record: &ConversationRecord, byte_budget: usize) -> Vec<MessageView> {
-    message_views(record, byte_budget, 64)
+    message_views(record, byte_budget, 64).0
 }
 
-/// Build bounded views from the newest entry. The newest entry always renders
-/// even past the byte budget, so an oversized response stays reachable instead
-/// of disappearing behind its own size.
+/// One prefix of the transcript ordered newest first. Consecutive assistant
+/// phases that share a logical-response anchor render as one entry with one
+/// stable identity, so a live patch never targets an absent phase. The second
+/// value counts the original entries represented by the returned views.
 fn message_views(
     record: &ConversationRecord,
     byte_budget: usize,
     limit: usize,
-) -> Vec<MessageView> {
-    let mut messages = Vec::new();
-    let mut bytes = 0;
-    for (index, message) in record.messages.iter().enumerate().rev() {
-        let mut view = message_view(&record.id, message);
-        if crate::conversations::forks::forkable(&record.messages, index) {
-            view.forkable = true;
-            view.fork_href = format!(
-                "/conversations/{}/fork?message={}",
-                record.id.as_hex(),
-                message.id.as_hex()
+) -> (Vec<MessageView>, usize) {
+    let messages = &record.messages;
+    let mut views: Vec<MessageView> = Vec::new();
+    let mut bytes = 0usize;
+    let mut rendered = 0usize;
+    let mut end = messages.len();
+    while end > 0 {
+        let last = &messages[end - 1];
+        let (start, grouped) = if last.role == MessageRole::Assistant {
+            let anchor = last.response.unwrap_or(last.id);
+            let mut start = end - 1;
+            while start > 0 {
+                let previous = &messages[start - 1];
+                if previous.role == MessageRole::Assistant
+                    && previous.response.unwrap_or(previous.id) == anchor
+                {
+                    start -= 1;
+                } else {
+                    break;
+                }
+            }
+            (start, true)
+        } else {
+            (end - 1, false)
+        };
+        let view = if grouped {
+            let phases: Vec<&ConversationMessage> = messages[start..end].iter().collect();
+            let mut view = response_view(
+                &record.id,
+                phases[0].response.unwrap_or(phases[0].id),
+                &phases,
+                None,
             );
-        }
+            let boundary = end - 1;
+            if crate::conversations::forks::forkable(messages, boundary) {
+                view.forkable = true;
+                view.fork_href = format!(
+                    "/conversations/{}/fork?message={}",
+                    record.id.as_hex(),
+                    messages[boundary].id.as_hex()
+                );
+            }
+            view
+        } else {
+            message_view_in(&record.id, messages, start)
+        };
         let cost = view.html.len() + view.copy.as_ref().map_or(0, |copy| copy.escaped_bytes) + 2048;
-        if !messages.is_empty() && (bytes + cost > byte_budget || messages.len() >= limit) {
+        if !views.is_empty() && (bytes + cost > byte_budget || views.len() >= limit) {
             break;
         }
         bytes += cost;
-        messages.push(view);
+        rendered += end - start;
+        views.push(view);
+        end = start;
     }
-    messages.reverse();
-    messages
+    views.reverse();
+    let rendered = rendered.min(messages.len());
+    (views, rendered)
 }
 
 pub(super) fn message_id(conversation: &ConversationId, message: &ConversationMessage) -> String {
@@ -2146,19 +2196,34 @@ pub(super) fn reply_id(conversation: &ConversationId, id: MessageId) -> String {
     )
 }
 
+#[cfg(test)]
 pub(super) fn message_view(
     conversation: &ConversationId,
     message: &ConversationMessage,
 ) -> MessageView {
+    message_view_in(conversation, std::slice::from_ref(message), 0)
+}
+
+pub(super) fn message_view_in(
+    conversation: &ConversationId,
+    messages: &[ConversationMessage],
+    index: usize,
+) -> MessageView {
+    let message = &messages[index];
     let user = message.role == MessageRole::User;
     let streaming = message.status == MessageStatus::Pending;
     MessageView {
         id: message_id(conversation, message),
         user,
-        copy: if user || streaming {
+        // Copy belongs to a settled logical response. An intermediate phase,
+        // an active phase and a user entry never carry it.
+        copy: if user || streaming || !message.final_phase {
             None
         } else {
-            copy_response_view(&crate::conversations::history::response_text(message))
+            let anchor = message.response.unwrap_or(message.id);
+            copy_response_view(&crate::conversations::history::logical_response_text(
+                messages, anchor,
+            ))
         },
         html: if user {
             format!(
@@ -2205,39 +2270,122 @@ pub(super) fn message_view(
     }
 }
 
-pub(super) fn reply_view(
+/// One view for a whole logical response. Committed phases and an optional
+/// live reply concatenate in order under the anchor identity, so a phase
+/// transition never targets an absent element and never duplicates text.
+pub(super) fn response_view(
     conversation: &ConversationId,
-    message: MessageId,
-    reply: &crate::providers::AssistantReply,
-    streaming: bool,
+    anchor: MessageId,
+    phases: &[&ConversationMessage],
+    live: Option<(&crate::providers::AssistantReply, bool)>,
 ) -> MessageView {
-    let id = reply_id(conversation, message);
-    MessageView {
-        // A live reply is never a settled response, even while it waits for a decision.
-        copy: None,
-        html: activity_html(
+    let id = reply_id(conversation, anchor);
+    let mut html = String::new();
+    for message in phases {
+        let phase_id = message_id(conversation, message);
+        let content = activity_html(
             conversation,
-            &id,
-            &reply.text,
-            &reply.activity,
-            &reply.progress,
-            &reply.usage,
-            streaming,
-            reply
+            &message_id(conversation, message),
+            &message.text,
+            &message.activity,
+            &[],
+            &message.requests,
+            false,
+            message
                 .completion
                 .is_some_and(crate::providers::CompletionReason::incomplete),
-        ),
-        id,
-        user: false,
-        status: if streaming {
+        );
+        // A long response still uses a bounded transport window. Each omitted
+        // phase remains available through its canonical entry presentation.
+        let content = if phases.len() > 1 && html.len() + content.len() > 192 * 1024 {
+            format!(
+                "<a data-graft href=\"/conversations/{}?around={}&amp;leaf={}\">View response phase</a>",
+                conversation.as_hex(),
+                message.id.as_hex(),
+                message.id.as_hex(),
+            )
+        } else {
+            content
+        };
+        if message.id != anchor {
+            html.push_str(&format!("<div id=\"{phase_id}\">{content}</div>"));
+        } else {
+            html.push_str(&content);
+        }
+    }
+    let mut streaming = false;
+    let mut status = "";
+    let mut error = String::new();
+    if let Some((reply, live_streaming)) = live {
+        // A distinct live id keeps inner streaming anchors unique when the
+        // committed first phase shares the logical-response anchor.
+        let live_id = format!("{id}-live");
+        // The job snapshot can precede the phase commit. Request identities
+        // distinguish that stale snapshot from a fresh pending phase.
+        let committed = reply.usage.last().is_some_and(|request| {
+            phases
+                .iter()
+                .any(|phase| phase.requests.iter().any(|stored| stored.id == request.id))
+        });
+        if !committed {
+            html.push_str(&activity_html(
+                conversation,
+                &live_id,
+                &reply.text,
+                &reply.activity,
+                &reply.progress,
+                &reply.usage,
+                live_streaming,
+                reply
+                    .completion
+                    .is_some_and(crate::providers::CompletionReason::incomplete),
+            ));
+        }
+        streaming = live_streaming;
+        status = if live_streaming {
             reply_status(&reply.activity)
         } else {
             reply
                 .completion
                 .and_then(crate::providers::CompletionReason::status_label)
                 .unwrap_or("")
-        },
-        error: String::new(),
+        };
+    } else if let Some(last) = phases.last() {
+        streaming = last.status == MessageStatus::Pending;
+        status = match last.status {
+            MessageStatus::Complete => "",
+            MessageStatus::Pending => reply_status(&last.activity),
+            MessageStatus::Interrupted => "Interrupted",
+            MessageStatus::Failed => last
+                .completion
+                .and_then(crate::providers::CompletionReason::status_label)
+                .unwrap_or("Failed"),
+        };
+        error = message_error(last);
+    }
+    let settled = phases.last().filter(|message| {
+        message.final_phase
+            && live.is_none()
+            && phases.first().is_some_and(|first| first.id == anchor)
+    });
+    let copy = settled.and_then(|_| {
+        let text = phases
+            .iter()
+            .map(|message| crate::conversations::history::response_text(message))
+            .filter(|text| !text.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        (html_escaped_len(&text) <= 256 * 1024)
+            .then(|| copy_response_view(&text))
+            .flatten()
+    });
+    MessageView {
+        id,
+        user: false,
+        copy,
+        html,
+        status,
+        error,
         streaming,
         forkable: false,
         fork_href: String::new(),

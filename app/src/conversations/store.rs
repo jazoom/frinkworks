@@ -77,6 +77,8 @@ pub(crate) struct TreeEntry {
     pub(crate) status: MessageStatus,
     pub(crate) text: String,
     pub(crate) on_active_path: bool,
+    /// True only for the phase that ended its logical response.
+    pub(crate) final_phase: bool,
     /// Immutable append order. It orders tree pages and breaks ties.
     pub(crate) sequence: i64,
 }
@@ -565,6 +567,12 @@ struct MessageFile {
     /// entry starts a path. The store validates it before use.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     parent: Option<String>,
+    /// Logical-response anchor for assistant phases. User entries omit it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    response: Option<String>,
+    /// Set only on the phase that ended its logical response.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    final_phase: bool,
     role: MessageRole,
     text: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -802,32 +810,10 @@ impl ConversationStore {
         }
         let user_id = MessageId::generate().map_err(|_| ConversationError::Random)?;
         let assistant_id = MessageId::generate().map_err(|_| ConversationError::Random)?;
-        updated.messages.push(ConversationMessage {
-            parent: None,
-            id: user_id,
-            role: MessageRole::User,
-            text,
-            activity: Vec::new(),
-            continuation: Vec::new(),
-            status: MessageStatus::Complete,
-            error: None,
-            request: None,
-            completion: None,
-            requests: Vec::new(),
-        });
-        updated.messages.push(ConversationMessage {
-            parent: None,
-            id: assistant_id,
-            role: MessageRole::Assistant,
-            text: String::new(),
-            activity: Vec::new(),
-            continuation: Vec::new(),
-            status: MessageStatus::Pending,
-            error: None,
-            request: Some(request),
-            completion: None,
-            requests: Vec::new(),
-        });
+        updated.messages.push(user_message(user_id, text));
+        updated
+            .messages
+            .push(pending_phase(assistant_id, assistant_id, request));
         updated.active_job = Some(request);
         updated.revision = shell
             .revision
@@ -1307,32 +1293,10 @@ impl ConversationStore {
             if let Some(model) = model {
                 current.model = Some(model);
             }
-            current.messages.push(ConversationMessage {
-                parent: None,
-                id: user_id,
-                role: MessageRole::User,
-                text,
-                activity: Vec::new(),
-                continuation: Vec::new(),
-                status: MessageStatus::Complete,
-                error: None,
-                request: None,
-                completion: None,
-                requests: Vec::new(),
-            });
-            current.messages.push(ConversationMessage {
-                parent: None,
-                id: assistant_id,
-                role: MessageRole::Assistant,
-                text: String::new(),
-                activity: Vec::new(),
-                continuation: Vec::new(),
-                status: MessageStatus::Pending,
-                error: None,
-                request: Some(request),
-                completion: None,
-                requests: Vec::new(),
-            });
+            current.messages.push(user_message(user_id, text));
+            current
+                .messages
+                .push(pending_phase(assistant_id, assistant_id, request));
             current.active_job = Some(request);
             Ok(())
         })
@@ -1381,6 +1345,8 @@ impl ConversationStore {
             let failed = ConversationMessage {
                 parent: active.parent,
                 id: active.id,
+                response: active.response,
+                final_phase: active.final_phase,
                 role: MessageRole::Assistant,
                 text: failed.text,
                 activity: failed.activity,
@@ -1435,6 +1401,7 @@ impl ConversationStore {
             apply_owned_reply(message, reply);
             message.status = status;
             message.error = error;
+            message.final_phase = true;
             current.active_job = None;
             current.continuation = None;
             Ok(())
@@ -1510,19 +1477,8 @@ impl ConversationStore {
             if current.active_job.is_some() || current.continuation.is_some() {
                 return Err(ConversationError::Active);
             }
-            current.messages.push(ConversationMessage {
-                parent: None,
-                id: MessageId::generate().map_err(|_| ConversationError::Random)?,
-                role: MessageRole::Assistant,
-                text: String::new(),
-                activity: Vec::new(),
-                continuation: Vec::new(),
-                status: MessageStatus::Pending,
-                error: None,
-                request: Some(job),
-                completion: None,
-                requests: Vec::new(),
-            });
+            let id = MessageId::generate().map_err(|_| ConversationError::Random)?;
+            current.messages.push(pending_phase(id, id, job));
             current.active_job = Some(job);
             Ok(())
         })
@@ -1585,19 +1541,15 @@ impl ConversationStore {
             if stored.id != checkpoint {
                 return Err(ConversationError::Conflict);
             }
-            current.messages.push(ConversationMessage {
-                parent: None,
-                id: assistant_id,
-                role: MessageRole::Assistant,
-                text: String::new(),
-                activity: Vec::new(),
-                continuation: Vec::new(),
-                status: MessageStatus::Pending,
-                error: None,
-                request: Some(request),
-                completion: None,
-                requests: Vec::new(),
-            });
+            let response = current
+                .messages
+                .iter()
+                .find(|message| message.id == stored.boundary)
+                .and_then(|message| message.response)
+                .ok_or(ConversationError::Corrupt)?;
+            current
+                .messages
+                .push(pending_phase(assistant_id, response, request));
             current.active_job = Some(request);
             Ok(())
         })
@@ -1772,32 +1724,10 @@ impl ConversationStore {
                 .revision
                 .checked_add(1)
                 .ok_or(ConversationError::Revision)?;
-            current.messages.push(ConversationMessage {
-                parent: None,
-                id: user_id,
-                role: MessageRole::User,
-                text: item.text,
-                activity: Vec::new(),
-                continuation: Vec::new(),
-                status: MessageStatus::Complete,
-                error: None,
-                request: None,
-                completion: None,
-                requests: Vec::new(),
-            });
-            current.messages.push(ConversationMessage {
-                parent: None,
-                id: assistant_id,
-                role: MessageRole::Assistant,
-                text: String::new(),
-                activity: Vec::new(),
-                continuation: Vec::new(),
-                status: MessageStatus::Pending,
-                error: None,
-                request: Some(request),
-                completion: None,
-                requests: Vec::new(),
-            });
+            current.messages.push(user_message(user_id, item.text));
+            current
+                .messages
+                .push(pending_phase(assistant_id, assistant_id, request));
             current.active_job = Some(request);
             Ok(())
         })
@@ -1814,21 +1744,11 @@ impl ConversationStore {
             let message = active_assistant(current, job)?;
             apply_reply(message, reply);
             message.status = MessageStatus::Complete;
+            let response = message.response.unwrap_or(message.id);
             super::history::project(&current.messages, None)
                 .map_err(|_| ConversationError::Unsettled)?;
-            current.messages.push(ConversationMessage {
-                parent: None,
-                id: MessageId::generate().map_err(|_| ConversationError::Random)?,
-                role: MessageRole::Assistant,
-                text: String::new(),
-                activity: Vec::new(),
-                continuation: Vec::new(),
-                status: MessageStatus::Pending,
-                error: None,
-                request: Some(job),
-                completion: None,
-                requests: Vec::new(),
-            });
+            let next = MessageId::generate().map_err(|_| ConversationError::Random)?;
+            current.messages.push(pending_phase(next, response, job));
             Ok(())
         })
         .map(|_| ())
@@ -1860,6 +1780,7 @@ impl ConversationStore {
                 let message = active_assistant(current, request)?;
                 apply_reply(message, &reply);
                 message.status = MessageStatus::Complete;
+                message.final_phase = true;
                 message.error = None;
             }
             let item = current.queue.items.remove(index);
@@ -1868,32 +1789,12 @@ impl ConversationStore {
                 .revision
                 .checked_add(1)
                 .ok_or(ConversationError::Revision)?;
-            current.messages.push(ConversationMessage {
-                parent: None,
-                id: user_id,
-                role: MessageRole::User,
-                text: item.text.clone(),
-                activity: Vec::new(),
-                continuation: Vec::new(),
-                status: MessageStatus::Complete,
-                error: None,
-                request: None,
-                completion: None,
-                requests: Vec::new(),
-            });
-            current.messages.push(ConversationMessage {
-                parent: None,
-                id: assistant_id,
-                role: MessageRole::Assistant,
-                text: String::new(),
-                activity: Vec::new(),
-                continuation: Vec::new(),
-                status: MessageStatus::Pending,
-                error: None,
-                request: Some(request),
-                completion: None,
-                requests: Vec::new(),
-            });
+            current
+                .messages
+                .push(user_message(user_id, item.text.clone()));
+            current
+                .messages
+                .push(pending_phase(assistant_id, assistant_id, request));
             super::history::validate_exchange(&current.messages)
                 .map_err(|_| ConversationError::Message)?;
             if !super::queue::valid_queue(&current.queue) {
@@ -2080,6 +1981,42 @@ impl ConversationStore {
     }
 }
 
+fn user_message(id: MessageId, text: String) -> ConversationMessage {
+    ConversationMessage {
+        id,
+        parent: None,
+        response: None,
+        final_phase: false,
+        role: MessageRole::User,
+        text,
+        activity: Vec::new(),
+        continuation: Vec::new(),
+        status: MessageStatus::Complete,
+        error: None,
+        request: None,
+        completion: None,
+        requests: Vec::new(),
+    }
+}
+
+fn pending_phase(id: MessageId, response: MessageId, request: JobId) -> ConversationMessage {
+    ConversationMessage {
+        id,
+        parent: None,
+        response: Some(response),
+        final_phase: false,
+        role: MessageRole::Assistant,
+        text: String::new(),
+        activity: Vec::new(),
+        continuation: Vec::new(),
+        status: MessageStatus::Pending,
+        error: None,
+        request: Some(request),
+        completion: None,
+        requests: Vec::new(),
+    }
+}
+
 fn active_assistant(
     record: &mut ConversationRecord,
     request: JobId,
@@ -2110,6 +2047,7 @@ fn interrupt_recovered_request(record: &mut ConversationRecord) -> bool {
     {
         settle_interrupted_questions(message);
         message.status = MessageStatus::Interrupted;
+        message.final_phase = true;
     }
     record.active_job = None;
     record.revision = record.revision.saturating_add(1);
@@ -2145,7 +2083,9 @@ fn valid_directory_approvals(
 /// is not a branch boundary.
 fn branchable(messages: &[ConversationMessage]) -> bool {
     messages.last().is_some_and(|message| {
-        message.role == MessageRole::Assistant && message.status == MessageStatus::Complete
+        message.role == MessageRole::Assistant
+            && message.status == MessageStatus::Complete
+            && message.final_phase
     }) && super::history::project(messages, None).is_ok()
 }
 
@@ -2545,6 +2485,15 @@ fn message_from_file(file: MessageFile) -> Result<ConversationMessage, Conversat
     if parent == Some(id) {
         return Err(ConversationError::Corrupt);
     }
+    let response = match file.response {
+        Some(value) => Some(MessageId::parse(&value).ok_or(ConversationError::Corrupt)?),
+        None => None,
+    };
+    if (file.role == MessageRole::User) != response.is_none()
+        || (file.role == MessageRole::User && file.final_phase)
+    {
+        return Err(ConversationError::Corrupt);
+    }
     let limit = match file.role {
         MessageRole::User => MAXIMUM_MESSAGE_BYTES,
         MessageRole::Assistant => MAXIMUM_REPLY_BYTES,
@@ -2573,6 +2522,8 @@ fn message_from_file(file: MessageFile) -> Result<ConversationMessage, Conversat
     Ok(ConversationMessage {
         id,
         parent,
+        response,
+        final_phase: file.final_phase,
         role: file.role,
         text: file.text,
         activity: file.activity,
@@ -2617,6 +2568,8 @@ fn message_to_file(message: &ConversationMessage) -> MessageFile {
     MessageFile {
         id: message.id.as_hex(),
         parent: message.parent.map(|parent| parent.as_hex()),
+        response: message.response.map(|response| response.as_hex()),
+        final_phase: message.final_phase,
         role: message.role,
         text: message.text.clone(),
         activity: message.activity.clone(),

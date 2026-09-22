@@ -208,32 +208,14 @@ fn apply_handoff(
         {
             return Err(ConversationError::Conflict);
         }
-        destination.messages.push(ConversationMessage {
-            parent: None,
-            id: MessageId::generate().map_err(|_| ConversationError::Random)?,
-            role: MessageRole::User,
-            text: pending.prompt.clone(),
-            activity: Vec::new(),
-            continuation: Vec::new(),
-            status: MessageStatus::Complete,
-            error: None,
-            request: None,
-            completion: None,
-            requests: Vec::new(),
-        });
-        destination.messages.push(ConversationMessage {
-            parent: None,
-            id: MessageId::generate().map_err(|_| ConversationError::Random)?,
-            role: MessageRole::Assistant,
-            text: String::new(),
-            activity: Vec::new(),
-            continuation: Vec::new(),
-            status: MessageStatus::Pending,
-            error: None,
-            request: Some(job),
-            completion: None,
-            requests: Vec::new(),
-        });
+        let user_id = MessageId::generate().map_err(|_| ConversationError::Random)?;
+        let assistant_id = MessageId::generate().map_err(|_| ConversationError::Random)?;
+        destination
+            .messages
+            .push(super::user_message(user_id, pending.prompt.clone()));
+        destination
+            .messages
+            .push(super::pending_phase(assistant_id, assistant_id, job));
         destination.active_job = Some(job);
         destination.revision = destination
             .revision
@@ -245,6 +227,7 @@ fn apply_handoff(
         && let Some(message) = source
             .messages
             .iter_mut()
+            .rev()
             .find(|message| message.request == Some(source_job))
         && matches!(
             message.status,
@@ -252,6 +235,7 @@ fn apply_handoff(
         )
     {
         message.status = MessageStatus::Complete;
+        message.final_phase = true;
         message.error = None;
         message.text = format!(
             "Prepared changes now belong to [the destination conversation](/conversations/{}). No files were applied or discarded.",

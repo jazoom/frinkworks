@@ -48,6 +48,13 @@ pub(crate) struct ConversationMessage {
     /// The immutable parent identity inside one conversation. The first entry
     /// of a path has no parent. A later branch selects a different child.
     pub(crate) parent: Option<MessageId>,
+    /// Logical-response grouping for assistant phases. Every phase of one
+    /// assistant response shares the anchor id of its first phase. A user
+    /// entry has no anchor.
+    pub(crate) response: Option<MessageId>,
+    /// True only on the phase that ended its logical response. An intermediate
+    /// completed phase is a compaction boundary, never a branch boundary.
+    pub(crate) final_phase: bool,
     pub(crate) role: MessageRole,
     pub(crate) text: String,
     pub(crate) activity: Vec<AssistantActivity>,
@@ -657,6 +664,32 @@ fn assistant_projection(
         }
     }
     Ok((text, calls, tools))
+}
+
+/// True when the assistant entry at `index` ends a settled logical response.
+/// Only such an entry is a user-selectable branch boundary.
+pub(crate) fn logical_boundary(messages: &[ConversationMessage], index: usize) -> bool {
+    messages.get(index).is_some_and(|message| {
+        message.role == MessageRole::Assistant
+            && message.status == MessageStatus::Complete
+            && message.final_phase
+    })
+}
+
+/// Visible response text for one logical response. Every phase that shares the
+/// anchor contributes its response blocks once. Reasoning and tool output never
+/// enter the copy payload.
+pub(crate) fn logical_response_text(messages: &[ConversationMessage], anchor: MessageId) -> String {
+    let mut parts = Vec::new();
+    for message in messages {
+        if message.role == MessageRole::Assistant && message.response == Some(anchor) {
+            let text = response_text(message);
+            if !text.trim().is_empty() {
+                parts.push(text);
+            }
+        }
+    }
+    parts.join("\n\n")
 }
 
 /// Visible assistant response text for projection and display. Response blocks

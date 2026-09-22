@@ -638,7 +638,7 @@ impl Database {
             .prepare(&format!(
                 "{PATH_CTE} SELECT m.id, m.parent, json_extract(m.message, '$.role'),
                         json_extract(m.message, '$.status'), json_extract(m.message, '$.text'), m.sequence,
-                        p.id IS NOT NULL
+                        p.id IS NOT NULL, COALESCE(json_extract(m.message, '$.final-phase'), 0)
                  FROM messages m LEFT JOIN path p ON p.id = m.id
                  WHERE m.conversation_id = ?1 AND m.sequence > ?3
                  AND (?5 IS NULL OR m.parent = ?5)
@@ -663,13 +663,14 @@ impl Database {
                         row.get::<_, String>(4)?,
                         row.get::<_, i64>(5)?,
                         row.get::<_, bool>(6)?,
+                        row.get::<_, bool>(7)?,
                     ))
                 },
             )
             .map_err(map_error)?;
         let mut entries = Vec::new();
         for row in rows {
-            let (id, parent, role, status, text, sequence, on_active_path) =
+            let (id, parent, role, status, text, sequence, on_active_path, final_phase) =
                 row.map_err(map_error)?;
             let parent = match parent.as_deref() {
                 Some(value) => Some(MessageId::parse(value).ok_or(ConversationError::Corrupt)?),
@@ -683,6 +684,7 @@ impl Database {
                 text,
                 sequence,
                 on_active_path,
+                final_phase,
             });
         }
         Ok(entries)
@@ -1242,7 +1244,7 @@ fn write_messages(
             return Err(ConversationError::Message);
         }
         if let Some(old) = previous.get(&message.id) {
-            if old.parent != parent {
+            if old.parent != parent || old.response != message.response {
                 return Err(ConversationError::Message);
             }
             if *old != message {

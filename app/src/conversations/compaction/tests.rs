@@ -39,6 +39,8 @@ fn user(text: &str) -> ConversationMessage {
     ConversationMessage {
         parent: None,
         id: identifier(),
+        response: None,
+        final_phase: false,
         role: MessageRole::User,
         text: text.to_owned(),
         activity: Vec::new(),
@@ -52,9 +54,12 @@ fn user(text: &str) -> ConversationMessage {
 }
 
 fn assistant(text: &str) -> ConversationMessage {
+    let id = identifier();
     ConversationMessage {
         parent: None,
-        id: identifier(),
+        id,
+        response: Some(id),
+        final_phase: true,
         role: MessageRole::Assistant,
         text: text.to_owned(),
         activity: Vec::new(),
@@ -68,9 +73,12 @@ fn assistant(text: &str) -> ConversationMessage {
 }
 
 fn assistant_tool(id: &str, result: Option<ToolOutput>) -> ConversationMessage {
+    let message = identifier();
     ConversationMessage {
         parent: None,
-        id: identifier(),
+        id: message,
+        response: Some(message),
+        final_phase: true,
         role: MessageRole::Assistant,
         text: String::new(),
         activity: vec![AssistantActivity::ToolCall {
@@ -512,4 +520,41 @@ fn project_turns_carries_every_request_and_the_retained_suffix() {
     assert_eq!(projected[0].usage.len(), 2);
     assert_eq!(projected[1].text, "Second");
     assert_eq!(projected[2].text, "Latest");
+}
+
+#[test]
+fn opaque_continuation_blocks_an_otherwise_valid_boundary() {
+    let target = |label: &str, output: &str| ToolOutput {
+        resource: None,
+        label: label.to_owned(),
+        output: output.to_owned(),
+        command: None,
+    };
+    let mut first = assistant_tool("call-1", Some(target("read", "first")));
+    first.continuation = vec![crate::conversations::ContinuationMetadata {
+        provider: ProviderKind::Xai,
+        model: "grok-4.6".to_owned(),
+        reasoning_id: None,
+        blocks: vec![crate::conversations::ContinuationBlock::Encrypted {
+            data: "opaque".to_owned(),
+        }],
+    }];
+    let messages = vec![
+        user("First"),
+        first,
+        assistant_tool(
+            "call-2",
+            Some(target("read", &"large result ".repeat(1_000))),
+        ),
+        assistant_tool("call-3", Some(target("read", "latest"))),
+    ];
+    assert_eq!(
+        select_boundary(&messages, None, Some(&selection()), 100),
+        Err(CompactionError::Continuation)
+    );
+    let turns = crate::conversations::history::project(&messages, Some(&selection())).unwrap();
+    assert_eq!(
+        super::workflow_cover_index(&turns, Some(&selection()), 100),
+        Err(CompactionError::Continuation)
+    );
 }

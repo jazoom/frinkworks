@@ -23,6 +23,8 @@ fn escaped_history_keeps_the_latest_message_within_the_patch_bound() {
         .map(|_| ConversationMessage {
             parent: None,
             id: crate::conversations::MessageId::generate().expect("message id"),
+            response: None,
+            final_phase: false,
             continuation: Vec::new(),
             role: MessageRole::User,
             text: "\"".repeat(32 * 1024),
@@ -127,9 +129,12 @@ fn dense_markup_uses_escaped_text_with_bounded_nodes() {
 }
 
 fn assistant_message(text: &str, status: MessageStatus) -> ConversationMessage {
+    let id = crate::conversations::MessageId::generate().expect("message id");
     ConversationMessage {
         parent: None,
-        id: crate::conversations::MessageId::generate().expect("message id"),
+        id,
+        response: Some(id),
+        final_phase: status != MessageStatus::Pending,
         role: MessageRole::Assistant,
         text: text.to_owned(),
         activity: Vec::new(),
@@ -461,4 +466,88 @@ fn usage_panel_labels_unknown_cost_instead_of_a_zero_total() {
     assert!(html.contains("Cost unknown for plan authentication"));
     assert!(!html.contains("$0.00"));
     assert!(html.contains("incomplete"));
+}
+
+#[test]
+fn phases_render_as_one_logical_response_with_aggregated_copy() {
+    use crate::conversations::{MessageId, MessageRole, MessageStatus};
+    use crate::providers::AssistantActivity;
+    let state = crate::tests::test_state(RuntimeConfig::development());
+    let mut record = state.conversations.create("Phases".to_owned()).unwrap();
+    let anchor = MessageId::generate().unwrap();
+    let phase = |id: MessageId, text: &str, final_phase: bool| ConversationMessage {
+        parent: None,
+        id,
+        response: Some(anchor),
+        final_phase,
+        role: MessageRole::Assistant,
+        text: text.to_owned(),
+        activity: vec![AssistantActivity::Response(text.to_owned())],
+        continuation: Vec::new(),
+        status: MessageStatus::Complete,
+        error: None,
+        request: None,
+        completion: None,
+        requests: Vec::new(),
+    };
+    record.messages = vec![
+        ConversationMessage {
+            parent: None,
+            id: MessageId::generate().unwrap(),
+            response: None,
+            final_phase: false,
+            role: MessageRole::User,
+            text: "Question".to_owned(),
+            activity: Vec::new(),
+            continuation: Vec::new(),
+            status: MessageStatus::Complete,
+            error: None,
+            request: None,
+            completion: None,
+            requests: Vec::new(),
+        },
+        phase(anchor, "First response", false),
+        phase(MessageId::generate().unwrap(), "Second response", true),
+    ];
+    let views = visible_messages(&record, usize::MAX);
+    assert_eq!(views.len(), 2, "user entry plus one logical response");
+    let response = &views[1];
+    assert_eq!(response.id, reply_id(&record.id, anchor));
+    let copy = response
+        .copy
+        .as_ref()
+        .expect("settled logical response copy");
+    assert_eq!(copy.source, "First response\n\nSecond response");
+    let partial = response_view(&record.id, anchor, &[&record.messages[2]], None);
+    assert!(
+        partial.copy.is_none(),
+        "a history window must not copy an incomplete response"
+    );
+}
+
+#[test]
+fn a_live_snapshot_before_the_phase_commit_does_not_repeat_committed_text() {
+    let state = crate::tests::test_state(RuntimeConfig::development());
+    let record = state.conversations.create("Phases".to_owned()).unwrap();
+    let mut phase = assistant_message("Committed response sentinel", MessageStatus::Complete);
+    phase.final_phase = false;
+    let request = crate::conversations::RequestUsage {
+        id: crate::conversations::RequestId::generate().unwrap(),
+        usage: crate::providers::ModelUsage::new(
+            crate::providers::ProviderKind::Xai,
+            "grok-4.6".to_owned(),
+        ),
+        auth: crate::providers::AuthMethod::ApiKey,
+        prices: None,
+        sources: Vec::new(),
+        advertised: Vec::new(),
+    };
+    phase.requests.push(request.clone());
+    let mut stale = crate::providers::AssistantReply::default();
+    stale.push_response(&phase.text);
+    stale.usage.push(request);
+    let view = response_view(&record.id, phase.id, &[&phase], Some((&stale, true)));
+    assert_eq!(view.html.matches("Committed response sentinel").count(), 1);
+    assert!(view.copy.is_none());
+    assert!(view.streaming);
 }

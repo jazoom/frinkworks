@@ -413,6 +413,7 @@ fn view(
                 active_leaf: active_leaf_entry,
                 continueable: entry.role == MessageRole::Assistant
                     && entry.status == MessageStatus::Complete
+                    && entry.final_phase
                     && !active_leaf_entry,
                 id: entry.id.as_hex(),
                 revisable: entry.role == MessageRole::User,

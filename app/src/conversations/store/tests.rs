@@ -264,10 +264,13 @@ fn history_beyond_former_message_byte_and_catalogue_limits_survives_restart() {
         let mut record = previous.clone();
         for _ in 0..600 {
             for role in [super::MessageRole::User, super::MessageRole::Assistant] {
+                let id = super::MessageId::generate().unwrap();
                 record.messages.push(super::ConversationMessage {
                     parent: None,
-                    id: super::MessageId::generate().unwrap(),
+                    id,
                     role,
+                    response: (role == super::MessageRole::Assistant).then_some(id),
+                    final_phase: role == super::MessageRole::Assistant,
                     text: if role == super::MessageRole::User {
                         "Question".to_owned()
                     } else {
@@ -1951,4 +1954,94 @@ fn branch_selection_restores_only_ancestor_compactions_across_restart() {
             .unwrap();
     assert_eq!(history.len(), 2);
     assert_eq!(history[1].text, "New sibling");
+}
+
+#[test]
+fn phase_commits_group_one_logical_response_and_only_the_last_phase_is_final() {
+    use crate::providers::{AssistantReply, CompletionReason, ToolOutput};
+    let dir = tempfile::tempdir().unwrap();
+    let store = ConversationStore::open(dir.path().to_path_buf()).unwrap();
+    let record = store.create("Long turn".to_owned()).unwrap();
+    let job = JobId::generate().unwrap();
+    let selection = ModelSelection::new(ProviderKind::Xai, "model".to_owned(), None).unwrap();
+    let record = store
+        .begin_message(
+            &record.id,
+            record.revision,
+            selection,
+            job,
+            "Work".to_owned(),
+        )
+        .unwrap();
+    for id in ["call-1", "call-2"] {
+        let mut reply = AssistantReply::default();
+        reply.start_tool(
+            id.to_owned(),
+            "read".to_owned(),
+            serde_json::json!({"path": "main.rs"}),
+        );
+        reply.finish_tool(
+            id,
+            ToolOutput {
+                resource: None,
+                label: "read".to_owned(),
+                output: "ok".to_owned(),
+                command: None,
+            },
+        );
+        reply.completion = Some(CompletionReason::ToolCalls);
+        store.settle_tool_batch(&record.id, job, &reply).unwrap();
+    }
+    let refreshed = store.get(&record.id).unwrap();
+    let phases: Vec<_> = refreshed
+        .messages
+        .iter()
+        .filter(|message| message.role == super::MessageRole::Assistant)
+        .collect();
+    assert_eq!(
+        phases.len(),
+        3,
+        "two completed phases and one pending phase"
+    );
+    let anchor = phases[0].response.expect("logical response anchor");
+    assert!(phases.iter().all(|phase| phase.response == Some(anchor)));
+    assert!(phases[..2].iter().all(|phase| !phase.final_phase));
+    assert!(!phases[2].final_phase);
+    store
+        .settle_message(
+            &record.id,
+            job,
+            AssistantReply::default(),
+            MessageStatus::Complete,
+            None,
+        )
+        .unwrap();
+    let settled = store.get(&record.id).unwrap();
+    let phases: Vec<_> = settled
+        .messages
+        .iter()
+        .filter(|message| message.role == super::MessageRole::Assistant)
+        .collect();
+    assert!(phases[..2].iter().all(|phase| !phase.final_phase));
+    assert!(phases[2].final_phase);
+    assert_eq!(
+        store.continue_from(
+            &record.id,
+            settled.revision,
+            Some(phases[2].id),
+            phases[0].id,
+        ),
+        Err(ConversationError::Entry)
+    );
+    let window = store
+        .tree_window(&record.id, None, None, None)
+        .unwrap()
+        .expect("tree window");
+    let assistant: Vec<_> = window
+        .entries
+        .iter()
+        .filter(|entry| entry.role == super::MessageRole::Assistant)
+        .collect();
+    assert!(assistant[..2].iter().all(|entry| !entry.final_phase));
+    assert!(assistant[2].final_phase);
 }

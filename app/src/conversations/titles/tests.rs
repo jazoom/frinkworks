@@ -44,6 +44,8 @@ async fn title_request_excludes_tools_presets_and_later_history() {
     record.messages.push(super::super::ConversationMessage {
         parent: None,
         id: crate::conversations::MessageId::generate().expect("message id"),
+        response: None,
+        final_phase: false,
         continuation: Vec::new(),
         role: super::super::MessageRole::User,
         text: "Later private message".to_owned(),

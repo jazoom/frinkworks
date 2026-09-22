@@ -81,6 +81,32 @@ pub(crate) struct AgentActionEnd {
     pub(crate) budget: Option<BudgetSnapshot>,
 }
 
+/// Tracks automatic compaction attempts that made no usable progress. It
+/// resets on genuine source growth or a committed context reduction, so a long
+/// turn can compact repeatedly instead of exhausting a lifetime budget.
+#[derive(Default)]
+struct CompactionGuard {
+    stalled: u32,
+}
+
+impl CompactionGuard {
+    fn reset(&mut self) {
+        self.stalled = 0;
+    }
+
+    fn record(&mut self, reduced: bool) {
+        self.stalled = if reduced {
+            0
+        } else {
+            self.stalled.saturating_add(1)
+        };
+    }
+
+    fn blocked(&self) -> bool {
+        self.stalled >= crate::conversations::compaction::MAXIMUM_STALLED_COMPACTIONS
+    }
+}
+
 pub(crate) async fn run_agent_action(
     state: &AppState,
     spec: AgentRunSpec,
@@ -112,8 +138,9 @@ pub(crate) async fn run_agent_action(
     let mut event_count = 0usize;
     let mut budget = Budget::start(spec.budget);
     let mut turns = turns;
-    let mut summary_attempts = 0u32;
+    let mut compaction_guard = CompactionGuard::default();
     let mut overflow_recovery = 0u32;
+    let mut overflow_compacted = false;
 
     'round: loop {
         if let Some(reason) = budget.next_request_block() {
@@ -155,12 +182,12 @@ pub(crate) async fn run_agent_action(
             if let Some(reason) = budget.next_request_block() {
                 return pause_action(&job, reply, budget.snapshot(reason));
             }
-            if overflow_recovery > 0 && summary_attempts == 0 {
-                summary_attempts += 1;
-                if let Err(error) =
-                    compact_history(state, &spec, &job, &mut turns, &extra, &request_tools).await
+            if overflow_recovery > 0 && !overflow_compacted && !compaction_guard.blocked() {
+                overflow_compacted = true;
+                match compact_history(state, &spec, &job, &mut turns, &extra, &request_tools).await
                 {
-                    return with_reply(error, reply);
+                    Ok(reduced) => compaction_guard.record(reduced),
+                    Err(error) => return with_reply(error, reply),
                 }
             }
             let (output_allowance, mut context_estimate) = match fit_context(
@@ -170,7 +197,7 @@ pub(crate) async fn run_agent_action(
                 &mut turns,
                 &extra,
                 &request_tools,
-                &mut summary_attempts,
+                &mut compaction_guard,
             )
             .await
             {
@@ -222,7 +249,7 @@ pub(crate) async fn run_agent_action(
                                 < crate::conversations::compaction::MAXIMUM_OVERFLOW_RECOVERY
                             {
                                 overflow_recovery += 1;
-                                summary_attempts = 0;
+                                overflow_compacted = false;
                                 if let Err(error) = record_failed_attempt(
                                     state,
                                     &spec,
@@ -573,7 +600,7 @@ pub(crate) async fn run_agent_action(
                                 < crate::conversations::compaction::MAXIMUM_OVERFLOW_RECOVERY
                             {
                                 overflow_recovery += 1;
-                                summary_attempts = 0;
+                                overflow_compacted = false;
                                 let tail = response_redactor.finish_boundary();
                                 append_model_piece(&mut reply, &tail, &mut model_reply_bytes);
                                 let tail = thinking_redactor.finish_boundary();
@@ -781,7 +808,7 @@ pub(crate) async fn run_agent_action(
                     &mut turns,
                     &extra,
                     &request_tools,
-                    &mut summary_attempts,
+                    &mut compaction_guard,
                 )
                 .await
                 {
@@ -1047,26 +1074,16 @@ pub(crate) async fn run_agent_action(
         if spec.steering_session.is_none() {
             turns.push(completed_turn);
             extra.clear();
+            // A committed phase is genuine source growth.
+            compaction_guard.reset();
         }
         if let Some(reason) = budget.next_request_block() {
             return pause_action(&job, reply, budget.snapshot(reason));
         }
-        if let Err(end) = compact_if_needed(
-            state,
-            &spec,
-            &job,
-            &mut turns,
-            &extra,
-            &request_tools,
-            &mut summary_attempts,
-        )
-        .await
-        {
-            return with_reply(end, reply);
-        }
         match take_steering(state, &spec, &job, &reply) {
             Ok(Some(text)) => {
                 let _ = text;
+                compaction_guard.reset();
                 extra.clear();
                 match current_conversation_turns(state, &spec) {
                     Ok(current) => turns = current,
@@ -1096,6 +1113,8 @@ pub(crate) async fn run_agent_action(
                     {
                         return store_failure(&reply, error);
                     }
+                    // A committed phase is genuine source growth.
+                    compaction_guard.reset();
                     extra.clear();
                     match current_conversation_turns(state, &spec) {
                         Ok(current) => turns = current,
@@ -1707,9 +1726,9 @@ async fn fit_context(
     turns: &mut Vec<ChatTurn>,
     extra: &[Message],
     tools: &[rig_core::completion::ToolDefinition],
-    summary_attempts: &mut u32,
+    compaction_guard: &mut CompactionGuard,
 ) -> Result<crate::execution::ContextEstimate, AgentActionEnd> {
-    compact_if_needed(state, spec, job, turns, extra, tools, summary_attempts).await?;
+    compact_if_needed(state, spec, job, turns, extra, tools, compaction_guard).await?;
     let request = crate::execution::ContextRequest {
         preamble: &spec.preamble,
         tools,
@@ -1747,7 +1766,7 @@ async fn compact_if_needed(
     turns: &mut Vec<ChatTurn>,
     extra: &[Message],
     tools: &[rig_core::completion::ToolDefinition],
-    summary_attempts: &mut u32,
+    compaction_guard: &mut CompactionGuard,
 ) -> Result<(), AgentActionEnd> {
     let request = crate::execution::ContextRequest {
         preamble: &spec.preamble,
@@ -1792,11 +1811,12 @@ async fn compact_if_needed(
     if !estimate.needs_compaction(compactable) {
         return Ok(());
     }
-    if *summary_attempts >= crate::conversations::compaction::MAXIMUM_SUMMARY_ATTEMPTS {
+    if compaction_guard.blocked() {
         return Ok(());
     }
-    *summary_attempts += 1;
-    compact_history(state, spec, job, turns, extra, tools).await
+    let reduced = compact_history(state, spec, job, turns, extra, tools).await?;
+    compaction_guard.record(reduced);
+    Ok(())
 }
 
 fn run_selection(spec: &AgentRunSpec) -> crate::providers::ModelSelection {
@@ -1861,7 +1881,7 @@ async fn compact_history(
     turns: &mut Vec<ChatTurn>,
     extra: &[Message],
     tools: &[rig_core::completion::ToolDefinition],
-) -> Result<(), AgentActionEnd> {
+) -> Result<bool, AgentActionEnd> {
     if job.cancel_requested() {
         return Err(cancel_action(job, &AssistantReply::default()));
     }
@@ -1878,7 +1898,7 @@ async fn compact_history_inner(
     turns: &mut Vec<ChatTurn>,
     extra: &[Message],
     tools: &[rig_core::completion::ToolDefinition],
-) -> Result<(), AgentActionEnd> {
+) -> Result<bool, AgentActionEnd> {
     let estimate = current_estimate(state, spec, turns, extra, tools)
         .map_err(|error| context_blocked(AssistantReply::default(), error))?;
     job.set_context(estimate);
@@ -1929,7 +1949,7 @@ async fn compact_history_inner(
             Some(&compaction),
         )
         .map_err(|error| context_blocked(AssistantReply::default(), error.message()))?;
-        measure_replacement(state, spec, job, &replacement, extra, tools)
+        let replacement_tokens = measure_replacement(state, spec, job, &replacement, extra, tools)
             .map_err(|error| context_blocked(AssistantReply::default(), error))?;
         state
             .conversations
@@ -1937,7 +1957,7 @@ async fn compact_history_inner(
             .map_err(|error| store_failure(&AssistantReply::default(), error))?;
         *turns = current_conversation_turns(state, spec)
             .map_err(|error| context_blocked(AssistantReply::default(), error))?;
-        return Ok(());
+        return Ok(replacement_tokens < estimate.input_tokens);
     }
     let selection = run_selection(spec);
     let source = &turns[spec.context_prefix_len..];
@@ -1949,7 +1969,7 @@ async fn compact_history_inner(
     ) {
         Ok(cover) => cover,
         Err(crate::conversations::compaction::CompactionError::NothingToCompact) => {
-            return Ok(());
+            return Ok(false);
         }
         Err(error) => {
             return Err(context_blocked(AssistantReply::default(), error.message()));
@@ -1969,7 +1989,7 @@ async fn compact_history_inner(
         )
         .map_err(|error| context_blocked(AssistantReply::default(), error.message()))?,
     );
-    measure_replacement(state, spec, job, &projected, extra, tools)
+    let replacement_tokens = measure_replacement(state, spec, job, &projected, extra, tools)
         .map_err(|error| context_blocked(AssistantReply::default(), error))?;
     let evidence = spec.evidence.as_ref().ok_or_else(|| {
         context_blocked(
@@ -1991,7 +2011,7 @@ async fn compact_history_inner(
             )
         })?;
     *turns = projected;
-    Ok(())
+    Ok(replacement_tokens < estimate.input_tokens)
 }
 
 fn current_estimate(
@@ -2025,7 +2045,7 @@ fn measure_replacement(
     turns: &[ChatTurn],
     extra: &[Message],
     tools: &[rig_core::completion::ToolDefinition],
-) -> Result<(), &'static str> {
+) -> Result<u64, &'static str> {
     let request = crate::execution::ContextRequest {
         preamble: &spec.preamble,
         tools,
@@ -2043,7 +2063,7 @@ fn measure_replacement(
     match crate::execution::context::measure(request, catalogue) {
         Ok(estimate) => {
             job.set_context(estimate);
-            Ok(())
+            Ok(estimate.input_tokens)
         }
         Err(error) => Err(error.message()),
     }

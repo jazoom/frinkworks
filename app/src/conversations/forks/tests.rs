@@ -18,10 +18,13 @@ fn message(
     activity: Vec<AssistantActivity>,
     request: Option<JobId>,
 ) -> ConversationMessage {
+    let id = MessageId::generate().expect("message id");
     ConversationMessage {
         parent: None,
-        id: MessageId::generate().expect("message id"),
+        id,
         role,
+        response: (role == MessageRole::Assistant).then_some(id),
+        final_phase: role == MessageRole::Assistant,
         text: text.to_owned(),
         activity,
         continuation: Vec::new(),
@@ -302,4 +305,17 @@ fn materialise_rebinds_retained_output_to_the_destination() {
             )
             .is_err()
     );
+}
+
+#[test]
+fn an_intermediate_phase_is_not_a_fork_boundary() {
+    let mut intermediate = assistant("First phase", Vec::new());
+    intermediate.final_phase = false;
+    let mut final_phase = assistant("Last phase", Vec::new());
+    final_phase.response = Some(intermediate.response.unwrap());
+    // The intermediate phase completes an exchange, but its logical response
+    // has not settled.
+    assert!(!super::forkable(&[user("Question"), intermediate], 1));
+    // The final phase of the same response is a safe boundary.
+    assert!(super::forkable(&[user("Question"), final_phase], 1));
 }

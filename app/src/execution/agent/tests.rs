@@ -305,8 +305,8 @@ async fn automatic_compaction_fits_a_smaller_model_without_deleting_local_tool_r
     spec.steering_session = Some(crate::sessions::generate_session_token().unwrap().id());
     let mut turns = super::current_conversation_turns(&state, &spec).unwrap();
     let before = turns.clone();
-    let mut attempts = 0;
-    let result = super::fit_context(&state, &spec, &job, &mut turns, &[], &[], &mut attempts).await;
+    let mut guard = super::CompactionGuard::default();
+    let result = super::fit_context(&state, &spec, &job, &mut turns, &[], &[], &mut guard).await;
     assert!(matches!(result, Ok(estimate) if estimate.fits() && !estimate.unknown_capacity()));
     assert_eq!(backend.turn_count(), 1);
     assert_eq!(
@@ -1443,4 +1443,214 @@ async fn provider_requests_honour_the_selected_output_allowance() {
     .await;
     assert_eq!(ended.outcome, super::AgentOutcome::Completed);
     assert!(backend.last_max_tokens().is_some());
+}
+
+#[tokio::test]
+async fn a_compacted_long_turn_settles_once_without_replaying_settled_tools() {
+    use crate::providers::{
+        AssistantReply, ChatBackend, CompletionReason, ModelEvent, ProviderConnection,
+        ProviderKind, ToolOutput,
+    };
+    let mut state = crate::tests::test_state(crate::config::RuntimeConfig::development());
+    let backend = crate::tests::ScriptedBackend::rounds(vec![
+        vec![
+            Ok(ModelEvent::Text("Retained file result".repeat(2_750))),
+            Ok(ModelEvent::ToolCall {
+                id: "latest".to_owned(),
+                name: "run".to_owned(),
+                arguments: serde_json::json!({"command": "printf x >> effects", "explanation": "Record one effect"}),
+            }),
+            Ok(ModelEvent::Complete {
+                reason: CompletionReason::ToolCalls,
+            }),
+        ],
+        vec![
+            Ok(ModelEvent::Text("Earlier file read completed.".to_owned())),
+            Ok(ModelEvent::Complete {
+                reason: CompletionReason::Stop,
+            }),
+        ],
+        vec![
+            Ok(ModelEvent::Text("Long turn complete.".to_owned())),
+            Ok(ModelEvent::Complete {
+                reason: CompletionReason::Stop,
+            }),
+        ],
+    ]);
+    state.chat = std::sync::Arc::new(ChatBackend::Scripted(backend.clone()));
+    let directory = tempfile::tempdir().unwrap();
+    let records = tempfile::tempdir().unwrap();
+    state.conversations = std::sync::Arc::new(
+        crate::conversations::ConversationStore::open(records.path().to_owned()).unwrap(),
+    );
+    let session = crate::sessions::generate_session_token().unwrap().id();
+    state.sessions.insert(session);
+    let record = state.conversations.create("Long turn".to_owned()).unwrap();
+    let settings = crate::execution::ExecutionSettings::new(
+        crate::providers::ModelSelection::new(
+            ProviderKind::Openrouter,
+            "qwen/qwen-2.5-7b-instruct".to_owned(),
+            None,
+        )
+        .unwrap(),
+        String::new(),
+        vec![crate::agents::ToolId::Run],
+        crate::tests::test_environment_id(),
+    )
+    .unwrap()
+    .with_location(crate::execution::ToolLocation::Host)
+    .with_host_approval(crate::execution::HostApprovalPolicy::Automatic);
+    let record = state
+        .conversations
+        .update_execution_settings(&record.id, record.revision, settings.clone())
+        .unwrap();
+    state
+        .access_consent
+        .approve_host_conversation(
+            &state
+                .access_consent
+                .request_host_conversation(session, record.id, &settings)
+                .unwrap(),
+            session,
+            record.id,
+            &settings,
+        )
+        .unwrap();
+    let job = state
+        .sessions
+        .begin_conversation_job(&session, record.id)
+        .unwrap();
+    let record = state
+        .conversations
+        .begin_message_with_model(
+            &record.id,
+            record.revision,
+            None,
+            job.id(),
+            "Run once".to_owned(),
+        )
+        .unwrap();
+    // The next real tool batch must commit before its compaction decision.
+    {
+        let id = "first";
+        let output = "x".repeat(65_000);
+        let mut reply = AssistantReply::default();
+        reply.start_tool(
+            id.to_owned(),
+            "read".to_owned(),
+            serde_json::json!({"path": "file.txt"}),
+        );
+        reply.finish_tool(
+            id,
+            ToolOutput {
+                resource: None,
+                label: "read".to_owned(),
+                output,
+                command: None,
+            },
+        );
+        reply.completion = Some(CompletionReason::ToolCalls);
+        state
+            .conversations
+            .settle_tool_batch(&record.id, job.id(), &reply)
+            .unwrap();
+    }
+    let connection = ProviderConnection::with_key(
+        ProviderKind::Openrouter,
+        "test-key",
+        "qwen/qwen-2.5-7b-instruct",
+    );
+    state.vault.put(connection.clone()).expect("provider");
+    let mut spec = read_spec(connection, record.id, record.revision);
+    spec.steering_session = Some(session);
+    spec.location = crate::execution::ToolLocation::Host;
+    spec.tool_ids = vec![crate::agents::ToolId::Run];
+    spec.tools = crate::tools::definitions_for(&spec.tool_ids, spec.location);
+    spec.host = Some(crate::tools::HostRunSpec {
+        session,
+        conversation: record.id,
+        execution_revision: record.revision,
+        directory: directory.path().to_owned(),
+        settings,
+        run: None,
+        step: None,
+        attempt: None,
+    });
+    let turns = super::current_conversation_turns(&state, &spec).unwrap();
+    let ended = super::run_agent_action(&state, spec, turns, job.clone()).await;
+    assert_eq!(
+        ended.outcome,
+        super::AgentOutcome::Completed,
+        "{:?}",
+        ended.error
+    );
+    assert_eq!(
+        std::fs::read(directory.path().join("effects")).unwrap(),
+        b"x"
+    );
+    assert_eq!(backend.turn_count(), 3);
+    let requests = backend.captured();
+    let final_request = requests.last().expect("final request");
+    assert!(
+        final_request
+            .history
+            .iter()
+            .any(|turn| turn.text.contains("Earlier file read completed.")),
+        "the covered context is replaced by its summary"
+    );
+    let final_calls: Vec<&str> = final_request
+        .history
+        .iter()
+        .flat_map(|turn| &turn.calls)
+        .map(|call| call.id.as_str())
+        .collect();
+    assert_eq!(final_calls.iter().filter(|id| **id == "latest").count(), 1);
+    assert_eq!(backend.last_extra_len(), 0);
+    assert!(
+        !final_calls.contains(&"first"),
+        "a covered settled tool is never replayed"
+    );
+    let stored = state.conversations.get(&record.id).unwrap();
+    let mut ids: Vec<String> = stored
+        .messages
+        .iter()
+        .flat_map(|message| &message.activity)
+        .filter_map(|activity| match activity {
+            crate::providers::AssistantActivity::ToolCall { id, .. } => Some(id.clone()),
+            _ => None,
+        })
+        .collect();
+    let count = ids.len();
+    ids.sort();
+    ids.dedup();
+    assert_eq!(ids.len(), count, "no durable tool call is duplicated");
+    assert_eq!(count, 2);
+    // Reopen before logical settlement to simulate interruption after compaction.
+    let reopened =
+        crate::conversations::ConversationStore::open(records.path().to_owned()).unwrap();
+    let interrupted = reopened.get(&record.id).unwrap();
+    assert_eq!(
+        std::fs::read(directory.path().join("effects")).unwrap(),
+        b"x"
+    );
+    assert_eq!(
+        interrupted
+            .messages
+            .iter()
+            .filter(|message| message.final_phase)
+            .count(),
+        1
+    );
+    let mut after: Vec<String> = interrupted
+        .messages
+        .iter()
+        .flat_map(|message| &message.activity)
+        .filter_map(|activity| match activity {
+            crate::providers::AssistantActivity::ToolCall { id, .. } => Some(id.clone()),
+            _ => None,
+        })
+        .collect();
+    after.sort();
+    after.dedup();
+    assert_eq!(after.len(), 2);
 }

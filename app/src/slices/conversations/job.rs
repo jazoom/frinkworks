@@ -307,11 +307,6 @@ async fn observe_segment(
 ) {
     let mut cursor = cursor;
     let mut budget = hypergraft::StreamBudget::new();
-    let assistant = if historical {
-        None
-    } else {
-        assistant_message(&state, &conversation, &job).map(|message| message.id)
-    };
     let job_id = job.id().as_hex();
     job.wait_after(cursor, OBSERVE_WAIT).await;
     let started = std::time::Instant::now();
@@ -332,11 +327,12 @@ async fn observe_segment(
                     },
                     &mut budget,
                 )
-            } else if let Some(message) = assistant {
+            } else if let Some((anchor, committed)) = active_response(&state, &conversation, &job) {
                 progress_frame(
                     &conversation,
                     &job_id,
-                    message,
+                    anchor,
+                    &committed,
                     snapshot.latest_seq,
                     &output,
                     snapshot.retry.is_some(),
@@ -370,37 +366,56 @@ async fn observe_segment(
         .await;
 }
 
-fn assistant_message(
+/// The logical response for a live job: its stable anchor and every settled
+/// phase before the active one. The live reply always represents the pending
+/// phase, so it is never included twice.
+fn active_response(
     state: &AppState,
     conversation: &ConversationId,
     job: &Job,
-) -> Option<crate::conversations::ConversationMessage> {
-    state
+) -> Option<(
+    crate::conversations::MessageId,
+    Vec<crate::conversations::ConversationMessage>,
+)> {
+    let (record, _) = state
         .conversations
         .transcript_window(conversation, None, None)
         .ok()
-        .flatten()
-        .and_then(|(record, _)| {
-            record
-                .messages
-                .iter()
-                .find(|message| message.request == Some(job.id()))
-                .cloned()
+        .flatten()?;
+    let anchor = record
+        .messages
+        .iter()
+        .rev()
+        .find(|message| message.request == Some(job.id()))
+        .map(|message| message.response.unwrap_or(message.id))?;
+    let committed = record
+        .messages
+        .iter()
+        .filter(|message| {
+            message.role == crate::conversations::MessageRole::Assistant
+                && message.response.unwrap_or(message.id) == anchor
+                && message.status != MessageStatus::Pending
         })
+        .cloned()
+        .collect();
+    Some((anchor, committed))
 }
 
 #[allow(clippy::too_many_arguments)]
 fn progress_frame(
     conversation: &ConversationId,
     job_id: &str,
-    message: crate::conversations::MessageId,
+    anchor: crate::conversations::MessageId,
+    committed: &[crate::conversations::ConversationMessage],
     cursor: u64,
     reply: &AssistantReply,
     retrying: bool,
     historical: bool,
     budget: &mut hypergraft::StreamBudget,
 ) -> Option<hypergraft::StreamFrame> {
-    let mut message = super::page::reply_view(conversation, message, reply, true);
+    let phases: Vec<&crate::conversations::ConversationMessage> = committed.iter().collect();
+    let mut message =
+        super::page::response_view(conversation, anchor, &phases, Some((reply, true)));
     if retrying {
         message.status = "Retrying the provider";
     }
@@ -508,29 +523,25 @@ fn final_frame(
     }
     if !historical
         && let Some((record, _)) = record
-        && let Some(found) = record
+        && let Some(anchor) = record
             .messages
             .iter()
+            .rev()
             .find(|message| message.request == Some(job.id()))
+            .map(|message| message.response.unwrap_or(message.id))
     {
-        let mut message = if snapshot.status == JobStatus::Running && !snapshot.output.is_empty() {
-            super::page::reply_view(conversation, found.id, &snapshot.output, true)
-        } else {
-            super::page::message_view(conversation, found)
-        };
-        if let Some(index) = record
+        let phases: Vec<&crate::conversations::ConversationMessage> = record
             .messages
             .iter()
-            .position(|candidate| candidate.id == found.id)
-            && crate::conversations::forks::forkable(&record.messages, index)
-        {
-            message.forkable = true;
-            message.fork_href = format!(
-                "/conversations/{}/fork?message={}",
-                conversation.as_hex(),
-                found.id.as_hex()
-            );
-        }
+            .filter(|message| {
+                message.role == crate::conversations::MessageRole::Assistant
+                    && message.response.unwrap_or(message.id) == anchor
+                    && message.status != MessageStatus::Pending
+            })
+            .collect();
+        let live = (snapshot.status == JobStatus::Running && !snapshot.output.is_empty())
+            .then_some((&snapshot.output, true));
+        let message = super::page::response_view(conversation, anchor, &phases, live);
         let _ = patches.children(&message.id, &MessageBody { message: &message });
     }
     let active = snapshot.status == JobStatus::Running;

@@ -32,9 +32,12 @@ fn output() -> ToolOutput {
 }
 
 fn assistant(activity: Vec<AssistantActivity>) -> ConversationMessage {
+    let id = identifier();
     ConversationMessage {
         parent: None,
-        id: identifier(),
+        id,
+        response: Some(id),
+        final_phase: true,
         role: MessageRole::Assistant,
         text: String::new(),
         activity,
@@ -53,6 +56,8 @@ fn projection_keeps_tool_exchanges_and_matches_results() {
         ConversationMessage {
             parent: None,
             id: identifier(),
+            response: None,
+            final_phase: false,
             role: MessageRole::User,
             text: "Read the file".to_owned(),
             activity: Vec::new(),

@@ -87,6 +87,14 @@ The application measures the replacement request before it commits a checkpoint.
 
 A committed checkpoint stores coverage against durable source positions. Repeated summaries include the previous summary and newly covered content once. Configured requests keep candidate-bound inputs outside summary coverage.
 
+### Long active turns
+
+One logical assistant response can hold several model phases. A settled tool batch starts a fresh pending entry. The logical job and action budget stay unchanged. Every completed phase is durable and carries the logical-response anchor.
+
+The transcript groups phases under one logical-response anchor. Oversized groups link to individual phases through bounded entry views. Copy requires a settled response that fits completely within the transcript window and copy budget. Only the settled final phase is a user-selectable branch boundary. Intermediate completed phases permit compaction inside a long active turn without loss of durable history.
+
+Compaction rejects coverage that contains opaque continuation blocks for the selected model. It reports the unsupported boundary instead. An automatic compaction attempt that makes no source progress and no usable context reduction stops further automatic attempts. Genuine source growth or a committed context reduction resets that guard.
+
 ## Live execution
 
 Ordinary messages share one model lifecycle. Tool-free messages use the chat job. Host tools without named directories and read-only sandbox tools use the ordinary conversation runtime. They do not create a workflow run.
@@ -213,9 +221,9 @@ Current file-operation recovery remains separate from historical compatibility. 
 
 The full suites pass:
 
-- 1,150 Rust library tests.
+- 1,194 Rust library tests.
 - One additional Rust binary test.
-- 78 browser-unit tests.
+- 81 browser-unit tests.
 
 `mise run clean` passes without warnings. Production and development asset builds pass.
 
@@ -243,6 +251,10 @@ The review browser check used a separate local fixture. It opened the fork draft
 The branch route test selected an earlier response and kept both alternatives in the tree. Its controlled provider request contained only the selected path. A store test reopened two branches across restart with the abandoned branch excluded from model context. A real browser check used a synthetic conversation with two retained branches. It selected an earlier response through Continue here, appended a new child with a failed placeholder-provider request and reloaded the tree after a server restart. The abandoned branch stayed in the tree. Console and page diagnostics were empty. These checks use synthetic records, not hosted model requests.
 
 The branch review browser exercise switched between synthetic branches across a server restart. It retained an unsent draft during branch selection. Both alternative tips stayed available after selection of their shared ancestor. Console and page diagnostics were empty. This exercise made no provider request.
+
+A controlled long-turn test committed a host command before compaction. The next request carried the summary and retained phase once. The command wrote one file marker, which stayed unchanged across interruption and reload. A view test rejects duplicate text from a live snapshot that precedes a phase commit.
+
+A controlled browser fixture exercised live phase transitions and settlement. Response anchors stayed stable, phase text appeared once, and the unsent draft stayed intact. The settled copy contained both phases without tool or reasoning content. Console and page diagnostics were empty.
 
 Successful hosted-model generation and hosted agent execution remain unverified. The placeholder credential exercised the generation error path only.
 

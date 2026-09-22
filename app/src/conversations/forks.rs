@@ -198,11 +198,10 @@ pub(crate) fn snapshot(
     })
 }
 
-/// True when the message at `index` is a safe fork boundary.
+/// True when the message at `index` is a safe fork boundary. A completed
+/// intermediate phase is not a branch boundary.
 pub(crate) fn forkable(messages: &[ConversationMessage], index: usize) -> bool {
-    messages
-        .get(index)
-        .is_some_and(|message| message.status == MessageStatus::Complete)
+    super::history::logical_boundary(messages, index)
         && validate_prefix(&messages[..=index]).is_ok()
 }
 
@@ -212,10 +211,11 @@ fn validate_prefix(prefix: &[ConversationMessage]) -> Result<(), ForkError> {
     }
     // A complete exchange ends with a settled assistant response. A trailing
     // user message would split the exchange and duplicate a question.
-    if prefix
-        .last()
-        .is_none_or(|message| message.role != MessageRole::Assistant)
-    {
+    if prefix.last().is_none_or(|message| {
+        message.role != MessageRole::Assistant
+            || message.status != MessageStatus::Complete
+            || !message.final_phase
+    }) {
         return Err(ForkError::Boundary);
     }
     for message in prefix {

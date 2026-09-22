@@ -41,6 +41,13 @@ fn fixture() -> (
             "Prepare changes".to_owned(),
         )
         .unwrap();
+    let mut phase = crate::providers::AssistantReply::default();
+    phase.push_response("Completed preparation phase");
+    state
+        .conversations
+        .settle_tool_batch(&source.id, source.active_job.unwrap(), &phase)
+        .unwrap();
+    let source = state.conversations.get(&source.id).unwrap();
     let destination = state
         .conversations
         .create_saved(
@@ -114,10 +121,11 @@ fn committed_transfer_recovers_after_catalogue_failure_without_duplicate_ownersh
     assert!(restored.active_job.is_none());
     assert_eq!(restored.messages[1].status, MessageStatus::Interrupted);
     assert!(conversations.get(&source.id).unwrap().active_job.is_none());
-    assert_eq!(
-        conversations.get(&source.id).unwrap().messages[1].status,
-        MessageStatus::Complete
-    );
+    let source = conversations.get(&source.id).unwrap();
+    assert_eq!(source.messages[1].text, "Completed preparation phase");
+    let last = source.messages.last().unwrap();
+    assert_eq!(last.status, MessageStatus::Complete);
+    assert!(last.final_phase);
     assert!(runs.for_conversation(&source.id).is_empty());
     assert_eq!(runs.for_conversation(&destination.id).len(), 1);
     assert_eq!(runs.get(&run.id).unwrap().source, run.source);
@@ -192,7 +200,7 @@ fn stale_source_revision_and_concurrent_transfers_cannot_move_the_same_run_twice
     assert_eq!(moved.source, run.source);
     assert_eq!(
         state.conversations.get(&source.id).unwrap().messages.len(),
-        2
+        3
     );
 }
 

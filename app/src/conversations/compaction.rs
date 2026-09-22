@@ -17,7 +17,9 @@ pub(crate) const SUMMARY_OUTPUT_TOKENS: u64 = 10_000;
 /// separate from the summary output allowance and from permanent retention.
 pub(crate) const RECENT_CONTEXT_TOKENS: u64 = 20_000;
 pub(crate) const MAXIMUM_PRESERVE_BYTES: usize = 2 * 1024;
-pub(crate) const MAXIMUM_SUMMARY_ATTEMPTS: u32 = 2;
+/// Maximum consecutive automatic compaction attempts without source growth or
+/// a usable context reduction. It replaces a lifetime request count.
+pub(crate) const MAXIMUM_STALLED_COMPACTIONS: u32 = 2;
 pub(crate) const MAXIMUM_OVERFLOW_RECOVERY: u32 = 1;
 /// Bound on sequential summary requests for one checkpoint. It stops an
 /// unbounded chunk loop without capping retained history.
@@ -51,6 +53,9 @@ pub(crate) enum CompactionError {
     Retention,
     /// The selected model cannot reserve the summary output allowance.
     Output,
+    /// The selected model requires opaque continuation data that this
+    /// boundary would remove.
+    Continuation,
     Requests,
     UnknownCapacity,
     Preserve,
@@ -82,6 +87,9 @@ impl CompactionError {
             }
             Self::Requests => {
                 "The summary needs more sequential requests than Power Plant allows. The previous context remains."
+            }
+            Self::Continuation => {
+                "This boundary would discard opaque provider continuation data. The previous context remains."
             }
             Self::Preserve => {
                 "The preservation instructions must contain no NUL characters and use at most 2,048 UTF-8 bytes."
@@ -260,9 +268,36 @@ pub(crate) fn select_boundary(
     // action still reduces context without exceeding the retention budget.
     let retained_count = retained_count.min(count - 1);
     let covered = suffix[count - retained_count - 1];
+    if messages[start..=covered]
+        .iter()
+        .any(|message| requires_continuation(&message.continuation, selection))
+    {
+        return Err(CompactionError::Continuation);
+    }
     let covered_through = messages[covered].id;
     let retained_from = first_message_after(messages, covered).ok_or(CompactionError::Malformed)?;
     Ok((covered_through, retained_from))
+}
+
+/// Opaque continuation blocks are provider-required. A boundary must not
+/// cover the phase that carries them, because the summary cannot reproduce
+/// them. Portable text blocks remain summarisable.
+fn requires_continuation(
+    continuation: &[super::history::ContinuationMetadata],
+    selection: Option<&ModelSelection>,
+) -> bool {
+    let Some(selection) = selection else {
+        return false;
+    };
+    continuation.iter().any(|metadata| {
+        metadata.provider == selection.provider
+            && metadata.model == selection.model
+            && (metadata.reasoning_id.is_some()
+                || metadata
+                    .blocks
+                    .iter()
+                    .any(|block| !matches!(block, super::history::ContinuationBlock::Text { .. })))
+    })
 }
 
 fn messages_tokens(
@@ -391,7 +426,14 @@ pub(crate) fn workflow_cover_index(
         retained_count += 1;
     }
     let retained_count = retained_count.min(count - 1);
-    Ok(ends[count - retained_count - 1])
+    let covered = ends[count - retained_count - 1];
+    if turns[..=covered]
+        .iter()
+        .any(|turn| requires_continuation(&turn.continuation, selection))
+    {
+        return Err(CompactionError::Continuation);
+    }
+    Ok(covered)
 }
 
 pub(crate) fn validate_summary(

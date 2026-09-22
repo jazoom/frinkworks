@@ -85,6 +85,7 @@ async fn untrusted_activity_keeps_its_order_and_stays_secret_safe_in_each_repres
                 &record.id,
                 &job.id().as_hex(),
                 message.id,
+                &[],
                 job.latest_seq(),
                 &job.snapshot().output,
                 false,
@@ -430,6 +431,7 @@ async fn provider_failure_retains_partial_output_and_safe_error_details() {
 #[test]
 fn pending_assistant_output_stays_out_of_the_next_request_history() {
     let request = JobId::generate().expect("request");
+    let first_reply_id = crate::conversations::MessageId::generate().expect("message id");
     let record = ConversationRecord {
         id: crate::conversations::ConversationId::generate().expect("conversation"),
         revision: 1,
@@ -450,6 +452,8 @@ fn pending_assistant_output_stays_out_of_the_next_request_history() {
             ConversationMessage {
                 parent: None,
                 id: crate::conversations::MessageId::generate().expect("message id"),
+                response: None,
+                final_phase: false,
                 continuation: Vec::new(),
                 role: MessageRole::User,
                 text: "First question".to_owned(),
@@ -462,7 +466,9 @@ fn pending_assistant_output_stays_out_of_the_next_request_history() {
             },
             ConversationMessage {
                 parent: None,
-                id: crate::conversations::MessageId::generate().expect("message id"),
+                id: first_reply_id,
+                response: Some(first_reply_id),
+                final_phase: true,
                 continuation: Vec::new(),
                 role: MessageRole::Assistant,
                 text: "First reply".to_owned(),
@@ -476,6 +482,8 @@ fn pending_assistant_output_stays_out_of_the_next_request_history() {
             ConversationMessage {
                 parent: None,
                 id: crate::conversations::MessageId::generate().expect("message id"),
+                response: None,
+                final_phase: false,
                 continuation: Vec::new(),
                 role: MessageRole::User,
                 text: "Second question".to_owned(),
@@ -489,6 +497,8 @@ fn pending_assistant_output_stays_out_of_the_next_request_history() {
             ConversationMessage {
                 parent: None,
                 id: crate::conversations::MessageId::generate().expect("message id"),
+                response: None,
+                final_phase: false,
                 continuation: Vec::new(),
                 role: MessageRole::Assistant,
                 text: String::new(),
