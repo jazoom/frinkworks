@@ -35,6 +35,14 @@
 </header>
 <div class="chat-turn-body">
   {% if message.user %}
+    {% if let Some(command) = message.command %}
+      <p
+        class="text-quiet mb-1 font-mono text-xs"
+        data-message-command-provenance
+      >
+        {{ command }}
+      </p>
+    {% endif %}
     <div class="chat-prose">{{ message.html|safe }}</div>
   {% else %}
     {{ message.html|safe }}

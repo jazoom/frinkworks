@@ -26,6 +26,7 @@ fn message(
         response: (role == MessageRole::Assistant).then_some(id),
         final_phase: role == MessageRole::Assistant,
         text: text.to_owned(),
+        input: None,
         attachments: Vec::new(),
         activity,
         continuation: Vec::new(),

@@ -935,6 +935,89 @@ test("shift+tab keeps ordinary focus traversal", async () => {
     expect(field.value).toBe("see @src/ma");
 });
 
+function commandMarkup(): HTMLTextAreaElement {
+    for (const listener of locations) listener({} as never);
+    document.body.innerHTML = `<template data-conversation-state="new"></template>
+        <div data-command-suggestions hidden></div>
+        <form id="conversation-composer">
+            <input type="hidden" name="draft_nonce" value="draft-one">
+            <input type="hidden" name="command_source">
+            <input type="hidden" name="command_hash">
+            <textarea id="composer-message">/skill:probe </textarea>
+            <button type="submit">Send</button>
+        </form>`;
+    const field =
+        document.querySelector<HTMLTextAreaElement>("#composer-message")!;
+    field.focus();
+    field.setSelectionRange(field.value.length, field.value.length);
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    return field;
+}
+
+function commandResponse(): Response {
+    return {
+        json: async () => ({
+            preview: {
+                command: "/skill:probe",
+                binding: "source-identity",
+                hash: "old-hash",
+                source: "/skills/probe/SKILL.md",
+                expanded: "Frozen body",
+                base: "/skills/probe",
+                scope: "global",
+            },
+        }),
+    } as Response;
+}
+
+test("skill preview survives trailing edits, caret movement and a pointer Send", async () => {
+    const fetchMock = vi.fn(async () => commandResponse());
+    vi.stubGlobal("fetch", fetchMock);
+    const field = commandMarkup();
+    await settle();
+    field.value += "inspect this";
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    await settle();
+    field.setSelectionRange(2, 2);
+    document.dispatchEvent(new Event("selectionchange"));
+    document
+        .querySelector("button")!
+        .dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    document
+        .querySelector("form")!
+        .dispatchEvent(
+            new Event("submit", { bubbles: true, cancelable: true }),
+        );
+    expect(value("command_hash")).toBe("old-hash");
+    expect(value("command_source")).toBe("source-identity");
+    expect(fetchMock).toHaveBeenCalledOnce();
+});
+
+test("skill preview discards a response from another draft scope", async () => {
+    let complete!: (response: Response) => void;
+    vi.stubGlobal(
+        "fetch",
+        vi.fn(
+            () =>
+                new Promise<Response>((resolve) => {
+                    complete = resolve;
+                }),
+        ),
+    );
+    commandMarkup();
+    await settle();
+    document.querySelector<HTMLInputElement>(
+        'input[name="draft_nonce"]',
+    )!.value = "draft-two";
+    complete(commandResponse());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(value("command_hash")).toBe("");
+    expect(
+        document.querySelector<HTMLElement>("[data-command-suggestions]")!
+            .hidden,
+    ).toBe(true);
+});
+
 test("tab without a completion keeps ordinary focus traversal", async () => {
     vi.stubGlobal(
         "fetch",

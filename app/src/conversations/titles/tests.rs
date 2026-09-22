@@ -49,6 +49,7 @@ async fn title_request_excludes_tools_presets_and_later_history() {
         continuation: Vec::new(),
         role: super::super::MessageRole::User,
         text: "Later private message".to_owned(),
+        input: None,
         attachments: Vec::new(),
         activity: Vec::new(),
         status: super::super::MessageStatus::Complete,

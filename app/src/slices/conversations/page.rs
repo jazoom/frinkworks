@@ -321,6 +321,9 @@ pub(super) struct MessageView {
     pub(super) id: String,
     pub(super) user: bool,
     pub(super) html: String,
+    /// The original skill command, retained for display beside the expanded
+    /// message. A plain or assistant entry leaves this absent.
+    pub(super) command: Option<String>,
     pub(super) copy: Option<CopyResponseView>,
     pub(super) status: &'static str,
     pub(super) error: String,
@@ -2181,7 +2184,13 @@ fn message_views(
         } else {
             message_view_in(&record.id, messages, start)
         };
-        let cost = view.html.len() + view.copy.as_ref().map_or(0, |copy| copy.escaped_bytes) + 2048;
+        let cost = view.html.len()
+            + view
+                .command
+                .as_ref()
+                .map_or(0, |command| ammonia::clean_text(command).len())
+            + view.copy.as_ref().map_or(0, |copy| copy.escaped_bytes)
+            + 2048;
         if !views.is_empty() && (bytes + cost > byte_budget || views.len() >= limit) {
             break;
         }
@@ -2226,6 +2235,7 @@ pub(super) fn message_view_in(
     MessageView {
         id: message_id(conversation, message),
         user,
+        command: message.input.as_ref().map(|input| input.typed.clone()),
         // Copy belongs to a settled logical response. An intermediate phase,
         // an active phase and a user entry never carry it.
         copy: if user || streaming || !message.final_phase {
@@ -2400,6 +2410,7 @@ pub(super) fn response_view(
     MessageView {
         id,
         user: false,
+        command: None,
         copy,
         html,
         status,
@@ -2828,6 +2839,10 @@ impl ConversationDetailView {
             .rev()
             .take_while(|message| {
                 bytes += message.html.len()
+                    + message
+                        .command
+                        .as_ref()
+                        .map_or(0, |command| ammonia::clean_text(command).len())
                     + message.copy.as_ref().map_or(0, |copy| copy.escaped_bytes)
                     + 2048;
                 bytes <= budget

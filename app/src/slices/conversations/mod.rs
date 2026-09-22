@@ -1,5 +1,6 @@
 mod activity;
 mod attachments;
+mod commands;
 mod compaction;
 mod context;
 mod continuation;
@@ -80,6 +81,11 @@ pub(super) fn router() -> Router<AppState> {
             get(attachments::serve_new),
         )
         .route("/conversations/new/files", get(files::lookup_new))
+        .route("/conversations/new/commands", get(commands::lookup_new))
+        .route(
+            "/conversations/{conversation_id}/commands",
+            get(commands::lookup_saved),
+        )
         .route(
             "/conversations/{conversation_id}/files",
             get(files::lookup_saved),
@@ -329,6 +335,11 @@ struct RevisionForm {
 struct MessageForm {
     revision: String,
     message: String,
+    /// Frozen skill preview binding. An unpreviewed command sends both empty.
+    #[serde(default, rename = "command_source")]
+    command_source: String,
+    #[serde(default, rename = "command_hash")]
+    command_hash: String,
     #[serde(default)]
     revise_source: String,
     #[serde(default)]
@@ -968,6 +979,7 @@ async fn create_candidate_review(
         review.revision,
         model,
         form.brief,
+        None,
         Vec::new(),
         String::new(),
     )
@@ -1420,6 +1432,31 @@ async fn send_message(
             ),
         );
     };
+    let catalogue = commands::catalogue_for_record(
+        &state,
+        session.0,
+        record.id,
+        record.revision,
+        record.model.as_ref(),
+    );
+    let secret = provider_secret(&state, &model.settings.model);
+    let expansion = match commands::expand(
+        &form.message,
+        &catalogue,
+        secret.as_deref(),
+        commands::preview_binding(&form.command_source, &form.command_hash),
+    ) {
+        Ok(expansion) => expansion,
+        Err(error) => {
+            return render_detail_command(
+                graft,
+                PatchStatus::UnprocessableEntity,
+                detail_view(&state, session.0, &record, &record.title, error.message()),
+            );
+        }
+    };
+    let message = expansion.expanded;
+    let input = expansion.provenance;
     let revise = match form.revision_request() {
         Ok(revise) => revise,
         Err(error) => {
@@ -1448,7 +1485,8 @@ async fn send_message(
                 record.clone(),
                 revision,
                 model,
-                form.message,
+                message,
+                input,
                 revise,
                 attachments,
             )
@@ -1461,7 +1499,8 @@ async fn send_message(
                 record.clone(),
                 revision,
                 model,
-                form.message,
+                message,
+                input,
                 attachments,
                 record.id.as_hex(),
             )
@@ -1602,6 +1641,7 @@ pub(super) async fn start_message(
     revision: u32,
     model: ConversationModelConfiguration,
     text: String,
+    input: Option<crate::conversations::InputProvenance>,
     attachments: Vec<crate::conversations::AttachmentId>,
     attachment_scope: String,
 ) -> Result<ConversationRecord, StartMessageError> {
@@ -1612,6 +1652,7 @@ pub(super) async fn start_message(
         revision,
         model,
         text,
+        input,
         attachments,
         attachment_scope,
         MessageAppend::Ordinary,
@@ -1637,6 +1678,7 @@ async fn start_revision(
     revision: u32,
     model: ConversationModelConfiguration,
     text: String,
+    input: Option<crate::conversations::InputProvenance>,
     revise: RevisionRequest,
     attachments: Vec<crate::conversations::AttachmentId>,
 ) -> Result<ConversationRecord, StartMessageError> {
@@ -1648,6 +1690,7 @@ async fn start_revision(
         revision,
         model,
         text,
+        input,
         attachments,
         scope,
         MessageAppend::Revision(revise),
@@ -1663,6 +1706,7 @@ async fn start_message_mode(
     revision: u32,
     model: ConversationModelConfiguration,
     text: String,
+    input: Option<crate::conversations::InputProvenance>,
     attachments: Vec<crate::conversations::AttachmentId>,
     attachment_scope: String,
     append: MessageAppend,
@@ -1787,6 +1831,7 @@ async fn start_message_mode(
             Some(persisted_model),
             job.id(),
             text,
+            input,
             session,
             attachments,
         ),
@@ -1804,6 +1849,7 @@ async fn start_message_mode(
             Some(persisted_model),
             job.id(),
             text,
+            input,
             Some(session),
             &attachment_scope,
             attachments,
@@ -2025,6 +2071,7 @@ pub(crate) async fn continue_follow_ups(
         revision,
         model,
         item.text,
+        None,
         Vec::new(),
         String::new(),
         MessageAppend::FollowUp(item.id, queue_revision),
@@ -2553,6 +2600,19 @@ async fn delete_conversation(
             status_for(error),
             detail_view(&state, session.0, &record, &record.title, error.message()),
         ),
+    }
+}
+
+/// The selected provider credential, if any. Plan authentication has no key,
+/// so skill credential validation has nothing to compare.
+fn provider_secret(
+    state: &AppState,
+    selection: &crate::providers::ModelSelection,
+) -> Option<String> {
+    let connection = state.vault.connection_for(selection)?;
+    match connection.auth {
+        crate::providers::AuthMethod::ApiKey => Some(connection.api_key.expose().to_owned()),
+        crate::providers::AuthMethod::Plan => None,
     }
 }
 

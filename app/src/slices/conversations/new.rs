@@ -41,6 +41,10 @@ pub(super) struct NewForm {
     pub(super) consent_existing: String,
     pub(super) title: String,
     pub(super) message: String,
+    #[serde(default, rename = "command_source")]
+    pub(super) command_source: String,
+    #[serde(default, rename = "command_hash")]
+    pub(super) command_hash: String,
     pub(super) action: String,
     pub(super) attachment_0: String,
     pub(super) attachment_1: String,
@@ -424,6 +428,24 @@ pub(super) async fn save(
             form,
         );
     };
+    let catalogue = super::commands::catalogue_for_draft(
+        &state,
+        session.0,
+        &model.settings.directories,
+        &form.consent_reference,
+        &form.draft_nonce,
+        model.settings.location,
+    );
+    let secret = super::provider_secret(&state, &model.settings.model);
+    let expansion = match super::commands::expand(
+        &form.message,
+        &catalogue,
+        secret.as_deref(),
+        super::commands::preview_binding(&form.command_source, &form.command_hash),
+    ) {
+        Ok(expansion) => expansion,
+        Err(error) => return reject(PatchStatus::UnprocessableEntity, error.message(), form),
+    };
     if form.pending_directory().is_some() {
         return reject(
             PatchStatus::UnprocessableEntity,
@@ -611,7 +633,8 @@ pub(super) async fn save(
             record,
             1,
             model,
-            form.message.clone(),
+            expansion.expanded,
+            expansion.provenance,
             attachments,
             super::attachments::page::draft_scope(&form.draft_nonce),
         )

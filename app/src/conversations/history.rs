@@ -20,6 +20,7 @@ use crate::sessions::JobId;
 use crate::workflows::{AttemptId, RunId};
 
 use super::id::{CheckpointId, MessageId, RequestId};
+use super::input::InputProvenance;
 
 pub(crate) const MAXIMUM_ACTIVITY_ITEMS: usize = 256;
 pub(crate) const MAXIMUM_ACTIVITY_BYTES: usize = 256 * 1024;
@@ -62,6 +63,9 @@ pub(crate) struct ConversationMessage {
     pub(crate) final_phase: bool,
     pub(crate) role: MessageRole,
     pub(crate) text: String,
+    /// Frozen command provenance for a skill-expanded user turn. The expanded
+    /// text stays in `text`. A plain turn leaves this absent.
+    pub(crate) input: Option<InputProvenance>,
     /// Immutable image references for a user turn. Reasoning and tool output
     /// never carry references.
     pub(crate) attachments: Vec<AttachmentRef>,

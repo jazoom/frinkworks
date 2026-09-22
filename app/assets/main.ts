@@ -271,12 +271,15 @@ document.addEventListener("submit", (event) => {
             event.preventDefault();
             return;
         }
+        const editText = event.target.dataset.queueEditText ?? text;
         if (!message.value.trim() || replace) {
-            message.value = text;
+            message.value = editText;
             message.dispatchEvent(new Event("input", { bubbles: true }));
             message.focus();
         }
-        editor.value = message.value;
+        // The hidden field keeps the unescaped text so the server identity
+        // comparison still matches the queued item.
+        editor.value = text;
         return;
     }
     if (
@@ -1997,6 +2000,445 @@ listenForLivePatches(() => {
     if (fileSuggestionState !== fileState()) closeFileSuggestions();
 });
 listenForLocationChanges(() => closeFileSuggestions());
+
+// Slash skill commands. The leading token selects the command. A complete
+// reference previews its source, and the frozen hash binds submission.
+type CommandSuggestion = {
+    command: string;
+    name: string;
+    scope: string;
+    description: string;
+};
+
+type CommandPreview = {
+    binding: string;
+    command: string;
+    scope: string;
+    source: string;
+    hash: string;
+    base: string;
+    expanded: string;
+};
+
+type CommandPlan = { mode: "suggest" | "preview"; query: string };
+
+type CommandToken = { start: number; end: number; text: string };
+
+let commandLookupSequence = 0;
+let commandSuggestions: CommandSuggestion[] = [];
+let commandSelection = -1;
+let commandRequest: AbortController | null = null;
+let commandDebounce: number | undefined;
+let commandSuggestionState: string | null = null;
+let commandBoundPreview: CommandPreview | null = null;
+let commandBoundUrl: string | null = null;
+
+function commandField(): HTMLTextAreaElement | null {
+    return document.querySelector<HTMLTextAreaElement>("#composer-message");
+}
+
+function commandContainer(): HTMLElement | null {
+    return document.querySelector<HTMLElement>("[data-command-suggestions]");
+}
+
+function commandSourceInput(): HTMLInputElement | null {
+    return document.querySelector<HTMLInputElement>(
+        'input[name="command_source"]',
+    );
+}
+
+function commandHashInput(): HTMLInputElement | null {
+    return document.querySelector<HTMLInputElement>(
+        'input[name="command_hash"]',
+    );
+}
+
+function commandLeadingToken(value: string): CommandToken | null {
+    let index = 0;
+    while (index < value.length && /\s/.test(value[index] ?? "")) index += 1;
+    if (index >= value.length) return null;
+    const start = index;
+    while (index < value.length && !/\s/.test(value[index] ?? "")) index += 1;
+    return { start, end: index, text: value.slice(start, index) };
+}
+
+function commandPlan(): CommandPlan | null {
+    const field = commandField();
+    if (!field || field.disabled) return null;
+    const caret = field.selectionStart ?? 0;
+    if (field.selectionEnd !== caret) return null;
+    const token = commandLeadingToken(field.value);
+    if (!token || !token.text.startsWith("/")) return null;
+    if (caret <= token.end) return { mode: "suggest", query: token.text };
+    return { mode: "preview", query: token.text };
+}
+
+function commandLookupUrl(plan: CommandPlan): string | null {
+    const owner =
+        document.querySelector<HTMLElement>("[data-conversation-url]")?.dataset
+            .conversationUrl ?? "";
+    const params = new URLSearchParams();
+    params.set("q", plan.query);
+    params.set("mode", plan.mode);
+    if (owner !== "") return `${owner}/commands?${params.toString()}`;
+    const state = document.querySelector<HTMLElement>(
+        "[data-conversation-state]",
+    )?.dataset.conversationState;
+    if (state !== "new") return null;
+    const form = document.querySelector<HTMLFormElement>(
+        "#conversation-composer",
+    );
+    if (!form) return null;
+    for (const name of [
+        "draft_nonce",
+        "consent_reference",
+        "location",
+        "directory_0",
+        "directory_1",
+        "directory_2",
+        "directory_3",
+        "directory_4",
+        "directory_5",
+        "directory_6",
+        "directory_7",
+    ]) {
+        const value = form.elements.namedItem(name);
+        if (value instanceof HTMLInputElement && value.value !== "") {
+            params.set(name, value.value);
+        }
+    }
+    return `/conversations/new/commands?${params.toString()}`;
+}
+
+function commandState(plan: CommandPlan, url: string): string | null {
+    const field = commandField();
+    if (!field) return null;
+    return JSON.stringify([
+        field.value,
+        field.selectionStart,
+        plan.mode,
+        plan.query,
+        url,
+    ]);
+}
+
+function setCommandPreview(preview: CommandPreview | null) {
+    const source = commandSourceInput();
+    const hash = commandHashInput();
+    if (source) source.value = preview?.binding ?? "";
+    if (hash) hash.value = preview?.hash ?? "";
+}
+
+function reconcileCommandPreview() {
+    const token = commandLeadingToken(commandField()?.value ?? "");
+    const url = token
+        ? commandLookupUrl({ mode: "preview", query: token.text })
+        : null;
+    if (
+        !token ||
+        token.text !== commandBoundPreview?.command ||
+        url !== commandBoundUrl
+    ) {
+        commandBoundPreview = null;
+        commandBoundUrl = null;
+    }
+    setCommandPreview(commandBoundPreview);
+}
+
+function closeCommandSuggestions() {
+    ++commandLookupSequence;
+    if (commandDebounce !== undefined) window.clearTimeout(commandDebounce);
+    commandDebounce = undefined;
+    commandSuggestionState = null;
+    commandSuggestions = [];
+    commandSelection = -1;
+    commandRequest?.abort();
+    commandRequest = null;
+    const container = commandContainer();
+    if (container) {
+        container.hidden = true;
+        container.replaceChildren();
+    }
+    const field = commandField();
+    field?.removeAttribute("aria-expanded");
+    field?.removeAttribute("aria-controls");
+}
+
+function renderCommandSuggestions(payload: {
+    suggestions?: CommandSuggestion[];
+    preview?: CommandPreview | null;
+    message?: string;
+}) {
+    const container = commandContainer();
+    if (!container) return;
+    commandSuggestions = payload.suggestions ?? [];
+    commandSelection = commandSuggestions.length > 0 ? 0 : -1;
+    if (payload.preview) {
+        commandBoundPreview = payload.preview;
+        commandBoundUrl = commandLookupUrl({
+            mode: "preview",
+            query: payload.preview.command,
+        });
+        setCommandPreview(payload.preview);
+    }
+    const nodes: Node[] = [];
+    if (payload.preview) {
+        const status = document.createElement("p");
+        status.className = "text-quiet px-3 py-2 text-xs";
+        status.setAttribute("role", "status");
+        status.textContent = `Skill ready: ${payload.preview.source}`;
+        nodes.push(status);
+        const details = document.createElement("details");
+        details.className = "px-3 pb-2 text-xs";
+        const summary = document.createElement("summary");
+        summary.textContent = "Skill preview";
+        const body = document.createElement("pre");
+        body.className = "max-h-64 overflow-auto whitespace-pre-wrap";
+        body.textContent = payload.preview.expanded;
+        details.append(summary, body);
+        nodes.push(details);
+    } else if (payload.message) {
+        const status = document.createElement("p");
+        status.className = "text-quiet px-3 py-2 text-xs";
+        status.setAttribute("role", "status");
+        status.textContent = payload.message;
+        nodes.push(status);
+    }
+    if (commandSuggestions.length === 0) {
+        if (!payload.message && !payload.preview) {
+            const status = document.createElement("p");
+            status.className = "text-quiet px-3 py-2 text-xs";
+            status.setAttribute("role", "status");
+            status.textContent = "No matching skills.";
+            nodes.push(status);
+        }
+    } else {
+        const list = document.createElement("ul");
+        list.id = "conversation-command-options";
+        list.className =
+            "menu menu-sm max-h-[min(18rem,40dvh)] w-full flex-nowrap overflow-y-auto";
+        list.setAttribute("role", "listbox");
+        list.setAttribute("aria-label", "Skill suggestions");
+        commandSuggestions.forEach((suggestion, index) => {
+            const item = document.createElement("li");
+            item.id = `conversation-command-option-${index}`;
+            item.setAttribute("role", "option");
+            item.setAttribute(
+                "aria-selected",
+                index === commandSelection ? "true" : "false",
+            );
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className =
+                "flex w-full min-w-0 flex-col items-start gap-1 text-left";
+            button.dataset.commandSuggestion = "";
+            button.dataset.command = suggestion.command;
+            const top = document.createElement("span");
+            top.className = "flex w-full items-center justify-between gap-3";
+            const label = document.createElement("span");
+            label.className = "truncate font-medium";
+            label.textContent = suggestion.command;
+            const scope = document.createElement("span");
+            scope.className = "text-quiet shrink-0 text-xs";
+            scope.textContent = suggestion.scope;
+            top.append(label, scope);
+            const description = document.createElement("span");
+            description.className = "text-quiet line-clamp-2 text-xs";
+            description.textContent = suggestion.description;
+            button.append(top, description);
+            item.append(button);
+            list.append(item);
+        });
+        nodes.push(list);
+    }
+    container.replaceChildren(...nodes);
+    container.hidden = false;
+    const field = commandField();
+    field?.setAttribute("aria-expanded", "true");
+    field?.setAttribute("aria-controls", "conversation-command-options");
+}
+
+function updateCommandSelection(delta: number) {
+    if (commandSuggestions.length === 0) return;
+    commandSelection =
+        (commandSelection + delta + commandSuggestions.length) %
+        commandSuggestions.length;
+    commandContainer()
+        ?.querySelectorAll<HTMLElement>('[role="option"]')
+        .forEach((option, index) => {
+            option.setAttribute(
+                "aria-selected",
+                index === commandSelection ? "true" : "false",
+            );
+            if (index === commandSelection)
+                option.scrollIntoView({ block: "nearest" });
+        });
+}
+
+function chooseCommandSuggestion(command: string) {
+    commandBoundPreview = null;
+    commandBoundUrl = null;
+    const field = commandField();
+    if (!field) return;
+    const token = commandLeadingToken(field.value);
+    if (!token || !token.text.startsWith("/")) return;
+    field.value =
+        field.value.slice(0, token.start) +
+        `${command} ` +
+        field.value.slice(token.end);
+    const caret = token.start + command.length + 1;
+    field.focus();
+    field.setSelectionRange(caret, caret);
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+async function requestCommandSuggestions(plan: CommandPlan) {
+    const url = commandLookupUrl(plan);
+    if (!url) return;
+    const state = commandState(plan, url);
+    if (!state) return;
+    const sequence = ++commandLookupSequence;
+    commandRequest?.abort();
+    const controller = new AbortController();
+    commandRequest = controller;
+    try {
+        const response = await fetch(url, {
+            headers: { Accept: "application/json" },
+            credentials: "same-origin",
+            signal: controller.signal,
+        });
+        const payload = await response.json();
+        if (sequence !== commandLookupSequence) return;
+        const current = commandPlan();
+        const currentUrl = current ? commandLookupUrl(current) : null;
+        if (
+            !current ||
+            !currentUrl ||
+            commandState(current, currentUrl) !== state
+        )
+            return;
+        commandSuggestionState = state;
+        renderCommandSuggestions(payload);
+    } catch (error) {
+        if ((error as { name?: string } | null)?.name === "AbortError") return;
+        if (sequence !== commandLookupSequence) return;
+        closeCommandSuggestions();
+    }
+}
+
+function scheduleCommandSuggestions() {
+    closeCommandSuggestions();
+    reconcileCommandPreview();
+    const plan = commandPlan();
+    if (!plan) return;
+    if (commandBoundPreview) {
+        renderCommandSuggestions({ preview: commandBoundPreview });
+        return;
+    }
+    if (commandDebounce !== undefined) window.clearTimeout(commandDebounce);
+    commandDebounce = window.setTimeout(() => {
+        commandDebounce = undefined;
+        void requestCommandSuggestions(plan);
+    }, 120);
+}
+
+document.addEventListener("input", (event) => {
+    if (!(event.target instanceof HTMLTextAreaElement)) return;
+    if (event.target.id !== "composer-message") return;
+    scheduleCommandSuggestions();
+});
+
+document.addEventListener(
+    "keydown",
+    (event) => {
+        if (!(event.target instanceof HTMLTextAreaElement)) return;
+        if (event.target.id !== "composer-message") return;
+        if (event.isComposing || event.ctrlKey || event.metaKey || event.altKey)
+            return;
+        if (commandSuggestions.length === 0) {
+            if (event.key === "Escape") closeCommandSuggestions();
+            return;
+        }
+        if (event.key === "ArrowDown") {
+            updateCommandSelection(1);
+        } else if (event.key === "ArrowUp") {
+            updateCommandSelection(-1);
+        } else if (event.key === "Enter") {
+            const selected = commandSuggestions[commandSelection];
+            if (selected) chooseCommandSuggestion(selected.command);
+        } else if (event.key === "Tab") {
+            if (event.shiftKey) return;
+            const selected = commandSuggestions[commandSelection];
+            if (!selected) return;
+            chooseCommandSuggestion(selected.command);
+        } else if (event.key === "Escape") {
+            closeCommandSuggestions();
+        } else {
+            return;
+        }
+        // Selection never reaches Send or ordinary focus traversal.
+        event.preventDefault();
+        event.stopImmediatePropagation();
+    },
+    true,
+);
+
+document.addEventListener("click", (event) => {
+    if (!(event.target instanceof Element)) return;
+    const button = event.target.closest<HTMLElement>(
+        "[data-command-suggestion]",
+    );
+    if (!button) return;
+    const command = button.dataset.command ?? "";
+    if (command === "") return;
+    event.preventDefault();
+    chooseCommandSuggestion(command);
+});
+
+document.addEventListener("pointerdown", (event) => {
+    if (!(event.target instanceof Element)) return;
+    if (event.target.closest("[data-command-suggestions]")) return;
+    if (
+        event.target instanceof HTMLTextAreaElement &&
+        event.target.id === "composer-message"
+    )
+        return;
+    closeCommandSuggestions();
+});
+
+document.addEventListener("selectionchange", () => {
+    if (commandSuggestionState === null) return;
+    const plan = commandPlan();
+    const url = plan ? commandLookupUrl(plan) : null;
+    if (!plan || !url || commandSuggestionState !== commandState(plan, url)) {
+        closeCommandSuggestions();
+    }
+});
+listenForLivePatches(() => {
+    reconcileCommandPreview();
+    const plan = commandPlan();
+    const url = plan ? commandLookupUrl(plan) : null;
+    if (
+        commandSuggestionState !== null &&
+        (!plan || !url || commandSuggestionState !== commandState(plan, url))
+    ) {
+        closeCommandSuggestions();
+    }
+});
+listenForLocationChanges(() => {
+    closeCommandSuggestions();
+    commandBoundPreview = null;
+    commandBoundUrl = null;
+    setCommandPreview(null);
+});
+
+// A programmatic composer clear emits no input event. Drop a preview binding
+// that no longer matches the submitted text before the form serialises it.
+document.addEventListener("submit", (event) => {
+    if (!(event.target instanceof HTMLFormElement)) return;
+    if (event.target.id !== "conversation-composer") return;
+    reconcileCommandPreview();
+});
 
 startApp();
 reconcileRevision();

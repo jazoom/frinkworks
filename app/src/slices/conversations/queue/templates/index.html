@@ -23,6 +23,14 @@
           <p class="text-quiet text-xs tracking-wide uppercase">
             {{ item.delivery }}
           </p>
+          {% if let Some(command) = item.command %}
+            <p
+              class="text-quiet font-mono text-xs"
+              data-message-command-provenance
+            >
+              {{ command }}
+            </p>
+          {% endif %}
           <pre
             class="max-h-32 overflow-auto text-sm break-words whitespace-pre-wrap"
             tabindex="0"
@@ -36,6 +44,7 @@
               data-graft
               data-queue-return
               data-queue-text="{{ item.text }}"
+              data-queue-edit-text="{{ item.edit_text }}"
               method="post"
               action="/conversations/{{ saved.id }}/queue/{{ item.id }}/editor"
               class="contents"

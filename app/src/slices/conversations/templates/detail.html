@@ -881,6 +881,12 @@
             data-file-suggestions
             hidden
           ></div>
+          <div
+            id="conversation-command-suggestions"
+            class="border-base-300 bg-base-100 rounded-box mb-2 border shadow-sm"
+            data-command-suggestions
+            hidden
+          ></div>
           {% include "conversations/queue/templates/index.html" %}
           {% let view = &self.attachments %}
           <div
@@ -898,6 +904,18 @@
             action="{{ self.composer_action() }}"
             class="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-x-3 gap-y-2"
           >
+            <input
+              type="hidden"
+              name="command_source"
+              value=""
+              data-command-source-input
+            />
+            <input
+              type="hidden"
+              name="command_hash"
+              value=""
+              data-command-hash-input
+            />
             {% if let Some(saved) = self.saved() %}
               <input
                 type="hidden"

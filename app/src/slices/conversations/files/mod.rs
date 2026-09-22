@@ -264,7 +264,7 @@ fn resolve_search(
 }
 
 /// A missing candidate must not cause a fallback to newer host files.
-fn candidate_roots(
+pub(super) fn candidate_roots(
     state: &AppState,
     conversation: ConversationId,
 ) -> Result<Vec<crate::execution::resources::CandidateRoot>, ()> {

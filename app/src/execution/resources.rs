@@ -680,6 +680,149 @@ pub(crate) fn effective_roots(
     roots
 }
 
+/// A bounded project skill body read from an effective read-only root. This
+/// never starts a sandbox. A candidate-backed root has no host directory, so
+/// its body stays unavailable instead of using current host files.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PreviewSkill {
+    pub(crate) scope: String,
+    pub(crate) name: String,
+    pub(crate) description: String,
+    pub(crate) body: String,
+    /// The model-visible SKILL.md path.
+    pub(crate) path: String,
+    /// The model-visible directory that holds relative references.
+    pub(crate) relative_base: String,
+    pub(crate) content_hash: String,
+}
+
+/// Read project skill bodies from the effective read-only roots. The result is
+/// bounded by the skill count and body size. Symbolic links never enter a
+/// preview. A candidate-backed root counts as unavailable.
+pub(crate) fn preview_project_skills(
+    roots: &[EffectiveRoot],
+    grants: &[super::DirectoryGrant],
+    data_root: &Path,
+) -> (Vec<PreviewSkill>, usize) {
+    let mut skills = Vec::new();
+    let mut unavailable = 0;
+    for root in roots {
+        match &root.host_path {
+            Some(path) => {
+                if let Some(grant) = grants.iter().find(|grant| grant.alias == root.scope) {
+                    read_preview_root(root, path, grant, data_root, &mut skills);
+                }
+            }
+            None => unavailable += 1,
+        }
+        if skills.len() >= MAXIMUM_SKILLS {
+            break;
+        }
+    }
+    (skills, unavailable)
+}
+
+fn read_preview_root(
+    root: &EffectiveRoot,
+    host: &Path,
+    grant: &super::DirectoryGrant,
+    data_root: &Path,
+    skills: &mut Vec<PreviewSkill>,
+) {
+    use cap_std::fs::MetadataExt;
+    let skill_path = host.join(".agents/skills");
+    if skill_path.starts_with(data_root) || data_root.starts_with(&skill_path) {
+        return;
+    }
+    let Ok(directory) = cap_std::fs::Dir::open_ambient_dir(host, cap_std::ambient_authority())
+    else {
+        return;
+    };
+    if grant.revalidate().is_err()
+        || !directory.dir_metadata().is_ok_and(|metadata| {
+            metadata.dev() == grant.identity.device && metadata.ino() == grant.identity.inode
+        })
+    {
+        return;
+    }
+    let Some(directory) = open_preview_directory(&directory, ".agents")
+        .and_then(|directory| open_preview_directory(&directory, "skills"))
+    else {
+        return;
+    };
+    let Ok(entries) = directory.entries() else {
+        return;
+    };
+    for entry in entries.take(MAXIMUM_SKILLS + 1) {
+        if skills.len() >= MAXIMUM_SKILLS {
+            return;
+        }
+        let Ok(entry) = entry else {
+            continue;
+        };
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        if kind.is_symlink() || !kind.is_dir() {
+            continue;
+        }
+        let Some(folder) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        if folder.is_empty() || matches!(folder.as_str(), "." | ".." | ".git") {
+            continue;
+        }
+        let Some(bytes) = open_preview_directory(&directory, &folder)
+            .and_then(|directory| read_preview_bytes(&directory, MAXIMUM_SKILL_BODY_BYTES))
+        else {
+            continue;
+        };
+        let Ok(metadata) = parse_skill_metadata(&bytes) else {
+            continue;
+        };
+        let Ok(body) = std::str::from_utf8(&bytes) else {
+            continue;
+        };
+        let relative_base = format!("{}/.agents/skills/{folder}", root.model_path);
+        skills.push(PreviewSkill {
+            scope: root.scope.clone(),
+            name: metadata.name,
+            description: metadata.description,
+            body: body.to_owned(),
+            path: format!("{relative_base}/{SKILL_METADATA_NAME}"),
+            relative_base,
+            content_hash: content_hash(&bytes),
+        });
+    }
+}
+
+fn open_preview_directory(directory: &cap_std::fs::Dir, name: &str) -> Option<cap_std::fs::Dir> {
+    use cap_std::fs::OpenOptionsExt;
+    let mut options = cap_std::fs::OpenOptions::new();
+    // Directory handles and O_NOFOLLOW prevent replacement with an escaping link.
+    options.read(true).custom_flags(0o200000 | 0o400000);
+    let file = directory.open_with(name, &options).ok()?;
+    Some(cap_std::fs::Dir::from_std_file(file.into_std()))
+}
+
+fn read_preview_bytes(directory: &cap_std::fs::Dir, maximum: usize) -> Option<Vec<u8>> {
+    use cap_std::fs::OpenOptionsExt;
+    use std::io::Read;
+    let mut options = cap_std::fs::OpenOptions::new();
+    // O_NONBLOCK avoids a FIFO stall before the regular-file check.
+    options.read(true).custom_flags(0o400000 | 0o4000);
+    let file = directory.open_with(SKILL_METADATA_NAME, &options).ok()?;
+    let metadata = file.metadata().ok()?;
+    if !metadata.is_file() || metadata.len() > u64::try_from(maximum).ok()? {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    file.take(u64::try_from(maximum).ok()? + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    (bytes.len() <= maximum).then_some(bytes)
+}
+
 /// Compose the skill advertisement block. Skill text stays below the explicit
 /// task and server boundary instructions.
 pub(crate) fn compose_skills(skills: &[SkillAdvertisement]) -> String {

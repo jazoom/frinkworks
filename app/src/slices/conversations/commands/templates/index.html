@@ -1,0 +1,58 @@
+{% if !view.message.is_empty() %}
+  <p class="text-quiet px-3 py-2 text-xs" data-command-status role="status">
+    {{ view.message }}
+  </p>
+{% endif %}
+{% if view.preview.is_some() %}
+  {% let preview = view.preview.as_ref().unwrap() %}
+  <div
+    class="border-base-300 flex flex-col gap-1 border-t px-3 py-2 text-xs"
+    data-command-preview
+    data-command-source="{{ preview.source }}"
+    data-command-hash="{{ preview.hash }}"
+    data-command-base="{{ preview.base }}"
+    data-command-scope="{{ preview.scope }}"
+  >
+    <span class="text-quiet" role="status">Skill expanded</span>
+    <span class="truncate font-medium">{{ preview.command }}</span>
+    <span class="text-quiet truncate">{{ preview.source }}</span>
+    <pre class="break-words whitespace-pre-wrap">{{ preview.expanded }}</pre>
+  </div>
+{% endif %}
+{% if view.suggestions.is_empty() %}
+  {% if view.message.is_empty() && view.preview.is_none() %}
+    <p class="text-quiet px-3 py-2 text-xs" data-command-status role="status">
+      No matching skills.
+    </p>
+  {% endif %}
+{% else %}
+  <ul
+    class="menu menu-sm max-h-[min(18rem,40dvh)] w-full flex-nowrap overflow-y-auto"
+    role="listbox"
+    aria-label="Skill suggestions"
+    data-command-suggestion-list
+  >
+    {% for suggestion in view.suggestions %}
+      <li role="option" aria-selected="false">
+        <button
+          type="button"
+          class="flex w-full min-w-0 flex-col items-start gap-1 text-left"
+          data-command-suggestion
+          data-command="{{ suggestion.command }}"
+          data-command-name="{{ suggestion.name }}"
+          data-command-scope="{{ suggestion.scope }}"
+        >
+          <span class="flex w-full items-center justify-between gap-3">
+            <span class="truncate font-medium">{{ suggestion.command }}</span>
+            <span class="text-quiet shrink-0 text-xs"
+              >{{ suggestion.scope }}</span
+            >
+          </span>
+          <span class="text-quiet line-clamp-2 text-xs"
+            >{{ suggestion.description }}</span
+          >
+        </button>
+      </li>
+    {% endfor %}
+  </ul>
+{% endif %}

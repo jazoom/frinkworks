@@ -213,6 +213,7 @@ fn apply_handoff(
         destination.messages.push(super::user_message(
             user_id,
             pending.prompt.clone(),
+            None,
             Vec::new(),
         ));
         destination

@@ -496,6 +496,8 @@ struct PausedDraftFile {
 struct QueueItemFile {
     id: String,
     text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    input: Option<super::InputProvenance>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     attachments: Vec<AttachmentFile>,
     delivery: String,
@@ -597,6 +599,8 @@ struct MessageFile {
     final_phase: bool,
     role: MessageRole,
     text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    input: Option<super::InputProvenance>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     attachments: Vec<AttachmentFile>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -815,7 +819,10 @@ impl ConversationStore {
         Ok(Some(RevisionSource {
             id: source,
             parent: parent_path.last().map(|message| message.id),
-            text: last.text.clone(),
+            // Restore the frozen expansion as literal text. An escaped leading
+            // prefix keeps a body that starts with `/` or `!` from becoming a
+            // new command on resubmission.
+            text: super::input::escape_leading(&last.text),
         }))
     }
 
@@ -833,6 +840,7 @@ impl ConversationStore {
         model: Option<ConversationModelConfiguration>,
         request: JobId,
         text: String,
+        input: Option<super::InputProvenance>,
         session: crate::sessions::SessionId,
         attachment_ids: Vec<AttachmentId>,
     ) -> Result<ConversationRecord, ConversationError> {
@@ -873,6 +881,12 @@ impl ConversationStore {
             return Err(ConversationError::Image(AttachmentError::Aggregate));
         }
         let text = normalise_message_optional(&text, !attachments.is_empty())?;
+        if input
+            .as_ref()
+            .is_some_and(|input| !input.valid() || input.expanded != text)
+        {
+            return Err(ConversationError::Message);
+        }
         let parent_path = messages[..messages.len() - 1].to_vec();
         let parent = parent_path.last().map(|message| message.id);
         if parent != revision.parent {
@@ -897,7 +911,7 @@ impl ConversationStore {
         let assistant_id = MessageId::generate().map_err(|_| ConversationError::Random)?;
         updated
             .messages
-            .push(user_message(user_id, text, attachments));
+            .push(user_message(user_id, text, input, attachments));
         updated
             .messages
             .push(pending_phase(assistant_id, assistant_id, request));
@@ -1409,6 +1423,7 @@ impl ConversationStore {
             request,
             text,
             None,
+            None,
             "",
             Vec::new(),
         )
@@ -1425,6 +1440,7 @@ impl ConversationStore {
         model: Option<ConversationModelConfiguration>,
         request: JobId,
         text: String,
+        input: Option<super::InputProvenance>,
         session: Option<crate::sessions::SessionId>,
         scope: &str,
         attachment_ids: Vec<AttachmentId>,
@@ -1434,6 +1450,12 @@ impl ConversationStore {
         }
         let has_attachments = !attachment_ids.is_empty();
         let text = normalise_message_optional(&text, has_attachments)?;
+        if input
+            .as_ref()
+            .is_some_and(|input| !input.valid() || input.expanded != text)
+        {
+            return Err(ConversationError::Message);
+        }
         let user_id = MessageId::generate().map_err(|_| ConversationError::Random)?;
         let assistant_id = MessageId::generate().map_err(|_| ConversationError::Random)?;
         self.update_with_attachment_claim(id, expected_revision, true, |current, database| {
@@ -1446,7 +1468,7 @@ impl ConversationStore {
             }
             current
                 .messages
-                .push(user_message(user_id, text, references));
+                .push(user_message(user_id, text, input, references));
             current
                 .messages
                 .push(pending_phase(assistant_id, assistant_id, request));
@@ -1509,6 +1531,7 @@ impl ConversationStore {
                 final_phase: active.final_phase,
                 role: MessageRole::Assistant,
                 text: failed.text,
+                input: None,
                 attachments: Vec::new(),
                 activity: failed.activity,
                 continuation: Vec::new(),
@@ -1771,6 +1794,7 @@ impl ConversationStore {
             expected_queue_revision,
             text,
             None,
+            None,
             "",
             Vec::new(),
             delivery,
@@ -1786,6 +1810,7 @@ impl ConversationStore {
         id: &ConversationId,
         expected_queue_revision: u32,
         text: String,
+        input: Option<super::InputProvenance>,
         session: Option<crate::sessions::SessionId>,
         scope: &str,
         attachment_ids: Vec<AttachmentId>,
@@ -1797,6 +1822,12 @@ impl ConversationStore {
             return Err(ConversationError::Image(AttachmentError::Count));
         }
         let text = normalise_message_optional(&text, has_attachments)?;
+        if input
+            .as_ref()
+            .is_some_and(|input| !input.valid() || input.expanded != text)
+        {
+            return Err(ConversationError::Message);
+        }
         let item_id =
             super::queue::QueueItemId::generate().map_err(|_| ConversationError::Random)?;
         self.update_with_attachment_claim(id, 0, false, |current, database| {
@@ -1829,6 +1860,7 @@ impl ConversationStore {
             current.queue.items.push(super::queue::QueueItem {
                 id: item_id,
                 text,
+                input,
                 attachments: references,
                 delivery,
                 settings_digest,
@@ -1977,9 +2009,12 @@ impl ConversationStore {
                 .revision
                 .checked_add(1)
                 .ok_or(ConversationError::Revision)?;
-            current
-                .messages
-                .push(user_message(user_id, item.text, item.attachments));
+            current.messages.push(user_message(
+                user_id,
+                item.text,
+                item.input,
+                item.attachments,
+            ));
             current
                 .messages
                 .push(pending_phase(assistant_id, assistant_id, request));
@@ -2044,9 +2079,12 @@ impl ConversationStore {
                 .revision
                 .checked_add(1)
                 .ok_or(ConversationError::Revision)?;
-            current
-                .messages
-                .push(user_message(user_id, item.text.clone(), item.attachments));
+            current.messages.push(user_message(
+                user_id,
+                item.text.clone(),
+                item.input.clone(),
+                item.attachments,
+            ));
             current
                 .messages
                 .push(pending_phase(assistant_id, assistant_id, request));
@@ -2387,6 +2425,7 @@ impl ConversationStore {
 fn user_message(
     id: MessageId,
     text: String,
+    input: Option<super::InputProvenance>,
     attachments: Vec<AttachmentRef>,
 ) -> ConversationMessage {
     ConversationMessage {
@@ -2396,6 +2435,7 @@ fn user_message(
         final_phase: false,
         role: MessageRole::User,
         text,
+        input,
         attachments,
         activity: Vec::new(),
         continuation: Vec::new(),
@@ -2415,6 +2455,7 @@ fn pending_phase(id: MessageId, response: MessageId, request: JobId) -> Conversa
         final_phase: false,
         role: MessageRole::Assistant,
         text: String::new(),
+        input: None,
         attachments: Vec::new(),
         activity: Vec::new(),
         continuation: Vec::new(),
@@ -2929,6 +2970,11 @@ fn message_from_file(file: MessageFile) -> Result<ConversationMessage, Conversat
     {
         return Err(ConversationError::Corrupt);
     }
+    if file.input.as_ref().is_some_and(|input| {
+        file.role != MessageRole::User || !input.valid() || input.expanded != file.text
+    }) {
+        return Err(ConversationError::Corrupt);
+    }
     let attachments = file
         .attachments
         .into_iter()
@@ -2946,6 +2992,7 @@ fn message_from_file(file: MessageFile) -> Result<ConversationMessage, Conversat
         final_phase: file.final_phase,
         role: file.role,
         text: file.text,
+        input: file.input,
         attachments,
         activity: file.activity,
         continuation: file.continuation,
@@ -2993,6 +3040,7 @@ fn message_to_file(message: &ConversationMessage) -> MessageFile {
         final_phase: message.final_phase,
         role: message.role,
         text: message.text.clone(),
+        input: message.input.clone(),
         attachments: message.attachments.iter().map(attachment_to_file).collect(),
         activity: message.activity.clone(),
         continuation: message.continuation.clone(),
@@ -3220,6 +3268,7 @@ fn queue_from_file(
         queue.items.push(super::queue::QueueItem {
             id,
             text: item.text,
+            input: item.input,
             attachments,
             delivery,
             settings_digest,
@@ -3236,6 +3285,7 @@ fn queue_item_to_file(item: &super::queue::QueueItem) -> QueueItemFile {
     QueueItemFile {
         id: item.id.as_hex(),
         text: item.text.clone(),
+        input: item.input.clone(),
         attachments: item.attachments.iter().map(attachment_to_file).collect(),
         delivery: item.delivery.as_str().to_owned(),
         settings_digest: crate::hex::encode(&item.settings_digest),

@@ -79,6 +79,8 @@ impl QueueDelivery {
 pub(crate) struct QueueItem {
     pub(crate) id: QueueItemId,
     pub(crate) text: String,
+    /// Frozen command provenance. The expanded text stays in `text`.
+    pub(crate) input: Option<super::InputProvenance>,
     /// Immutable image references that the delivery moves to its message.
     pub(crate) attachments: Vec<super::AttachmentRef>,
     pub(crate) delivery: QueueDelivery,
@@ -145,6 +147,10 @@ pub(crate) fn valid_queue(queue: &ConversationQueue) -> bool {
         if seen.contains(&item.id)
             || (!empty_with_images && item.text.is_empty())
             || !super::history::valid_attachments(&item.attachments)
+            || !item
+                .input
+                .as_ref()
+                .is_none_or(|input| input.valid() && input.expanded == item.text)
             || item.text.len() > MAXIMUM_QUEUE_ITEM_BYTES
             || item
                 .text

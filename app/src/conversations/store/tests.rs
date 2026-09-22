@@ -277,6 +277,7 @@ fn history_beyond_former_message_byte_and_catalogue_limits_survives_restart() {
                     } else {
                         "x".repeat(120 * 1024)
                     },
+                    input: None,
                     attachments: Vec::new(),
                     activity: Vec::new(),
                     continuation: Vec::new(),

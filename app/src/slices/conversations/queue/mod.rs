@@ -29,6 +29,10 @@ use super::{
 pub(super) struct EnqueueForm {
     queue_revision: String,
     message: String,
+    #[serde(default, rename = "command_source")]
+    command_source: String,
+    #[serde(default, rename = "command_hash")]
+    command_hash: String,
     #[serde(default)]
     delivery: String,
     #[serde(default, rename = "attachment_0")]
@@ -152,15 +156,44 @@ pub(super) async fn enqueue(
         }
     };
     let scope = record.id.as_hex();
-    let queued = if attachments.is_empty() {
+    let catalogue = super::commands::catalogue_for_record(
+        &state,
+        session.0,
+        record.id,
+        record.revision,
+        record.model.as_ref(),
+    );
+    let secret = record
+        .model
+        .as_ref()
+        .and_then(|model| super::provider_secret(&state, &model.settings.model));
+    let expansion = match super::commands::expand(
+        &form.message,
+        &catalogue,
+        secret.as_deref(),
+        super::commands::preview_binding(&form.command_source, &form.command_hash),
+    ) {
+        Ok(expansion) => expansion,
+        Err(error) => {
+            return render_detail_command(
+                graft,
+                PatchStatus::UnprocessableEntity,
+                detail_view(&state, session.0, &record, &record.title, error.message()),
+            );
+        }
+    };
+    let message = expansion.expanded;
+    let input = expansion.provenance;
+    let queued = if input.is_none() && attachments.is_empty() {
         state
             .conversations
-            .enqueue(&record.id, queue_revision, form.message, delivery, job)
+            .enqueue(&record.id, queue_revision, message, delivery, job)
     } else {
         state.conversations.enqueue_with_attachments(
             &record.id,
             queue_revision,
-            form.message,
+            message,
+            input,
             Some(session.0),
             &scope,
             attachments,

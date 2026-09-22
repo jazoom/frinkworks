@@ -210,6 +210,20 @@ A retained reference survives compaction and a fork. Compaction keeps original i
 
 Image routes are session-scoped. A saved image requires a reference that belongs to its conversation. The response uses the explicit raster media type and `no-store`.
 
+## Skill commands
+
+A composer message can start with `/skill:name` or `/skill:scope/name`. The resolver includes the skill directory and body, then appends the trailing user instructions. Relative references use the model-visible skill directory.
+
+Global skill names can collide with project skill names. An unqualified duplicate name is ambiguous. Suggestions show the scopes and insert a qualified command for duplicate names.
+
+The resolver reads global skills from the global skill folder. It reads project skills from `.agents/skills` below an authorised work location. A candidate-backed location exposes no skill body. The preview reports the limitation instead of reading current host files.
+
+A leading backslash escapes the prefix. For example, `\/skill:name` sends the literal text `/skill:name`. Expansion output never runs command classification again.
+
+A preview binds the source scope, path, relative-path base and body hash. Send rejects a changed preview. An unpreviewed command resolves from one validated source snapshot at submission. The submission freezes the typed text, the expanded text and the provenance. A queued command keeps its frozen text until the user selects a new resource.
+
+The application rejects a skill body above 1 MiB or an expanded message above 32 KiB. Previews and submissions exclude skills that contain a known provider API key. Unknown slash commands leave the draft intact.
+
 ## Ownership and recovery
 
 The existing run record remains the sole ownership authority. Transfer never copies a run or recaptures its baseline.
