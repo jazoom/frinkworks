@@ -342,3 +342,224 @@ async fn continue_here_rejects_unsettled_destinations_without_changing_the_branc
         settled.messages
     );
 }
+
+#[tokio::test]
+async fn revise_restores_a_root_prompt_without_mutating_the_conversation() {
+    let state = test_state();
+    let token = connected(&state);
+    let record = seeded_history(&state, "Revise root", 2);
+    let source = record.messages[0].id;
+    let base = format!("/conversations/{}", record.id.as_hex());
+    let before = state.conversations.get(&record.id).expect("record");
+
+    let response = app(&state)
+        .oneshot(document(
+            &format!("{base}?revise={}", source.as_hex()),
+            &token,
+        ))
+        .await
+        .expect("document");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = text(response).await;
+    assert!(body.contains("data-revision-state"));
+    assert!(body.contains("name=\"revise_source\""));
+    assert!(body.contains("name=\"revise_parent\""));
+    assert!(body.contains("name=\"revise_active_leaf\""));
+    assert!(body.contains("data-revision-text=\"Question 0\""));
+
+    // A stale or invalid source opens no draft and writes nothing.
+    for suffix in [
+        format!("?revise={}", record.messages[1].id.as_hex()),
+        "?revise=nothex".to_owned(),
+        format!(
+            "?revise={}",
+            super::super::tests::seeded_history(&state, "Other", 1).messages[0]
+                .id
+                .as_hex()
+        ),
+    ] {
+        let response = app(&state)
+            .oneshot(document(&format!("{base}{suffix}"), &token))
+            .await
+            .expect("document");
+        assert_eq!(
+            response.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{suffix}"
+        );
+        assert!(!text(response).await.contains("data-revision-state"));
+    }
+
+    let after = state.conversations.get(&record.id).expect("record");
+    assert_eq!(before.revision, after.revision);
+    assert_eq!(before.messages, after.messages);
+}
+
+#[tokio::test]
+async fn revise_appends_a_root_replacement_and_rejects_a_stale_form() {
+    let mut state = test_state();
+    let backend = crate::providers::tests::ScriptedBackend::accept();
+    state.chat = std::sync::Arc::new(crate::providers::ChatBackend::Scripted(backend.clone()));
+    let token = connected(&state);
+    super::super::tests::ready_starter_environment(&state).await;
+    let record = seeded_history(&state, "Revise append", 2);
+    let mut settings = record.model.as_ref().unwrap().settings.clone();
+    settings.environment = super::super::default_environment(&state).unwrap();
+    settings.tools.clear();
+    settings.model = crate::providers::ModelSelection::new(
+        crate::providers::ProviderKind::Xai,
+        "grok-4.6".to_owned(),
+        state
+            .models_dev
+            .effective_effort(crate::providers::ProviderKind::Xai, "grok-4.6", None),
+    )
+    .unwrap();
+    let record = state
+        .conversations
+        .update_execution_settings(&record.id, record.revision, settings)
+        .unwrap();
+    let source = record.messages[0].id;
+    let active_leaf = record.messages.last().unwrap().id;
+    let action = format!("/conversations/{}/messages", record.id.as_hex());
+    let body = format!(
+        "revision={}&message=Revised+question&revise_source={}&revise_parent=&revise_active_leaf={}",
+        record.revision,
+        source.as_hex(),
+        active_leaf.as_hex()
+    );
+
+    let response = app(&state)
+        .oneshot(command(&action, &token, &body))
+        .await
+        .unwrap();
+    let status = response.status();
+    assert_eq!(status, StatusCode::OK, "{}", text(response).await);
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while state
+            .conversations
+            .get(&record.id)
+            .unwrap()
+            .active_job
+            .is_some()
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("settlement");
+
+    let loaded = state.conversations.get(&record.id).unwrap();
+    // The replacement starts a fresh root branch. It does not extend the
+    // original first exchange.
+    assert_eq!(loaded.messages.len(), 2);
+    assert_eq!(loaded.messages[0].text, "Revised question");
+    assert_eq!(loaded.messages[0].parent, None);
+    assert_eq!(loaded.messages[1].parent, Some(loaded.messages[0].id));
+
+    // Retained descendants stay reachable through the tree as alternatives.
+    let tree = text(
+        app(&state)
+            .oneshot(document(
+                &format!("/conversations/{}/tree", record.id.as_hex()),
+                &token,
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(normalised(&tree).contains("Question 0"));
+    assert!(normalised(&tree).contains("Reply 1"));
+    let history: Vec<_> = backend
+        .last_history()
+        .iter()
+        .map(|turn| turn.text.clone())
+        .collect();
+    assert_eq!(history, vec!["Revised question"]);
+
+    // A stale form changes no branch and starts no model request.
+    let before = state.conversations.get(&record.id).unwrap();
+    let stale = format!(
+        "revision={}&message=Stale+question&revise_source={}&revise_parent=&revise_active_leaf={}",
+        record.revision,
+        source.as_hex(),
+        active_leaf.as_hex()
+    );
+    let response = app(&state)
+        .oneshot(command(&action, &token, &stale))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let after = state.conversations.get(&record.id).unwrap();
+    assert_eq!(before.messages, after.messages);
+    assert_eq!(before.revision, after.revision);
+    assert!(
+        backend
+            .last_history()
+            .iter()
+            .all(|turn| turn.text != "Stale question")
+    );
+}
+
+#[tokio::test]
+async fn revise_rejects_a_non_user_source_and_a_mismatched_parent() {
+    let mut state = test_state();
+    let backend = crate::providers::tests::ScriptedBackend::accept();
+    state.chat = std::sync::Arc::new(crate::providers::ChatBackend::Scripted(backend.clone()));
+    let token = connected(&state);
+    super::super::tests::ready_starter_environment(&state).await;
+    let record = seeded_history(&state, "Revise guard", 2);
+    let mut settings = record.model.as_ref().unwrap().settings.clone();
+    settings.environment = super::super::default_environment(&state).unwrap();
+    settings.tools.clear();
+    settings.model = crate::providers::ModelSelection::new(
+        crate::providers::ProviderKind::Xai,
+        "grok-4.6".to_owned(),
+        state
+            .models_dev
+            .effective_effort(crate::providers::ProviderKind::Xai, "grok-4.6", None),
+    )
+    .unwrap();
+    let record = state
+        .conversations
+        .update_execution_settings(&record.id, record.revision, settings)
+        .unwrap();
+    let assistant = record.messages[1].id;
+    let source = record.messages[0].id;
+    let active_leaf = record.messages.last().unwrap().id;
+    let action = format!("/conversations/{}/messages", record.id.as_hex());
+    let before = state.conversations.get(&record.id).unwrap();
+
+    let body = format!(
+        "revision={}&message=Nope&revise_source={}&revise_parent=&revise_active_leaf={}",
+        record.revision,
+        assistant.as_hex(),
+        active_leaf.as_hex()
+    );
+    let response = app(&state)
+        .oneshot(command(&action, &token, &body))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        state.conversations.get(&record.id).unwrap().messages,
+        before.messages
+    );
+
+    let body = format!(
+        "revision={}&message=Nope&revise_source={}&revise_parent={}&revise_active_leaf={}",
+        record.revision,
+        source.as_hex(),
+        assistant.as_hex(),
+        active_leaf.as_hex()
+    );
+    let response = app(&state)
+        .oneshot(command(&action, &token, &body))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        state.conversations.get(&record.id).unwrap().messages,
+        before.messages
+    );
+    assert!(backend.last_history().is_empty());
+}

@@ -327,6 +327,39 @@ pub(super) struct MessageView {
     pub(super) streaming: bool,
     pub(super) forkable: bool,
     pub(super) fork_href: String,
+    pub(super) revisable: bool,
+    pub(super) revise_href: String,
+}
+
+/// The frozen replacement prompt that the composer restores. The client binds
+/// the source, parent and expected active leaf so a stale form cannot append
+/// to a branch that another mutation already changed.
+#[derive(Clone, Eq, PartialEq)]
+pub(super) struct RevisionDraft {
+    pub(super) source: String,
+    pub(super) parent: String,
+    pub(super) active_leaf: String,
+    pub(super) revision: String,
+    pub(super) text: String,
+}
+
+impl RevisionDraft {
+    pub(super) fn from_source(
+        source: crate::conversations::RevisionSource,
+        revision: u32,
+        active_leaf: Option<MessageId>,
+    ) -> Self {
+        Self {
+            source: source.id.as_hex(),
+            parent: source
+                .parent
+                .map(|parent| parent.as_hex())
+                .unwrap_or_default(),
+            active_leaf: active_leaf.map(|leaf| leaf.as_hex()).unwrap_or_default(),
+            revision: revision.to_string(),
+            text: source.text,
+        }
+    }
 }
 
 pub(super) struct CopyResponseView {
@@ -561,6 +594,9 @@ pub(super) struct ConversationDetailView {
     /// A new draft that continues copied context. It is a context alternative,
     /// not a file rollback and not a permission transfer.
     pub(super) fork: Option<ForkNotice>,
+    /// A pending replacement for an earlier user prompt. It holds no durable
+    /// mutation until Send.
+    pub(super) revision: Option<RevisionDraft>,
 }
 
 pub(super) struct ForkNotice {
@@ -793,6 +829,7 @@ impl ConversationDetailView {
                 false,
             ),
             fork,
+            revision: None,
         }
     }
 
@@ -840,6 +877,9 @@ impl ConversationDetailView {
     }
 
     fn draft_message(&self) -> &str {
+        if let Some(revision) = &self.revision {
+            return &revision.text;
+        }
         match &self.state {
             ConversationPageState::New { message, .. } => message,
             ConversationPageState::Saved(_) => "",
@@ -866,7 +906,9 @@ impl ConversationDetailView {
         self.saved().map_or_else(
             || "/conversations/new".to_owned(),
             |saved| {
-                if self.queue.follow_up {
+                // A replacement prompt is a branch mutation, never a queue
+                // entry. The command route validates the bound revision.
+                if self.queue.follow_up && self.revision.is_none() {
                     format!("/conversations/{}/queue", saved.id)
                 } else {
                     format!("/conversations/{}/messages", saved.id)
@@ -875,8 +917,22 @@ impl ConversationDetailView {
         )
     }
 
+    /// Leave a replacement draft without a durable mutation. The link keeps
+    /// the inspected transcript path so cancellation never jumps to new work.
+    fn cancel_revision_href(&self) -> String {
+        let Some(saved) = self.saved() else {
+            return "/conversations/new".to_owned();
+        };
+        let leaf = self.inspection_leaf_query.trim_start_matches('&');
+        if leaf.is_empty() {
+            format!("/conversations/{}", saved.id)
+        } else {
+            format!("/conversations/{}?{}", saved.id, leaf)
+        }
+    }
+
     fn follow_up_submit_label(&self) -> &'static str {
-        if self.queue.follow_up {
+        if self.queue.follow_up && self.revision.is_none() {
             "Queue"
         } else {
             "Send message"
@@ -884,7 +940,7 @@ impl ConversationDetailView {
     }
 
     fn follow_up_submit_value(&self) -> &'static str {
-        if self.queue.follow_up {
+        if self.queue.follow_up && self.revision.is_none() {
             "queue"
         } else {
             "send"
@@ -1259,6 +1315,7 @@ impl ConversationDetailView {
                 job.is_some_and(|job| job.status == JobStatus::Running),
             ),
             fork: None,
+            revision: None,
             state: ConversationPageState::Saved(Box::new(SavedConversationState {
                 id: record.id.as_hex(),
                 revision: record.revision.to_string(),
@@ -1277,6 +1334,11 @@ impl ConversationDetailView {
     pub(super) fn with_preset_preview(mut self, preview: PresetPreviewView) -> Self {
         self.preset_preview = Some(preview);
         self.settings_open = true;
+        self
+    }
+
+    pub(super) fn with_revision(mut self, draft: RevisionDraft) -> Self {
+        self.revision = Some(draft);
         self
     }
 
@@ -2124,6 +2186,16 @@ pub(super) fn message_view(
         streaming: message.status == MessageStatus::Pending,
         forkable: false,
         fork_href: String::new(),
+        revisable: message.role == MessageRole::User,
+        revise_href: if message.role == MessageRole::User {
+            format!(
+                "/conversations/{}?revise={}",
+                conversation.as_hex(),
+                message.id.as_hex()
+            )
+        } else {
+            String::new()
+        },
     }
 }
 
@@ -2163,6 +2235,8 @@ pub(super) fn reply_view(
         streaming,
         forkable: false,
         fork_href: String::new(),
+        revisable: false,
+        revise_href: String::new(),
     }
 }
 

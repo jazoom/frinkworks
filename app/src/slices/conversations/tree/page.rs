@@ -33,6 +33,15 @@ pub(crate) struct ContinueForm {
     destination: String,
 }
 
+/// The retained prompt to restore. The tree route keeps the tree companion
+/// open while the composer shows the replacement draft.
+#[derive(Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct ReviseQuery {
+    source: String,
+    leaf: String,
+}
+
 pub(super) struct TreeEntryView {
     pub(super) href: String,
     pub(super) children_href: String,
@@ -46,6 +55,9 @@ pub(super) struct TreeEntryView {
     /// validates fully; this only hides an obviously unusable control.
     pub(super) continueable: bool,
     pub(super) id: String,
+    /// Whether this retained user prompt can open a replacement draft.
+    pub(super) revisable: bool,
+    pub(super) revise_href: String,
 }
 
 /// One branch tip that a transcript inspection can follow.
@@ -231,6 +243,103 @@ pub(crate) async fn continue_here(
     }
 }
 
+/// Restore one retained prompt as a replacement draft from the tree. The
+/// route is read-only: it changes neither the active leaf nor any record and
+/// starts no model call. Send validates the bound form and appends a branch.
+pub(crate) async fn revise(
+    State(state): State<AppState>,
+    session: RequiredSession,
+    graft: GraftRequest,
+    Path(conversation_id): Path<String>,
+    Query(query): Query<ReviseQuery>,
+) -> AppResult<Response> {
+    let Some(id) = ConversationId::parse(&conversation_id) else {
+        return Ok(responses::request_navigation(graft, "/conversations"));
+    };
+    let Some(metadata) = state.conversations.metadata_for(&id) else {
+        return Ok(responses::request_navigation(graft, "/conversations"));
+    };
+    let conversation_href = format!("/conversations/{}", id.as_hex());
+    let leaf = MessageId::parse(query.leaf.trim());
+    let mut error = if !query.leaf.trim().is_empty() && leaf.is_none() {
+        "That transcript position is not valid."
+    } else {
+        ""
+    };
+    let (record, mut window) = match state.conversations.transcript_window(&id, None, leaf) {
+        Ok(Some((record, window))) => (record, window),
+        Ok(None) => return Ok(responses::request_navigation(graft, "/conversations")),
+        Err(crate::conversations::ConversationError::Entry) => {
+            match state.conversations.transcript_window(&id, None, None) {
+                Ok(Some((record, window))) => {
+                    error = "That transcript position is not valid.";
+                    (record, window)
+                }
+                Ok(None) => return Ok(responses::request_navigation(graft, "/conversations")),
+                Err(error) => return Err(AppError::new("load revision transcript", error)),
+            }
+        }
+        Err(error) => return Err(AppError::new("load revision transcript", error)),
+    };
+    // The replaced branch must not become the live target of a settlement.
+    window.live = false;
+    let draft = match MessageId::parse(query.source.trim()) {
+        Some(source) => match state.conversations.revision_source(&id, source) {
+            Ok(Some(revision)) => Some(super::super::page::RevisionDraft::from_source(
+                revision,
+                record.revision,
+                metadata.active_leaf,
+            )),
+            Ok(None) => return Ok(responses::request_navigation(graft, "/conversations")),
+            Err(entry) => {
+                error = entry.message();
+                None
+            }
+        },
+        None => {
+            error = "That prompt revision is not valid.";
+            None
+        }
+    };
+    let Some(tree_window) = state
+        .conversations
+        .tree_window(&id, None, None, None)
+        .map_err(|error| AppError::new("load revision tree", error))?
+    else {
+        return Ok(responses::request_navigation(graft, "/conversations"));
+    };
+    let html = view(
+        &metadata.title,
+        conversation_href,
+        "",
+        tree_window,
+        metadata.revision,
+    )
+    .render()
+    .map_err(|error| AppError::new("render tree companion", error))?;
+    let status = if error.is_empty() {
+        PatchStatus::Ok
+    } else {
+        PatchStatus::UnprocessableEntity
+    };
+    let mut workspace = super::super::detail_view_with_transcript(
+        &state,
+        session.0,
+        &record,
+        &record.title,
+        error,
+        Some(&window),
+        leaf,
+    );
+    if error.is_empty()
+        && let Some(draft) = draft
+    {
+        workspace = workspace.with_revision(draft);
+    }
+    let workspace = workspace.with_companion_titled(html, "tree", "Conversation tree");
+    super::super::render_detail(&state, session.0, graft, status, workspace)
+}
+
 fn tree_error_response(
     state: &AppState,
     id: ConversationId,
@@ -306,6 +415,15 @@ fn view(
                     && entry.status == MessageStatus::Complete
                     && !active_leaf_entry,
                 id: entry.id.as_hex(),
+                revisable: entry.role == MessageRole::User,
+                revise_href: if entry.role == MessageRole::User {
+                    format!(
+                        "{conversation_href}/tree/revise?source={}",
+                        entry.id.as_hex()
+                    )
+                } else {
+                    String::new()
+                },
             }
         })
         .collect();

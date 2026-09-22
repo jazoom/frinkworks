@@ -7,6 +7,8 @@ import "./input.css";
 import { startApp } from "./hypergraft-bootstrap";
 import {
     commandBlockReason,
+    listenForLocationChanges,
+    listenForLivePatches,
     listenForRequestSettled,
 } from "hypergraft/browser";
 
@@ -1123,7 +1125,237 @@ document.addEventListener(
     true,
 );
 
+// A revision draft pre-fills the composer with an earlier user prompt. The
+// binding lives in hidden fields, so an unrelated patch that re-renders the
+// composer must not drop it. The client keeps the last captured target and
+// re-applies it after such a patch.
+type RevisionTarget = {
+    owner: string;
+    source: string;
+    parent: string;
+    activeLeaf: string;
+    revision: string;
+    text: string;
+    cancelHref: string;
+};
+
+let revisionTarget: RevisionTarget | null = null;
+let cancellingRevision = false;
+let ordinaryDraft = "";
+
+function conversationUrl(): string {
+    return (
+        document.querySelector<HTMLElement>("[data-conversation-url]")?.dataset
+            .conversationUrl ?? ""
+    );
+}
+
+function readRevisionTarget(): RevisionTarget | null {
+    const state = document.querySelector<HTMLElement>("[data-revision-state]");
+    if (!state) return null;
+    const cancel = state.querySelector<HTMLAnchorElement>(
+        "[data-cancel-revision]",
+    );
+    return {
+        owner: conversationUrl(),
+        source: state.dataset.revisionSource ?? "",
+        parent: state.dataset.revisionParent ?? "",
+        activeLeaf: state.dataset.revisionActiveLeaf ?? "",
+        revision: state.dataset.revisionRevision ?? "",
+        text: state.dataset.revisionText ?? "",
+        cancelHref: cancel?.getAttribute("href") ?? "",
+    };
+}
+
+function revisionBanner(target: RevisionTarget): HTMLElement {
+    const banner = document.createElement("div");
+    banner.className =
+        "col-span-2 flex flex-wrap items-center justify-between gap-2 rounded-box border border-base-300 bg-base-200 px-3 py-2";
+    banner.dataset.revisionState = "";
+    banner.dataset.revisionSource = target.source;
+    banner.dataset.revisionParent = target.parent;
+    banner.dataset.revisionActiveLeaf = target.activeLeaf;
+    banner.dataset.revisionRevision = target.revision;
+    banner.dataset.revisionText = target.text;
+    banner.setAttribute("role", "status");
+    const text = document.createElement("p");
+    text.className = "text-sm";
+    text.textContent =
+        "Revising an earlier prompt. Send creates a new branch. The original prompt and its descendants stay in the tree.";
+    const cancel = document.createElement("a");
+    cancel.className = "btn btn-ghost btn-xs min-h-11";
+    cancel.setAttribute("href", target.cancelHref);
+    cancel.dataset.graft = "";
+    cancel.dataset.cancelRevision = "";
+    cancel.textContent = "Cancel revision";
+    banner.append(text, cancel);
+    return banner;
+}
+
+function clearComposerDraft() {
+    const message =
+        document.querySelector<HTMLTextAreaElement>("#composer-message");
+    if (!message || message.value === "") return;
+    message.value = "";
+    message.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function reconcileRevision() {
+    const owner = conversationUrl();
+    const rendered = readRevisionTarget();
+    const initialise =
+        rendered !== null &&
+        (revisionTarget?.source !== rendered.source ||
+            revisionTarget.owner !== rendered.owner);
+    if (rendered) {
+        revisionTarget = rendered;
+    } else if (cancellingRevision || !revisionTarget) {
+        if (cancellingRevision) {
+            const message =
+                document.querySelector<HTMLTextAreaElement>(
+                    "#composer-message",
+                );
+            if (message) {
+                message.value = ordinaryDraft;
+                message.dispatchEvent(new Event("input", { bubbles: true }));
+            }
+            ordinaryDraft = "";
+        }
+        cancellingRevision = false;
+        revisionTarget = null;
+        return;
+    } else if (owner !== revisionTarget.owner) {
+        // A different conversation never inherits another draft's target.
+        revisionTarget = null;
+        cancellingRevision = false;
+        return;
+    }
+    const form = document.querySelector<HTMLFormElement>(
+        "#conversation-composer",
+    );
+    if (!form || !revisionTarget) return;
+    form.action = `${revisionTarget.owner}/messages`;
+    for (const [name, value] of [
+        ["revision", revisionTarget.revision],
+        ["revise_source", revisionTarget.source],
+        ["revise_parent", revisionTarget.parent],
+        ["revise_active_leaf", revisionTarget.activeLeaf],
+    ] as const) {
+        const existing = form.elements.namedItem(name);
+        const input =
+            existing instanceof HTMLInputElement
+                ? existing
+                : document.createElement("input");
+        if (!(existing instanceof HTMLInputElement)) {
+            input.type = "hidden";
+            input.name = name;
+            form.append(input);
+        }
+        input.value = value;
+    }
+    if (!form.querySelector("[data-revision-state]")) {
+        form.prepend(revisionBanner(revisionTarget));
+    }
+    const message =
+        form.querySelector<HTMLTextAreaElement>("#composer-message");
+    if (initialise && message && message.value === "") {
+        message.value = revisionTarget.text;
+        message.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+}
+
+// Explicit consent prevents a link from silently replacing unrelated input.
+document.addEventListener(
+    "click",
+    (event) => {
+        if (!(event.target instanceof Element)) return;
+        if (
+            event instanceof MouseEvent &&
+            (event.button !== 0 ||
+                event.ctrlKey ||
+                event.metaKey ||
+                event.shiftKey ||
+                event.altKey)
+        )
+            return;
+        const revise = event.target.closest("[data-revise-prompt]");
+        if (revise) {
+            const message =
+                document.querySelector<HTMLTextAreaElement>(
+                    "#composer-message",
+                );
+            const draft = message?.value ?? "";
+            const current = readRevisionTarget();
+            const href = revise.getAttribute("href") ?? "";
+            if (
+                draft.trim() !== "" &&
+                !(current && href.includes(current.source))
+            ) {
+                const confirm = (
+                    globalThis as {
+                        confirm?: (message: string) => boolean;
+                    }
+                ).confirm;
+                // An unavailable confirmation blocks the navigation instead of
+                // discarding the unsent draft silently.
+                if (
+                    typeof confirm !== "function" ||
+                    !confirm(
+                        "Revise the earlier prompt? Cancel revision restores the unsent message.",
+                    )
+                ) {
+                    event.preventDefault();
+                    event.stopImmediatePropagation();
+                    return;
+                }
+            }
+            if (!current) ordinaryDraft = draft;
+            revisionTarget = null;
+            clearComposerDraft();
+            cancellingRevision = false;
+            return;
+        }
+        const cancel = event.target.closest("[data-cancel-revision]");
+        if (cancel) {
+            cancellingRevision = true;
+            clearComposerDraft();
+        }
+    },
+    true,
+);
+
+listenForRequestSettled((detail) => {
+    if (detail.outcome !== "applied-patch") return;
+    if (
+        !detail.targetIds.includes("conversation-detail") &&
+        !detail.targetIds.includes("composer") &&
+        !detail.targetIds.includes("chat-main")
+    )
+        return;
+    if (
+        detail.status === 200 &&
+        revisionTarget &&
+        new URL(detail.url, window.location.href).pathname ===
+            `${revisionTarget.owner}/messages`
+    ) {
+        revisionTarget = null;
+        cancellingRevision = false;
+        ordinaryDraft = "";
+        return;
+    }
+    reconcileRevision();
+});
+
 startApp();
+reconcileRevision();
+listenForLivePatches(() => reconcileRevision());
+
+// Link navigation emits no settlement, so the revision target is reconciled
+// from the location change. This listener runs after startApp, so the
+// composer island has already restored its own draft.
+listenForLocationChanges(() => {
+    reconcileRevision();
+});
 
 const LIVE_RELOAD_EVENT_STREAM = "/_tower-livereload/event-stream";
 const LIVE_RELOAD_CHANNEL = "powerplant-live-reload";

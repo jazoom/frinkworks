@@ -94,13 +94,22 @@
             class="link link-hover text-left text-sm break-words"
             >{{ entry.excerpt }}</a
           >
-          <div class="flex gap-3 text-sm">
+          <div class="flex flex-wrap gap-3 text-sm">
             <a class="link" href="{{ entry.children_href }}" data-graft
               >Children</a
             >
             {% if !entry.parent_href.is_empty() %}
               <a class="link" href="{{ entry.parent_href }}" data-graft
                 >Siblings</a
+              >
+            {% endif %}
+            {% if entry.revisable %}
+              <a
+                class="link"
+                href="{{ entry.revise_href }}"
+                data-graft
+                data-revise-prompt
+                >Revise</a
               >
             {% endif %}
           </div>

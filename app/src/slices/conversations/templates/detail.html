@@ -875,6 +875,23 @@
                 name="queue_revision"
                 value="{{ self.queue.revision }}"
               />
+              {% if let Some(revision) = self.revision %}
+                <input
+                  type="hidden"
+                  name="revise_source"
+                  value="{{ revision.source }}"
+                />
+                <input
+                  type="hidden"
+                  name="revise_parent"
+                  value="{{ revision.parent }}"
+                />
+                <input
+                  type="hidden"
+                  name="revise_active_leaf"
+                  value="{{ revision.active_leaf }}"
+                />
+              {% endif %}
             {% else %}
               {% for directory in directories %}
                 {% if !directory.transient %}
@@ -968,6 +985,30 @@
                 value="{% if let Some(preview) = preset_preview %}{{ preview.token }}{% else %}{{ draft_preset_reference }}{% endif %}"
               />
             {% endif %}
+            {% if let Some(revision) = self.revision %}
+              <div
+                class="rounded-box border-base-300 bg-base-200 col-span-2 flex flex-wrap items-center justify-between gap-2 border px-3 py-2"
+                data-revision-state
+                data-revision-source="{{ revision.source }}"
+                data-revision-parent="{{ revision.parent }}"
+                data-revision-active-leaf="{{ revision.active_leaf }}"
+                data-revision-revision="{{ revision.revision }}"
+                data-revision-text="{{ revision.text }}"
+                role="status"
+              >
+                <p class="text-sm">
+                  Revising an earlier prompt. Send creates a new branch. The
+                  original prompt and its descendants stay in the tree.
+                </p>
+                <a
+                  class="btn btn-ghost btn-xs min-h-11"
+                  href="{{ self.cancel_revision_href() }}"
+                  data-graft
+                  data-cancel-revision
+                  >Cancel revision</a
+                >
+              </div>
+            {% endif %}
             <label class="sr-only" for="composer-message">Message</label>
             <textarea
               id="composer-message"
@@ -981,7 +1022,7 @@
             >
 {{ self.draft_message() }}</textarea>
             {% include "conversations/templates/model_picker.html" %}
-            {% if self.queue.follow_up && self.queue.steering %}
+            {% if self.queue.follow_up && self.queue.steering && self.revision.is_none() %}
               <fieldset class="col-span-2 flex flex-wrap gap-3 text-sm">
                 <legend class="sr-only">Queue delivery</legend>
                 <label class="flex min-h-11 items-center gap-2">
@@ -1031,7 +1072,7 @@
                 aria-disabled="{{ self.composer_disabled() }}"
                 {% if self.composer_disabled() %}disabled{% endif %}
               >
-                {% if self.queue.follow_up %}Queue{% else %}Send{% endif %}<svg
+                {% if self.queue.follow_up && self.revision.is_none() %}Queue{% else %}Send{% endif %}<svg
                   class="workspace-icon"
                   aria-hidden="true"
                 >

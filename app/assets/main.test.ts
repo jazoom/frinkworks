@@ -8,10 +8,19 @@ const settled = vi.hoisted(
             typeof import("hypergraft/browser").listenForRequestSettled
         >[0][],
 );
+const locations = vi.hoisted(
+    () =>
+        [] as Parameters<
+            typeof import("hypergraft/browser").listenForLocationChanges
+        >[0][],
+);
 vi.mock("hypergraft/browser", () => ({
     commandBlockReason: vi.fn(),
     listenForRequestSettled: (listener: (typeof settled)[number]) =>
         settled.push(listener),
+    listenForLivePatches: vi.fn(),
+    listenForLocationChanges: (listener: (typeof locations)[number]) =>
+        locations.push(listener),
 }));
 import "./main";
 
@@ -337,4 +346,142 @@ test("copy uses the source bound to the clicked response and reports success", a
         document.querySelector<HTMLElement>("#message-two [data-copy-status]")!
             .textContent,
     ).toBe("");
+});
+
+test("patches keep the frozen revision without restoring deleted text or a successful Send", () => {
+    document.body.innerHTML = `<section id="conversation-detail">
+        <form id="conversation-composer">
+            <div data-revision-state
+                data-revision-source="abc"
+                data-revision-parent=""
+                data-revision-active-leaf="def"
+                data-revision-revision="5"
+                data-revision-text="Original prompt">
+                <a href="/conversations/one" data-cancel-revision>Cancel revision</a>
+            </div>
+            <textarea id="composer-message"></textarea>
+        </form>
+    </section>`;
+    const settle = (targetIds: string[]) => {
+        const form = document.createElement("form");
+        for (const listener of settled)
+            listener({
+                requestKind: "patch",
+                form,
+                url: "/conversations/one/model",
+                outcome: "applied-patch",
+                status: 200,
+                targetIds,
+            });
+    };
+    settle(["conversation-detail"]);
+    document.querySelector("[data-revision-state]")!.remove();
+    document.querySelector<HTMLInputElement>('input[name="revision"]')!.value =
+        "6";
+    document.querySelector<HTMLTextAreaElement>("#composer-message")!.value =
+        "";
+    settle(["conversation-detail"]);
+    const form = document.querySelector<HTMLFormElement>(
+        "#conversation-composer",
+    )!;
+    expect(
+        (form.elements.namedItem("revise_source") as HTMLInputElement).value,
+    ).toBe("abc");
+    expect(
+        (form.elements.namedItem("revise_active_leaf") as HTMLInputElement)
+            .value,
+    ).toBe("def");
+    expect(
+        document.querySelector<HTMLTextAreaElement>("#composer-message")!.value,
+    ).toBe("");
+    expect(document.querySelector("[data-revision-state]")).not.toBeNull();
+    expect(
+        (form.elements.namedItem("revision") as HTMLInputElement).value,
+    ).toBe("5");
+
+    document.querySelector("[data-revision-state]")!.remove();
+    document.querySelector<HTMLTextAreaElement>("#composer-message")!.value =
+        "";
+    for (const listener of settled)
+        listener({
+            requestKind: "patch",
+            form,
+            url: "/messages",
+            outcome: "applied-patch",
+            status: 200,
+            targetIds: ["conversation-detail"],
+        });
+    settle(["conversation-detail"]);
+    expect(document.querySelector("[data-revision-state]")).toBeNull();
+    expect(
+        document.querySelector<HTMLTextAreaElement>("#composer-message")!.value,
+    ).toBe("");
+});
+
+test("Revise confirms before it discards an unrelated unsent draft", () => {
+    document.body.innerHTML = `<section id="conversation-detail">
+        <form id="conversation-composer">
+            <textarea id="composer-message">Unsent draft</textarea>
+        </form>
+        <a id="revise-link" href="/conversations/one?revise=abc" data-revise-prompt>Revise</a>
+    </section>`;
+    const confirm = vi.fn().mockReturnValue(false);
+    vi.stubGlobal("confirm", confirm);
+    const link = document.getElementById("revise-link")!;
+    const dispatched = link.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true }),
+    );
+    expect(confirm).toHaveBeenCalled();
+    expect(dispatched).toBe(false);
+    expect(
+        document.querySelector<HTMLTextAreaElement>("#composer-message")!.value,
+    ).toBe("Unsent draft");
+});
+
+test("a link navigation keeps the revision target across an unrelated view", () => {
+    document.body.innerHTML = `<section id="conversation-detail">
+        <template data-conversation-url="/conversations/one"></template>
+        <form id="conversation-composer">
+            <div data-revision-state
+                data-revision-source="abc"
+                data-revision-parent=""
+                data-revision-active-leaf="def"
+                data-revision-revision="5"
+                data-revision-text="Original prompt">
+                <a href="/conversations/one" data-cancel-revision>Cancel revision</a>
+            </div>
+            <textarea id="composer-message"></textarea>
+        </form>
+    </section>`;
+    const navigate = () => {
+        for (const listener of locations)
+            listener({
+                url: "http://localhost/conversations/one/tree",
+                cause: "link-navigation",
+            });
+    };
+    navigate();
+    document.querySelector("[data-revision-state]")!.remove();
+    document.querySelector<HTMLTextAreaElement>("#composer-message")!.value =
+        "";
+    navigate();
+    const form = document.querySelector<HTMLFormElement>(
+        "#conversation-composer",
+    )!;
+    expect(
+        (form.elements.namedItem("revise_source") as HTMLInputElement).value,
+    ).toBe("abc");
+    expect(document.querySelector("[data-revision-state]")).not.toBeNull();
+    expect(
+        document.querySelector<HTMLTextAreaElement>("#composer-message")!.value,
+    ).toBe("");
+
+    // A different conversation never inherits the previous target.
+    const identity = document.querySelector<HTMLElement>(
+        "[data-conversation-url]",
+    )!;
+    identity.dataset.conversationUrl = "/conversations/two";
+    document.querySelector("[data-revision-state]")!.remove();
+    navigate();
+    expect(document.querySelector("[data-revision-state]")).toBeNull();
 });

@@ -40,7 +40,8 @@ use crate::{
     agents::AgentId,
     conversations::{
         CandidateReviewCreation, CandidateReviewLink, ConversationError, ConversationId,
-        ConversationModelConfiguration, ConversationRecord, MessageId, TranscriptCursor,
+        ConversationModelConfiguration, ConversationRecord, MessageId, RevisionRequest,
+        TranscriptCursor,
     },
     environments::EnvironmentId,
     error::{AppError, AppResult},
@@ -54,7 +55,7 @@ use crate::{
 use self::page::model_picker::ModelPicker;
 use self::page::{
     CandidateReviewLinkView, CandidateReviewView, CatalogueView, ConversationDetailView,
-    ModelSources, PresetOption,
+    ModelSources, PresetOption, RevisionDraft,
 };
 
 const REVISION_MESSAGE: &str = "Reload the conversation and try again.";
@@ -116,6 +117,10 @@ pub(super) fn router() -> Router<AppState> {
         .route(
             "/conversations/{conversation_id}/tree/continue",
             post(tree::continue_here),
+        )
+        .route(
+            "/conversations/{conversation_id}/tree/revise",
+            get(tree::revise),
         )
         .route(
             "/conversations/{conversation_id}/workflow",
@@ -291,6 +296,45 @@ struct RevisionForm {
 struct MessageForm {
     revision: String,
     message: String,
+    #[serde(default)]
+    revise_source: String,
+    #[serde(default)]
+    revise_parent: String,
+    #[serde(default)]
+    revise_active_leaf: String,
+}
+
+impl MessageForm {
+    /// Parse an optional replacement prompt. Every revision field must be
+    /// present together; the store still validates each value against its own
+    /// retained path before it appends anything.
+    fn revision_request(&self) -> Result<Option<RevisionRequest>, &'static str> {
+        let source = self.revise_source.trim();
+        let parent = self.revise_parent.trim();
+        let active_leaf = self.revise_active_leaf.trim();
+        if source.is_empty() {
+            if parent.is_empty() && active_leaf.is_empty() {
+                return Ok(None);
+            }
+            return Err("That prompt revision is not valid.");
+        }
+        let source = MessageId::parse(source).ok_or("That prompt revision is not valid.")?;
+        if active_leaf.is_empty() {
+            return Err("That prompt revision is not valid.");
+        }
+        let active_leaf =
+            MessageId::parse(active_leaf).ok_or("That prompt revision is not valid.")?;
+        let parent = if parent.is_empty() {
+            None
+        } else {
+            Some(MessageId::parse(parent).ok_or("That prompt revision is not valid.")?)
+        };
+        Ok(Some(RevisionRequest {
+            source,
+            parent,
+            active_leaf: Some(active_leaf),
+        }))
+    }
 }
 
 #[derive(Default, Deserialize)]
@@ -352,6 +396,9 @@ struct ObserveQuery {
     /// An explicit inspection leaf. The transcript follows its path without
     /// changing the active leaf.
     leaf: String,
+    /// A retained user prompt to restore as a replacement draft. It opens the
+    /// composer without a durable mutation or a model call.
+    revise: String,
     historical: bool,
     #[serde(default)]
     title: bool,
@@ -404,6 +451,21 @@ impl ObserveQuery {
 
     fn has_inspection_leaf(&self) -> bool {
         !self.leaf.trim().is_empty()
+    }
+
+    fn revision_source(&self) -> (Option<MessageId>, &'static str) {
+        let raw = self.revise.trim();
+        if raw.is_empty() {
+            return (None, "");
+        }
+        match MessageId::parse(raw) {
+            Some(source) => (Some(source), ""),
+            None => (None, "That prompt revision is not valid."),
+        }
+    }
+
+    fn has_revision(&self) -> bool {
+        !self.revise.trim().is_empty()
     }
 }
 
@@ -499,6 +561,31 @@ async fn detail(
             "Observation cannot use a transcript position.",
         );
     }
+    if query.has_revision() {
+        if query.has_transcript_cursor()
+            || !query.job.is_empty()
+            || !query.cursor.is_empty()
+            || query.title
+            || query.historical
+        {
+            return render_transcript(
+                &state,
+                session.0,
+                graft,
+                conversation,
+                None,
+                None,
+                "Observation cannot use a prompt revision.",
+            );
+        }
+        let (source, source_error) = query.revision_source();
+        let error = if source_error.is_empty() {
+            leaf_error
+        } else {
+            source_error
+        };
+        return render_revision(&state, session.0, graft, conversation, source, leaf, error);
+    }
     if graft == GraftRequest::Patch && query.title {
         let Some(record) = state.conversations.get(&conversation) else {
             return Ok(responses::request_navigation(graft, "/conversations"));
@@ -583,6 +670,84 @@ fn render_transcript(
         Some(&window),
         leaf,
     );
+    render_detail(state, session, graft, status, view)
+}
+
+/// Restore one retained user prompt as a replacement draft. The route is a
+/// canonical GET: it writes no record, selects no branch and starts no model
+/// call. Send performs the atomic append.
+fn render_revision(
+    state: &AppState,
+    session: crate::sessions::SessionId,
+    graft: GraftRequest,
+    conversation: ConversationId,
+    source: Option<MessageId>,
+    leaf: Option<MessageId>,
+    error: &'static str,
+) -> AppResult<Response> {
+    let (record, window, mut error) =
+        match state
+            .conversations
+            .transcript_window(&conversation, None, leaf)
+        {
+            Ok(Some((record, window))) => (record, window, error),
+            Ok(None) => return Ok(responses::request_navigation(graft, "/conversations")),
+            Err(ConversationError::Entry) => {
+                match state
+                    .conversations
+                    .transcript_window(&conversation, None, None)
+                {
+                    Ok(Some((record, window))) => {
+                        (record, window, ConversationError::Entry.message())
+                    }
+                    Ok(None) => return Ok(responses::request_navigation(graft, "/conversations")),
+                    Err(error) => return Err(AppError::new("load revision transcript", error)),
+                }
+            }
+            Err(error) => return Err(AppError::new("load revision transcript", error)),
+        };
+    let draft = if error.is_empty() {
+        match source {
+            Some(source) => match state.conversations.revision_source(&conversation, source) {
+                Ok(Some(revision)) => {
+                    let active_leaf = state
+                        .conversations
+                        .metadata_for(&conversation)
+                        .and_then(|metadata| metadata.active_leaf);
+                    Some(RevisionDraft::from_source(
+                        revision,
+                        record.revision,
+                        active_leaf,
+                    ))
+                }
+                Ok(None) => return Ok(responses::request_navigation(graft, "/conversations")),
+                Err(entry) => {
+                    error = entry.message();
+                    None
+                }
+            },
+            None => None,
+        }
+    } else {
+        None
+    };
+    let status = if error.is_empty() {
+        PatchStatus::Ok
+    } else {
+        PatchStatus::UnprocessableEntity
+    };
+    let mut view = detail_view_with_transcript(
+        state,
+        session,
+        &record,
+        &record.title,
+        error,
+        Some(&window),
+        leaf,
+    );
+    if let Some(draft) = draft {
+        view = view.with_revision(draft);
+    }
     render_detail(state, session, graft, status, view)
 }
 
@@ -1177,16 +1342,42 @@ async fn send_message(
             ),
         );
     };
-    match start_message(
-        &state,
-        session.0,
-        record.clone(),
-        revision,
-        model,
-        form.message,
-    )
-    .await
-    {
+    let revise = match form.revision_request() {
+        Ok(revise) => revise,
+        Err(error) => {
+            return render_detail_command(
+                graft,
+                PatchStatus::UnprocessableEntity,
+                detail_view(&state, session.0, &record, &record.title, error),
+            );
+        }
+    };
+    let result = match revise {
+        Some(revise) => {
+            start_revision(
+                &state,
+                session.0,
+                record.clone(),
+                revision,
+                model,
+                form.message,
+                revise,
+            )
+            .await
+        }
+        None => {
+            start_message(
+                &state,
+                session.0,
+                record.clone(),
+                revision,
+                model,
+                form.message,
+            )
+            .await
+        }
+    };
+    match result {
         Ok(started) => render_detail_command(
             graft,
             PatchStatus::Ok,
@@ -1320,7 +1511,47 @@ pub(super) async fn start_message(
     model: ConversationModelConfiguration,
     text: String,
 ) -> Result<ConversationRecord, StartMessageError> {
-    start_message_mode(state, session, record, revision, model, text, None).await
+    start_message_mode(
+        state,
+        session,
+        record,
+        revision,
+        model,
+        text,
+        MessageAppend::Ordinary,
+    )
+    .await
+}
+
+/// Choose which durable exchange an ordinary model request appends.
+enum MessageAppend {
+    Ordinary,
+    FollowUp(crate::conversations::QueueItemId, u32),
+    Revision(RevisionRequest),
+}
+
+/// Append a replacement prompt as a new branch through the ordinary model
+/// path. Preflight, workflow selection and settlement are shared with an
+/// ordinary send; only the durable append differs.
+async fn start_revision(
+    state: &AppState,
+    session: crate::sessions::SessionId,
+    record: ConversationRecord,
+    revision: u32,
+    model: ConversationModelConfiguration,
+    text: String,
+    revise: RevisionRequest,
+) -> Result<ConversationRecord, StartMessageError> {
+    start_message_mode(
+        state,
+        session,
+        record,
+        revision,
+        model,
+        text,
+        MessageAppend::Revision(revise),
+    )
+    .await
 }
 
 async fn start_message_mode(
@@ -1330,7 +1561,7 @@ async fn start_message_mode(
     revision: u32,
     model: ConversationModelConfiguration,
     text: String,
-    follow_up: Option<(crate::conversations::QueueItemId, u32)>,
+    append: MessageAppend,
 ) -> Result<ConversationRecord, StartMessageError> {
     let persisted_model = model.clone();
     // Reject file access for immutable-evidence conversations before any runtime
@@ -1423,8 +1654,16 @@ async fn start_message_mode(
         })?;
     let launch_brief = text.trim().to_owned();
     let phase_model = model.clone();
-    let started = match follow_up {
-        Some((item_id, queue_revision)) => state.conversations.begin_follow_up(
+    let started = match append {
+        MessageAppend::Revision(revise) => state.conversations.revise_message_with_model(
+            &record.id,
+            revision,
+            revise,
+            Some(persisted_model),
+            job.id(),
+            text,
+        ),
+        MessageAppend::FollowUp(item_id, queue_revision) => state.conversations.begin_follow_up(
             &record.id,
             revision,
             queue_revision,
@@ -1432,7 +1671,7 @@ async fn start_message_mode(
             job.id(),
             Some(persisted_model),
         ),
-        None => state.conversations.begin_message_with_model(
+        MessageAppend::Ordinary => state.conversations.begin_message_with_model(
             &record.id,
             revision,
             Some(persisted_model),
@@ -1656,7 +1895,7 @@ pub(crate) async fn continue_follow_ups(
         revision,
         model,
         item.text,
-        Some((item.id, queue_revision)),
+        MessageAppend::FollowUp(item.id, queue_revision),
     )
     .await;
 }

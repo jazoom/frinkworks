@@ -87,6 +87,24 @@ pub(crate) struct TreeTip {
     pub(crate) text: String,
 }
 
+/// The frozen prompt that a revision draft restores into the composer. The
+/// parent is the branch point that a replacement prompt extends.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RevisionSource {
+    pub(crate) id: MessageId,
+    pub(crate) parent: Option<MessageId>,
+    pub(crate) text: String,
+}
+
+/// One replacement prompt submission. The client binds every field; the store
+/// validates each against its own retained path before any append.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct RevisionRequest {
+    pub(crate) source: MessageId,
+    pub(crate) parent: Option<MessageId>,
+    pub(crate) active_leaf: Option<MessageId>,
+}
+
 /// One bounded page of tree entries. `partial` reports that a bounded search
 /// stopped at its work budget instead of an exhaustive match set.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -682,6 +700,146 @@ impl ConversationStore {
             last.status,
         );
         self.commit_result(*id, result)?;
+        database.load(id)?.ok_or(ConversationError::Missing)
+    }
+
+    pub(crate) fn revision_source(
+        &self,
+        id: &ConversationId,
+        source: MessageId,
+    ) -> Result<Option<RevisionSource>, ConversationError> {
+        let database = self.database();
+        if database.load_shell(id)?.is_none() {
+            return Ok(None);
+        }
+        let messages = source_path(&database, id, source)?;
+        let Some(last) = messages.last() else {
+            return Err(ConversationError::Entry);
+        };
+        if last.role != MessageRole::User {
+            return Err(ConversationError::Entry);
+        }
+        let parent_path = &messages[..messages.len() - 1];
+        if !parent_path.is_empty() && !branchable(parent_path) {
+            return Err(ConversationError::Entry);
+        }
+        Ok(Some(RevisionSource {
+            id: source,
+            parent: parent_path.last().map(|message| message.id),
+            text: last.text.clone(),
+        }))
+    }
+
+    /// Append a replacement prompt as a new child of the source prompt's
+    /// parent. The committed record selects the parent path and appends the
+    /// new exchange in one transaction, so the original entry and every
+    /// descendant stay retained as an independent branch. The source entry,
+    /// its parent and the expected active leaf are validated before any write.
+    pub(crate) fn revise_message_with_model(
+        &self,
+        id: &ConversationId,
+        expected_revision: u32,
+        revision: RevisionRequest,
+        model: Option<ConversationModelConfiguration>,
+        request: JobId,
+        text: String,
+    ) -> Result<ConversationRecord, ConversationError> {
+        let text = normalise_message(&text)?;
+        let mut database = self.database();
+        self.require_durable(id)?;
+        let Some(shell) = database.load_shell(id)? else {
+            return Err(ConversationError::Missing);
+        };
+        if shell.revision != expected_revision {
+            return Err(ConversationError::Conflict);
+        }
+        if shell.active_job.is_some() || shell.continuation.is_some() {
+            return Err(ConversationError::Active);
+        }
+        if !shell.queue.items.is_empty() || self.questions.has_pending(*id) {
+            return Err(ConversationError::Active);
+        }
+        let current_leaf = database
+            .metadata(id)?
+            .and_then(|metadata| metadata.active_leaf);
+        if current_leaf != revision.active_leaf {
+            return Err(ConversationError::Conflict);
+        }
+        let messages = source_path(&database, id, revision.source)?;
+        let Some(source) = messages.last() else {
+            return Err(ConversationError::Entry);
+        };
+        if source.role != MessageRole::User {
+            return Err(ConversationError::Entry);
+        }
+        let parent_path = messages[..messages.len() - 1].to_vec();
+        let parent = parent_path.last().map(|message| message.id);
+        if parent != revision.parent {
+            return Err(ConversationError::Conflict);
+        }
+        if !parent_path.is_empty() && !branchable(&parent_path) {
+            return Err(ConversationError::Entry);
+        }
+        // The previous projection must be the parent path, never the current
+        // active path. `write_messages` deletes entries absent from the
+        // previous record, so naming only retained ancestors keeps the
+        // replaced prompt and its descendants.
+        let mut previous = shell.clone();
+        previous.messages = parent_path.clone();
+        project_active_path(&mut previous);
+        let mut updated = shell.clone();
+        updated.messages = parent_path;
+        if let Some(model) = model {
+            updated.model = Some(model);
+        }
+        let user_id = MessageId::generate().map_err(|_| ConversationError::Random)?;
+        let assistant_id = MessageId::generate().map_err(|_| ConversationError::Random)?;
+        updated.messages.push(ConversationMessage {
+            parent: None,
+            id: user_id,
+            role: MessageRole::User,
+            text,
+            activity: Vec::new(),
+            continuation: Vec::new(),
+            status: MessageStatus::Complete,
+            error: None,
+            request: None,
+            completion: None,
+            requests: Vec::new(),
+        });
+        updated.messages.push(ConversationMessage {
+            parent: None,
+            id: assistant_id,
+            role: MessageRole::Assistant,
+            text: String::new(),
+            activity: Vec::new(),
+            continuation: Vec::new(),
+            status: MessageStatus::Pending,
+            error: None,
+            request: Some(request),
+            completion: None,
+            requests: Vec::new(),
+        });
+        updated.active_job = Some(request);
+        updated.revision = shell
+            .revision
+            .checked_add(1)
+            .ok_or(ConversationError::Revision)?;
+        updated.updated_at_ms = now_ms().max(shell.updated_at_ms);
+        project_active_path(&mut updated);
+        updated.compaction = database.path_compaction(id, &updated.messages)?;
+        // A replacement that changes access settings must not carry approvals
+        // from the abandoned configuration.
+        let access_digest = |record: &ConversationRecord| {
+            record
+                .model
+                .as_ref()
+                .map(|model| crate::execution::settings_digest(&model.settings))
+        };
+        if access_digest(&shell) != access_digest(&updated) {
+            updated.directory_approvals.clear();
+        }
+        self.persist(&mut database, Some(&previous), &updated)?;
         database.load(id)?.ok_or(ConversationError::Missing)
     }
 
@@ -1981,6 +2139,24 @@ fn branchable(messages: &[ConversationMessage]) -> bool {
     messages.last().is_some_and(|message| {
         message.role == MessageRole::Assistant && message.status == MessageStatus::Complete
     }) && super::history::project(messages, None).is_ok()
+}
+
+/// Load the root-first path that ends at one retained entry. A missing or
+/// foreign entry is a rejected cursor, not an empty path.
+fn source_path(
+    database: &Database,
+    id: &ConversationId,
+    source: MessageId,
+) -> Result<Vec<ConversationMessage>, ConversationError> {
+    let files = database.load_messages(id, Some(&source.as_hex()))?;
+    let messages: Vec<ConversationMessage> = files
+        .into_iter()
+        .map(message_from_file)
+        .collect::<Result<Vec<_>, _>>()?;
+    match messages.last() {
+        Some(last) if last.id == source => Ok(messages),
+        _ => Err(ConversationError::Entry),
+    }
 }
 
 fn unused_identifier(database: &Database) -> Result<ConversationId, ConversationError> {
