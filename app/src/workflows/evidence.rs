@@ -130,6 +130,20 @@ impl AttemptEvidenceContext {
             .append_history(self.run_id, self.attempt_id, turn, &self.phase)
     }
 
+    /// The durable source position already covered by a committed summary,
+    /// when the attempt has one. The next compaction continues from it.
+    pub(crate) fn covered_through(&self) -> Option<u32> {
+        self.store
+            .get(&self.run_id, &self.attempt_id)
+            .and_then(|record| {
+                record
+                    .compaction
+                    .map(|compaction| compaction.covered_through)
+            })
+    }
+
+    /// `covered_through` is an absolute position in the durable attempt
+    /// history. It never counts offsets in an already compacted projection.
     pub(crate) fn compaction(
         &self,
         covered_through: u32,
@@ -669,12 +683,12 @@ impl WorkflowEvidenceStore {
         if next.phase != phase {
             return Err(EvidenceError::Conflict);
         }
-        let mut compaction = compaction;
-        if let Some(previous) = &next.compaction {
-            compaction.covered_through = previous
-                .covered_through
-                .checked_add(compaction.covered_through)
-                .ok_or(EvidenceError::Full)?;
+        if next
+            .compaction
+            .as_ref()
+            .is_some_and(|previous| compaction.covered_through <= previous.covered_through)
+        {
+            return Err(EvidenceError::Conflict);
         }
         next.compaction = Some(compaction);
         persist_record(self.dir.as_deref(), &mut next)?;
@@ -775,6 +789,13 @@ fn validate_record(record: &AttemptEvidence) -> Result<(), EvidenceError> {
             || crate::conversations::compaction::normalise_preserve(summary.preserve.as_deref())
                 .is_err()
             || crate::conversations::compaction::validate_summary(&summary.text, None).is_err()
+            || crate::conversations::compaction::project_turns(
+                &record.history,
+                summary.covered_through as usize,
+                &summary.text,
+                &summary.requests,
+            )
+            .is_err()
     }) {
         return Err(EvidenceError::Corrupt);
     }

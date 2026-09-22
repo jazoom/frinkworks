@@ -168,6 +168,22 @@ fn compaction_survives_restart_with_a_later_pending_request() {
     assert!(projected[0].text.ends_with("Earlier context"));
     assert_eq!(projected[1].text, "Retained");
     assert_eq!(projected.last().unwrap().text, "Next request");
+    let context = reopened.context_record(&record.id).unwrap();
+    assert!(
+        !context
+            .messages
+            .iter()
+            .any(|message| message.id == original[0].id)
+    );
+    assert_eq!(
+        crate::conversations::compaction::project(
+            &context.messages,
+            None,
+            context.compaction.as_ref(),
+        )
+        .unwrap(),
+        projected
+    );
 }
 
 #[test]

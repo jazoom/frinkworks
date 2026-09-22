@@ -615,6 +615,12 @@ impl ConversationStore {
         self.database().load(id).ok().flatten()
     }
 
+    /// The model projection for the next provider dispatch. It loads the
+    /// summary and the retained suffix without reading covered message bodies.
+    pub(crate) fn context_record(&self, id: &ConversationId) -> Option<ConversationRecord> {
+        self.database().load_context(id).ok().flatten()
+    }
+
     /// Load metadata and one bounded transcript window without reading every
     /// retained message body. `Err(Entry)` reports a foreign cursor entry.
     pub(crate) fn transcript_window(

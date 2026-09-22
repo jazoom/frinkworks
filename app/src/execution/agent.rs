@@ -26,6 +26,8 @@ pub(crate) struct AgentRunSpec {
     pub(crate) agent_id: Option<AgentId>,
     pub(crate) revision: u32,
     pub(crate) preamble: String,
+    /// Candidate-bound inputs remain outside durable summary coverage.
+    pub(crate) context_prefix_len: usize,
     pub(crate) tools: Vec<rig_core::completion::ToolDefinition>,
     pub(crate) tool_ids: Vec<ToolId>,
     pub(crate) policy: DirectoryPolicy,
@@ -155,7 +157,9 @@ pub(crate) async fn run_agent_action(
             }
             if overflow_recovery > 0 && summary_attempts == 0 {
                 summary_attempts += 1;
-                if let Err(error) = compact_history(state, &spec, &job, &mut turns).await {
+                if let Err(error) =
+                    compact_history(state, &spec, &job, &mut turns, &extra, &request_tools).await
+                {
                     return with_reply(error, reply);
                 }
             }
@@ -1685,9 +1689,11 @@ fn current_conversation_turns(
     state: &AppState,
     spec: &AgentRunSpec,
 ) -> Result<Vec<ChatTurn>, &'static str> {
+    // The summary and retained suffix load directly. Covered message bodies
+    // stay on disk for the transcript and the tree.
     let record = spec
         .conversation
-        .and_then(|id| state.conversations.get(&id))
+        .and_then(|id| state.conversations.context_record(&id))
         .ok_or("The conversation is unavailable.")?;
     let secret = (spec.connection.auth == crate::providers::AuthMethod::ApiKey)
         .then(|| spec.connection.api_key.expose());
@@ -1766,17 +1772,22 @@ async fn compact_if_needed(
     job.set_context(estimate);
     let compactable = if spec.steering_session.is_some() {
         spec.conversation.is_some_and(|id| {
-            state.conversations.get(&id).is_some_and(|record| {
-                crate::conversations::compaction::select_boundary(
-                    &record.messages,
-                    record.compaction.as_ref(),
-                )
-                .is_ok()
-            })
+            state
+                .conversations
+                .context_record(&id)
+                .is_some_and(|record| {
+                    crate::conversations::compaction::has_boundary(
+                        &record.messages,
+                        record.compaction.as_ref(),
+                    )
+                })
         })
     } else {
-        spec.evidence.is_some()
-            && crate::conversations::compaction::workflow_cover_index(turns).is_ok()
+        spec.evidence.is_some() && {
+            let source = &turns[spec.context_prefix_len..];
+            crate::conversations::compaction::exchange_ends(source)
+                .is_ok_and(|ends| ends.len() >= 2)
+        }
     };
     if !estimate.needs_compaction(compactable) {
         return Ok(());
@@ -1785,7 +1796,62 @@ async fn compact_if_needed(
         return Ok(());
     }
     *summary_attempts += 1;
-    compact_history(state, spec, job, turns).await
+    compact_history(state, spec, job, turns, extra, tools).await
+}
+
+fn run_selection(spec: &AgentRunSpec) -> crate::providers::ModelSelection {
+    crate::providers::ModelSelection {
+        provider: spec.connection.kind,
+        model: spec.connection.model.clone(),
+        thinking: None,
+    }
+}
+
+/// Reserve space for the replacement summary, independently of its generation request.
+fn retention_budget_for(
+    state: &AppState,
+    spec: &AgentRunSpec,
+    extra: &[Message],
+    tools: &[rig_core::completion::ToolDefinition],
+    estimate: crate::execution::ContextEstimate,
+    turns: &[ChatTurn],
+) -> u64 {
+    let source = &turns[spec.context_prefix_len..];
+    let pending_start = source
+        .iter()
+        .rposition(|turn| {
+            turn.role == crate::providers::Role::Assistant
+                && turn.calls.iter().all(|call| call.result.is_some())
+        })
+        .map_or(0, |index| index + 1);
+    let mut fixed = turns[..spec.context_prefix_len].to_vec();
+    fixed.extend_from_slice(&source[pending_start..]);
+    let catalogue = state
+        .models_dev
+        .context_limit(spec.connection.kind, &spec.connection.model);
+    let output_limit = state
+        .models_dev
+        .output_limit(spec.connection.kind, &spec.connection.model);
+    let overhead = crate::execution::context::inspect(
+        crate::execution::ContextRequest {
+            preamble: &spec.preamble,
+            tools,
+            turns: &fixed,
+            extra,
+            provider: spec.connection.kind,
+            model: &spec.connection.model,
+            output_limit,
+        },
+        catalogue,
+    )
+    .map(|overhead| overhead.input_tokens)
+    .unwrap_or(estimate.limit);
+    crate::conversations::compaction::retention_budget(
+        estimate.limit,
+        overhead,
+        estimate.reserved_output_tokens,
+        crate::conversations::compaction::SUMMARY_OUTPUT_TOKENS,
+    )
 }
 
 async fn compact_history(
@@ -1793,12 +1859,14 @@ async fn compact_history(
     spec: &AgentRunSpec,
     job: &Job,
     turns: &mut Vec<ChatTurn>,
+    extra: &[Message],
+    tools: &[rig_core::completion::ToolDefinition],
 ) -> Result<(), AgentActionEnd> {
     if job.cancel_requested() {
         return Err(cancel_action(job, &AssistantReply::default()));
     }
     job.set_compacting();
-    let result = compact_history_inner(state, spec, job, turns).await;
+    let result = compact_history_inner(state, spec, job, turns, extra, tools).await;
     job.clear_compacting();
     result
 }
@@ -1808,57 +1876,77 @@ async fn compact_history_inner(
     spec: &AgentRunSpec,
     job: &Job,
     turns: &mut Vec<ChatTurn>,
+    extra: &[Message],
+    tools: &[rig_core::completion::ToolDefinition],
 ) -> Result<(), AgentActionEnd> {
+    let estimate = current_estimate(state, spec, turns, extra, tools)
+        .map_err(|error| context_blocked(AssistantReply::default(), error))?;
+    job.set_context(estimate);
     if let Some(conversation) = spec
         .conversation
         .filter(|_| spec.steering_session.is_some())
     {
-        let Some(record) = state.conversations.get(&conversation) else {
+        let Some(record) = state.conversations.context_record(&conversation) else {
             return Err(context_blocked(
                 AssistantReply::default(),
                 "The conversation is unavailable.",
             ));
         };
-        if let Ok((covered_through, retained_from)) =
-            crate::conversations::compaction::select_boundary(
-                &record.messages,
-                record.compaction.as_ref(),
-            )
-        {
-            let selection = record
-                .model
-                .as_ref()
-                .map(|model| model.settings.model.clone());
-            let covered = crate::conversations::compaction::covered_turns(
-                &record.messages,
-                selection.as_ref(),
-                covered_through,
-                record.compaction.as_ref(),
-            )
-            .map_err(|error| context_blocked(AssistantReply::default(), error.message()))?;
-            let outcome = generate_summary(state, spec, job, &covered, None).await?;
-            if job.cancel_requested() {
-                return Err(cancel_action(job, &AssistantReply::default()));
-            }
-            let compaction = crate::conversations::CompactionRecord {
-                covered_through,
-                retained_from,
-                text: outcome.text,
-                requests: outcome.requests,
-                preserve: None,
-                created_at_ms: crate::workflows::now_ms(),
-            };
-            state
-                .conversations
-                .record_job_compaction(&conversation, job.id(), compaction.clone())
-                .map_err(|error| store_failure(&AssistantReply::default(), error))?;
-            *turns = current_conversation_turns(state, spec)
-                .map_err(|error| context_blocked(AssistantReply::default(), error))?;
-            return Ok(());
+        let selection = record
+            .model
+            .as_ref()
+            .map(|model| model.settings.model.clone());
+        let budget = retention_budget_for(state, spec, extra, tools, estimate, turns);
+        let (covered_through, retained_from) = crate::conversations::compaction::select_boundary(
+            &record.messages,
+            record.compaction.as_ref(),
+            selection.as_ref(),
+            budget,
+        )
+        .map_err(|error| context_blocked(AssistantReply::default(), error.message()))?;
+        let covered = crate::conversations::compaction::covered_turns(
+            &record.messages,
+            selection.as_ref(),
+            covered_through,
+            record.compaction.as_ref(),
+        )
+        .map_err(|error| context_blocked(AssistantReply::default(), error.message()))?;
+        let outcome = generate_summary(state, spec, job, &covered, None).await?;
+        if job.cancel_requested() {
+            return Err(cancel_action(job, &AssistantReply::default()));
         }
+        let compaction = crate::conversations::CompactionRecord {
+            covered_through,
+            retained_from,
+            text: outcome.text,
+            requests: outcome.requests,
+            preserve: None,
+            created_at_ms: crate::workflows::now_ms(),
+        };
+        let replacement = crate::conversations::compaction::project(
+            &record.messages,
+            selection.as_ref(),
+            Some(&compaction),
+        )
+        .map_err(|error| context_blocked(AssistantReply::default(), error.message()))?;
+        measure_replacement(state, spec, job, &replacement, extra, tools)
+            .map_err(|error| context_blocked(AssistantReply::default(), error))?;
+        state
+            .conversations
+            .record_job_compaction(&conversation, job.id(), compaction)
+            .map_err(|error| store_failure(&AssistantReply::default(), error))?;
+        *turns = current_conversation_turns(state, spec)
+            .map_err(|error| context_blocked(AssistantReply::default(), error))?;
         return Ok(());
     }
-    let cover = match crate::conversations::compaction::workflow_cover_index(turns) {
+    let selection = run_selection(spec);
+    let source = &turns[spec.context_prefix_len..];
+    let budget = retention_budget_for(state, spec, extra, tools, estimate, turns);
+    let cover = match crate::conversations::compaction::workflow_cover_index(
+        source,
+        Some(&selection),
+        budget,
+    ) {
         Ok(cover) => cover,
         Err(crate::conversations::compaction::CompactionError::NothingToCompact) => {
             return Ok(());
@@ -1867,25 +1955,34 @@ async fn compact_history_inner(
             return Err(context_blocked(AssistantReply::default(), error.message()));
         }
     };
-    let outcome = generate_summary(state, spec, job, &turns[..=cover], None).await?;
+    let outcome = generate_summary(state, spec, job, &source[..=cover], None).await?;
     if job.cancel_requested() {
         return Err(cancel_action(job, &AssistantReply::default()));
     }
-    let projected = crate::conversations::compaction::project_turns(
-        turns,
-        cover,
-        &outcome.text,
-        &outcome.requests,
-    )
-    .map_err(|error| context_blocked(AssistantReply::default(), error.message()))?;
+    let mut projected = turns[..spec.context_prefix_len].to_vec();
+    projected.extend(
+        crate::conversations::compaction::project_turns(
+            source,
+            cover,
+            &outcome.text,
+            &outcome.requests,
+        )
+        .map_err(|error| context_blocked(AssistantReply::default(), error.message()))?,
+    );
+    measure_replacement(state, spec, job, &projected, extra, tools)
+        .map_err(|error| context_blocked(AssistantReply::default(), error))?;
     let evidence = spec.evidence.as_ref().ok_or_else(|| {
         context_blocked(
             AssistantReply::default(),
             "The summary has no durable history owner.",
         )
     })?;
+    // Coverage is an absolute durable position, never an offset in a
+    // previously compacted projection.
+    let covered_before = evidence.covered_through();
+    let absolute = covered_before.map_or(cover as u32, |value| value.saturating_add(cover as u32));
     evidence
-        .compaction(cover as u32, &outcome.text, outcome.requests, None)
+        .compaction(absolute, &outcome.text, outcome.requests, None)
         .map_err(|error| {
             end(
                 AgentOutcome::PersistenceFailure,
@@ -1895,6 +1992,61 @@ async fn compact_history_inner(
         })?;
     *turns = projected;
     Ok(())
+}
+
+fn current_estimate(
+    state: &AppState,
+    spec: &AgentRunSpec,
+    turns: &[ChatTurn],
+    extra: &[Message],
+    tools: &[rig_core::completion::ToolDefinition],
+) -> Result<crate::execution::ContextEstimate, &'static str> {
+    let request = crate::execution::ContextRequest {
+        preamble: &spec.preamble,
+        tools,
+        turns,
+        extra,
+        provider: spec.connection.kind,
+        model: &spec.connection.model,
+        output_limit: state
+            .models_dev
+            .output_limit(spec.connection.kind, &spec.connection.model),
+    };
+    let catalogue = state
+        .models_dev
+        .context_limit(spec.connection.kind, &spec.connection.model);
+    crate::execution::context::inspect(request, catalogue).map_err(|error| error.message())
+}
+
+fn measure_replacement(
+    state: &AppState,
+    spec: &AgentRunSpec,
+    job: &Job,
+    turns: &[ChatTurn],
+    extra: &[Message],
+    tools: &[rig_core::completion::ToolDefinition],
+) -> Result<(), &'static str> {
+    let request = crate::execution::ContextRequest {
+        preamble: &spec.preamble,
+        tools,
+        turns,
+        extra,
+        provider: spec.connection.kind,
+        model: &spec.connection.model,
+        output_limit: state
+            .models_dev
+            .output_limit(spec.connection.kind, &spec.connection.model),
+    };
+    let catalogue = state
+        .models_dev
+        .context_limit(spec.connection.kind, &spec.connection.model);
+    match crate::execution::context::measure(request, catalogue) {
+        Ok(estimate) => {
+            job.set_context(estimate);
+            Ok(())
+        }
+        Err(error) => Err(error.message()),
+    }
 }
 
 async fn generate_summary(

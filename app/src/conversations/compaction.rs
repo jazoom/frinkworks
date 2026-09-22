@@ -12,6 +12,10 @@ mod tests;
 
 pub(crate) const MAXIMUM_SUMMARY_BYTES: usize = 128 * 1024;
 pub(crate) const SUMMARY_OUTPUT_TOKENS: u64 = 10_000;
+/// Application-selected budget for retained recent context. It bounds the
+/// complete exchanges that stay in the model projection after a summary. It is
+/// separate from the summary output allowance and from permanent retention.
+pub(crate) const RECENT_CONTEXT_TOKENS: u64 = 20_000;
 pub(crate) const MAXIMUM_PRESERVE_BYTES: usize = 2 * 1024;
 pub(crate) const MAXIMUM_SUMMARY_ATTEMPTS: u32 = 2;
 pub(crate) const MAXIMUM_OVERFLOW_RECOVERY: u32 = 1;
@@ -43,6 +47,8 @@ pub(crate) enum CompactionError {
     Persist,
     /// One complete exchange is larger than a summary request can carry.
     Oversized,
+    /// No complete exchange fits the recent-context retention budget.
+    Retention,
     /// The selected model cannot reserve the summary output allowance.
     Output,
     Requests,
@@ -64,6 +70,9 @@ impl CompactionError {
             }
             Self::Oversized => {
                 "One complete exchange is too large to summarise. The previous context remains."
+            }
+            Self::Retention => {
+                "No complete exchange fits the recent-context budget. The previous context remains."
             }
             Self::Output => {
                 "The selected model cannot supply the 10,000-token summary allowance. The previous context remains."
@@ -129,10 +138,85 @@ pub(crate) fn summary_preamble(preserve: Option<&str>) -> Result<String, Compact
     Ok(preamble)
 }
 
-/// Keep the latest complete exchange. Summarise earlier complete exchanges.
+/// Reserve replacement-summary space once in the ordinary request budget.
+/// The summary generator separately budgets its own request.
+pub(crate) fn retention_budget(
+    limit: u64,
+    overhead_tokens: u64,
+    reserved_output_tokens: u64,
+    previous_summary_tokens: u64,
+) -> u64 {
+    let available = limit
+        .saturating_sub(overhead_tokens)
+        .saturating_sub(reserved_output_tokens)
+        .saturating_sub(previous_summary_tokens.max(SUMMARY_OUTPUT_TOKENS));
+    RECENT_CONTEXT_TOKENS.min(available)
+}
+
+/// Manual compaction lacks runtime tools and resource instructions.
+/// The automatic path also accounts for those inputs and pending content.
+pub(crate) fn model_retention_budget(
+    selection: &ModelSelection,
+    preamble: &str,
+    catalogue_limit: Option<u64>,
+    output_limit: Option<u64>,
+    previous_summary: Option<&str>,
+) -> u64 {
+    let request = crate::execution::ContextRequest {
+        preamble,
+        tools: &[],
+        turns: &[],
+        extra: &[],
+        provider: selection.provider,
+        model: &selection.model,
+        output_limit,
+    };
+    let Ok(estimate) = crate::execution::context::inspect(request, catalogue_limit) else {
+        return 0;
+    };
+    let previous = previous_summary.map_or(0, |text| {
+        crate::execution::context::count_text(&selection.model, text)
+    });
+    retention_budget(
+        estimate.limit,
+        estimate.input_tokens,
+        estimate.reserved_output_tokens,
+        previous,
+    )
+}
+
+/// Whether a compaction boundary exists independently of the token budget.
+/// Manual compaction stays available when a small retained suffix hides the
+/// action from the automatic budget check.
+pub(crate) fn has_boundary(
+    messages: &[ConversationMessage],
+    current: Option<&CompactionRecord>,
+) -> bool {
+    if current.is_some_and(|record| !record.valid(messages)) {
+        return false;
+    }
+    let settled = messages
+        .iter()
+        .position(|message| message.status == MessageStatus::Pending)
+        .unwrap_or(messages.len());
+    let Ok(ends) = complete_ends(&messages[..settled]) else {
+        return false;
+    };
+    let start = current
+        .and_then(|record| split_index(messages, record))
+        .unwrap_or(0);
+    ends.into_iter().filter(|&index| index >= start).count() >= 2
+}
+
+/// Select a boundary that leaves complete recent exchanges within the token
+/// budget. The walk starts at the latest complete exchange and moves backwards
+/// along the active path. An exchange never splits. If the latest complete
+/// exchange alone exceeds the budget, retention is impossible.
 pub(crate) fn select_boundary(
     messages: &[ConversationMessage],
     current: Option<&CompactionRecord>,
+    selection: Option<&ModelSelection>,
+    budget: u64,
 ) -> Result<(MessageId, MessageId), CompactionError> {
     if current.is_some_and(|record| !record.valid(messages)) {
         return Err(CompactionError::Malformed);
@@ -153,10 +237,69 @@ pub(crate) fn select_boundary(
     if suffix.len() < 2 {
         return Err(CompactionError::NothingToCompact);
     }
-    let covered = suffix[suffix.len() - 2];
+    let count = suffix.len();
+    let budget = budget.min(RECENT_CONTEXT_TOKENS);
+    let mut retained_count = 0usize;
+    for position in (0..count).rev() {
+        let begin = if position == 0 {
+            start
+        } else {
+            suffix[position - 1] + 1
+        };
+        let cost = messages_tokens(selection, &messages[begin..=suffix[count - 1]])?;
+        if retained_count == 0 && cost > budget {
+            return Err(CompactionError::Retention);
+        }
+        if cost > budget {
+            break;
+        }
+        retained_count += 1;
+    }
+    // A compaction always covers at least the earliest complete exchange. When
+    // every exchange fits the budget, retain all but that earliest one so the
+    // action still reduces context without exceeding the retention budget.
+    let retained_count = retained_count.min(count - 1);
+    let covered = suffix[count - retained_count - 1];
     let covered_through = messages[covered].id;
     let retained_from = first_message_after(messages, covered).ok_or(CompactionError::Malformed)?;
     Ok((covered_through, retained_from))
+}
+
+fn messages_tokens(
+    selection: Option<&ModelSelection>,
+    messages: &[ConversationMessage],
+) -> Result<u64, CompactionError> {
+    let turns =
+        super::history::project(messages, selection).map_err(|_| CompactionError::Unsettled)?;
+    Ok(turns_tokens(selection, &turns))
+}
+
+fn turns_tokens(selection: Option<&ModelSelection>, turns: &[ChatTurn]) -> u64 {
+    let Some(selection) = selection else {
+        // Without a selected model the count is a bounded approximation over
+        // the visible text. It is never presented as a measured token count.
+        let bytes: usize = turns.iter().map(turn_text_bytes).sum();
+        return u64::try_from(bytes.div_ceil(4)).unwrap_or(u64::MAX);
+    };
+    crate::execution::context::count_turns(selection.provider, &selection.model, turns)
+        .unwrap_or_else(|_| {
+            let bytes: usize = turns.iter().map(turn_text_bytes).sum();
+            u64::try_from(bytes.div_ceil(4)).unwrap_or(u64::MAX)
+        })
+}
+
+fn turn_text_bytes(turn: &ChatTurn) -> usize {
+    let mut bytes = turn.text.len();
+    for call in &turn.calls {
+        bytes = bytes
+            .saturating_add(call.arguments.to_string().len())
+            .saturating_add(
+                call.result
+                    .as_ref()
+                    .map_or(0, |result| result.output.len() + result.label.len()),
+            );
+    }
+    bytes
 }
 
 pub(crate) fn project(
@@ -217,12 +360,38 @@ pub(crate) fn project_turns(
     Ok(projected)
 }
 
-pub(crate) fn workflow_cover_index(turns: &[ChatTurn]) -> Result<usize, CompactionError> {
+/// Select a workflow compaction boundary over the durable turn projection.
+/// The returned index is relative to `turns`, which may start with a previous
+/// summary turn. The caller maps it onto the durable source position.
+pub(crate) fn workflow_cover_index(
+    turns: &[ChatTurn],
+    selection: Option<&ModelSelection>,
+    budget: u64,
+) -> Result<usize, CompactionError> {
     let ends = exchange_ends(turns)?;
     if ends.len() < 2 {
         return Err(CompactionError::NothingToCompact);
     }
-    Ok(ends[ends.len() - 2])
+    let count = ends.len();
+    let budget = budget.min(RECENT_CONTEXT_TOKENS);
+    let mut retained_count = 0usize;
+    for position in (0..count).rev() {
+        let begin = if position == 0 {
+            0
+        } else {
+            ends[position - 1] + 1
+        };
+        let cost = turns_tokens(selection, &turns[begin..=ends[count - 1]]);
+        if retained_count == 0 && cost > budget {
+            return Err(CompactionError::Retention);
+        }
+        if cost > budget {
+            break;
+        }
+        retained_count += 1;
+    }
+    let retained_count = retained_count.min(count - 1);
+    Ok(ends[count - retained_count - 1])
 }
 
 pub(crate) fn validate_summary(

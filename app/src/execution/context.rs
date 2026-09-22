@@ -189,6 +189,25 @@ fn append_block(text: &mut String, block: &str) {
     text.push_str(block);
 }
 
+/// Count the text tokens of provider-bound turns for a model. Dispatch and
+/// this estimate share the projection in `providers::rig`.
+pub(crate) fn count_turns(
+    provider: ProviderKind,
+    model: &str,
+    turns: &[ChatTurn],
+) -> Result<u64, ContextError> {
+    let messages = crate::providers::project_messages(provider, model, turns, &[])
+        .map_err(|_| ContextError::Continuation)?;
+    let text = crate::providers::projected_token_text(&messages);
+    Ok(count_tokens(model, &text).0)
+}
+
+/// Count tokens for plain text with the same tokenizer mapping as dispatch.
+/// A missing supported mapping falls back to the bounded approximation.
+pub(crate) fn count_text(model: &str, text: &str) -> u64 {
+    count_tokens(model, text).0
+}
+
 pub(crate) fn effective_limit(catalogue_limit: Option<u64>) -> u64 {
     catalogue_limit
         .filter(|limit| *limit > 0)

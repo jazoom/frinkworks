@@ -422,6 +422,7 @@ async fn prepare(
             agent_id: None,
             revision: work.record.revision,
             preamble,
+            context_prefix_len: 0,
             tools: crate::tools::definitions_for(&tools, location),
             tool_ids: tools,
             policy,

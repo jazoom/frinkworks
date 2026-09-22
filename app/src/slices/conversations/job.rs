@@ -45,6 +45,7 @@ pub(super) async fn run(
                 agent_id: None,
                 revision: record.revision,
                 preamble: instructions,
+                context_prefix_len: 0,
                 tools: Vec::new(),
                 tool_ids: Vec::new(),
                 policy: DirectoryPolicy::from_grants(Vec::new(), String::new()),

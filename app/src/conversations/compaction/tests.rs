@@ -10,6 +10,20 @@ fn identifier() -> MessageId {
     MessageId::generate().expect("message id")
 }
 
+fn selection() -> crate::providers::ModelSelection {
+    crate::providers::ModelSelection {
+        provider: ProviderKind::Xai,
+        model: "grok-4.6".to_owned(),
+        thinking: None,
+    }
+}
+
+fn cost(messages: &[ConversationMessage]) -> u64 {
+    let turns =
+        crate::conversations::history::project(messages, Some(&selection())).expect("turns");
+    crate::execution::context::count_turns(ProviderKind::Xai, "grok-4.6", &turns).expect("tokens")
+}
+
 fn usage() -> RequestUsage {
     RequestUsage {
         id: RequestId::generate().expect("request"),
@@ -111,7 +125,9 @@ fn compaction_preserves_consumed_resource_provenance() {
     assert_eq!(sources, vec![source.clone()]);
     let mut request = usage();
     request.sources = sources;
-    let (covered_through, retained_from) = select_boundary(&messages, None).expect("boundary");
+    let budget = cost(&messages[3..=4]);
+    let (covered_through, retained_from) =
+        select_boundary(&messages, None, Some(&selection()), budget).expect("boundary");
     let record = CompactionRecord {
         covered_through,
         retained_from,
@@ -131,11 +147,104 @@ fn compaction_preserves_consumed_resource_provenance() {
 }
 
 #[test]
-fn a_boundary_keeps_the_latest_complete_exchange() {
+fn a_recent_context_budget_keeps_the_latest_complete_exchange() {
     let messages = two_exchanges();
-    let (covered, retained) = select_boundary(&messages, None).expect("boundary");
+    let budget = cost(&messages[2..=3]);
+    let (covered, retained) =
+        select_boundary(&messages, None, Some(&selection()), budget).expect("boundary");
     assert_eq!(covered, messages[1].id);
     assert_eq!(retained, messages[2].id);
+    // When the whole history fits, the earliest exchange is still covered so a
+    // requested compaction always reduces context.
+    let (covered, retained) = select_boundary(
+        &messages,
+        None,
+        Some(&selection()),
+        super::RECENT_CONTEXT_TOKENS,
+    )
+    .expect("boundary");
+    assert_eq!(covered, messages[1].id);
+    assert_eq!(retained, messages[2].id);
+}
+
+#[test]
+fn retention_budget_clamps_against_overhead_and_headroom() {
+    assert_eq!(
+        super::retention_budget(200_000, 1_000, 4_000, 500),
+        super::RECENT_CONTEXT_TOKENS
+    );
+    assert_eq!(super::retention_budget(30_000, 5_000, 4_000, 1_000), 11_000);
+    assert_eq!(super::retention_budget(20_000, 5_000, 4_000, 1_000), 1_000);
+    assert_eq!(super::retention_budget(8_000, 5_000, 4_000, 0), 0);
+}
+
+#[test]
+fn no_complete_exchange_in_the_budget_is_reported() {
+    let messages = vec![
+        user(&"a".repeat(4_000)),
+        assistant(&"b".repeat(4_000)),
+        user("Later"),
+        assistant("Done"),
+    ];
+    assert_eq!(
+        select_boundary(&messages, None, Some(&selection()), 0),
+        Err(CompactionError::Retention)
+    );
+}
+
+#[test]
+fn a_retained_exchange_is_not_split_from_its_tool_result() {
+    let messages = vec![
+        user(&"a".repeat(4_000)),
+        assistant(&"b".repeat(4_000)),
+        user("Run the tool"),
+        assistant_tool(
+            "call-latest",
+            Some(ToolOutput {
+                resource: None,
+                label: "read".to_owned(),
+                output: "latest output".to_owned(),
+                command: None,
+            }),
+        ),
+        user("Continue"),
+        assistant("Done"),
+    ];
+    let budget = cost(&messages[4..=5]);
+    let (covered, retained) =
+        select_boundary(&messages, None, Some(&selection()), budget).expect("boundary");
+    assert_eq!(covered, messages[3].id);
+    assert_eq!(retained, messages[4].id);
+}
+
+#[test]
+fn repeated_coverage_extends_one_previous_summary() {
+    let messages = vec![
+        user(&"a".repeat(4_000)),
+        assistant(&"b".repeat(4_000)),
+        user(&"c".repeat(4_000)),
+        assistant(&"d".repeat(4_000)),
+        user("Recent"),
+        assistant("Recent reply"),
+    ];
+    let first = CompactionRecord {
+        covered_through: messages[1].id,
+        retained_from: messages[2].id,
+        text: "First summary".to_owned(),
+        requests: vec![usage()],
+        preserve: None,
+        created_at_ms: 1,
+    };
+    let budget = cost(&messages[4..=5]);
+    let (covered, retained) =
+        select_boundary(&messages, Some(&first), Some(&selection()), budget).expect("boundary");
+    assert_eq!(covered, messages[3].id);
+    assert_eq!(retained, messages[4].id);
+    let covered = super::covered_turns(&messages, Some(&selection()), covered, Some(&first))
+        .expect("covered turns");
+    assert!(covered[0].text.contains("First summary"));
+    assert_eq!(covered.len(), 3);
+    assert_eq!(covered[1].text, "c".repeat(4_000));
 }
 
 #[test]
@@ -147,7 +256,12 @@ fn a_tool_call_cannot_split_from_its_result() {
         assistant("Done"),
     ];
     assert_eq!(
-        select_boundary(&messages, None),
+        select_boundary(
+            &messages,
+            None,
+            Some(&selection()),
+            super::RECENT_CONTEXT_TOKENS
+        ),
         Err(CompactionError::Unsettled)
     );
 }
@@ -156,7 +270,12 @@ fn a_tool_call_cannot_split_from_its_result() {
 fn one_exchange_cannot_compact() {
     let messages = vec![user("Hello"), assistant("Hi")];
     assert_eq!(
-        select_boundary(&messages, None),
+        select_boundary(
+            &messages,
+            None,
+            Some(&selection()),
+            super::RECENT_CONTEXT_TOKENS
+        ),
         Err(CompactionError::NothingToCompact)
     );
 }
@@ -217,7 +336,12 @@ fn a_missing_cover_boundary_is_rejected() {
     };
     assert!(!record.valid(&messages));
     assert_eq!(
-        select_boundary(&messages, Some(&record)),
+        select_boundary(
+            &messages,
+            Some(&record),
+            Some(&selection()),
+            super::RECENT_CONTEXT_TOKENS
+        ),
         Err(CompactionError::Malformed)
     );
 }

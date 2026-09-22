@@ -9,7 +9,8 @@ use super::{
     CATALOGUE_VERSION, ConversationError, ConversationId, ConversationMessage,
     ConversationMetadata, ConversationRecord, MessageFile, MessageId, MessageRole, MessageStatus,
     MetadataFile, TREE_PAGE, TranscriptCursor, TranscriptWindow, TreeEntry, TreeTip, TreeWindow,
-    message_to_file, metadata_to_file, model_from_file, parse_stored_network, record_from_parts,
+    message_from_file, message_to_file, metadata_to_file, model_from_file, parse_stored_network,
+    record_from_parts,
 };
 
 const DATABASE_NAME: &str = "conversations.sqlite3";
@@ -153,6 +154,92 @@ impl Database {
             return Ok(None);
         };
         record_from_parts(metadata, Vec::new(), summary_requests, false).map(Some)
+    }
+
+    /// Metadata plus the model projection from the committed compaction
+    /// boundary to the active leaf. Covered message bodies are not read. The
+    /// committed summary itself stays in the metadata, so the caller receives
+    /// the summary turn and the retained suffix with one bounded path walk.
+    pub(crate) fn load_context(
+        &self,
+        id: &ConversationId,
+    ) -> Result<Option<ConversationRecord>, ConversationError> {
+        let Some((metadata, summary_requests)) = self.load_header(id)? else {
+            return Ok(None);
+        };
+        let boundary = metadata
+            .compaction
+            .as_ref()
+            .map(|compaction| compaction.covered_through.clone());
+        let files =
+            self.load_context_messages(id, metadata.active_leaf.as_deref(), boundary.as_deref())?;
+        let messages: Vec<ConversationMessage> = files
+            .into_iter()
+            .map(message_from_file)
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut shell = record_from_parts(metadata, Vec::new(), summary_requests, false)?;
+        if let Some(compaction) = &shell.compaction
+            && !compaction.valid(&messages)
+        {
+            return Err(ConversationError::Corrupt);
+        }
+        shell.messages = messages;
+        Ok(Some(shell))
+    }
+
+    /// Walk the active path and keep entries from one boundary onward. A
+    /// missing boundary or leaf reports corruption through the caller.
+    fn load_context_messages(
+        &self,
+        id: &ConversationId,
+        leaf: Option<&str>,
+        boundary: Option<&str>,
+    ) -> Result<Vec<MessageFile>, ConversationError> {
+        let Some(leaf) = leaf else {
+            return Ok(Vec::new());
+        };
+        let mut statement = self
+            .connection
+            .prepare(
+                "WITH RECURSIVE path(id, parent, sequence, depth) AS (
+                    SELECT id, parent, sequence, 0 FROM messages
+                        WHERE conversation_id = ?1 AND id = ?2
+                    UNION ALL
+                    SELECT m.id, m.parent, m.sequence, p.depth + 1
+                        FROM messages m JOIN path p ON m.id = p.parent
+                        WHERE m.conversation_id = ?1 AND m.sequence < p.sequence
+                            AND (?3 IS NULL OR p.id != ?3)
+                ) SELECT id, (SELECT message FROM messages WHERE conversation_id = ?1 AND id = path.id)
+                    FROM path ORDER BY depth DESC"
+            )
+            .map_err(map_error)?;
+        let rows = statement
+            .query_map(params![id.as_hex(), leaf, boundary], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(map_error)?;
+        let mut messages = Vec::new();
+        for row in rows {
+            let (key, json) = row.map_err(map_error)?;
+            let message: MessageFile =
+                serde_json::from_str(&json).map_err(|_| ConversationError::Corrupt)?;
+            if message.id != key {
+                return Err(ConversationError::Corrupt);
+            }
+            messages.push(message);
+        }
+        if messages.last().map(|message| message.id.as_str()) != Some(leaf)
+            || messages.first().is_none_or(|message| match boundary {
+                Some(boundary) => message.id != boundary,
+                None => message.parent.is_some(),
+            })
+            || messages
+                .windows(2)
+                .any(|pair| pair[1].parent.as_deref() != Some(pair[0].id.as_str()))
+        {
+            return Err(ConversationError::Corrupt);
+        }
+        Ok(messages)
     }
 
     fn load_header(

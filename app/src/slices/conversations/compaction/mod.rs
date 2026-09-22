@@ -79,11 +79,31 @@ pub(super) async fn compact(
         Ok(preserve) => preserve,
         Err(error) => return reject(PatchStatus::UnprocessableEntity, error.message()),
     };
-    let (covered_through, retained_from) =
-        match compaction::select_boundary(&record.messages, record.compaction.as_ref()) {
-            Ok(boundary) => boundary,
-            Err(error) => return reject(PatchStatus::UnprocessableEntity, error.message()),
-        };
+    let selection = model.settings.model.clone();
+    let instructions = model.settings.instructions.clone();
+    let budget = compaction::model_retention_budget(
+        &selection,
+        &instructions,
+        state
+            .models_dev
+            .context_limit(selection.provider, &selection.model),
+        state
+            .models_dev
+            .output_limit(selection.provider, &selection.model),
+        record
+            .compaction
+            .as_ref()
+            .map(|current| current.text.as_str()),
+    );
+    let (covered_through, retained_from) = match compaction::select_boundary(
+        &record.messages,
+        record.compaction.as_ref(),
+        Some(&selection),
+        budget,
+    ) {
+        Ok(boundary) => boundary,
+        Err(error) => return reject(PatchStatus::UnprocessableEntity, error.message()),
+    };
     let covered = match compaction::covered_turns(
         &record.messages,
         Some(&model.settings.model),
@@ -143,20 +163,39 @@ pub(super) async fn compact(
             if job.cancel_requested() {
                 return Err("Context compaction was cancelled. The previous context remains.");
             }
+            let candidate = compaction::CompactionRecord {
+                covered_through,
+                retained_from,
+                text: outcome.text,
+                requests: outcome.requests,
+                preserve,
+                created_at_ms: crate::workflows::now_ms(),
+            };
+            // The replacement request must fit before the checkpoint commits.
+            let replacement =
+                compaction::project(&record.messages, Some(&selection), Some(&candidate))
+                    .map_err(|error| error.message())?;
+            let request = crate::execution::ContextRequest {
+                preamble: &instructions,
+                tools: &[],
+                turns: &replacement,
+                extra: &[],
+                provider: selection.provider,
+                model: &selection.model,
+                output_limit: state
+                    .models_dev
+                    .output_limit(selection.provider, &selection.model),
+            };
+            crate::execution::context::measure(
+                request,
+                state
+                    .models_dev
+                    .context_limit(selection.provider, &selection.model),
+            )
+            .map_err(|error| error.message())?;
             state
                 .conversations
-                .record_job_compaction(
-                    &record.id,
-                    job.id(),
-                    compaction::CompactionRecord {
-                        covered_through,
-                        retained_from,
-                        text: outcome.text,
-                        requests: outcome.requests,
-                        preserve,
-                        created_at_ms: crate::workflows::now_ms(),
-                    },
-                )
+                .record_job_compaction(&record.id, job.id(), candidate)
                 .map(|_| ())
                 .map_err(|error| error.message())
         });

@@ -1303,11 +1303,10 @@ impl ConversationDetailView {
                 && pending_gate.is_none()
                 && record.continuation.is_none()
                 && (transcript.is_some_and(|window| window.total > record.messages.len())
-                    || crate::conversations::compaction::select_boundary(
+                    || crate::conversations::compaction::has_boundary(
                         &record.messages,
                         record.compaction.as_ref(),
-                    )
-                    .is_ok()),
+                    )),
             summary_usage: usage_panel(
                 &record.summary_requests,
                 &format!("/conversations/{}/context/", record.id.as_hex()),

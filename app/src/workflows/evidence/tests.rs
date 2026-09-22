@@ -431,3 +431,92 @@ fn configured_step_history_stays_within_its_attempt() {
         vec![turn]
     );
 }
+
+fn usage_request() -> crate::conversations::RequestUsage {
+    crate::conversations::RequestUsage {
+        id: crate::conversations::RequestId::generate().expect("request"),
+        usage: crate::providers::ModelUsage::new(crate::providers::ProviderKind::Xai, "grok-4"),
+        auth: crate::providers::AuthMethod::ApiKey,
+        prices: None,
+        sources: Vec::new(),
+        advertised: Vec::new(),
+    }
+}
+
+#[test]
+fn compaction_coverage_uses_durable_history_after_reload() {
+    let root = tempfile::tempdir().unwrap();
+    let store = WorkflowEvidenceStore::open(root.path().to_owned()).unwrap();
+    let (run, attempt) = ids();
+    let compaction = |covered: u32, text: &str| WorkflowCompaction {
+        covered_through: covered,
+        text: text.to_owned(),
+        requests: vec![usage_request()],
+        preserve: None,
+    };
+    for index in 0..4 {
+        store
+            .append_history(
+                run,
+                attempt,
+                &crate::providers::ChatTurn::user(format!("Prompt {index}")),
+                "phase",
+            )
+            .unwrap();
+        store
+            .append_history(
+                run,
+                attempt,
+                &crate::providers::ChatTurn::assistant(crate::providers::AssistantReply {
+                    text: format!("Reply {index}"),
+                    ..Default::default()
+                }),
+                "phase",
+            )
+            .unwrap();
+    }
+    store
+        .record_compaction(run, attempt, "phase", compaction(1, "First summary"))
+        .expect("first compaction");
+    let reloaded = WorkflowEvidenceStore::open(root.path().to_owned()).unwrap();
+    assert_eq!(
+        reloaded
+            .get(&run, &attempt)
+            .expect("record")
+            .compaction
+            .expect("compaction")
+            .covered_through,
+        1
+    );
+    reloaded
+        .record_compaction(run, attempt, "phase", compaction(5, "Second summary"))
+        .expect("second compaction");
+    let reloaded = WorkflowEvidenceStore::open(root.path().to_owned()).unwrap();
+    let stored = reloaded
+        .get(&run, &attempt)
+        .expect("record")
+        .compaction
+        .expect("compaction");
+    assert_eq!(stored.covered_through, 5);
+    assert_eq!(stored.text, "Second summary");
+    let history = reloaded.get(&run, &attempt).unwrap().history;
+    let projected = crate::conversations::compaction::project_turns(
+        &history,
+        stored.covered_through as usize,
+        &stored.text,
+        &stored.requests,
+    )
+    .unwrap();
+    assert_eq!(projected.len(), 3);
+    assert_eq!(projected[1].text, "Prompt 3");
+    assert_eq!(projected[2].text, "Reply 3");
+    assert_eq!(history.len(), 8);
+    assert_eq!(
+        reloaded.record_compaction(run, attempt, "phase", compaction(3, "Stale summary")),
+        Err(EvidenceError::Conflict)
+    );
+    assert_eq!(
+        reloaded.record_compaction(run, attempt, "phase", compaction(9, "Foreign boundary")),
+        Err(EvidenceError::Corrupt)
+    );
+}

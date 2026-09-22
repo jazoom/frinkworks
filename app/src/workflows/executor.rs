@@ -2463,6 +2463,7 @@ async fn run_ordinary_file_agent(
         agent_id: None,
         revision: job.agent_revision,
         preamble,
+        context_prefix_len: 0,
         tools: definitions,
         tool_ids: tools,
         policy,
@@ -2964,6 +2965,7 @@ async fn run_agent_step(
         agent_id: job.agent_id,
         revision: 0,
         preamble: resource_context.text,
+        context_prefix_len: packet.request_messages().len(),
         tools: packet.request_tools(),
         tool_ids: packet.tool_ids(),
         policy,
@@ -3004,15 +3006,15 @@ async fn run_agent_step(
                 error: Some("The paused phase history is unavailable.".to_owned()),
             };
         };
-        turns.extend(stored.history);
+        let mut history = stored.history;
         if let Some(compaction) = stored.compaction {
             match crate::conversations::compaction::project_turns(
-                &turns,
+                &history,
                 compaction.covered_through as usize,
                 &compaction.text,
                 &compaction.requests,
             ) {
-                Ok(projected) => turns = projected,
+                Ok(projected) => history = projected,
                 Err(error) => {
                     return StepOutcome::Failed {
                         category: FailureCategory::Operational,
@@ -3021,6 +3023,7 @@ async fn run_agent_step(
                 }
             }
         }
+        turns.extend(history);
     }
     let ended = crate::execution::run_agent_action(state, spec, turns, job.job.clone()).await;
     if ended.outcome != AgentOutcome::BudgetExhausted {

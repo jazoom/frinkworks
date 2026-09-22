@@ -361,27 +361,36 @@ async fn workflow_compaction_preserves_scope_and_complete_tool_exchanges() {
         result: Some(crate::providers::ToolOutput {
             resource: None,
             label: "read".to_owned(),
-            output: "Phase evidence".to_owned(),
+            // The first phase exceeds the recent-context budget, so it is
+            // summarised while the small latest phase is retained whole.
+            output: "Phase evidence".repeat(10_000),
             command: None,
         }),
     });
     let mut last = first.clone();
     last.calls[0].id = "call-two".to_owned();
+    last.calls[0].result.as_mut().unwrap().output = "Phase evidence".to_owned();
+    spec.context_prefix_len = 1;
     let mut turns = vec![
         ChatTurn::user("Pinned phase input".to_owned()),
         first,
         last.clone(),
     ];
-    let result = super::compact_history(&state, &spec, &job, &mut turns).await;
+    for turn in &turns[1..] {
+        spec.evidence.as_ref().unwrap().turn(turn).unwrap();
+    }
+    let result = super::compact_history(&state, &spec, &job, &mut turns, &[], &spec.tools).await;
     assert!(result.is_ok());
-    assert_eq!(turns.len(), 2);
-    assert_eq!(turns[1], last);
+    assert_eq!(turns.len(), 3);
+    assert_eq!(turns[0].text, "Pinned phase input");
+    assert_eq!(turns[2], last);
     assert!(backend.last_tools().is_empty());
     assert_eq!(backend.last_extra_len(), 0);
     let prompt = &backend.last_history()[0].text;
     assert!(prompt.contains("phase.txt"));
     assert!(prompt.contains("Phase evidence"));
     assert!(!prompt.contains("Read the file"));
+    assert!(!prompt.contains("Pinned phase input"));
     assert!(
         state
             .conversations
@@ -391,7 +400,7 @@ async fn workflow_compaction_preserves_scope_and_complete_tool_exchanges() {
             .is_none()
     );
     let evidence = state.workflow_evidence.get(&run, &attempt).unwrap();
-    assert_eq!(evidence.compaction.unwrap().covered_through, 1);
+    assert_eq!(evidence.compaction.unwrap().covered_through, 0);
     assert_eq!(
         evidence
             .events
@@ -413,6 +422,7 @@ fn read_spec(
         agent_id: None,
         revision,
         preamble: String::new(),
+        context_prefix_len: 0,
         tools: crate::tools::definitions_for(&[ToolId::Read], ToolLocation::Sandbox),
         tool_ids: vec![ToolId::Read],
         policy: DirectoryPolicy::from_grants(Vec::new(), String::new()),

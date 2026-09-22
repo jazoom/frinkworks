@@ -69,6 +69,24 @@ A branch changes model context only. It changes no file, no directory approval a
 
 The store retains compaction checkpoints across branch changes. It selects the checkpoint with the latest covered ancestor on the selected path. Summary coverage binds to that immutable ancestor, not to an abandoned child. The retained suffix follows that ancestor on the selected path.
 
+### Context retention
+
+Permanent retention is separate from model context. Every original entry stays in the database after a summary. A summary replaces covered entries only in the model projection. Local transcript views and the tree always read the original entries.
+
+Compaction keeps complete recent exchanges within an application-selected budget of 20,000 tokens. Selection walks backwards along the active path and uses the model-aware tokenizer or an explicit approximation. A fallback count is an estimate, not a measured value. The selection never splits a tool call from its result and never asks the summary model to count tokens.
+
+The automatic retention budget accounts for fixed request content:
+
+- Effective instructions and tool declarations.
+- Pending input and candidate-bound inputs.
+- Replacement-summary capacity and the ordinary output reserve.
+
+The summary generator separately budgets its own request. Pending input and unresolved tool exchanges stay intact. If no complete exchange fits the budget, the application reports the constraint and keeps the previous context.
+
+The application measures the replacement request before it commits a checkpoint. Manual compaction measures the saved instructions and transcript without runtime tools. Automatic compaction also measures runtime instructions, tools and pending input.
+
+A committed checkpoint stores coverage against durable source positions. Repeated summaries include the previous summary and newly covered content once. Configured requests keep candidate-bound inputs outside summary coverage.
+
 ## Live execution
 
 Ordinary messages share one model lifecycle. Tool-free messages use the chat job. Host tools without named directories and read-only sandbox tools use the ordinary conversation runtime. They do not create a workflow run.
