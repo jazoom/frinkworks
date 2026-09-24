@@ -37,6 +37,13 @@ export function initObserve(root: HTMLElement): IslandInstance {
 
     return {
         reconcile(context) {
+            // Navigation cancels safe requests without a settlement event.
+            // A retained observer must restart, but not for its own GET URL.
+            if (context.cause === "location") {
+                if (context.detail.cause !== "get-form-replacement")
+                    schedule(0);
+                return;
+            }
             if (context.cause !== "patch") {
                 return;
             }

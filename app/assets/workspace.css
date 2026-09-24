@@ -599,7 +599,7 @@ body:has(.workspace-catalogue) .app-frame {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 0px;
     /* Wrapped header actions must stay above the companion on short screens. */
-    grid-template-rows: max-content auto minmax(0, 1fr) auto auto;
+    grid-template-rows: max-content max-content minmax(0, 1fr) auto auto;
     position: relative;
     /* Focus must not scroll the grid towards the companion during its slide. */
     overflow: clip;
@@ -650,12 +650,42 @@ body:has(.workspace-catalogue) .app-frame {
     grid-column: 1;
     grid-row: 2;
     min-height: 56px;
+    padding-inline: 34px;
+    border-bottom: 1px solid var(--color-base-300);
+}
+.workspace-transcript-controls {
+    overflow-x: auto;
+    scrollbar-width: thin;
+}
+.workspace-transcript-controls > * {
+    flex-shrink: 0;
+}
+.workspace-toolbar .chat-thinking-toggle {
+    flex-direction: row-reverse;
+    min-height: 44px;
+    font-size: 16px;
+    white-space: nowrap;
+}
+.app-frame .workspace-transcript-actions .btn {
+    min-height: 44px;
+    padding: 8px 12px;
+    border-radius: 7px;
+    font-size: 16px;
+    font-weight: 400;
+    white-space: nowrap;
+}
+.workspace-transcript-actions [aria-expanded="true"] {
+    background: var(--color-base-200);
+}
+.workspace-reply-strip {
+    display: none;
 }
 #transcript {
     grid-column: 1;
     grid-row: 3;
     min-height: 0;
-    padding: 12px 34px 30px;
+    padding: 20px 34px 30px;
+    scrollbar-gutter: auto;
 }
 #conversation-composer-dock {
     grid-column: 1;
@@ -744,6 +774,59 @@ body:has(.workspace-catalogue) .app-frame {
 }
 .workspace-composer-toolbar {
     padding: 0 14px 12px;
+    gap: 10px;
+}
+.workspace-composer-tools {
+    flex: 1 1 auto;
+    gap: 8px;
+}
+.workspace-queue-delivery {
+    min-width: 0;
+}
+.workspace-queue-delivery .select {
+    min-height: 44px;
+    height: 44px;
+    border-radius: 7px;
+    font-size: 16px;
+    width: 100%;
+    appearance: auto;
+    background-image: none;
+    padding-inline: 10px;
+}
+#conversation-queue {
+    max-height: 18dvh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+.workspace-composer-actions {
+    min-width: 0;
+    max-width: 100%;
+}
+#conversation-composer-dock {
+    container-type: inline-size;
+}
+@media (min-width: 701px) {
+    @container (max-width: 440px) {
+        .workspace-composer-tools {
+            flex-wrap: nowrap;
+            overflow-x: auto;
+            scrollbar-width: thin;
+        }
+        .workspace-composer-tools > * {
+            flex-shrink: 0;
+        }
+        .workspace-composer-actions {
+            width: 100%;
+        }
+        .workspace-composer-surface {
+            max-height: 42dvh;
+            overflow-y: auto;
+            overscroll-behavior: contain;
+        }
+    }
+}
+.workspace-composer-actions .btn[form="conversation-stop"] .workspace-icon {
+    fill: currentColor;
 }
 .app-frame .workspace-composer-toolbar .btn {
     min-height: 44px;
@@ -777,14 +860,58 @@ body:has(.workspace-catalogue) .app-frame {
 .workspace-mobile-brand {
     display: none;
 }
-.chat-turn.conversation-turn {
-    max-width: 670px;
+/* input.css also styles legacy chat. Scope the conversation hierarchy here. */
+#transcript .conversation-turn {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr);
+    column-gap: 20px;
+    row-gap: 6px;
+    max-width: 1110px;
     width: 100%;
     padding: 12px 0;
     margin-block: 8px;
-    font-size: 14px;
+    font-size: 16px;
 }
-/* input.css loads after this sheet, so user rules need transcript scope to win. */
+#transcript .chat-turn-avatar {
+    grid-column: 1;
+    grid-row: 1 / 3;
+    display: grid;
+    width: 44px;
+    height: 44px;
+    place-items: center;
+    border-radius: 50%;
+    background: var(--color-base-200);
+    color: var(--color-base-content);
+}
+#transcript .chat-turn-meta {
+    grid-column: 2;
+    margin: 0;
+    min-height: 28px;
+    line-height: 1.5;
+}
+#transcript .chat-turn-meta strong {
+    font-size: 16px;
+}
+#transcript .chat-reply-status {
+    font-size: 13px;
+}
+#transcript .chat-turn-body {
+    grid-column: 2;
+    padding-top: 0;
+}
+#transcript .chat-message-actions .btn {
+    min-height: 44px;
+    padding: 6px 10px;
+    font-size: 14px;
+    font-weight: 400;
+}
+#transcript .chat-tool-record {
+    background: var(--color-base-100);
+    font-size: 15px;
+}
+#transcript .chat-thinking {
+    border-radius: 3px;
+}
 #transcript .chat-turn-user {
     border: 0;
     background: none;
@@ -799,20 +926,6 @@ body:has(.workspace-catalogue) .app-frame {
     border-radius: 3px;
     background: var(--color-base-200);
     padding: 14px 16px;
-}
-#transcript .chat-turn-user .chat-turn-meta {
-    margin-bottom: 11px;
-    font-size: 12px;
-}
-.user-avatar {
-    display: inline-grid;
-    width: 23px;
-    height: 23px;
-    place-items: center;
-    border: 1px solid var(--color-base-300);
-    border-radius: 50%;
-    background: var(--color-base-200);
-    font-size: 10px;
 }
 .empty-conversation {
     display: flex;
@@ -832,22 +945,11 @@ body:has(.workspace-catalogue) .app-frame {
     max-width: 60ch;
     font-size: 20px;
 }
-.chat-turn-meta strong {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-.chat-turn-agent .chat-turn-meta strong::before {
-    content: "";
-    width: 24px;
-    height: 20px;
-    background: url("/images/logo.svg") center / contain no-repeat;
-}
 .workspace-companion {
     display: flex;
     flex-direction: column;
     grid-column: 2;
-    grid-row: 2 / 6;
+    grid-row: 2 / -1;
     position: absolute;
     inset: 0 0 0 auto;
     min-width: 0;
@@ -871,21 +973,32 @@ body:has(.workspace-catalogue) .app-frame {
         transform 320ms cubic-bezier(0.16, 1, 0.3, 1),
         visibility 0s;
 }
-#conversation-settings > div:first-child,
-.workspace-companion > header {
+#conversation-settings > div:first-child {
     min-height: 57px;
     padding: 10px 20px;
 }
-#conversation-settings-heading,
-#workspace-work-heading {
+#conversation-settings-heading {
     font-size: 13px;
     line-height: 1.35;
 }
-#conversation-settings > div:first-child .btn,
-.workspace-companion > header .btn {
+#conversation-settings > div:first-child .btn {
     min-height: 28px;
     width: 28px;
     padding: 4px;
+}
+.workspace-companion > header {
+    min-height: 64px;
+    padding: 8px 20px;
+    gap: 12px;
+}
+#workspace-work-heading {
+    font-size: 16px;
+    line-height: 1.35;
+}
+.workspace-companion > header .btn {
+    min-height: 44px;
+    width: 44px;
+    padding: 10px;
 }
 [data-settings-panel] > h3 {
     font-size: 17px;
@@ -952,6 +1065,55 @@ body:has(.workspace-catalogue) .app-frame {
 }
 .workspace-work-content h2 {
     font-size: 24px;
+}
+.workspace-work-content > :is(section, details),
+.workspace-work-status {
+    flex-shrink: 0;
+    overflow-wrap: anywhere;
+}
+.workspace-work-content > .workspace-candidate {
+    flex-shrink: 1;
+}
+.workspace-work-status {
+    border-bottom: 1px solid var(--color-base-300);
+}
+.workspace-context-details {
+    margin-top: auto;
+}
+.workspace-context-details > summary:hover {
+    background: var(--color-base-200);
+}
+.workspace-context-details > summary:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: -3px;
+}
+.workspace-work-content .workspace-phase dd {
+    margin-bottom: 0;
+}
+.app-frame .workspace-work-actions .btn {
+    min-height: 44px;
+    font-size: 16px;
+    border-radius: 7px;
+}
+.workspace-work-actions {
+    background: var(--color-base-100);
+}
+.app-frame
+    :is(
+        #conversation-question,
+        #conversation-continuation,
+        #conversation-host-command,
+        .workspace-recovery,
+        .workspace-outcomes
+    )
+    :is(.btn, .textarea) {
+    min-height: 44px;
+    font-size: 14px;
+    border-radius: 7px;
+}
+.workspace-toolbar [data-attention-strip] {
+    min-height: 44px;
+    font-size: 14px;
 }
 #workflow-detail h2 {
     font-size: 16px;
@@ -1050,9 +1212,43 @@ body:has(.workspace-catalogue) .app-frame {
     overflow-y: auto;
     background: var(--color-base-100);
 }
+.workspace-candidate-body,
+.workspace-gate {
+    container-type: inline-size;
+}
+.app-frame :is(.workspace-candidate, .workspace-gate) :is(.btn, .textarea) {
+    min-height: 44px;
+    font-size: 14px;
+    border-radius: 7px;
+}
 .workspace-candidate .workspace-diff {
     max-height: none;
     margin: 0;
+}
+.workspace-gate .workspace-diff {
+    max-height: 65vh;
+    font-size: 13px;
+}
+.workspace-gate .workspace-file-list > li > details > summary {
+    min-height: 44px;
+    align-content: center;
+}
+.workspace-candidate [data-review-diff]:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 3px;
+}
+.workspace-file-list a:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: -3px;
+}
+@container (min-width: 680px) {
+    .workspace-review-browser {
+        grid-template-columns: minmax(200px, 1fr) minmax(0, 2fr);
+        align-items: start;
+    }
+    .workspace-review-browser .workspace-file-list {
+        max-height: 65vh;
+    }
 }
 .workspace-file-list {
     list-style: none;
@@ -1141,7 +1337,11 @@ body:has(.workspace-catalogue) .app-frame {
     font-family: var(--font-mono);
 }
 .workspace-diff-add-text {
-    color: #2f7a3d;
+    color: color-mix(
+        in oklch,
+        var(--color-success) 80%,
+        var(--color-base-content)
+    );
 }
 .workspace-diff-remove-text {
     color: var(--color-error);
@@ -1201,10 +1401,23 @@ body:has(.workspace-catalogue) .app-frame {
 #conversation-settings .sm\:grid-cols-3 {
     grid-template-columns: minmax(0, 1fr);
 }
+#conversation-detail:has(> #conversation-error) {
+    grid-template-rows:
+        max-content max-content max-content minmax(0, 1fr)
+        auto auto;
+}
 #conversation-detail > #conversation-error {
     grid-column: 1;
-    grid-row: 2;
-    z-index: 1;
+    grid-row: 3;
+}
+#conversation-detail:has(> #conversation-error) > #transcript {
+    grid-row: 4;
+}
+#conversation-detail:has(> #conversation-error) > #conversation-composer-dock {
+    grid-row: 5;
+}
+#conversation-detail:has(> #conversation-error) > .workspace-effective {
+    grid-row: 6;
 }
 @media (max-width: 1020px) {
     .app-frame,
@@ -1335,19 +1548,23 @@ body:has(.workspace-catalogue) .app-frame {
         padding: 12px;
         gap: 8px;
     }
-    #conversation-settings > div:first-child,
-    .workspace-companion > header {
+    #conversation-settings > div:first-child {
         min-height: 54px;
         padding: 8px 15px;
     }
-    #conversation-settings-heading,
-    #workspace-work-heading {
+    .workspace-companion > header {
+        padding-inline: 16px;
+    }
+    #conversation-settings-heading {
         font-size: 14px;
     }
-    #conversation-settings > div:first-child .btn-square,
-    .workspace-companion > header .btn {
+    #conversation-settings > div:first-child .btn-square {
         width: 44px;
         min-height: 40px;
+    }
+    .workspace-work-actions {
+        padding: 12px 16px;
+        gap: 8px;
     }
     .app-frame .setup-tabs {
         padding: 5px 10px;
@@ -1375,11 +1592,30 @@ body:has(.workspace-catalogue) .app-frame {
     }
     .workspace-toolbar {
         min-height: 48px;
-        padding: 7px 16px;
+        padding: 2px 16px 6px;
+    }
+    .workspace-toolbar .chat-thinking-toggle,
+    .app-frame .workspace-transcript-actions .btn {
+        font-size: 14px;
+    }
+    .workspace-reply-strip:not([hidden]) {
+        display: block;
+        width: 100%;
+        border: 1px solid var(--color-base-300);
+        border-radius: 7px;
+        background: var(--color-base-200);
+    }
+    .workspace-reply-strip .btn {
+        min-height: 44px;
+        height: auto;
+        padding: 8px 12px;
+        font-size: 14px;
+        font-weight: 400;
+        text-align: left;
     }
     .workspace-companion {
         grid-column: 1;
-        grid-row: 2 / 6;
+        grid-row: 2 / -1;
         z-index: 3;
         width: 100%;
         border-left: 0;
@@ -1390,8 +1626,21 @@ body:has(.workspace-catalogue) .app-frame {
     #transcript {
         padding: 12px 20px 15px;
     }
-    .chat-turn.conversation-turn {
-        width: 100%;
+    #transcript .conversation-turn {
+        grid-template-columns: 32px minmax(0, 1fr);
+        column-gap: 12px;
+        margin-block: 4px;
+    }
+    #transcript .chat-turn-avatar {
+        width: 32px;
+        height: 32px;
+    }
+    #transcript .chat-turn-avatar img {
+        width: 26px;
+        height: 26px;
+    }
+    #transcript .chat-turn-body {
+        grid-column: 1 / -1;
     }
     #composer-message {
         min-height: 67px;
@@ -1402,13 +1651,43 @@ body:has(.workspace-catalogue) .app-frame {
         padding: 4px 10px 10px;
     }
     .workspace-composer-tools {
-        gap: 8px;
+        width: 100%;
+        gap: 6px;
+    }
+    .app-frame .workspace-composer-tools .btn {
+        padding-inline: 8px;
+        gap: 6px;
+        font-size: 14px;
+    }
+    .workspace-composer-tools #conversation-thinking-toggle,
+    .workspace-queue-delivery {
+        order: 1;
+    }
+    .workspace-composer-tools:has(.workspace-queue-delivery)
+        #conversation-thinking-toggle,
+    .workspace-queue-delivery {
+        width: calc(50% - 3px);
+    }
+    .workspace-composer-tools #conversation-thinking-toggle > span {
+        flex-wrap: wrap;
+        text-align: left;
+    }
+    .workspace-queue-delivery .select {
+        font-size: 14px;
+    }
+    .workspace-composer-surface {
+        max-height: 42dvh;
+        overflow-y: auto;
+        overscroll-behavior: contain;
     }
     .workspace-composer-actions {
         width: 100%;
     }
     .workspace-composer-actions > .btn {
         flex: 1;
+    }
+    .workspace-composer-actions > .btn-primary {
+        flex-grow: 2;
     }
     #conversation-composer .shortcut-hint {
         display: none;
@@ -1588,6 +1867,49 @@ body:has(.workspace-catalogue) .app-frame {
     }
     .configured-draft > :not(h2) {
         display: none;
+    }
+}
+@media (max-width: 700px) and (max-height: 650px) {
+    .app-file:has(#conversation-detail) .app-file-bar {
+        min-height: 48px;
+    }
+    #conversation-detail > header {
+        padding-block: 6px;
+        gap: 4px;
+    }
+    #conversation-heading {
+        font-size: 20px;
+    }
+    #conversation-queue:not(:has([data-queue-item], [role="alert"])) {
+        display: none;
+    }
+    #composer-message {
+        min-height: 44px;
+        max-height: 72px;
+        padding-block: 8px;
+    }
+    .workspace-composer-tools {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        scrollbar-width: thin;
+    }
+    .workspace-composer-tools .btn {
+        flex-shrink: 0;
+    }
+    .workspace-composer-tools:has(.workspace-queue-delivery)
+        #conversation-thinking-toggle,
+    .workspace-queue-delivery {
+        width: auto;
+        flex-shrink: 0;
+    }
+    .workspace-composer-tools #conversation-model-toggle {
+        max-width: 160px;
+    }
+    .workspace-composer-actions {
+        gap: 8px;
+    }
+    .workspace-effective {
+        padding-block: 4px;
     }
 }
 .presets-setup .preset-value,

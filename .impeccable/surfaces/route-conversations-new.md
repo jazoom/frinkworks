@@ -2,7 +2,7 @@
 version: 1
 slug: "route-conversations-new"
 primary_target: "route:/conversations/new"
-related_targets: ["app/src/slices/conversations/templates/detail.html","app/src/slices/conversations/templates/composer_toolbar.html","app/src/slices/conversations/templates/draft_summary.html","app/src/slices/conversations/templates/directory_card.html","app/src/slices/conversations/templates/command_directory.html","app/src/slices/conversations/templates/effective_settings.html","app/src/slices/conversations/templates/instructions_settings.html","app/src/slices/conversations/templates/presets_settings.html","app/src/slices/conversations/page/presets.rs","app/src/shared_templates/layout/chat.html"]
+related_targets: ["app/src/slices/conversations/templates/detail.html","app/src/slices/conversations/templates/current_work.html","app/src/slices/conversations/templates/candidate.html","app/src/slices/human_gates/templates/detail.html","app/src/slices/conversations/templates/workflow_progress.html","app/src/slices/conversations/templates/composer_toolbar.html","app/src/slices/conversations/templates/draft_summary.html","app/src/slices/conversations/templates/directory_card.html","app/src/slices/conversations/templates/command_directory.html","app/src/slices/conversations/templates/effective_settings.html","app/src/slices/conversations/templates/instructions_settings.html","app/src/slices/conversations/templates/presets_settings.html","app/src/slices/conversations/page/presets.rs","app/src/shared_templates/layout/chat.html"]
 ---
 
 # New conversation
@@ -13,9 +13,9 @@ Visitor mode: Operate.
 
 The user starts an unsaved conversation, selects a model and optionally requests directory access. Send remains the primary action.
 
-## Visual reference
+## Visual direction
 
-`i/001-new-conversation.png` defines the desktop composition. `i/071-mobile-conversation.png` supplies mobile navigation guidance.
+`DESIGN.md` records the workspace layout and responsive behaviour.
 
 The user approved the lime accent and larger controls. Existing themes remain available. Existing IBM Plex fonts and the product mark remain.
 
@@ -39,7 +39,7 @@ The implementation retains Hypergraft target identifiers and native navigation l
 
 ## Configured draft and directories
 
-References `i/002-configured-draft.png` and `i/004-directory-setup.png` define this bounded extension. Stage 1 remains approved.
+This bounded extension covers configured drafts and directory setup. Stage 1 remains approved.
 
 The configured draft shows actual paths and access modes. Pending approval remains explicit. The heading makes no claim that an environment is ready.
 
@@ -53,7 +53,7 @@ Short mobile screens retain the heading and composer access strip. Setup contain
 
 ## Execution setup
 
-References 007, 010 and 011 define this extension. Execution retains the approved companion layout and larger controls.
+Execution retains the approved companion layout and larger controls.
 
 Saved network changes join the revision-bound execution review. The comparison shows current and requested values without changes to effective authority.
 
@@ -65,7 +65,7 @@ Execution commands retain the unsent message. Active work and exact-candidate se
 
 ## Instructions setup
 
-Reference 008 defines this extension. The editor sits above single-column tool rows with descriptions and a mixed-state Select all control.
+The editor sits above single-column tool rows with descriptions and a mixed-state Select all control.
 
 Draft text and tool choices survive section changes and command responses. Saved edits retain honest save feedback and the existing consent boundaries.
 
@@ -75,7 +75,7 @@ The user chose recorded instruction sources, not a preview. The list describes t
 
 ## Presets setup
 
-References 042 and 079 define this extension. The preview compares current and replacement values before an explicit command.
+The preview compares current and replacement values before an explicit command.
 
 Each setting labels two value columns within the approved companion width. The save panel shows a name field and an independent snapshot.
 
@@ -85,8 +85,62 @@ Preview and save retain uncommitted edits. Successful replacement supersedes the
 
 Short mobile screens retain the complete header above Setup. Preset actions remain available through the panel scroll area.
 
+## Active conversation
+
+Stage 3a covers the active transcript and composer. The transcript retains the approved visual language and larger controls.
+
+Avatars sit beside author labels. Message actions follow the content. Mobile message bodies use the full available width.
+
+The user chose existing reply statuses instead of model-generated descriptions. The mobile strip repeats the server status and opens Current work without a command.
+
+Queue and Stop remain separate. The composer keeps the model and effort controls. Short mobile screens expose those controls through horizontal scroll.
+
+The latest server patch controls the Send or Queue label. Live updates and Stop retain the unsent message.
+
+## Current work
+
+Stage 3b puts execution status and required decisions before the Context and usage disclosure.
+
+Ordinary replies and retries use server-authored status. Workflow progress shows the pinned name, recorded state and current phase without inferred completion.
+
+The companion retains eligible Stop controls outside its scroll area. Questions and execution pauses expose the existing controls through attention strips.
+
+The desktop companion retains its 400-pixel width. Mobile fills the conversation area and excludes the hidden composer.
+
+Compact desktop composer controls scroll horizontally without overlap with the companion. Escape and responsive focus restoration remain available.
+
+## Candidate review
+
+Stage 4a leads with changed files and the selected diff. Wide review containers use adjacent columns. Narrow containers stack them.
+
+File selection reveals and focuses the preview. It sends no command and does not narrow approval to one file.
+
+The full review selects the first file on each manifest page. Metadata and immutable downloads remain available through disclosures.
+
+Approval labels follow the pinned next command. File application, local Git commits and configured continuation remain distinct.
+
+Companion decisions return conversation patches. Draft retention and mobile focus survive the removal of the decision controls.
+
+## Recovery
+
+Stage 4b separates recorded directory and repository outcomes from managed cleanup. The records describe past attempts, not current files.
+
+Unresolved application remains visible after a terminal run state. A stopped application makes no claim that any directory reports Applied.
+
+View attempt evidence opens the exact attempt without a command. Current work and Activity share the evidence presentation with the canonical attempt page.
+
+Settlement retains its exact run, attempt and transaction state. It keeps files and evidence through cancellation, not a Completed result.
+
+Unsettled file or repository work omits Continue the conversation. The interface adds no retry, rollback or recovery authority.
+
+Attention stays inside the toolbar. A rejected mobile command closes the companion and exposes its authoritative error without draft loss.
+
+The error has its own grid row. Recovery controls retain the larger workspace scale and keyboard focus.
+
 ## Review boundary
 
-The user authorised Presets after Instructions. Stage 2d awaits user review. Preset catalogue redesign and active-conversation redesign remain deferred.
+The user approved and staged Stage 3b. The staged patch remains unchanged during Stages 4a and 4b.
+
+The user approved Stage 4a without permission to stage or commit. Stage 4b awaits review. The preset catalogue remains outside this pass.
 
 The workload and browser evidence live in `docs/ui-overhaul.md`.

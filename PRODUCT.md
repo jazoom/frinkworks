@@ -88,7 +88,15 @@ File application does not implicitly create a Git commit. Explicit Git operation
 
 Candidate approval binds the exact candidate and original baseline. A newer host state cannot silently replace that baseline.
 
+File selection changes the preview, not the approval scope. Approval consequences follow the pinned next command rather than the candidate format.
+
 Application transactions retain recovery journals and preimages. Uncertain file outcomes or incomplete cleanup block further work.
+
+Recovery views distinguish recorded directory results, repository results and managed cleanup. These records describe past attempts, not the current files.
+
+A stopped application does not imply that any directory changed. Evidence links start no write or retry.
+
+Existing settlement keeps known file outcomes and ends the task through cancellation. The interface adds no retry, rollback or recovery authority.
 
 Cancellation and discarded proposals do not undo direct writes or other host effects.
 
@@ -176,6 +184,22 @@ The system preference selects Springfield or Sector 7-G unless the user selects 
 The application requires JavaScript. Real links carry ordinary navigation. Hypergraft supplies command patches and live projections.
 
 The transcript preserves its scroll position when the reader leaves the end. Jump to latest returns to new output.
+
+Live status comes from the server's reply state. The mobile activity strip repeats that status and opens Current work without a command.
+
+The interface generates no task description and makes no additional model request for status. Historical transcript windows show no active-reply strip.
+
+Current work prioritises execution status and required decisions. Workflow progress uses the recorded workflow name, state and current phase without an inferred completion percentage.
+
+Questions and execution pauses expose their existing controls through attention strips. Context estimates and recorded usage remain available in a separate disclosure.
+
+The companion retains eligible Stop controls outside its content scroll area. Stop during a question retains observation until settlement without a replacement execution.
+
+Reply status and retry details stay live after companion navigation. Navigation grants no authority and starts no model request.
+
+Queue and Stop remain separate actions. Stop targets the displayed job.
+
+After ordinary reply completion or cancellation, the composer returns to Send without loss of the unsent message.
 
 On mobile, an open companion excludes hidden conversation controls from interaction. Closure restores focus to a conversation control.
 

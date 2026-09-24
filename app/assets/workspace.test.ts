@@ -176,6 +176,41 @@ test.each([false, true])(
     },
 );
 
+test("a mobile resize moves focus out of the excluded composer and keeps Escape available", () => {
+    let resize = () => {};
+    const mobile = {
+        matches: false,
+        addEventListener: (_: string, listener: () => void) => {
+            resize = listener;
+        },
+    };
+    vi.stubGlobal("matchMedia", () => mobile);
+    const root = document.createElement("div");
+    root.innerHTML = `<section id="conversation-detail"><button data-work-toggle>Current work</button><section id="conversation-composer-dock"><textarea></textarea></section><aside id="conversation-work" tabindex="-1"></aside></section>`;
+    document.body.append(root);
+    const controller = new AbortController();
+    const island = initWorkspace(root, { signal: controller.signal });
+    const toggle = root.querySelector<HTMLButtonElement>("[data-work-toggle]")!;
+    toggle.click();
+    root.querySelector("textarea")!.focus();
+    mobile.matches = true;
+    resize();
+    expect(
+        root.querySelector<HTMLElement>("#conversation-composer-dock")!.inert,
+    ).toBe(true);
+    expect(document.activeElement?.id).toBe("conversation-work");
+    document.activeElement!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+    );
+    expect(workOpen(root)).toBe(false);
+    expect(document.activeElement).toBe(toggle);
+    expect(
+        root.querySelector<HTMLElement>("#conversation-composer-dock")!.inert,
+    ).toBe(false);
+    island.destroy();
+    controller.abort();
+});
+
 test("Escape closes navigation before the companion and restores the menu trigger", () => {
     vi.stubGlobal("matchMedia", () => ({
         matches: true,
@@ -263,6 +298,109 @@ test("diff colours preserve untrusted text without HTML interpretation", () => {
         .join("");
     expect(preserved).toBe(text);
     expect(root.querySelector("script, img")).toBeNull();
+    island.destroy?.();
+    controller.abort();
+});
+
+test("file preview selection grants no authority and retains native modified navigation", () => {
+    const { root, island, controller } = mountSidebar(
+        false,
+        `<a href="/runs/run/gates/gate?change=0" data-review-file="0" aria-current="true">One</a><a href="/runs/run/gates/gate?change=1" data-review-file="1">Two</a><section data-review-diff="0" tabindex="-1"></section><section data-review-diff="1" tabindex="-1" hidden></section><form action="/runs/run/gates/gate/approve"><input name="candidate" value="exact-candidate"><input name="gate-revision" value="7"></form>`,
+    );
+    const link = root.querySelector<HTMLAnchorElement>(
+        '[data-review-file="1"]',
+    )!;
+    const preview = root.querySelector<HTMLElement>('[data-review-diff="1"]')!;
+    const scroll = vi.spyOn(preview, "scrollIntoView");
+    const submit = vi.fn();
+    root.addEventListener("submit", submit);
+    const event = new MouseEvent("click", { bubbles: true, cancelable: true });
+    link.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(preview.hidden).toBe(false);
+    expect(document.activeElement).toBe(preview);
+    expect(scroll).toHaveBeenCalledWith({ block: "nearest" });
+    expect(link.getAttribute("aria-current")).toBe("true");
+    expect(submit).not.toHaveBeenCalled();
+    expect([...new FormData(root.querySelector("form")!)]).toEqual([
+        ["candidate", "exact-candidate"],
+        ["gate-revision", "7"],
+    ]);
+    const modified = new MouseEvent("click", {
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+    });
+    link.dispatchEvent(modified);
+    expect(modified.defaultPrevented).toBe(false);
+    island.destroy?.();
+    controller.abort();
+});
+
+test.each([
+    "/runs/run/gates/gate/cancel",
+    "/conversations/one/runs/run/settle-partial",
+])("a settled decision at %s retains mobile focus after removal", (url) => {
+    const { root, island, controller } = mountSidebar(
+        true,
+        `<section id="conversation-detail"><button data-work-toggle>Current work</button><section id="conversation-composer-dock"></section><aside id="conversation-work" tabindex="-1"><form><button>Discard</button></form></aside></section>`,
+    );
+    root.querySelector<HTMLButtonElement>("[data-work-toggle]")!.click();
+    const form = root.querySelector("form")!;
+    form.querySelector("button")!.focus();
+    form.remove();
+    island.reconcile?.({
+        cause: "patch",
+        detail: {
+            requestKind: "patch",
+            outcome: "applied-patch",
+            status: 200,
+            form,
+            url,
+            targetIds: ["conversation-detail"],
+        },
+    });
+    const work = root.querySelector<HTMLElement>("#conversation-work")!;
+    expect(document.activeElement).toBe(work);
+    work.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+    );
+    expect(
+        root.querySelector<HTMLElement>("#conversation-composer-dock")!.inert,
+    ).toBe(false);
+    expect(document.activeElement).toBe(
+        root.querySelector("[data-work-toggle]"),
+    );
+    island.destroy?.();
+    controller.abort();
+});
+
+test("a rejected command exposes its focused error outside the mobile companion", () => {
+    const { root, island, controller } = mountSidebar(
+        true,
+        `<section id="conversation-detail"><button data-work-toggle>Current work</button><section id="conversation-composer-dock"></section><div id="conversation-error" tabindex="-1">The application changed.</div><aside id="conversation-work" tabindex="-1"><form><button>End task</button></form></aside></section>`,
+    );
+    root.querySelector<HTMLButtonElement>("[data-work-toggle]")!.click();
+    const error = root.querySelector<HTMLElement>("#conversation-error")!;
+    error.focus();
+    island.reconcile?.({
+        cause: "patch",
+        detail: {
+            requestKind: "patch",
+            outcome: "applied-patch",
+            status: 409,
+            form: root.querySelector("form")!,
+            url: "/conversations/one/runs/run/settle-partial",
+            targetIds: ["conversation-detail"],
+        },
+    });
+    expect(document.activeElement).toBe(error);
+    expect(root.querySelector<HTMLElement>("#conversation-work")!.inert).toBe(
+        true,
+    );
+    expect(
+        root.querySelector<HTMLElement>("#conversation-composer-dock")!.inert,
+    ).toBe(false);
     island.destroy?.();
     controller.abort();
 });

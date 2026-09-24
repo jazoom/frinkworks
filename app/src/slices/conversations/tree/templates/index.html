@@ -76,7 +76,9 @@
   {% else %}
     <ol class="record-list" aria-label="Retained entries">
       {% for entry in entries %}
-        <li class="record-row flex-col gap-1 py-2">
+        <li
+          class="border-base-300 flex min-w-0 flex-col items-start gap-2 border-b py-3"
+        >
           <div class="flex flex-wrap items-baseline gap-2">
             <span class="text-sm font-medium">{{ entry.role }}</span>
             {% if !entry.status.is_empty() %}
@@ -91,7 +93,7 @@
           <a
             href="{{ entry.href }}"
             data-graft
-            class="link link-hover text-left text-sm break-words"
+            class="link link-hover block w-full min-w-0 text-left text-sm [overflow-wrap:anywhere]"
             >{{ entry.excerpt }}</a
           >
           <div class="flex flex-wrap gap-3 text-sm">
@@ -151,11 +153,13 @@
       </p>
       <ul class="record-list" aria-label="Branch tips">
         {% for leaf in leaves %}
-          <li class="record-row flex-wrap gap-2">
+          <li
+            class="border-base-300 flex min-w-0 flex-col items-start gap-2 border-b py-3"
+          >
             <a
               href="{{ leaf.href }}"
               data-graft
-              class="link link-hover min-w-0 flex-1 text-sm break-words"
+              class="link link-hover block w-full min-w-0 text-sm [overflow-wrap:anywhere]"
               >{{ leaf.label }}</a
             >
             {% if leaf.active %}

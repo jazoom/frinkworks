@@ -1,0 +1,78 @@
+{% if !run.transactions.is_empty() || run.apply_partial || run.apply_uncertain %}
+  <section
+    class="workspace-recovery space-y-5"
+    aria-label="File application and recovery"
+  >
+    <div class="space-y-2">
+      {% if run.apply_uncertain %}
+        <h3 class="text-lg font-semibold">File application is unsettled</h3>
+        <p class="text-sm">
+          A file outcome or managed cleanup remains unsettled. Further work
+          stays blocked.
+        </p>
+      {% else if run.apply_partial %}
+        <h3 class="text-lg font-semibold">File application stopped</h3>
+        {% if run.apply_changed %}
+          <p class="text-sm">
+            Applied files remain. The application did not complete successfully.
+          </p>
+        {% else %}
+          <p class="text-sm">
+            No directory reports Applied. The application did not complete
+            successfully.
+          </p>
+        {% endif %}
+      {% else if run.apply_complete %}
+        <h3 class="text-lg font-semibold">File application complete</h3>
+        <p class="text-quiet text-sm">
+          Every reviewed directory reports Applied or Unchanged. Managed cleanup
+          is complete.
+        </p>
+      {% endif %}
+      {% if run.commit_unsettled %}
+        <h3 class="text-lg font-semibold">Repository work is unsettled</h3>
+        <p class="text-sm">
+          A repository transaction or managed cleanup remains incomplete. A
+          completed commit in another repository does not remove this blocker.
+        </p>
+      {% endif %}
+      {% if run.apply_uncertain || run.commit_unsettled %}
+        <p class="text-quiet text-sm">
+          Power Plant retains the evidence. This view offers no retry or
+          rollback.
+        </p>
+      {% endif %}
+    </div>
+    {% for transaction in run.transactions %}
+      {{ transaction|safe }}
+    {% endfor %}
+    {% if settlement_controls && run.apply_partial && run.settlement_eligible && !run.commit_unsettled %}
+      <div class="border-base-300 space-y-3 border-t pt-5">
+        <h4 class="font-semibold">End this task without another write</h4>
+        <p class="text-sm">
+          This keeps the recorded file outcomes and evidence. It records
+          Cancelled, not Completed.
+        </p>
+        <form
+          data-graft
+          method="post"
+          action="/conversations/{{ run.conversation_id }}/runs/{{ run.apply_run_id }}/settle-partial"
+        >
+          <input
+            type="hidden"
+            name="attempt"
+            value="{{ run.apply_attempt_id }}"
+          />
+          <input type="hidden" name="state" value="{{ run.apply_state }}" />
+          <button class="btn btn-outline w-full" type="submit">
+            Keep applied files and end task
+          </button>
+        </form>
+      </div>
+    {% else if run.apply_partial && run.run_terminal %}
+      <p class="text-quiet text-sm">
+        This run already ended. Its recorded file outcomes remain unchanged.
+      </p>
+    {% endif %}
+  </section>
+{% endif %}

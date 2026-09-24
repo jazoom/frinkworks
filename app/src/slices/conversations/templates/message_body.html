@@ -1,14 +1,29 @@
-<header class="chat-turn-meta flex items-center gap-2">
+<div class="chat-turn-avatar" aria-hidden="true">
   {% if message.user %}
-    <span class="user-avatar" aria-hidden="true">Y</span>
-  {% endif %}<strong>{{ message.role_label }}</strong>
+    <span>Y</span>
+  {% else if !message.is_command %}
+    <img src="/static/images/logo.svg" alt="" width="32" height="32" />
+  {% else %}
+    <svg class="workspace-icon">
+      <use href="/static/images/workspace-icons.svg#code" />
+    </svg>
+  {% endif %}
+</div>
+<header class="chat-turn-meta flex flex-wrap items-center gap-x-3 gap-y-1">
+  <strong>{{ message.role_label }}</strong>
   {% if message.excluded %}
     <span class="badge badge-ghost badge-sm" title="Excluded from model context"
       >Context excluded</span
     >
   {% endif %}
   {% if message.status != "" && (message.error == "" || message.status != "Failed") %}
-    <span class="inline-flex items-center gap-1.5 text-xs" role="status">
+    <span
+      class="chat-reply-status inline-flex items-center gap-2"
+      role="status"
+      data-reply-active="{{ message.streaming }}"
+      data-reply-status="{{ message.status }}"
+      data-reply-retry-message="{{ message.retry_message }}"
+    >
       {% if message.streaming %}
         <span
           class="loading loading-dots loading-xs motion-reduce:hidden"
@@ -17,23 +32,6 @@
       {% endif %}
       {{ message.status }}
     </span>
-  {% endif %}
-  {% if message.revisable %}
-    <a
-      class="btn btn-ghost btn-xs ml-auto min-h-11"
-      href="{{ message.revise_href }}"
-      data-graft
-      data-revise-prompt
-      >Revise</a
-    >
-  {% endif %}
-  {% if message.forkable %}
-    <a
-      class="btn btn-ghost btn-xs ml-auto min-h-11"
-      href="{{ message.fork_href }}"
-      data-graft
-      >Fork from here</a
-    >
   {% endif %}
 </header>
 <div class="chat-turn-body">
@@ -55,25 +53,46 @@
       <p>{{ message.error }}</p>
     </div>
   {% endif %}
-  {% if let Some(copy) = message.copy %}
-    <div class="mt-2 flex items-center gap-2" data-response-copy>
-      <button
-        type="button"
-        class="btn btn-ghost btn-xs min-h-11"
-        data-copy-response="{{ message.id }}"
-        aria-label="Copy response"
-      >
-        Copy
-      </button>
-      <span
-        class="text-quiet text-xs"
-        role="status"
-        aria-live="polite"
-        data-copy-status
-      ></span>
-      <template data-copy-source data-copy-for="{{ message.id }}"
-        >{{ copy.source }}</template
-      >
-    </div>
+  {% if message.revisable || message.forkable || message.copy.is_some() %}
+    <footer class="chat-message-actions mt-2 flex flex-wrap items-center gap-2">
+      {% if message.revisable %}
+        <a
+          class="btn btn-ghost btn-sm"
+          href="{{ message.revise_href }}"
+          data-graft
+          data-revise-prompt
+          >Revise</a
+        >
+      {% endif %}
+      {% if message.forkable %}
+        <a
+          class="btn btn-ghost btn-sm"
+          href="{{ message.fork_href }}"
+          data-graft
+          >Fork from here</a
+        >
+      {% endif %}
+      {% if let Some(copy) = message.copy %}
+        <div class="flex items-center gap-2" data-response-copy>
+          <button
+            type="button"
+            class="btn btn-ghost btn-sm"
+            data-copy-response="{{ message.id }}"
+            aria-label="Copy response"
+          >
+            Copy
+          </button>
+          <span
+            class="text-quiet text-xs"
+            role="status"
+            aria-live="polite"
+            data-copy-status
+          ></span>
+          <template data-copy-source data-copy-for="{{ message.id }}"
+            >{{ copy.source }}</template
+          >
+        </div>
+      {% endif %}
+    </footer>
   {% endif %}
 </div>

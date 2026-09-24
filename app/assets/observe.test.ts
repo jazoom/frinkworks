@@ -101,6 +101,44 @@ test("an ancestor command patch restarts observation after the unsafe guard rele
     vi.useRealTimers();
 });
 
+test("navigation restarts a retained observer without a loop from its own GET URL", () => {
+    vi.useFakeTimers();
+    const root = observeRoot("conversation-observe");
+    const form = root.querySelector("form")!;
+    const submissions = countSubmissions(form);
+    const island = initObserve(root);
+    vi.advanceTimersByTime(0);
+    island.reconcile?.({
+        cause: "location",
+        detail: {
+            url: "/conversations/one?job=one&cursor=2",
+            cause: "get-form-replacement",
+        },
+    });
+    vi.advanceTimersByTime(0);
+    expect(submissions.count).toBe(1);
+    for (const url of [
+        "/conversations/one/activity",
+        "/conversations/one?work=true",
+    ]) {
+        island.reconcile?.({
+            cause: "location",
+            detail: { url, cause: "link-navigation" },
+        });
+        vi.advanceTimersByTime(0);
+    }
+    expect(submissions.count).toBe(3);
+    root.dataset.observeActive = "false";
+    island.reconcile?.({
+        cause: "location",
+        detail: { url: "/conversations/one", cause: "link-navigation" },
+    });
+    vi.advanceTimersByTime(0);
+    expect(submissions.count).toBe(3);
+    island.destroy();
+    vi.useRealTimers();
+});
+
 for (const config of configurations) {
     test(`${config.name}: an active island submits after mount`, () => {
         vi.useFakeTimers();

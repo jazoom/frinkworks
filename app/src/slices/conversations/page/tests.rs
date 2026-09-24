@@ -327,20 +327,19 @@ fn candidate_review_escapes_untrusted_file_contents() {
         diff_base: "def".to_owned(),
         diff_href: "/runs/run/gates/gate".to_owned(),
         review_href: "/conversations/candidate-review?run=run".to_owned(),
-        ordinary: true,
         commit_on_approval: true,
+        apply_on_approval: false,
         application_destination: "/tmp/test".to_owned(),
         can_request_revision: false,
-        quick_task: false,
         exclusions: Vec::new(),
         total_changes: 1,
         changes_truncated: false,
         changes: vec![super::CandidateChangeView {
             path: "<script>alert(1)</script>".to_owned(),
-            name: "<script>alert(1)</script>".to_owned(),
             directory: "project".to_owned(),
             status: "Added",
             preview: "+<img src=x onerror=alert(1)>\n".to_owned(),
+            preview_note: "",
             additions: 1,
             removals: 0,
             has_counts: true,
@@ -376,52 +375,92 @@ fn candidate_review_escapes_untrusted_file_contents() {
     assert!(!html.contains("no Git commit"));
 }
 
+#[test]
+fn candidate_approval_consequences_follow_the_pinned_step_not_the_diff_format() {
+    use crate::workflows::{
+        commands::SystemCommandId,
+        definition::{PinnedWorkflowDefinition, StepAction, WorkflowDefinition},
+    };
+    let (state, _, _, mut run) = crate::slices::human_gates::tests::conversation_at_gate();
+    for command in [
+        Some(SystemCommandId::ApplyChanges),
+        Some(SystemCommandId::CommitCandidate),
+        None,
+    ] {
+        let mut steps = run.pinned.definition.steps().to_vec();
+        let last = steps.last_mut().unwrap();
+        if let Some(command) = command {
+            let StepAction::SystemCommand(action) = &mut last.action else {
+                panic!("application step")
+            };
+            action.command = command;
+        } else {
+            steps.pop();
+        }
+        let definition = WorkflowDefinition::from_parts(
+            run.pinned.definition.name().to_owned(),
+            run.pinned.definition.default_environment(),
+            run.pinned.definition.roles().to_vec(),
+            steps,
+        )
+        .unwrap();
+        run.pinned = PinnedWorkflowDefinition::pin(None, definition);
+        let view = super::pending_code_gate(
+            &run,
+            &state.workflow_artefacts,
+            "review directory".to_owned(),
+        )
+        .unwrap();
+        assert_eq!(
+            view.apply_on_approval,
+            command == Some(SystemCommandId::ApplyChanges)
+        );
+        assert_eq!(
+            view.commit_on_approval,
+            command == Some(SystemCommandId::CommitCandidate)
+        );
+        assert_eq!(
+            view.candidate,
+            run.artefact(&run.gates[0].candidate.id)
+                .unwrap()
+                .candidate_hash()
+                .unwrap()
+                .as_str()
+        );
+    }
+}
+
 #[derive(askama::Template)]
 #[template(path = "conversations/templates/workflow_progress.html")]
 struct ProgressHarness {
     run: WorkflowProgressView,
+    observe_active: bool,
 }
 
-fn partial_progress_view() -> WorkflowProgressView {
-    WorkflowProgressView {
-        run_href: "/runs/aaa".to_owned(),
-        name: "Quick task".to_owned(),
-        state: "Active",
-        current_step: "Apply changes".to_owned(),
-        result: "Worker activity stays in the run record.",
-        task_progress: String::new(),
-
-        conversation_id: "ccc".to_owned(),
-        apply_run_id: "aaa".to_owned(),
-        apply_attempt_id: "bbb".to_owned(),
-        apply_state: "recovered",
-        apply_outcomes: vec![ApplyOutcomeView {
-            directory: "fieldnotes".to_owned(),
-            path: "/tmp/fieldnotes".to_owned(),
-            outcome: "Applied",
-        }],
-        apply_resolve_href: "/runs/aaa/attempts/bbb/changes".to_owned(),
-        apply_partial: true,
-        apply_uncertain: false,
-        apply_complete: false,
-        settlement_eligible: true,
-        run_terminal: false,
-    }
-}
-
-// Recovery controls bind the displayed run, attempt and outcome state.
 #[test]
 fn partial_progress_links_the_exact_attempt_and_settlement_identity() {
-    use askama::Template;
+    let conversation = crate::conversations::ConversationId::generate().unwrap();
+    let run = crate::slices::tests::file_outcome_run(
+        conversation,
+        &[
+            crate::workflows::apply::ApplyRootOutcome::Applied,
+            crate::workflows::apply::ApplyRootOutcome::Conflicted,
+        ],
+    );
+    let attempt = run.attempts[0].id;
     let html = ProgressHarness {
-        run: partial_progress_view(),
+        run: workflow_progress(&run),
+        observe_active: false,
     }
     .render()
-    .expect("progress");
-    assert!(html.contains("/runs/aaa/attempts/bbb/changes"));
-    assert!(html.contains("/conversations/ccc/runs/aaa/settle-partial"));
+    .unwrap();
+    assert!(html.contains(&format!("/runs/{}/attempts/{attempt}/changes", run.id)));
+    assert!(html.contains(&format!(
+        "/conversations/{conversation}/runs/{}/settle-partial",
+        run.id
+    )));
     assert!(html.contains("name=\"attempt\""));
-    assert!(html.contains("value=\"bbb\""));
+    assert!(html.contains(&format!("value=\"{attempt}\"")));
     assert!(html.contains("value=\"recovered\""));
 }
 

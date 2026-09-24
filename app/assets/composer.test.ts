@@ -33,6 +33,51 @@ test("the send shortcut submits Quick task", () => {
     expect(requestSubmit).toHaveBeenCalledWith(quick);
 });
 
+test("the shortcut queues through the composer and never submits its adjacent Stop control", () => {
+    const form = composerForm();
+    form.innerHTML = `<textarea id="composer-message"></textarea>
+        <button type="submit" name="action" value="queue">Queue</button>
+        <button type="submit" form="conversation-stop">Stop</button>`;
+    form.requestSubmit = vi.fn();
+    initComposer(form, { signal: new AbortController().signal });
+    form.querySelector("textarea")!.dispatchEvent(
+        new KeyboardEvent("keydown", {
+            key: "Enter",
+            ctrlKey: true,
+            bubbles: true,
+            cancelable: true,
+        }),
+    );
+    expect(form.requestSubmit).toHaveBeenCalledWith(
+        form.querySelector('[value="queue"]'),
+    );
+});
+
+test("a retained composer takes Send and Queue labels from the latest server patch", () => {
+    const form = composerForm();
+    form.innerHTML = `<textarea id="composer-message"></textarea>
+        <button data-composer-submit data-default-label="Queue" data-default-aria-label="Queue" type="submit"><span data-composer-submit-label>Queue</span></button>`;
+    const island = initComposer(form, { signal: new AbortController().signal });
+    const button = form.querySelector("button")!;
+    for (const [label, aria] of [
+        ["Send", "Send message"],
+        ["Queue", "Queue"],
+    ]) {
+        button.dataset.defaultLabel = label;
+        button.dataset.defaultAriaLabel = aria;
+        island?.reconcile?.({
+            cause: "live-patch",
+            detail: {
+                form,
+                url: "/conversations/one",
+                targetIds: ["conversation-detail"],
+            },
+        });
+        expect(button.textContent).toBe(label);
+        expect(button.getAttribute("aria-label")).toBe(aria);
+    }
+});
+
 test("navigation replaces the draft before a later conversation command patch", () => {
     const form = composerForm();
     const textarea = form.querySelector("textarea")!;
@@ -149,7 +194,13 @@ test.each(["host-consent", "host-consent/approve"])(
     },
 );
 
-test("a sandbox projection preserves the unsent message", () => {
+test.each([
+    ["/projects/a/agents/b?sandbox=cursor", ["sandbox-status", "composer"]],
+    ["/runs/run/gates/gate/approve", ["conversation-detail"]],
+    ["/runs/run/gates/gate/request-revision", ["conversation-detail"]],
+    ["/runs/run/gates/gate/cancel", ["conversation-detail"]],
+    ["/conversations/one/runs/run/settle-partial", ["conversation-detail"]],
+])("a patch from %s preserves the unsent message", (url, targetIds) => {
     const form = composerForm();
     document.body.append(form);
     const textarea = form.querySelector("textarea")!;
@@ -171,10 +222,10 @@ test("a sandbox projection preserves the unsent message", () => {
         detail: {
             requestKind: "patch",
             form: document.createElement("form"),
-            url: "/projects/a/agents/b?sandbox=cursor",
+            url,
             outcome: "applied-patch",
             status: 200,
-            targetIds: ["sandbox-status", "composer"],
+            targetIds,
         },
     });
 

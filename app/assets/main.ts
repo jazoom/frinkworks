@@ -1830,6 +1830,36 @@ const SUPPORTED_IMAGE_TYPES = new Set([
 let pendingAttachmentUpload:
     { form: HTMLFormElement; action: string; warning: string } | undefined;
 
+// Mirror only the server's active reply status. A historical window can contain
+// a pending entry, but its content does not represent the live tail.
+function syncReplyStrip() {
+    const strip = document.querySelector<HTMLElement>("[data-reply-strip]");
+    const text = strip?.querySelector<HTMLElement>("[data-reply-strip-text]");
+    if (!strip || !text) return;
+    const reply = document.querySelector("#conversation-history-status")
+        ? null
+        : document.querySelector<HTMLElement>(
+              '#transcript > .conversation-turn > .chat-turn-meta > [data-reply-active="true"]',
+          );
+    const status = reply?.dataset.replyStatus ?? "";
+    if (text.textContent !== status) text.textContent = status;
+    strip.hidden = status === "";
+    const work = document.querySelector<HTMLElement>(
+        "[data-work-reply-status]",
+    );
+    if (work && status) {
+        if (work.textContent !== status) work.textContent = status;
+        const retry = document.querySelector<HTMLElement>(
+            "[data-work-retry-message]",
+        );
+        if (retry) {
+            const message = reply?.dataset.replyRetryMessage ?? "";
+            if (retry.textContent !== message) retry.textContent = message;
+            retry.hidden = message === "";
+        }
+    }
+}
+
 function syncComposerActions() {
     const form = document.querySelector<HTMLFormElement>(
         "#conversation-composer",
@@ -2999,6 +3029,11 @@ listenForRequestSettled(syncInstructionsFields);
 listenForLivePatches(syncInstructionsFields);
 reconcileRevision();
 syncImageCompatibility();
+syncReplyStrip();
+listenForLivePatches(syncReplyStrip);
+listenForLocationChanges(syncReplyStrip);
+listenForRequestSettled(syncReplyStrip);
+document.addEventListener("hypergraft:progress", syncReplyStrip);
 syncComposerActions();
 listenForLivePatches(syncComposerActions);
 listenForLocationChanges(syncComposerActions);

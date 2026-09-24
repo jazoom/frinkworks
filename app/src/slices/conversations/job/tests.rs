@@ -89,6 +89,7 @@ async fn untrusted_activity_keeps_its_order_and_stays_secret_safe_in_each_repres
                 job.latest_seq(),
                 &job.snapshot().output,
                 false,
+                None,
                 false,
                 &mut hypergraft::StreamBudget::new(),
             )
@@ -176,6 +177,127 @@ async fn conversation_instructions_apply_before_and_after_the_first_exchange() {
         );
         assert!(record.active_job.is_none());
     }
+}
+
+#[test]
+fn running_observation_keeps_compaction_and_retry_status_in_each_representation() {
+    let state = crate::tests::test_state(RuntimeConfig::development());
+    let token = generate_session_token().unwrap();
+    state.sessions.insert(token.id());
+    let record = state.conversations.create("Retry".to_owned()).unwrap();
+    let job = state
+        .sessions
+        .begin_conversation_job(&token.id(), record.id)
+        .unwrap();
+    let record = state
+        .conversations
+        .begin_message_with_model(
+            &record.id,
+            record.revision,
+            None,
+            job.id(),
+            "Question".to_owned(),
+        )
+        .unwrap();
+    for compacting in [true, false] {
+        if compacting {
+            job.set_compacting();
+        } else {
+            job.clear_compacting();
+        }
+        let expected = if compacting {
+            "Compacting context"
+        } else {
+            "Waiting for model"
+        };
+        let view = super::super::detail_view(&state, token.id(), &record, &record.title, "");
+        let page = askama::Template::render(&view.contents()).unwrap();
+        assert!(page.contains("data-work-reply-status"));
+        for body in [
+            page,
+            String::from_utf8(
+                super::progress_frame(
+                    &record.id,
+                    &job.id().as_hex(),
+                    record.messages[1].id,
+                    &[],
+                    job.latest_seq(),
+                    &job.snapshot().output,
+                    compacting,
+                    None,
+                    false,
+                    &mut hypergraft::StreamBudget::new(),
+                )
+                .unwrap()
+                .into_bytes(),
+            )
+            .unwrap(),
+            String::from_utf8(
+                super::final_frame(
+                    &state,
+                    &record.id,
+                    token.id(),
+                    &job,
+                    job.latest_seq(),
+                    false,
+                )
+                .into_bytes(),
+            )
+            .unwrap(),
+        ] {
+            assert!(body.contains(&format!("data-reply-status=\"{expected}\"")));
+            assert!(body.contains("data-reply-active=\"true\""));
+        }
+    }
+    job.push_response("Partial reply".to_owned());
+    job.set_retry(2, std::time::Duration::from_secs(2), "Synthetic retry");
+    for frame in [
+        super::progress_frame(
+            &record.id,
+            &job.id().as_hex(),
+            record.messages[1].id,
+            &[],
+            job.latest_seq(),
+            &job.snapshot().output,
+            false,
+            Some(super::super::page::retry_status_message(
+                2,
+                std::time::Duration::from_secs(2),
+            )),
+            false,
+            &mut hypergraft::StreamBudget::new(),
+        )
+        .unwrap(),
+        super::final_frame(
+            &state,
+            &record.id,
+            token.id(),
+            &job,
+            job.latest_seq(),
+            false,
+        ),
+    ] {
+        let body = String::from_utf8(frame.into_bytes()).unwrap();
+        assert!(body.contains("data-reply-status=\"Retrying the provider\""));
+        assert!(body.contains("data-reply-active=\"true\""));
+        assert!(body.contains("data-reply-retry-message=\"Retrying the provider in 2s (attempt 2). Stop remains available.\""));
+        assert!(body.contains("target=\"conversation-observe\""));
+    }
+    job.clear_retry();
+    let body = String::from_utf8(
+        super::final_frame(
+            &state,
+            &record.id,
+            token.id(),
+            &job,
+            job.latest_seq(),
+            false,
+        )
+        .into_bytes(),
+    )
+    .unwrap();
+    assert!(body.contains("data-reply-status=\"Replying\""));
+    assert!(body.contains("data-reply-retry-message=\"\""));
 }
 
 #[tokio::test]

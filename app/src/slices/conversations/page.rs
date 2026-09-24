@@ -52,10 +52,10 @@ pub(super) struct DirectoryView {
 #[derive(Clone)]
 pub(super) struct CandidateChangeView {
     pub(super) path: String,
-    pub(super) name: String,
     pub(super) directory: String,
     pub(super) status: &'static str,
     pub(super) preview: String,
+    pub(super) preview_note: &'static str,
     pub(super) additions: usize,
     pub(super) removals: usize,
     pub(super) has_counts: bool,
@@ -70,11 +70,10 @@ pub(super) struct PendingCodeGateView {
     pub(super) diff_base: String,
     pub(super) diff_href: String,
     pub(super) review_href: String,
-    pub(super) ordinary: bool,
     pub(super) commit_on_approval: bool,
+    pub(super) apply_on_approval: bool,
     pub(super) application_destination: String,
     pub(super) can_request_revision: bool,
-    pub(super) quick_task: bool,
     pub(super) exclusions: Vec<String>,
     pub(super) changes: Vec<CandidateChangeView>,
     pub(super) total_changes: usize,
@@ -332,6 +331,7 @@ pub(super) struct MessageView {
     pub(super) command: Option<String>,
     pub(super) copy: Option<CopyResponseView>,
     pub(super) status: &'static str,
+    pub(super) retry_message: String,
     pub(super) error: String,
     pub(super) streaming: bool,
     pub(super) forkable: bool,
@@ -387,12 +387,6 @@ pub(super) struct CandidateReviewLinkView {
     pub(super) diff_base_hash: String,
 }
 
-pub(super) struct ApplyOutcomeView {
-    pub(super) directory: String,
-    pub(super) path: String,
-    pub(super) outcome: &'static str,
-}
-
 pub(super) struct WorkflowProgressView {
     pub(super) run_href: String,
     pub(super) name: String,
@@ -405,8 +399,9 @@ pub(super) struct WorkflowProgressView {
     pub(super) apply_run_id: String,
     pub(super) apply_attempt_id: String,
     pub(super) apply_state: &'static str,
-    pub(super) apply_outcomes: Vec<ApplyOutcomeView>,
-    pub(super) apply_resolve_href: String,
+    pub(super) transactions: Vec<crate::slices::workflow_runs::TransactionOutcomesView>,
+    pub(super) apply_changed: bool,
+    pub(super) commit_unsettled: bool,
     pub(super) apply_partial: bool,
     pub(super) apply_uncertain: bool,
     pub(super) apply_complete: bool,
@@ -967,6 +962,61 @@ impl ConversationDetailView {
         })
     }
 
+    fn needs_attention(&self) -> bool {
+        self.needs_review()
+            || self.pending_question.is_some()
+            || self.continuation.is_some()
+            || (!self.job_active && self.file_recovery_blocked())
+    }
+
+    fn file_recovery_blocked(&self) -> bool {
+        self.saved().is_some_and(|saved| {
+            saved
+                .workflow_progress
+                .as_ref()
+                .is_some_and(|run| run.apply_uncertain || run.commit_unsettled)
+                || saved.direct_results.iter().any(|result| result.unknown)
+        })
+    }
+
+    fn attention_label(&self) -> &'static str {
+        if self.pending_question.is_some() {
+            "Needs your answer"
+        } else if self.continuation.is_some() {
+            "Execution paused"
+        } else if self.file_recovery_blocked() {
+            "File outcomes need attention"
+        } else {
+            "Needs your review"
+        }
+    }
+
+    fn active_workflow(&self) -> bool {
+        self.saved()
+            .and_then(|saved| saved.workflow_progress.as_ref())
+            .is_some_and(|run| !run.run_terminal)
+    }
+
+    fn work_reply_status(&self) -> &'static str {
+        if self
+            .context
+            .as_ref()
+            .is_some_and(|context| context.compacting)
+        {
+            "Compacting context"
+        } else if self.retry.is_some() {
+            "Retrying the provider"
+        } else if self.historical {
+            "Work is in progress"
+        } else {
+            self.messages
+                .iter()
+                .rev()
+                .find(|message| message.streaming)
+                .map_or("Work is in progress", |message| message.status)
+        }
+    }
+
     fn draft_message(&self) -> &str {
         if let Some(revision) = &self.revision {
             return &revision.text;
@@ -1019,6 +1069,14 @@ impl ConversationDetailView {
             format!("/conversations/{}", saved.id)
         } else {
             format!("/conversations/{}?{}", saved.id, leaf)
+        }
+    }
+
+    fn composer_placeholder(&self) -> &'static str {
+        if self.queue.follow_up && self.revision.is_none() {
+            "Add a follow-up…"
+        } else {
+            "Ask anything, or describe what you would like to build…"
         }
     }
 
@@ -1245,9 +1303,15 @@ impl ConversationDetailView {
                 message.streaming = false;
             }
         }
-        if retry.is_some() {
+        if let Some(retry) = &retry {
             for message in messages.iter_mut().filter(|message| message.streaming) {
                 message.status = "Retrying the provider";
+                message.retry_message = retry.message.clone();
+            }
+        }
+        if job.is_some_and(|job| job.compacting) {
+            for message in messages.iter_mut().filter(|message| message.streaming) {
+                message.status = "Compacting context";
             }
         }
         let retained = transcript.map_or(record.messages.len(), |window| window.total);
@@ -2063,35 +2127,7 @@ fn network_summary_from_form(network: &str) -> String {
     }
 }
 
-pub(super) fn apply_outcomes(run: &WorkflowRun) -> Vec<ApplyOutcomeView> {
-    run.latest_apply_attempt()
-        .and_then(|attempt| {
-            attempt
-                .apply_transaction
-                .as_ref()
-                .map(|transaction| (attempt, transaction))
-        })
-        .map(|(_, transaction)| {
-            transaction
-                .roots
-                .iter()
-                .map(|root| ApplyOutcomeView {
-                    directory: root.alias.clone(),
-                    path: root.host_path.display().to_string(),
-                    outcome: match root.outcome {
-                        crate::workflows::apply::ApplyRootOutcome::Pending => "Pending",
-                        crate::workflows::apply::ApplyRootOutcome::Unchanged => "Unchanged",
-                        crate::workflows::apply::ApplyRootOutcome::Applied => "Applied",
-                        crate::workflows::apply::ApplyRootOutcome::Conflicted => "Conflicted",
-                        crate::workflows::apply::ApplyRootOutcome::Uncertain => "Uncertain",
-                    },
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn apply_attempt_presentation(run: &WorkflowRun) -> (String, String, &'static str, String) {
+fn apply_attempt_presentation(run: &WorkflowRun) -> (String, String, &'static str) {
     match run.latest_apply_attempt() {
         Some(attempt) => {
             let state = attempt
@@ -2108,24 +2144,14 @@ fn apply_attempt_presentation(run: &WorkflowRun) -> (String, String, &'static st
                     }
                 })
                 .unwrap_or("");
-            (
-                run.id.as_hex(),
-                attempt.id.as_hex(),
-                state,
-                format!(
-                    "/runs/{}/attempts/{}/changes",
-                    run.id.as_hex(),
-                    attempt.id.as_hex()
-                ),
-            )
+            (run.id.as_hex(), attempt.id.as_hex(), state)
         }
-        None => (String::new(), String::new(), "", String::new()),
+        None => (String::new(), String::new(), ""),
     }
 }
 
 pub(super) fn workflow_progress(run: &WorkflowRun) -> WorkflowProgressView {
-    let (apply_run_id, apply_attempt_id, apply_state, apply_resolve_href) =
-        apply_attempt_presentation(run);
+    let (apply_run_id, apply_attempt_id, apply_state) = apply_attempt_presentation(run);
     WorkflowProgressView {
         run_href: format!("/runs/{}", run.id.as_hex()),
         name: run.pinned.definition.name().to_owned(),
@@ -2141,11 +2167,39 @@ pub(super) fn workflow_progress(run: &WorkflowRun) -> WorkflowProgressView {
             .conversation_id
             .map(|id| id.as_hex())
             .unwrap_or_default(),
-        apply_outcomes: apply_outcomes(run),
+        transactions: run
+            .attempts
+            .iter()
+            .filter(|attempt| {
+                attempt.apply_transaction.is_some() || attempt.commit_transaction.is_some()
+            })
+            .map(|attempt| {
+                crate::slices::workflow_runs::TransactionOutcomesView::from_attempt(
+                    run, attempt, true,
+                )
+            })
+            .collect(),
+        apply_changed: run
+            .latest_apply_attempt()
+            .and_then(|attempt| attempt.apply_transaction.as_ref())
+            .is_some_and(|transaction| {
+                transaction
+                    .roots
+                    .iter()
+                    .any(|root| root.outcome == crate::workflows::apply::ApplyRootOutcome::Applied)
+            }),
+        commit_unsettled: run.attempts.iter().any(|attempt| {
+            attempt
+                .commit_transaction
+                .as_ref()
+                .is_some_and(|transaction| {
+                    transaction.needs_recovery()
+                        || attempt.cleanup != crate::workflows::run::AttemptCleanupRecord::Complete
+                })
+        }),
         apply_run_id,
         apply_attempt_id,
         apply_state,
-        apply_resolve_href,
         apply_partial: run.apply_is_known_partial(),
         apply_uncertain: run.apply_is_uncertain(),
         apply_complete: run.apply_is_complete(),
@@ -2233,10 +2287,11 @@ pub(super) fn pending_code_gate(
             gate.candidate.id.as_hex(),
             gate.diff_base.id.as_hex()
         ),
-        ordinary: diff.ordinary(),
-        commit_on_approval: crate::slices::human_gates::approval_commits(run, gate),
+        commit_on_approval: crate::slices::human_gates::approval_command(run, gate)
+            == Some(crate::workflows::commands::SystemCommandId::CommitCandidate),
+        apply_on_approval: crate::slices::human_gates::approval_command(run, gate)
+            == Some(crate::workflows::commands::SystemCommandId::ApplyChanges),
         can_request_revision: run.human_revision_policy(&gate.step).is_some(),
-        quick_task: run.kind == crate::workflows::RunKind::QuickTask,
         application_destination,
         exclusions: diff.exclusions().to_vec(),
         total_changes,
@@ -2268,31 +2323,29 @@ pub(super) fn pending_code_gate(
                         (additions, removals, true)
                     })
                     .unwrap_or((0, 0, false));
-                let preview = full
-                    .and_then(|change| {
-                        let text: String = change
-                            .text?
-                            .into_iter()
-                            .map(|fragment| fragment.text)
-                            .collect();
+                let (preview, preview_note) = match full {
+                    Some(full) if full.binary => (String::new(), "Binary change. The full review contains immutable file downloads."),
+                    Some(full) if full.text_too_large => (String::new(), "This text change exceeds the display limit. The full review contains immutable file downloads."),
+                    Some(full) => {
+                        let text: String = full.text.unwrap_or_default().into_iter().map(|fragment| fragment.text).collect();
                         let bytes = crate::markdown::escape_plain(&text).len();
-                        if bytes > preview_budget {
-                            return None;
+                        if text.is_empty() {
+                            (String::new(), "No text changes. The full review contains file metadata.")
+                        } else if bytes > preview_budget {
+                            (String::new(), "This diff exceeds the companion preview limit. Open the full review for this file.")
+                        } else {
+                            preview_budget -= bytes;
+                            (text, "")
                         }
-                        preview_budget -= bytes;
-                        Some(text)
-                    })
-                    .unwrap_or_else(|| {
-                        "Open the full candidate diff for binary content or a larger preview."
-                            .to_owned()
-                    });
-                let name = candidate_file_name(&change.path);
+                    }
+                    None => (String::new(), "The diff preview is unavailable. Open the full review for this file."),
+                };
                 CandidateChangeView {
                     path: change.path,
-                    name,
                     directory: change.directory,
                     status: change.status,
                     preview,
+                    preview_note,
                     additions,
                     removals,
                     has_counts,
@@ -2300,14 +2353,6 @@ pub(super) fn pending_code_gate(
             })
             .collect(),
     })
-}
-
-fn candidate_file_name(path: &str) -> String {
-    path.rsplit('/')
-        .next()
-        .filter(|name| !name.is_empty())
-        .unwrap_or(path)
-        .to_owned()
 }
 
 // The transcript uses the durable message identity so projection never depends on position.
@@ -2421,6 +2466,7 @@ pub(super) fn message_view_in(
     let streaming = message.status == MessageStatus::Pending;
     MessageView {
         id: message_id(conversation, message),
+        retry_message: String::new(),
         user,
         is_command: command_entry,
         role_label: match message.role {
@@ -2632,6 +2678,7 @@ pub(super) fn response_view(
         copy,
         html,
         status,
+        retry_message: String::new(),
         error,
         streaming,
         forkable: false,
@@ -2641,7 +2688,7 @@ pub(super) fn response_view(
     }
 }
 
-fn retry_status_message(attempt: u32, delay: std::time::Duration) -> String {
+pub(super) fn retry_status_message(attempt: u32, delay: std::time::Duration) -> String {
     let wait = delay.as_secs();
     if wait == 0 {
         format!("Retrying the provider (attempt {attempt}). Stop remains available.")
@@ -3084,11 +3131,7 @@ pub(super) struct ActivityContents<'a> {
     pub(super) task_line: String,
     pub(super) environment_line: String,
     pub(super) needs_recovery: bool,
-    pub(super) apply_outcomes: &'a [ApplyOutcomeView],
-    pub(super) apply_partial: bool,
-    pub(super) apply_uncertain: bool,
-    pub(super) apply_complete: bool,
-    pub(super) apply_resolve_href: &'a str,
+    pub(super) progress: Option<&'a WorkflowProgressView>,
 }
 
 impl ConversationDetailView {
@@ -3145,7 +3188,7 @@ impl ConversationDetailView {
     ) -> Result<String, askama::Error> {
         use askama::Template;
         let saved = self.saved().expect("saved activity conversation");
-        let back_href = format!("/conversations/{}", saved.id);
+        let back_href = format!("/conversations/{}?work=true", saved.id);
         let Some(progress) = saved.workflow_progress.as_ref() else {
             return ActivityContents {
                 has_run: false,
@@ -3160,11 +3203,7 @@ impl ConversationDetailView {
                 task_line: String::new(),
                 environment_line: String::new(),
                 needs_recovery: false,
-                apply_outcomes: &[],
-                apply_partial: false,
-                apply_uncertain: false,
-                apply_complete: false,
-                apply_resolve_href: "",
+                progress: None,
             }
             .render();
         };
@@ -3185,11 +3224,7 @@ impl ConversationDetailView {
             task_line,
             environment_line,
             needs_recovery: matches!(progress.state, "Failed" | "Blocked" | "Interrupted"),
-            apply_outcomes: &progress.apply_outcomes,
-            apply_partial: progress.apply_partial,
-            apply_uncertain: progress.apply_uncertain,
-            apply_complete: progress.apply_complete,
-            apply_resolve_href: &progress.apply_resolve_href,
+            progress: Some(progress),
         }
         .render()
     }

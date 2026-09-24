@@ -1,61 +1,41 @@
 {% if let Some(saved) = self.saved() %}
-  {% if let Some(estimate) = context %}
-    <section
-      id="conversation-context"
-      class="space-y-2 p-5"
-      aria-labelledby="conversation-context-heading"
-    >
-      <h3 id="conversation-context-heading" class="text-lg font-semibold">
-        Context estimate
-      </h3>
-      <p class="text-quiet text-sm">{{ estimate.label }}</p>
-      {% if !estimate.measured %}
-        <p class="text-quiet text-sm">
-          This estimate is separate from provider-reported usage.
-        </p>
-      {% endif %}
-      {% if estimate.partial %}
-        <p class="text-quiet text-sm">
-          Partial estimate. Runtime project instructions and discovered tools
-          are not included, so the next request can differ.
-        </p>
-      {% endif %}
-      {% if estimate.approximate %}
-        <p class="text-quiet text-sm">
-          Approximate token count. This model has no supported tokenizer
-          mapping.
-        </p>
-      {% endif %}
-      {% if estimate.unknown_capacity %}
-        <p class="text-quiet text-sm">
-          Catalogue capacity is unavailable. Power Plant uses a conservative
-          operational limit, not an advertised model window.
-        </p>
-      {% endif %}
-      {% if estimate.measured %}
-        <p class="text-quiet text-sm">
-          The provider reported this input count for the latest request, not for
-          the next request.
-        </p>
-      {% endif %}
-      {% if estimate.compacting %}
-        <p class="text-sm">Compacting context. Stop remains available.</p>
-      {% endif %}
-    </section>
-  {% endif %}
-  {% if let Some(retry) = retry %}
-    <section
-      id="conversation-retry"
-      class="space-y-4 p-5"
-      aria-labelledby="conversation-retry-heading"
-    >
-      <div class="space-y-2">
-        <h3 id="conversation-retry-heading" class="text-lg font-semibold">
-          Retrying the provider
+  {% if job_active && saved.pending_gate.is_none() && pending_host_command.is_none() && pending_question.is_none() && continuation.is_none() && pending_command.is_none() %}
+    {% if !self.active_workflow() || retry.is_some() %}
+      <section
+        class="workspace-work-status space-y-3 p-5"
+        aria-labelledby="conversation-work-status"
+      >
+        <h3
+          id="conversation-work-status"
+          class="flex items-center gap-3 text-xl font-semibold"
+        >
+          <span
+            class="loading loading-spinner loading-sm shrink-0 motion-reduce:hidden"
+            aria-hidden="true"
+          ></span>
+          <span
+            role="status"
+            {% if !historical %}data-work-reply-status{% endif %}
+            >{{ self.work_reply_status() }}</span
+          >
         </h3>
-        <p class="text-quiet text-sm">{{ retry.message }}</p>
-      </div>
-    </section>
+        <p class="text-quiet text-sm">
+          The response appears in the conversation.
+        </p>
+        <p
+          class="text-quiet text-sm"
+          data-work-retry-message
+          {% if retry.is_none() %}hidden{% endif %}
+        >
+          {% if let Some(retry) = retry %}{{ retry.message }}{% endif %}
+        </p>
+        {% if historical %}
+          <a href="{{ latest_href }}" data-graft class="btn btn-outline w-full"
+            >Go to latest output</a
+          >
+        {% endif %}
+      </section>
+    {% endif %}
   {% endif %}
   {% if let Some(command) = pending_host_command %}
     <section
@@ -75,16 +55,16 @@
         </p>
       </div>
       <p
-        class="bg-base-200 overflow-x-auto p-3 font-mono text-sm break-all whitespace-pre-wrap"
+        class="bg-base-200 overflow-x-auto p-3 font-mono text-sm break-words whitespace-pre-wrap"
       >
-        {{ command.command }}
+        {{- command.command -}}
       </p>
       <dl class="grid gap-2 text-sm sm:grid-cols-[9rem_1fr]">
         <dt class="text-quiet">Work location</dt>
         <dd class="font-mono break-all">{{ command.directory }}</dd>
         <dt class="text-quiet">Purpose</dt>
         <dd class="break-words whitespace-pre-wrap">
-          {{ command.explanation }}
+          {{- command.explanation -}}
         </dd>
         <dt class="text-quiet">Approval policy</dt>
         <dd>{{ command.approval_policy }}</dd>
@@ -174,7 +154,6 @@
       {% endif %}
     </section>
   {% endif %}
-  {% include "conversations/compaction/templates/index.html" %}
   {% include "conversations/questions/templates/index.html" %}
   {% include "conversations/continuation/templates/index.html" %}
   {% if let Some(gate) = saved.pending_gate %}
@@ -186,7 +165,7 @@
         <summary>Execution details</summary>
         {% include "conversations/templates/workflow_progress.html" %}
       </details>
-    {% else if run.run_terminal %}
+    {% else if run.run_terminal && !run.apply_partial && !run.apply_uncertain && !run.commit_unsettled %}
       <details class="workspace-execution-details">
         <summary>Execution details</summary>
         {% include "conversations/templates/workflow_progress.html" %}
@@ -194,5 +173,57 @@
     {% else %}
       {% include "conversations/templates/workflow_progress.html" %}
     {% endif %}
+  {% endif %}
+  {% if context.is_some() || compaction.is_some() || summary_usage.is_some() %}
+    <details class="workspace-context-details border-base-300 border-t">
+      <summary class="cursor-pointer p-5 text-sm font-semibold">
+        Context and usage
+      </summary>
+      {% if let Some(estimate) = context %}
+        <section
+          id="conversation-context"
+          class="space-y-2 px-5 pb-5"
+          aria-labelledby="conversation-context-heading"
+        >
+          <h3 id="conversation-context-heading" class="font-semibold">
+            Context estimate
+          </h3>
+          <p class="text-sm">{{ estimate.label }}</p>
+          {% if !estimate.measured %}
+            <p class="text-quiet text-sm">
+              This estimate is separate from provider-reported usage.
+            </p>
+          {% endif %}
+          {% if estimate.partial %}
+            <p class="text-quiet text-sm">
+              Partial estimate. This estimate excludes runtime project
+              instructions and discovered tools. The next request can differ.
+            </p>
+          {% endif %}
+          {% if estimate.approximate %}
+            <p class="text-quiet text-sm">
+              Approximate token count. This model has no supported tokenizer
+              mapping.
+            </p>
+          {% endif %}
+          {% if estimate.unknown_capacity %}
+            <p class="text-quiet text-sm">
+              Catalogue capacity is unavailable. Power Plant uses a conservative
+              operational limit, not an advertised model window.
+            </p>
+          {% endif %}
+          {% if estimate.measured %}
+            <p class="text-quiet text-sm">
+              The provider reported this input count for the latest request, not
+              for the next request.
+            </p>
+          {% endif %}
+          {% if estimate.compacting %}
+            <p class="text-sm">Compacting context. Stop remains available.</p>
+          {% endif %}
+        </section>
+      {% endif %}
+      {% include "conversations/compaction/templates/index.html" %}
+    </details>
   {% endif %}
 {% endif %}

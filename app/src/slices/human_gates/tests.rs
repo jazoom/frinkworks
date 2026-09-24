@@ -2,9 +2,16 @@
 async fn conversation_workspace_keeps_exact_gate_fields_in_each_representation() {
     let fixture = conversation_awaiting_gate();
     let path = format!("/conversations/{}", fixture.conversation_id.unwrap());
-    for graft in [None, Some("navigation"), Some("patch")] {
+    let gate_path = fixture.gate_path();
+    for (path, graft, conversation_surface) in [
+        (&path, None, true),
+        (&path, Some("navigation"), true),
+        (&path, Some("patch"), true),
+        (&gate_path, None, false),
+        (&gate_path, Some("navigation"), false),
+    ] {
         let mut request = Request::builder()
-            .uri(&path)
+            .uri(path)
             .header(header::COOKIE, cookie(&fixture.token));
         if let Some(kind) = graft {
             request = request
@@ -28,7 +35,10 @@ async fn conversation_workspace_keeps_exact_gate_fields_in_each_representation()
             assert!(form.contains("value=\"1\""));
             assert!(form.contains("name=\"candidate\""));
             assert!(form.contains(&format!("value=\"{}\"", fixture.candidate)));
-            assert!(form.contains("name=\"surface\" value=\"conversation\""));
+            assert_eq!(
+                form.contains("name=\"surface\" value=\"conversation\""),
+                conversation_surface
+            );
         }
         assert!(body.contains(fixture.host.to_str().unwrap()));
     }
@@ -1255,6 +1265,9 @@ async fn a_human_revision_dispatches_the_reserved_attempt_and_rejects_a_duplicat
     );
     let response = post_decision(&fixture, "request-revision", body.clone(), None).await;
     assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let text = body_text(response).await;
+    assert!(text.contains("target=\"conversation-detail\""));
+    assert!(!text.contains("navigate="));
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
         loop {
             let run = fixture
@@ -1306,10 +1319,9 @@ async fn another_conversation_job_does_not_block_a_gate_decision() {
     )
     .await;
     assert_eq!(approved.status(), axum::http::StatusCode::OK);
-    assert!(body_text(approved).await.contains(&format!(
-        "navigate=\"/conversations/{}\"",
-        fixture.conversation_id.unwrap()
-    )));
+    let text = body_text(approved).await;
+    assert!(text.contains("target=\"conversation-detail\""));
+    assert!(!text.contains("navigate="));
     let run = fixture
         .state
         .workflow_runs
@@ -1452,7 +1464,8 @@ async fn a_conversation_discard_settles_only_that_conversation_and_rejects_dupli
     .await;
     assert_eq!(response.status(), axum::http::StatusCode::OK);
     let text = body_text(response).await;
-    assert!(text.contains(&format!("navigate=\"/conversations/{conversation}\"")));
+    assert!(text.contains("target=\"conversation-detail\""));
+    assert!(!text.contains("navigate="));
     assert!(
         fixture
             .state
@@ -1992,11 +2005,41 @@ fn gate_diff_counts_derive_from_complete_evidence_and_reject_out_of_range_naviga
     .expect("gate page");
     assert_eq!(view.total, 1);
     assert_eq!(view.changes.len(), 1);
+    assert_eq!(view.selected_path, "file.txt");
+    assert!(view.changes[0].selected);
+    assert!(!view.text.is_empty());
     assert!(view.changes[0].has_counts);
     assert_eq!(
         (view.changes[0].additions, view.changes[0].removals),
         (1, 1)
     );
+    let unavailable_store = crate::workflows::WorkflowArtefactRepository::in_memory();
+    for selection in [None, Some("0")] {
+        let query = super::forms::DiffQuery::parse(None, selection, None).unwrap();
+        let view = super::page::GatePage::new(
+            &run,
+            gate,
+            Some(diff.clone()),
+            None,
+            &unavailable_store,
+            query,
+            "",
+            destination.clone(),
+        )
+        .expect("missing objects do not remove the manifest");
+        assert!(view.preview_unavailable);
+        assert_eq!(view.selected_path, "file.txt");
+        assert_eq!(view.changes.len(), 1);
+        assert!(!view.changes[0].has_counts);
+        let body = askama::Template::render(&view).unwrap();
+        assert!(body.contains("This file preview is unavailable."));
+        assert!(body.contains(&format!("action=\"{}/cancel\"", fixture.gate_path())));
+        assert!(body.contains(&format!(
+            "name=\"candidate\" value=\"{}\"",
+            fixture.candidate
+        )));
+        assert!(body.contains("name=\"gate-revision\" value=\"1\""));
+    }
     for query in [
         super::forms::DiffQuery::parse(Some("9999"), None, None),
         super::forms::DiffQuery::parse(None, Some("9999"), None),

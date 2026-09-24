@@ -83,6 +83,38 @@ fn pending(
 }
 
 #[tokio::test]
+async fn stop_during_a_question_keeps_observation_until_settlement() {
+    let state = test_state();
+    let token = connected(&state);
+    let (record, job) = pending(&state, &token, true);
+    let response = app(&state)
+        .oneshot(command(
+            &format!("/conversations/{}/cancel", record.id),
+            &token,
+            &format!("job={}", job.id()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = text(response).await;
+    assert!(body.contains("target=\"conversation-detail\""));
+    assert!(body.contains("data-observe-active=\"true\""));
+    assert_eq!(body.matches("id=\"conversation-stop\"").count(), 1);
+    assert!(body.contains(&format!("value=\"{}\"", job.id())));
+    assert!(job.cancel_requested());
+    assert!(
+        state
+            .conversations
+            .pending_question(record.id, job.id())
+            .is_none()
+    );
+    assert_eq!(
+        state.conversations.get(&record.id).unwrap().active_job,
+        Some(job.id())
+    );
+}
+
+#[tokio::test]
 async fn question_commands_use_patch_representation() {
     let state = test_state();
     let token = connected(&state);

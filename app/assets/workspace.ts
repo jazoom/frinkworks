@@ -422,6 +422,10 @@ export function initWorkspace(
                     "[data-review-diff]",
                 ).forEach((diff) => {
                     diff.hidden = diff.dataset.reviewDiff !== selected;
+                    if (!diff.hidden) {
+                        diff.scrollIntoView({ block: "nearest" });
+                        diff.focus({ preventScroll: true });
+                    }
                 });
                 root.querySelectorAll<HTMLElement>(
                     "[data-review-file]",
@@ -525,7 +529,23 @@ export function initWorkspace(
         },
         { signal },
     );
-    mobile.addEventListener("change", () => sync(), { signal });
+    mobile.addEventListener(
+        "change",
+        () => {
+            const focus = document.activeElement;
+            sync();
+            if (
+                mobile.matches &&
+                workOpen &&
+                focus instanceof HTMLElement &&
+                focus.closest("[inert]")
+            )
+                root.querySelector<HTMLElement>("#conversation-work")?.focus({
+                    preventScroll: true,
+                });
+        },
+        { signal },
+    );
     sync(!!root.querySelector("#tree-detail"));
     return {
         reconcile(context) {
@@ -550,6 +570,18 @@ export function initWorkspace(
                     )?.hidePopover();
                 }
             }
+            // The mobile companion can cover a focused error after a rejected command.
+            // Closure exposes the authoritative error without a replay.
+            if (
+                context.cause === "patch" &&
+                context.detail.outcome === "applied-patch" &&
+                mobile.matches &&
+                workOpen &&
+                document.activeElement?.id === "conversation-error"
+            ) {
+                workOpen = false;
+                expanded = false;
+            }
             sync(
                 openWork ||
                     (context.cause === "location" &&
@@ -559,6 +591,17 @@ export function initWorkspace(
                             location.href,
                         ).searchParams.get("work") === "true"),
             );
+            const work = root.querySelector<HTMLElement>("#conversation-work");
+            if (
+                context.cause === "patch" &&
+                context.detail.outcome === "applied-patch" &&
+                context.detail.targetIds.includes("conversation-detail") &&
+                workOpen &&
+                work &&
+                !work.inert &&
+                document.activeElement === document.body
+            )
+                work.focus({ preventScroll: true });
         },
         destroy() {
             headerResize.disconnect();

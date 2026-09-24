@@ -101,70 +101,152 @@
         </div>
       </header>
       <div
-        class="workspace-toolbar flex flex-wrap items-center justify-between gap-2 px-6 py-2"
+        class="workspace-toolbar flex flex-wrap items-center gap-x-5 gap-y-2 px-6 py-2"
         {% if self.is_new() %}hidden{% endif %}
       >
-        <form
-          id="thinking-visibility"
-          method="post"
-          action="/thinking-visibility"
-          data-graft
-          data-island="thinking-visibility"
+        <div
+          class="workspace-transcript-controls flex w-full min-w-0 items-center gap-5"
         >
-          {% include "chat/templates/thinking_visibility.html" %}
-        </form>
-        <div class="flex items-center gap-2">
-          {% if let Some(saved) = self.saved() %}
-            <a
-              href="/conversations/{{ saved.id }}/workflow"
-              data-workflow-toggle
-              data-graft
-              class="btn btn-ghost btn-sm"
-              ><svg class="workspace-icon" aria-hidden="true">
-                <use href="/static/images/workspace-icons.svg#play" /></svg
-              >Run a workflow</a
-            >
-            <a
-              href="/conversations/{{ saved.id }}/tree"
-              data-graft
-              data-tree-toggle
-              class="btn btn-ghost btn-sm"
-              ><svg class="workspace-icon" aria-hidden="true">
-                <use href="/static/images/workspace-icons.svg#folder" /></svg
-              >Tree</a
-            >
-          {% endif %}
-          {% if self.work_non_idle() || context.is_some() || summary_usage.is_some() %}
-            {% if !companion_html.is_empty() %}
-              {% if let Some(saved) = self.saved() %}
-                <a
-                  href="/conversations/{{ saved.id }}?work=true"
-                  data-graft
+          <form
+            id="thinking-visibility"
+            method="post"
+            action="/thinking-visibility"
+            data-graft
+            data-island="thinking-visibility"
+          >
+            {% include "chat/templates/thinking_visibility.html" %}
+          </form>
+          <div class="workspace-transcript-actions flex items-center gap-2">
+            {% if let Some(saved) = self.saved() %}
+              <a
+                href="/conversations/{{ saved.id }}/workflow"
+                data-workflow-toggle
+                data-graft
+                class="btn btn-ghost btn-sm"
+                ><svg class="workspace-icon" aria-hidden="true">
+                  <use href="/static/images/workspace-icons.svg#play" /></svg
+                >Run a workflow</a
+              >
+              <a
+                href="/conversations/{{ saved.id }}/tree"
+                data-graft
+                data-tree-toggle
+                class="btn btn-ghost btn-sm"
+                ><svg class="workspace-icon" aria-hidden="true">
+                  <use href="/static/images/workspace-icons.svg#folder" /></svg
+                >Tree</a
+              >
+            {% endif %}
+            {% if self.work_non_idle() || context.is_some() || summary_usage.is_some() %}
+              {% if !companion_html.is_empty() %}
+                {% if let Some(saved) = self.saved() %}
+                  <a
+                    href="/conversations/{{ saved.id }}?work=true"
+                    data-graft
+                    data-work-toggle
+                    aria-controls="conversation-work"
+                    aria-expanded="false"
+                    class="btn btn-ghost btn-sm"
+                    ><svg class="workspace-icon" aria-hidden="true">
+                      <use
+                        href="/static/images/workspace-icons.svg#grid"
+                      /></svg
+                    >Current work</a
+                  >
+                {% endif %}
+              {% else %}
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-sm"
                   data-work-toggle
                   aria-controls="conversation-work"
                   aria-expanded="false"
-                  class="btn btn-ghost btn-sm"
-                  ><svg class="workspace-icon" aria-hidden="true">
-                    <use href="/static/images/workspace-icons.svg#grid" /></svg
-                  >Current work</a
                 >
+                  <svg class="workspace-icon" aria-hidden="true">
+                    <use href="/static/images/workspace-icons.svg#grid" />
+                  </svg>
+                  Current work
+                </button>
               {% endif %}
-            {% else %}
-              <button
-                type="button"
-                class="btn btn-ghost btn-sm"
+            {% endif %}
+          </div>
+        </div>
+        <div class="workspace-reply-strip" hidden data-reply-strip>
+          {% if !companion_html.is_empty() %}
+            {% if let Some(saved) = self.saved() %}
+              <a
+                href="/conversations/{{ saved.id }}?work=true"
+                data-graft
                 data-work-toggle
+                class="btn btn-ghost w-full justify-between"
                 aria-controls="conversation-work"
                 aria-expanded="false"
+                aria-label="Open Current work"
               >
-                <svg class="workspace-icon" aria-hidden="true">
-                  <use href="/static/images/workspace-icons.svg#grid" />
+                <span class="flex min-w-0 items-center gap-3">
+                  <span
+                    class="loading loading-spinner loading-sm motion-reduce:hidden"
+                    aria-hidden="true"
+                  ></span>
+                  <span data-reply-strip-text role="status"></span>
+                </span>
+                <svg class="workspace-icon shrink-0" aria-hidden="true">
+                  <use href="/static/images/workspace-icons.svg#arrow" />
                 </svg>
-                Current work
-              </button>
+              </a>
             {% endif %}
+          {% else %}
+            <button
+              type="button"
+              class="btn btn-ghost w-full justify-between"
+              data-work-toggle
+              aria-controls="conversation-work"
+              aria-expanded="false"
+              aria-label="Open Current work"
+            >
+              <span class="flex min-w-0 items-center gap-3">
+                <span
+                  class="loading loading-spinner loading-sm motion-reduce:hidden"
+                  aria-hidden="true"
+                ></span>
+                <span data-reply-strip-text role="status"></span>
+              </span>
+              <svg class="workspace-icon shrink-0" aria-hidden="true">
+                <use href="/static/images/workspace-icons.svg#arrow" />
+              </svg>
+            </button>
           {% endif %}
         </div>
+        {% if self.needs_attention() %}
+          {% if companion_html.is_empty() %}
+            <button
+              type="button"
+              data-work-toggle
+              data-attention-strip
+              aria-controls="conversation-work"
+              aria-expanded="false"
+              class="alert alert-warning w-full shrink-0 cursor-pointer text-left"
+            >
+              <svg class="workspace-icon" aria-hidden="true">
+                <use href="/static/images/workspace-icons.svg#attention" /></svg
+              ><span class="flex-1">{{ self.attention_label() }}</span>
+            </button>
+          {% else if let Some(saved) = self.saved() %}
+            <a
+              href="/conversations/{{ saved.id }}?work=true"
+              data-graft
+              data-work-toggle
+              data-attention-strip
+              aria-controls="conversation-work"
+              aria-expanded="false"
+              class="alert alert-warning w-full shrink-0 text-left"
+            >
+              <svg class="workspace-icon" aria-hidden="true">
+                <use href="/static/images/workspace-icons.svg#attention" /></svg
+              ><span class="flex-1">{{ self.attention_label() }}</span>
+            </a>
+          {% endif %}
+        {% endif %}
       </div>
       {% if error != "" && !settings_open && !directories_open %}
         <div
@@ -175,36 +257,6 @@
         >
           <p>{{ error }}</p>
         </div>
-      {% endif %}
-      {% if self.needs_review() %}
-        {% if companion_html.is_empty() %}
-          <button
-            type="button"
-            data-work-toggle
-            data-attention-strip
-            aria-controls="conversation-work"
-            aria-expanded="false"
-            class="alert alert-warning mx-5 w-auto shrink-0 cursor-pointer text-left sm:mx-8"
-          >
-            <svg class="workspace-icon" aria-hidden="true">
-              <use href="/static/images/workspace-icons.svg#attention" /></svg
-            ><span class="flex-1">Needs your review</span>
-          </button>
-        {% else if let Some(saved) = self.saved() %}
-          <a
-            href="/conversations/{{ saved.id }}"
-            data-graft
-            data-work-toggle
-            data-attention-strip
-            aria-controls="conversation-work"
-            aria-expanded="false"
-            class="alert alert-warning mx-5 w-auto shrink-0 text-left sm:mx-8"
-          >
-            <svg class="workspace-icon" aria-hidden="true">
-              <use href="/static/images/workspace-icons.svg#attention" /></svg
-            ><span class="flex-1">Needs your review</span>
-          </a>
-        {% endif %}
       {% endif %}
       <section
         id="conversation-actions"
@@ -736,7 +788,7 @@
                   {% if result.unknown %}
                     <p class="mt-3 text-sm">
                       The final snapshot is unavailable. Direct writes can
-                      remain.
+                      remain. This record cannot establish the final file state.
                     </p>
                   {% else %}
                     <p class="mt-3 text-sm">
@@ -767,46 +819,33 @@
                   >
                 </section>
               {% endfor %}
-              {% if saved.pending_gate.is_none() && pending_host_command.is_none() && pending_question.is_none() && retry.is_none() && continuation.is_none() %}
-                {% if job_active %}
-                  <p class="text-quiet p-5 text-sm">
-                    The model response is in progress.
-                  </p>
-                {% else %}
-                  <section
-                    class="workspace-idle space-y-4 p-5"
-                    aria-labelledby="workspace-idle-heading"
-                  >
-                    {% if let Some(run) = saved.workflow_progress %}
-                      {% if run.apply_complete %}
-                        <h3
-                          id="workspace-idle-heading"
-                          class="text-lg font-semibold"
-                        >
-                          Changes applied
-                        </h3>
-                      {% else if run.state == "Cancelled" || run.state == "Stopped" || run.state == "Interrupted" || run.state == "Failed" || run.state == "Blocked" %}
-                        <h3
-                          id="workspace-idle-heading"
-                          class="text-lg font-semibold"
-                        >
-                          The task stopped
-                        </h3>
-                      {% else if run.state == "Completed" %}
-                        <h3
-                          id="workspace-idle-heading"
-                          class="text-lg font-semibold"
-                        >
-                          The response is ready
-                        </h3>
-                      {% else %}
-                        <h3
-                          id="workspace-idle-heading"
-                          class="text-lg font-semibold"
-                        >
-                          Ready when you are
-                        </h3>
-                      {% endif %}
+              {% if !job_active && !self.active_workflow() && !self.file_recovery_blocked() && saved.pending_gate.is_none() && pending_host_command.is_none() && pending_question.is_none() && pending_command.is_none() && retry.is_none() && continuation.is_none() %}
+                <section
+                  class="workspace-idle space-y-4 p-5"
+                  aria-labelledby="workspace-idle-heading"
+                >
+                  {% if let Some(run) = saved.workflow_progress %}
+                    {% if run.apply_complete %}
+                      <h3
+                        id="workspace-idle-heading"
+                        class="text-lg font-semibold"
+                      >
+                        Changes applied
+                      </h3>
+                    {% else if run.state == "Cancelled" || run.state == "Stopped" || run.state == "Interrupted" || run.state == "Failed" || run.state == "Blocked" %}
+                      <h3
+                        id="workspace-idle-heading"
+                        class="text-lg font-semibold"
+                      >
+                        The task stopped
+                      </h3>
+                    {% else if run.state == "Completed" %}
+                      <h3
+                        id="workspace-idle-heading"
+                        class="text-lg font-semibold"
+                      >
+                        The response is ready
+                      </h3>
                     {% else %}
                       <h3
                         id="workspace-idle-heading"
@@ -815,24 +854,31 @@
                         Ready when you are
                       </h3>
                     {% endif %}
-                    <p class="text-quiet text-sm">
-                      The next result or decision will appear here.
-                    </p>
-                    <a
-                      href="/conversations/{{ saved.id }}/activity"
-                      data-graft
-                      class="btn btn-outline w-full"
-                      >View activity and evidence</a
+                  {% else %}
+                    <h3
+                      id="workspace-idle-heading"
+                      class="text-lg font-semibold"
                     >
-                    <button
-                      type="button"
-                      class="btn btn-primary w-full"
-                      data-continue-conversation
-                    >
-                      Continue the conversation
-                    </button>
-                  </section>
-                {% endif %}
+                      Ready when you are
+                    </h3>
+                  {% endif %}
+                  <p class="text-quiet text-sm">
+                    The next result or decision will appear here.
+                  </p>
+                  <a
+                    href="/conversations/{{ saved.id }}/activity"
+                    data-graft
+                    class="btn btn-outline w-full"
+                    >View activity and evidence</a
+                  >
+                  <button
+                    type="button"
+                    class="btn btn-primary w-full"
+                    data-continue-conversation
+                  >
+                    Continue the conversation
+                  </button>
+                </section>
               {% endif %}
             {% else %}
               <p class="text-quiet p-5 text-sm">
@@ -842,19 +888,30 @@
             {% endif %}
           {% endif %}
         </div>
-        {% if companion_html.is_empty() && observe_active %}
+        {% if companion_html.is_empty() && (observe_active || pending_question.is_some()) %}
           {% if let Some(saved) = self.saved() %}
             {% if saved.pending_gate.is_none() %}
-              <div class="border-base-300 shrink-0 border-t p-5">
+              <footer
+                class="workspace-work-actions border-base-300 grid shrink-0 gap-3 border-t p-5"
+              >
+                <a
+                  href="/conversations/{{ saved.id }}/activity"
+                  data-graft
+                  class="btn btn-outline w-full"
+                  >View activity and evidence</a
+                >
                 <button
                   class="btn btn-error w-full"
                   type="submit"
                   form="conversation-stop"
                   aria-label="Stop"
                 >
+                  <svg class="workspace-icon" aria-hidden="true">
+                    <use href="/static/images/workspace-icons.svg#stop" />
+                  </svg>
                   Stop
                 </button>
-              </div>
+              </footer>
             {% endif %}
           {% endif %}
         {% endif %}
@@ -1079,7 +1136,7 @@
                 id="composer-message"
                 name="message"
                 class="textarea textarea-bordered field-sizing-content max-h-[min(12rem,24dvh)] min-h-16 w-full min-w-0 resize-y text-base leading-relaxed"
-                placeholder="Ask anything, or describe what you would like to build…"
+                placeholder="{{ self.composer_placeholder() }}"
                 rows="2"
                 maxlength="32768"
                 {% if self.composer_disabled() %}disabled{% endif %}
@@ -1101,30 +1158,6 @@
                   >{{ self.image_compatibility_note() }}</span
                 >
               </p>
-              {% if self.queue.follow_up && self.queue.steering && self.revision.is_none() %}
-                <fieldset class="col-span-2 flex flex-wrap gap-3 text-sm">
-                  <legend class="sr-only">Queue delivery</legend>
-                  <label class="flex min-h-11 items-center gap-2">
-                    <input
-                      type="radio"
-                      name="delivery"
-                      value="follow-up"
-                      class="radio"
-                      checked
-                    />
-                    After this work
-                  </label>
-                  <label class="flex min-h-11 items-center gap-2">
-                    <input
-                      type="radio"
-                      name="delivery"
-                      value="steering"
-                      class="radio"
-                    />
-                    Correct current work
-                  </label>
-                </fieldset>
-              {% endif %}
 
               <p
                 class="text-quiet text-sm"
@@ -1175,7 +1208,7 @@
               />
             </form>
           {% endif %}
-          {% if let Some(saved) = self.saved() %}{% if observe_active %}
+          {% if let Some(saved) = self.saved() %}{% if observe_active || pending_question.is_some() %}
             <form
               id="conversation-stop"
               data-graft

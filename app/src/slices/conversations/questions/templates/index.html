@@ -92,23 +92,6 @@
           Cancel question
         </button>
       </form>
-      <form
-        id="conversation-stop"
-        data-graft
-        method="post"
-        action="/conversations/{{ saved.id }}/cancel"
-        hidden
-      >
-        <input type="hidden" name="job" value="{{ saved.job_id }}" />
-      </form>
-      <button
-        class="btn btn-error w-full"
-        type="submit"
-        form="conversation-stop"
-        aria-label="Stop"
-      >
-        Stop
-      </button>
     </section>
   {% endif %}
 {% endif %}

@@ -37,7 +37,7 @@ async fn activity_supports_document_navigation_and_targeted_updates() {
     let body = text(page).await;
     assert!(body.contains("id=\"conversation-detail\""));
     assert!(body.contains("id=\"activity-detail\""));
-    assert!(body.contains(&format!("href=\"/conversations/{}\"", record.id)));
+    assert!(body.contains(&format!("href=\"/conversations/{}?work=true\"", record.id)));
 
     let enhanced = app(&state)
         .oneshot(navigation(&path, &token))

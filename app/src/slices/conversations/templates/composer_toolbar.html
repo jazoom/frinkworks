@@ -97,11 +97,24 @@
         approval and consent requirements.
       </p>
     </section>
+    {% if self.queue.follow_up && self.queue.steering && self.revision.is_none() %}
+      <label class="workspace-queue-delivery">
+        <span class="sr-only">Queue delivery</span>
+        <select name="delivery" class="select select-bordered">
+          <option value="follow-up">After this work</option>
+          <option value="steering">Correct current work</option>
+        </select>
+      </label>
+    {% endif %}
   </div>
   <div
     class="workspace-composer-actions ml-auto flex flex-wrap items-center justify-end gap-3"
   >
-    <span data-island="shortcut-hint" class="shortcut-hint text-quiet"></span>
+    <span
+      data-island="shortcut-hint"
+      data-shortcut-action="{% if self.queue.follow_up && self.revision.is_none() %}queue{% else %}send{% endif %}"
+      class="shortcut-hint text-quiet"
+    ></span>
     {# Explicit ARIA values replace the transport overlay on a retained submitter. #}
     <button
       class="btn btn-primary"
@@ -111,6 +124,7 @@
       aria-label="{{ self.follow_up_submit_label() }}"
       aria-disabled="{{ self.composer_disabled() }}"
       data-composer-submit
+      data-default-label="{% if self.queue.follow_up && self.revision.is_none() %}Queue{% else %}Send{% endif %}"
       data-default-aria-label="{{ self.follow_up_submit_label() }}"
       {% if self.composer_disabled() %}disabled{% endif %}
     >

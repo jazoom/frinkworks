@@ -1,5 +1,6 @@
 mod page;
 pub(crate) use page::DirectChangesView;
+pub(super) use page::TransactionOutcomesView;
 
 #[cfg(test)]
 mod tests;

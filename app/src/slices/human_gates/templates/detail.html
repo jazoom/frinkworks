@@ -1,6 +1,6 @@
 <main
   data-section="runs"
-  class="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-5 py-8 sm:px-8"
+  class="workspace-gate mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-5 py-8 sm:px-8"
 >
   <p class="text-sm">
     {% if quick_task %}
@@ -25,18 +25,16 @@
         <h1>{{ gate_name }}</h1>
         <p>
           Step {{ position }} ·
-          {% if plan_gate %}Plan checkpoint{% else %}Human gate{% endif %}
+          {% if plan_gate %}Plan checkpoint{% else %}Candidate review{% endif %}
         </p>
       </div>
       <span class="status-stamp" data-state="{{ state }}">{{ state }}</span>
     </div>
-
     {% if error != "" %}
       <div role="alert" class="alert alert-error">
         <span>{{ error }}</span>
       </div>
     {% endif %}
-
     {% if needs_recovery %}
       <div class="alert" role="status">
         <p>
@@ -47,39 +45,17 @@
         </p>
       </div>
     {% endif %}
-
-    <section class="border-base-300 space-y-4 border p-4">
-      <div>
-        <h2 class="font-heading text-lg font-semibold">
-          {% if plan_gate %}
-            Review this plan
-          {% else if ordinary %}
-            Review before apply
-          {% else %}
-            Review this candidate
-          {% endif %}
-        </h2>
-        {% if awaiting %}
-          {% if plan_gate %}
+    {% if plan_gate %}
+      <section class="border-base-300 space-y-4 border p-4">
+        <div>
+          <h2 class="font-heading text-lg font-semibold">Review this plan</h2>
+          {% if awaiting %}
             <p class="text-quiet mt-1 max-w-[70ch] text-sm">
               Plan acceptance allows later implementation phases to start. This
               decision does not approve code changes.
             </p>
-          {% else if quick_task %}
-            <p class="text-quiet mt-1 max-w-[70ch] text-sm">
-              Review the prepared files before application. Apply writes only
-              these changes to the listed authorised directories. It creates no
-              Git commit. Writes across filesystems are not atomic.
-            </p>
-          {% else %}
-            <p class="text-quiet mt-1 max-w-[70ch] text-sm">
-              Approval continues the run. A revision request follows its pinned
-              revision route. Cancellation ends the run.
-            </p>
           {% endif %}
-        {% endif %}
-      </div>
-      {% if plan_gate %}
+        </div>
         <dl class="grid gap-3 text-sm sm:grid-cols-[7rem_1fr]">
           <dt class="text-quiet">Plan hash</dt>
           <dd class="font-mono break-all">{{ target }}</dd>
@@ -93,42 +69,8 @@
           class="border-base-300 bg-base-200 max-h-[70vh] overflow-auto rounded-sm border p-4 text-sm whitespace-pre-wrap"
         >
 {{ plan_text }}</pre>
-      {% else %}
-        <dl class="grid gap-3 text-sm sm:grid-cols-[7rem_1fr]">
-          <dt class="text-quiet">Diff base</dt>
-          <dd class="font-mono break-all">{{ base }}</dd>
-          <dt class="text-quiet">Candidate</dt>
-          <dd class="font-mono break-all">{{ target }}</dd>
-          <dt class="text-quiet">Changes</dt>
-          <dd>{{ total }} · {{ range }}</dd>
-        </dl>
-        <p class="text-quiet text-sm">
-          Your decision applies only to the displayed candidate hash.
-        </p>
-        {% if !exclusions.is_empty() %}
-          <div class="border-base-300 border-y py-3">
-            <h3 class="text-sm font-semibold">Excluded engine paths</h3>
-            <p class="text-quiet mt-1 text-sm">
-              Power Plant did not copy or change these generated paths.
-            </p>
-            <ul class="mt-2 space-y-1">
-              {% for exclusion in exclusions %}
-                <li class="font-mono text-xs break-all">{{ exclusion }}</li>
-              {% endfor %}
-            </ul>
-          </div>
-        {% endif %}
-        <a href="{{ review_href }}" data-graft class="link text-sm"
-          >Review in a new conversation</a
-        >
-
         {% if awaiting %}
-          {% if quick_task %}
-            <p class="text-sm">{{ host_unchanged }}</p>
-          {% endif %}
-          <div
-            class="{% if quick_task && !can_request_revision %}sm:grid-cols-2{% else %}lg:grid-cols-3{% endif %} grid gap-4 pt-2"
-          >
+          <div class="grid gap-4 pt-2 sm:grid-cols-3">
             <form
               method="post"
               action="/runs/{{ run_id }}/gates/{{ gate_id }}/approve"
@@ -140,31 +82,12 @@
                 name="gate-revision"
                 value="{{ revision }}"
               />
+              <input type="hidden" name="plan" value="{{ target }}" />
               <p class="text-sm">
-                {% if commit_on_approval %}
-                  Apply the reviewed changes and create one commit per changed
-                  repository. Earlier commits remain if another repository
-                  fails.
-                {% else if ordinary %}
-                  Apply the exact reviewed files to
-                  <span class="font-mono break-all"
-                    >{{ application_destination }}</span
-                  >. Power Plant checks every directory before the first write.
-                {% else if quick_task %}
-                  Apply these reviewed files to the authorised directories.
-                {% else %}
-                  Accept this candidate and continue to the next step.
-                {% endif %}
+                Accept this plan and continue to implementation.
               </p>
-              <input type="hidden" name="candidate" value="{{ target }}" />
               <button type="submit" class="btn btn-primary w-full">
-                {% if commit_on_approval %}
-                  Apply and commit
-                {% else if quick_task %}
-                  Apply changes
-                {% else %}
-                  Approve candidate
-                {% endif %}
+                Accept plan
               </button>
             </form>
             {% if can_request_revision %}
@@ -179,16 +102,14 @@
                   name="gate-revision"
                   value="{{ revision }}"
                 />
-                <input type="hidden" name="candidate" value="{{ target }}" />
+                <input type="hidden" name="plan" value="{{ target }}" />
                 <p class="text-sm">
-                  Start a fresh {{ revision_target }} attempt with the current
-                  candidate. The attempt limit is {{ revision_attempt_limit }}.
-                  If the limit is exhausted, this decision blocks the run
-                  without another attempt.
+                  Start a fresh planning attempt with this plan and your
+                  feedback.
                 </p>
-                <label class="form-control gap-1">
-                  <span class="text-sm">Revision note</span>
-                  <textarea
+                <label class="form-control gap-1"
+                  ><span class="text-sm">Plan revision note</span
+                  ><textarea
                     name="note"
                     required
                     maxlength="65536"
@@ -196,7 +117,7 @@
                   ></textarea>
                 </label>
                 <button type="submit" class="btn btn-outline w-full">
-                  Request changes
+                  Request plan changes
                 </button>
               </form>
             {% endif %}
@@ -211,255 +132,335 @@
                 name="gate-revision"
                 value="{{ revision }}"
               />
-              <input type="hidden" name="candidate" value="{{ target }}" />
-              <p class="text-sm">
-                {% if quick_task %}
-                  End this task and leave host files unchanged.
-                {% else %}
-                  End this run. No later step will start.
-                {% endif %}
-              </p>
-              <button
-                type="submit"
-                class="btn {% if quick_task %}
-                  btn-ghost
-                {% else %}
-                  btn-error btn-outline
-                {% endif %} w-full"
-              >
-                {% if quick_task %}Discard{% else %}Cancel run{% endif %}
+              <input type="hidden" name="plan" value="{{ target }}" />
+              <p class="text-sm">End this run before implementation starts.</p>
+              <button type="submit" class="btn btn-error btn-outline w-full">
+                Cancel run
               </button>
             </form>
           </div>
         {% else if state == "Approved" %}
           <p class="text-quiet text-sm">
-            This candidate was approved. The run continued from this decision.
+            This plan was accepted. The run continued.
           </p>
         {% else if state == "Revision requested" %}
           <p class="text-quiet text-sm">
-            A revision was requested. This run ended.
+            Plan changes were requested. A fresh planning attempt was reserved.
           </p>
         {% else if state == "Cancelled" %}
           <p class="text-quiet text-sm">
-            The run was cancelled. No later step started.
+            The run was cancelled. Implementation did not start.
           </p>
         {% else if state == "Interrupted" %}
           <p class="text-quiet text-sm">
-            The process restarted. This gate cannot continue because its
-            transcript context was not stored.
+            The process restarted. This checkpoint cannot continue.
           </p>
         {% endif %}
-      {% endif %}
-      {% if plan_gate && awaiting %}
-        <div class="grid gap-4 pt-2 sm:grid-cols-3">
+      </section>
+    {% else %}
+      <p class="text-quiet max-w-[70ch] text-sm">
+        This review compares the exact candidate with its original baseline.
+        File selection changes only the preview, not the scope of approval.
+      </p>
+      <section
+        id="candidate-diff"
+        class="workspace-review-browser grid min-w-0 scroll-mt-4 gap-5"
+      >
+        <div class="min-w-0 space-y-3">
+          <h2 class="text-base font-semibold">
+            Changed files
+            <span class="text-quiet font-normal">({{ total }})</span>
+          </h2>
+          <p class="text-quiet text-sm">{{ range }}</p>
+          {% if changes.is_empty() %}
+            <p class="text-quiet text-sm">The candidate has no changes.</p>
+          {% else %}
+            <ol class="workspace-file-list max-h-96 overflow-y-auto">
+              {% for change in changes %}
+                <li>
+                  <a
+                    href="{{ change.href }}"
+                    data-graft
+                    {% if change.selected %}aria-current="true"{% endif %}
+                    class="block px-3 py-3 text-sm"
+                  >
+                    <span class="block font-mono break-all"
+                      >{{ change.path }}</span
+                    >
+                    {% if change.directory != "" %}
+                      <span class="text-quiet mt-1 block text-xs break-all"
+                        >{{ change.directory }}</span
+                      >
+                    {% endif %}
+                    <span
+                      class="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs"
+                    >
+                      <span>{{ change.status }}</span>
+                      {% if change.has_counts %}
+                        <span
+                          class="workspace-diff-count"
+                          aria-label="{{ change.additions }} additions, {{ change.removals }} removals"
+                          ><b class="workspace-diff-add-text"
+                            >+{{ change.additions }}</b
+                          ><i class="workspace-diff-remove-text"
+                            >−{{ change.removals }}</i
+                          ></span
+                        >
+                      {% endif %}
+                    </span>
+                  </a>
+                  <details class="border-base-300 border-t px-3 py-2 text-xs">
+                    <summary class="text-quiet cursor-pointer py-1">
+                      File metadata and downloads
+                    </summary>
+                    <dl class="mt-2 space-y-2">
+                      <dt class="text-quiet">Base</dt>
+                      <dd class="font-mono break-all">{{ change.old }}</dd>
+                      <dt class="text-quiet">Target</dt>
+                      <dd class="font-mono break-all">{{ change.new }}</dd>
+                    </dl>
+                    <div class="mt-3 flex flex-wrap gap-3">
+                      {% if change.base_download != "" %}
+                        <a href="{{ change.base_download }}" class="link"
+                          >Download base object</a
+                        >
+                      {% endif %}
+                      {% if change.target_download != "" %}
+                        <a href="{{ change.target_download }}" class="link"
+                          >Download target object</a
+                        >
+                      {% endif %}
+                    </div>
+                  </details>
+                </li>
+              {% endfor %}
+            </ol>
+          {% endif %}
+          <nav aria-label="Changed files" class="flex flex-wrap gap-2">
+            {% if previous != "" %}
+              <a href="{{ previous }}" data-graft class="btn btn-outline btn-sm"
+                >Previous paths</a
+              >
+            {% endif %}
+            {% if next != "" %}
+              <a href="{{ next }}" data-graft class="btn btn-outline btn-sm"
+                >Next paths</a
+              >
+            {% endif %}
+          </nav>
+        </div>
+        {% if selected_path != "" %}
+          <section class="min-w-0 space-y-3" aria-label="Selected file">
+            <h2 class="text-base font-semibold">Diff preview</h2>
+            <p class="font-mono text-sm break-all">{{ selected_path }}</p>
+            {% if preview_unavailable %}
+              <p class="text-quiet text-sm" role="status">
+                This file preview is unavailable. The changed-file list and
+                recorded metadata remain available.
+              </p>
+            {% else if text_too_large %}
+              <p class="text-quiet text-sm">
+                This text change exceeds the display limit. File metadata and
+                downloads contains the immutable files.
+              </p>
+            {% else if binary %}
+              <p class="text-quiet text-sm">
+                This change contains binary data. File metadata and downloads
+                contains the immutable files.
+              </p>
+            {% else if text.is_empty() %}
+              <p class="text-quiet text-sm">
+                No text changes. File metadata and downloads contains the
+                recorded file properties.
+              </p>
+            {% else %}
+              <pre
+                class="workspace-diff"
+                tabindex="0"
+                role="region"
+                aria-label="Diff for {{ selected_path }}"
+              ><code>{% for row in text %}{{ row.text }}{% if row.continued %}
+                ⟦continued {{ row.range }}⟧
+              {% endif %}{% endfor %}</code></pre>
+              <nav aria-label="Diff lines" class="flex flex-wrap gap-2">
+                {% if text_previous != "" %}
+                  <a
+                    href="{{ text_previous }}"
+                    data-graft
+                    class="btn btn-outline btn-sm"
+                    >Previous lines</a
+                  >
+                {% endif %}
+                {% if text_next != "" %}
+                  <a
+                    href="{{ text_next }}"
+                    data-graft
+                    class="btn btn-outline btn-sm"
+                    >Next lines</a
+                  >
+                {% endif %}
+              </nav>
+            {% endif %}
+          </section>
+        {% endif %}
+      </section>
+      <details class="file-disclosure">
+        <summary>Candidate details</summary>
+        <dl class="mt-4 grid gap-3 text-sm sm:grid-cols-[9rem_1fr]">
+          <dt class="text-quiet">Original baseline</dt>
+          <dd class="font-mono break-all">{{ base }}</dd>
+          <dt class="text-quiet">Candidate</dt>
+          <dd class="font-mono break-all">{{ target }}</dd>
+        </dl>
+        <p class="text-quiet mt-3 text-sm">
+          Your decision applies only to the displayed candidate hash.
+        </p>
+        {% if !exclusions.is_empty() %}
+          <h3 class="mt-4 text-sm font-semibold">Excluded engine paths</h3>
+          <p class="text-quiet mt-1 text-sm">
+            Power Plant did not copy or change these generated paths.
+          </p>
+          <ul class="mt-2 space-y-1">
+            {% for exclusion in exclusions %}
+              <li class="font-mono text-xs break-all">{{ exclusion }}</li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+        <a
+          href="{{ review_href }}"
+          data-graft
+          class="link mt-4 inline-block text-sm"
+          >Review in a new conversation</a
+        >
+      </details>
+      {% if awaiting %}
+        <section
+          class="border-base-300 space-y-4 border-t pt-6"
+          aria-label="Candidate decisions"
+        >
+          <h2 class="text-lg font-semibold">If you approve</h2>
+          <p class="max-w-[70ch] text-sm">
+            {% if commit_on_approval %}
+              The next step applies these files and creates one local Git commit
+              per changed repository. Earlier commits remain if another
+              repository fails.
+            {% else if apply_on_approval %}
+              The next step applies these files. It creates no Git commit.
+              Writes across filesystems are not atomic.
+            {% else %}
+              Approval continues the configured run. This decision does not
+              itself apply files or create a Git commit.
+            {% endif %}
+          </p>
+          {% if !application_destination.is_empty() %}
+            <dl class="space-y-1 text-sm">
+              <dt class="text-quiet">
+                {% if commit_on_approval || apply_on_approval %}
+                  Destination
+                {% else %}
+                  Review directories
+                {% endif %}
+              </dt>
+              <dd class="font-mono break-all">{{ application_destination }}</dd>
+            </dl>
+          {% endif %}
+          {% if quick_task %}
+            <p class="text-quiet max-w-[70ch] text-sm">{{ host_unchanged }}</p>
+          {% endif %}
           <form
             method="post"
             action="/runs/{{ run_id }}/gates/{{ gate_id }}/approve"
             data-graft
-            class="border-base-300 flex flex-col gap-3 border p-3"
           >
             <input type="hidden" name="gate-revision" value="{{ revision }}" />
-            <input type="hidden" name="plan" value="{{ target }}" />
-            <p class="text-sm">
-              Accept this plan and continue to implementation.
-            </p>
-            <button type="submit" class="btn btn-primary w-full">
-              Accept plan
+            <input type="hidden" name="candidate" value="{{ target }}" />
+            <button type="submit" class="btn btn-primary">
+              {% if commit_on_approval %}
+                Apply and commit
+              {% else if apply_on_approval %}
+                Apply changes
+              {% else %}
+                Approve candidate
+              {% endif %}
             </button>
           </form>
           {% if can_request_revision %}
-            <form
-              method="post"
-              action="/runs/{{ run_id }}/gates/{{ gate_id }}/request-revision"
-              data-graft
-              class="border-base-300 flex flex-col gap-3 border p-3"
-            >
-              <input
-                type="hidden"
-                name="gate-revision"
-                value="{{ revision }}"
-              />
-              <input type="hidden" name="plan" value="{{ target }}" />
-              <p class="text-sm">
-                Start a fresh planning attempt with this plan and your feedback.
-              </p>
-              <label class="form-control gap-1">
-                <span class="text-sm">Plan revision note</span>
-                <textarea
-                  name="note"
-                  required
-                  maxlength="65536"
-                  class="textarea textarea-bordered min-h-24"
-                ></textarea>
-              </label>
-              <button type="submit" class="btn btn-outline w-full">
-                Request plan changes
-              </button>
-            </form>
+            <details class="workspace-revision max-w-xl">
+              <summary class="cursor-pointer py-3 text-sm">
+                Request changes
+              </summary>
+              <form
+                method="post"
+                action="/runs/{{ run_id }}/gates/{{ gate_id }}/request-revision"
+                data-graft
+                class="flex flex-col gap-3 pt-3"
+              >
+                <input
+                  type="hidden"
+                  name="gate-revision"
+                  value="{{ revision }}"
+                />
+                <input type="hidden" name="candidate" value="{{ target }}" />
+                <p class="text-quiet text-sm">
+                  Feedback starts a fresh {{ revision_target }} attempt with
+                  this candidate. The attempt limit is
+                  {{ revision_attempt_limit }}. An exhausted limit blocks the
+                  run without another attempt.
+                </p>
+                <label class="form-control gap-1"
+                  ><span class="text-sm">Revision note</span
+                  ><textarea
+                    name="note"
+                    required
+                    maxlength="65536"
+                    class="textarea textarea-bordered min-h-24"
+                  ></textarea>
+                </label>
+                <button type="submit" class="btn btn-outline self-start">
+                  Request changes
+                </button>
+              </form>
+            </details>
           {% endif %}
           <form
             method="post"
             action="/runs/{{ run_id }}/gates/{{ gate_id }}/cancel"
             data-graft
-            class="border-base-300 flex flex-col gap-3 border p-3"
+            class="space-y-3"
           >
             <input type="hidden" name="gate-revision" value="{{ revision }}" />
-            <input type="hidden" name="plan" value="{{ target }}" />
-            <p class="text-sm">End this run before implementation starts.</p>
-            <button type="submit" class="btn btn-error btn-outline w-full">
-              Cancel run
+            <input type="hidden" name="candidate" value="{{ target }}" />
+            <p class="text-quiet max-w-[70ch] text-sm">
+              {% if quick_task %}
+                Discard ends this task
+              {% else %}
+                Cancellation ends this run
+              {% endif %}
+              without application of this candidate. Earlier direct writes and
+              host command effects remain.
+            </p>
+            <button type="submit" class="btn btn-ghost text-error">
+              {% if quick_task %}Discard{% else %}Cancel run{% endif %}
             </button>
           </form>
-        </div>
-      {% else if plan_gate && state == "Approved" %}
-        <p class="text-quiet text-sm">
-          This plan was accepted. The run continued.
-        </p>
-      {% else if plan_gate && state == "Revision requested" %}
-        <p class="text-quiet text-sm">
-          Plan changes were requested. A fresh planning attempt was reserved.
-        </p>
-      {% else if plan_gate && state == "Cancelled" %}
-        <p class="text-quiet text-sm">
-          The run was cancelled. Implementation did not start.
-        </p>
-      {% else if plan_gate && state == "Interrupted" %}
-        <p class="text-quiet text-sm">
-          The process restarted. This checkpoint cannot continue.
-        </p>
-      {% endif %}
-    </section>
-
-    {% if !plan_gate %}
-      <section id="candidate-diff" class="scroll-mt-4 space-y-3">
-        <div class="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h2 class="font-heading text-lg font-semibold">Candidate diff</h2>
-            <p class="text-quiet text-sm">
-              {{ range }} of {{ total }} changed paths.
-            </p>
-          </div>
-          <div class="join">
-            {% if previous != "" %}
-              <a href="{{ previous }}" data-graft class="btn btn-sm join-item"
-                >Previous paths</a
-              >
-            {% endif %}
-            {% if next != "" %}
-              <a href="{{ next }}" data-graft class="btn btn-sm join-item"
-                >Next paths</a
-              >
-            {% endif %}
-          </div>
-        </div>
-        {% if changes.is_empty() %}
-          <p class="text-quiet">The candidate has no changes.</p>
-        {% else %}
-          <ol class="space-y-2">
-            {% for change in changes %}
-              <li class="border-base-300 rounded-sm border p-3">
-                <div class="flex flex-wrap items-start justify-between gap-2">
-                  <div class="min-w-0">
-                    {% if change.directory != "" %}
-                      <p class="text-quiet text-xs break-all">
-                        Directory {{ change.directory }}
-                      </p>
-                    {% endif %}
-                    <a
-                      href="{{ change.href }}"
-                      data-graft
-                      class="link font-mono text-sm break-all"
-                      >{{ change.path }}</a
-                    >
-                  </div>
-                  <span class="flex shrink-0 items-center gap-2">
-                    {% if change.has_counts %}
-                      <span
-                        class="workspace-diff-count text-xs"
-                        aria-label="{{ change.additions }} additions, {{ change.removals }} removals"
-                      >
-                        <b class="workspace-diff-add-text"
-                          >+{{ change.additions }}</b
-                        >
-                        <i class="workspace-diff-remove-text"
-                          >−{{ change.removals }}</i
-                        >
-                      </span>
-                    {% endif %}
-                    <span class="badge badge-outline badge-sm"
-                      >{{ change.status }}</span
-                    >
-                  </span>
-                </div>
-                <dl class="mt-2 grid gap-2 text-xs sm:grid-cols-[4rem_1fr]">
-                  <dt class="text-quiet">Base</dt>
-                  <dd class="font-mono break-all">{{ change.old }}</dd>
-                  <dt class="text-quiet">Target</dt>
-                  <dd class="font-mono break-all">{{ change.new }}</dd>
-                </dl>
-                <div class="mt-2 flex flex-wrap gap-3 text-sm">
-                  {% if change.base_download != "" %}
-                    <a href="{{ change.base_download }}" class="link"
-                      >Download base object</a
-                    >
-                  {% endif %}
-                  {% if change.target_download != "" %}
-                    <a href="{{ change.target_download }}" class="link"
-                      >Download target object</a
-                    >
-                  {% endif %}
-                </div>
-              </li>
-            {% endfor %}
-          </ol>
-        {% endif %}
-      </section>
-
-      {% if selected_path != "" %}
-        <section class="space-y-3">
-          <p class="text-quiet text-sm">
-            <a href="#candidate-diff" class="link">Back to changed paths</a>
-          </p>
-          <h2 class="font-heading text-lg font-semibold break-all">
-            {{ selected_path }}
-          </h2>
-          {% if text_too_large %}
-            <p class="text-quiet">
-              This text change is too large to display. Use the immutable object
-              downloads.
-            </p>
-          {% else if binary %}
-            <p class="text-quiet">
-              This change contains binary file data. Use the immutable object
-              downloads.
-            </p>
-          {% else %}
-            <pre
-              class="workspace-diff border-base-300 bg-base-200 max-h-[70vh] overflow-auto rounded-sm border p-3 text-xs"
-              tabindex="0"
-            ><code>{% for row in text %}{{ row.text }}{% if row.continued %}
-              ⟦continued {{ row.range }}⟧
-            {% endif %}{% endfor %}</code></pre>
-            <div class="join">
-              {% if text_previous != "" %}
-                <a
-                  href="{{ text_previous }}"
-                  data-graft
-                  class="btn btn-sm join-item"
-                  >Previous lines</a
-                >
-              {% endif %}
-              {% if text_next != "" %}
-                <a
-                  href="{{ text_next }}"
-                  data-graft
-                  class="btn btn-sm join-item"
-                  >Next lines</a
-                >
-              {% endif %}
-            </div>
-          {% endif %}
         </section>
+      {% else if state == "Approved" %}
+        <p class="text-quiet text-sm">
+          This candidate was approved. The run continued from this decision.
+        </p>
+      {% else if state == "Revision requested" %}
+        <p class="text-quiet text-sm">
+          A revision was requested for this candidate. The run record shows the
+          subsequent outcome.
+        </p>
+      {% else if state == "Cancelled" %}
+        <p class="text-quiet text-sm">
+          The run was cancelled. No later step started.
+        </p>
+      {% else if state == "Interrupted" %}
+        <p class="text-quiet text-sm">
+          This gate cannot continue. The run record shows the interruption.
+        </p>
       {% endif %}
     {% endif %}
   </div>

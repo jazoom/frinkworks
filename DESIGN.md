@@ -37,6 +37,13 @@ typography:
         fontFamily: "IBM Plex Sans, ui-sans-serif, system-ui, sans-serif"
         fontSize: "14px"
         lineHeight: 1.55
+    transcript:
+        fontSize: "16px"
+        lineHeight: 1.7
+    toolRecord:
+        fontSize: "15px"
+    replyStatus:
+        fontSize: "13px"
     code:
         fontFamily: "IBM Plex Mono, ui-monospace, monospace"
         fontSize: "12px"
@@ -118,7 +125,17 @@ The transcript and companion content scroll independently. The composer stays ou
 
 The index leaves the page below 1021 pixels. A branded mobile bar supplies Menu on conversation pages. Menu provides the same navigation destinations.
 
-The composer reaches a maximum width of 1110 pixels. Its controls share one desktop row and wrap on narrower screens.
+The composer and message records reach a maximum width of 1110 pixels. Message prose retains its 70-character measure.
+
+Composer controls share one desktop row and wrap on narrower screens. Mobile message bodies use the full transcript width below their author labels.
+
+The transcript toolbar scrolls horizontally when its controls exceed the available width. The mobile activity strip occupies a separate row beneath those controls.
+
+At heights up to 650 pixels, mobile composer controls scroll horizontally. Queue and Stop retain a separate row below them.
+
+Short mobile screens use a 20-pixel conversation title and the complete header. The empty queue explanation disappears, but queued records and errors remain.
+
+Mobile composer content uses a bounded scroll area. Queued records have their own bounded scroll area, so attachments and queues cannot displace every control.
 
 Short mobile screens omit the empty-state description and reduce its heading. The composer remains available without a page scroll.
 
@@ -140,7 +157,7 @@ Host consent uses a native modal above Setup with a dimmed backdrop. Its content
 
 Controls retain DaisyUI primitives. Workspace controls use seven-pixel corners. Recent records use five-pixel corners. User messages retain three-pixel corners. The composer uses nine-pixel corners.
 
-The existing Power Plant mark remains unchanged. Workspace icons use the approved reference's stroke geometry.
+The existing Power Plant mark remains unchanged. Workspace icons use the shared stroke geometry in `app/public/images/workspace-icons.svg`.
 
 ## Components
 
@@ -182,6 +199,14 @@ The paperclip uses a continuous diagonal stroke. The help icon uses a centred qu
 
 User messages use a tinted, ruled surface. Assistant messages identify Power Plant with its mark.
 
+Avatars sit beside desktop author labels and message bodies. Mobile avatars sit beside the labels, above full-width content.
+
+Message text uses the transcript scale. Status stays beside the author. Revise, Fork from here and Copy appear below the applicable message.
+
+Tool results use bordered disclosures with the actual tool label. Unfinished tools show their recorded name without an inferred path or result.
+
+The mobile activity strip repeats the server's active reply status. It opens Current work without a command. Historical windows and settled replies omit the strip.
+
 The model control opens a searchable popover above the composer. It lists connected providers with an optional provider filter. Favourites appear first, with a separate star control on each row. The active Favourites filter uses a soft tint and a check mark. Local application data stores favourites across browser sessions.
 
 Thinking effort stays visible beside the model as an outlined control with its label, value and caret. Both controls share the same height. The effort popover uses padded options and a tick for the current value. Models without adjustable effort show a disabled Not available control. Saved conversations apply model and effort changes immediately without changes to other settings. Unsent messages and unsaved setup fields survive those commands.
@@ -195,6 +220,10 @@ Send uses an accessible Send message label. An empty composer disables Send unle
 Effective directory access appears below the composer. Add a directory stays beside it. The execution label stays visible even without directory access. Host mode names unrestricted access.
 
 Job-bound cancellation reads Stop beside the composer submit control. It posts without a confirmation step. Current work keeps the same Stop control when the composer is inert.
+
+Active replies use the follow-up placeholder and Queue label. A labelled selector retains After this work and Correct current work when both choices apply.
+
+The shortcut hint distinguishes Queue from Send. The submit label follows the latest server patch after settlement.
 
 Pending decisions retain their existing queue and consent rules.
 
@@ -216,23 +245,75 @@ Current work appears when work is non-idle and its companion is closed. Initial 
 
 Narrow screens wrap the actions below a long title. All actions retain readable labels.
 
+### Conversation tree
+
+Tree entries and branch tips use full-width vertical records. Entry metadata sits above the excerpt, with navigation links below it.
+
+Long unbroken excerpts wrap within the companion. Tree records do not use the shared two-column catalogue layout.
+
 ### Current work
 
-Current work contains execution progress and required decisions. Candidate review shows real changed files and bounded diff previews. Diffs and Markdown code blocks receive keyboard focus. The idle companion reads Ready when you are with View activity and evidence and Continue the conversation. Local review expansion stays within the conversation URL and one native link opens the canonical gate page.
+Current work puts execution status and required decisions before Context and usage. That disclosure retains estimates, compaction details and recorded summary usage.
+
+Ordinary replies repeat the server status. Retry details follow the same observation updates and disappear when the retry ends. No generated activity description appears.
+
+Workflow progress leads with the pinned workflow name, recorded state and current phase. It shows no inferred percentage or completion count.
+
+The companion header uses 16-pixel text and a 44-pixel Close control. Eligible Stop controls remain outside the content scroll area, including during questions.
+
+Needs your answer and Execution paused open the existing decision controls. Native attention links and Back to current work open the canonical conversation route.
+
+Compact desktop composers use horizontal scroll for controls when their container narrows. Queue and Stop remain below those controls without overlap with the companion.
+
+A mobile resize moves focus from excluded conversation controls into the open companion. Escape closes the companion and restores the conversation trigger.
+
+Candidate review leads with changed files and the selected diff. Wide review containers place them side by side. Narrow containers stack them.
+
+The companion retains its 400-pixel width and local expansion. File selection reveals and focuses the preview without a command or an authority change.
+
+The full review selects the first file on each manifest page by default. File metadata and immutable downloads sit in disclosures below their paths.
+
+Binary, oversized and unavailable previews have distinct explanations. Diffs and Markdown code blocks receive keyboard focus.
+
+The idle companion reads Ready when you are with View activity and evidence and Continue the conversation.
+
+Local review expansion stays within the conversation URL. One native link opens the canonical gate page.
 
 Per-file addition and removal counts derive from the complete stored diff. Binary or oversized changes omit counts rather than infer them from truncated previews. The companion lists the total changed-file count and notes when only the first paths render. Recorded test outcomes are not part of the candidate evidence, so neither review surface shows a test result line. These omissions are deliberate: counts and test lines appear only when recorded data supports them.
 
 The candidate footer has a bounded scroll area for long destinations and feedback forms. Current work retains the eligible job-bound Stop control without a confirmation step.
 
-The approval footer names the destination and the actual application consequence. It distinguishes ordinary file application from a local Git commit. It distinguishes configured continuation to the next step from both file outcomes.
+The approval footer names the destination and the actual application consequence. Its label follows the pinned next command, not the candidate format.
+
+File application, local Git commits and configured continuation remain distinct. Selection changes only the preview. Approval covers the complete candidate and original baseline.
+
+Candidate decisions from the companion return conversation patches instead of full reloads. Unsent text survives approval, feedback and discard responses.
 
 Host approval reads Run this command. It shows the exact command, work location and effective approval policy beside the decision. Session-bound approval and rejection evidence remains in the run record.
 
 Request changes retains candidate-bound feedback. Discard posts directly without a confirmation dialog. Discard keeps evidence and history, so it is not destructive in the data sense. Discard does not reverse direct writes or host command effects.
 
-Current work shows per-directory file-application outcomes from the authoritative run transaction record. Known partial application stays distinct from uncertain recovery and successful completion. Resolve the conflict links to the exact run attempt and its directory evidence. The link opens evidence and starts no write, retry or simulated resolution. This manual recovery destination is the production difference from the mock simulated conflict button.
+Current work shows recorded file outcomes before secondary context. Unresolved outcomes remain visible even when the run reports a terminal state.
 
-Keep applied files and end task appears only when every transaction holds a known settled outcome and managed cleanup succeeded. Settlement binds the displayed run, attempt and outcome state. It keeps applied files and evidence without another application attempt, and ends ownership through cancellation rather than a Completed result. Terminal runs show Continue the conversation instead. Uncertain roots or cleanup retain execution blockers and disable settlement, retry and continuation.
+Directory records pair the alias and host path with an outcome explanation. Managed cleanup has a separate status. Recorded outcomes make no current-file claim.
+
+A stopped application does not imply that any directory reports Applied. The summary uses the recorded outcomes without an invented conflict cause.
+
+Repository records retain separate transaction states. Only completed commits show their identifiers. Success in one repository makes no success claim for another.
+
+View attempt evidence opens the exact run attempt. The canonical page includes its directory and repository results. The link starts no write or retry.
+
+Current work and Activity share the same read-only result presentation. Recovery controls retain the workspace scale and full-width targets within the companion.
+
+Keep applied files and end task retains the existing settlement command. The form binds the displayed run, attempt and transaction state.
+
+Settlement keeps files and evidence without another application attempt. It records Cancelled, not Completed. Uncertain outcomes and incomplete cleanup retain the execution blockers.
+
+Unsettled file or repository work omits Continue the conversation. Activity makes no promise that plain conversation bypasses recovery. The interface supplies no retry or rollback.
+
+The attention strip stays within the toolbar and opens Current work without a command. Mobile rejection closes the companion to expose its authoritative error.
+
+The error occupies a separate grid row instead of the toolbar area. Its focus remains visible, and the unsent draft remains intact.
 
 ### Setup
 
@@ -367,7 +448,7 @@ Decision entries link to conversations and exact gate pages. The decision list c
 
 The conversation catalogue pairs its directory filter with a title search. The query trims and matches titles without case sensitivity. Both filters stay in the canonical address and native form navigation. Access grants stay unchanged.
 
-Run history filters by stored canonical directory identity. The filter applies before the fifty-record bound with newest matches first. Unavailable directories keep their labels. Run history stays run-centred as an approved difference from the reference conversation rows.
+Run history filters by stored canonical directory identity. The filter applies before the fifty-record bound with newest matches first. Unavailable directories keep their labels. Run history stays run-centred.
 
 Run details retain the owning conversation. Evidence pages retain their canonical run links.
 

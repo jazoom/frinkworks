@@ -1286,6 +1286,8 @@ async fn observation_uses_the_page_route_and_cancel_needs_only_the_job_identity(
         assert!(body.contains(&format!("action=\"{path}/cancel\"")));
         assert!(body.contains("id=\"conversation-stop\""));
         assert!(body.contains(&format!("value=\"{}\"", job.id())));
+        assert!(body.contains("data-reply-active=\"true\""));
+        assert!(body.contains("data-reply-status=\"Waiting for model\""));
     }
     let response = app(&state)
         .oneshot(command(
@@ -1325,6 +1327,7 @@ async fn observation_uses_the_page_route_and_cancel_needs_only_the_job_identity(
     let body = text(response).await;
     assert!(body.contains("target=\"conversation-detail\""));
     assert!(!body.contains("navigate="));
+    assert!(!body.contains("data-reply-active=\"true\""));
 }
 
 #[tokio::test]

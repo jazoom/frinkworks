@@ -14,113 +14,33 @@
       <dd>{{ run.result }}</dd>
     </dl>
   {% else %}
-    <div class="space-y-2">
-      <h3 id="conversation-workflow-heading" class="text-lg font-semibold">
-        The task is in progress
+    <div class="space-y-3">
+      <h3
+        id="conversation-workflow-heading"
+        class="text-xl font-semibold break-words"
+      >
+        {{ run.name }}
       </h3>
-      <p class="text-quiet text-sm">
-        You can read the conversation while the work continues.
+      <p>
+        <span class="badge state-badge" data-state="{{ run.state }}"
+          >{{ run.state }}</span
+        >
       </p>
     </div>
-    <dl class="grid gap-2 text-sm sm:grid-cols-[8rem_1fr]">
-      <dt class="text-quiet">Workflow</dt>
-      <dd>{{ run.name }}</dd>
-      <dt class="text-quiet">State</dt>
-      <dd>{{ run.state }}</dd>
-      {% if run.state == "Paused" %}
-        <dt class="text-quiet">Pause</dt>
-        <dd>
-          The model phase waits for Continue. Approval phases stay later in the
-          sequence.
-        </dd>
-      {% endif %}
+    <dl class="workspace-phase border-base-300 space-y-1 border-y py-4 text-sm">
       <dt class="text-quiet">Current phase</dt>
-      <dd>{{ run.current_step }}</dd>
-      {% if run.task_progress != "" %}
-        <dt class="text-quiet">Tasks</dt>
-        <dd>{{ run.task_progress }}</dd>
-      {% endif %}
+      <dd class="text-lg font-semibold break-words">{{ run.current_step }}</dd>
     </dl>
+    {% if run.state == "Paused" %}
+      <p class="text-quiet text-sm">
+        The model phase waits for Continue. Approval phases stay later in the
+        sequence.
+      </p>
+    {% endif %}
   {% endif %}
-  {% if !run.apply_outcomes.is_empty() %}
-    <div class="border-base-300 space-y-2 border-t pt-3">
-      {% if run.apply_uncertain %}
-        <h3 class="font-semibold">File application needs recovery</h3>
-        <p class="text-sm">
-          Recovery is uncertain. Power Plant retains the evidence and blocks
-          completion, continuation and retry until cleanup finishes.
-        </p>
-      {% else if run.apply_partial %}
-        <h3 class="font-semibold">Only some changes applied</h3>
-        <p class="text-sm">
-          Some directories changed. A conflict stopped application to the
-          remaining directories. This task is not complete. Partial application
-          never appears as Completed.
-        </p>
-      {% else if run.apply_complete %}
-        <h3 class="font-semibold">File application complete</h3>
-        <p class="text-quiet text-sm">
-          Every reviewed directory reports Applied or Unchanged and managed
-          cleanup finished.
-        </p>
-      {% else %}
-        <h3 class="font-semibold">File application</h3>
-      {% endif %}
-      <dl class="grid gap-2 text-sm sm:grid-cols-[minmax(0,1fr)_auto]">
-        {% for outcome in run.apply_outcomes %}
-          <div class="min-w-0">
-            <dt class="font-semibold break-all">{{ outcome.directory }}</dt>
-            <dd class="text-quiet font-mono text-xs break-all">
-              {{ outcome.path }}
-            </dd>
-          </div>
-          <dd>
-            <span
-              class="badge state-badge badge-sm"
-              data-state="{{ outcome.outcome }}"
-              >{{ outcome.outcome }}</span
-            >
-          </dd>
-        {% endfor %}
-      </dl>
-      {% if run.apply_uncertain || run.apply_partial %}
-        <p class="text-sm">
-          <a href="{{ run.apply_resolve_href }}" data-graft class="link"
-            >Resolve the conflict</a
-          >
-          opens the exact run attempt and its directory evidence. This link
-          starts no write or retry.
-        </p>
-        {% if run.apply_partial && run.settlement_eligible %}
-          <form
-            data-graft
-            method="post"
-            action="/conversations/{{ run.conversation_id }}/runs/{{ run.apply_run_id }}/settle-partial"
-          >
-            <input
-              type="hidden"
-              name="attempt"
-              value="{{ run.apply_attempt_id }}"
-            />
-            <input type="hidden" name="state" value="{{ run.apply_state }}" />
-            <button class="btn btn-ghost btn-sm" type="submit">
-              Keep applied files and end task
-            </button>
-          </form>
-          <p class="text-quiet text-sm">
-            This keeps applied files and evidence without another application
-            attempt. It ends ownership through cancellation, not a Completed
-            result.
-          </p>
-        {% else if run.apply_partial && run.run_terminal %}
-          <p class="text-quiet text-sm">
-            This run already ended. Continue the conversation for the next task.
-          </p>
-        {% endif %}
-      {% endif %}
-    </div>
-  {% endif %}
-  {% if run.conversation_id != "" %}
+  {% let settlement_controls = true %}
+  {% include "conversations/templates/recovery.html" %}
+  {% if run.conversation_id != "" && !observe_active %}
     <p class="text-sm">
       <a
         href="/conversations/{{ run.conversation_id }}/activity"

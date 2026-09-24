@@ -314,7 +314,7 @@ async fn observe_segment(
     while job.latest_seq() > cursor {
         let snapshot = job.snapshot();
         let output = job.output_up_to(snapshot.latest_seq);
-        if !output.is_empty() || snapshot.retry.is_some() {
+        if snapshot.status == JobStatus::Running || !output.is_empty() || snapshot.retry.is_some() {
             let frame = if historical {
                 historical_status_frame(
                     &conversation,
@@ -336,7 +336,11 @@ async fn observe_segment(
                     &committed,
                     snapshot.latest_seq,
                     &output,
-                    snapshot.retry.is_some(),
+                    snapshot.compacting,
+                    snapshot
+                        .retry
+                        .as_ref()
+                        .map(|retry| super::page::retry_status_message(retry.attempt, retry.delay)),
                     historical,
                     &mut budget,
                 )
@@ -413,15 +417,20 @@ fn progress_frame(
     committed: &[crate::conversations::ConversationMessage],
     cursor: u64,
     reply: &AssistantReply,
-    retrying: bool,
+    compacting: bool,
+    retry_message: Option<String>,
     historical: bool,
     budget: &mut hypergraft::StreamBudget,
 ) -> Option<hypergraft::StreamFrame> {
     let phases: Vec<&crate::conversations::ConversationMessage> = committed.iter().collect();
     let mut message =
         super::page::response_view(conversation, anchor, &phases, Some((reply, true)));
-    if retrying {
+    if let Some(retry_message) = retry_message {
         message.status = "Retrying the provider";
+        message.retry_message = retry_message;
+    }
+    if compacting {
+        message.status = "Compacting context";
     }
     let mut patches = PatchSet::new();
     patches
@@ -546,9 +555,17 @@ fn final_frame(
                     && message.status != MessageStatus::Pending
             })
             .collect();
-        let live = (snapshot.status == JobStatus::Running && !snapshot.output.is_empty())
-            .then_some((&snapshot.output, true));
-        let message = super::page::response_view(conversation, anchor, &phases, live);
+        let live = (snapshot.status == JobStatus::Running).then_some((&snapshot.output, true));
+        let mut message = super::page::response_view(conversation, anchor, &phases, live);
+        if snapshot.status == JobStatus::Running
+            && let Some(retry) = &snapshot.retry
+        {
+            message.status = "Retrying the provider";
+            message.retry_message = super::page::retry_status_message(retry.attempt, retry.delay);
+        }
+        if snapshot.status == JobStatus::Running && snapshot.compacting {
+            message.status = "Compacting context";
+        }
         let _ = patches.children(&message.id, &MessageBody { message: &message });
     }
     let active = snapshot.status == JobStatus::Running;

@@ -5,113 +5,120 @@
 >
   <div class="workspace-candidate-body min-h-0 flex-1 overflow-y-auto p-5">
     <h3 id="conversation-candidate-heading" class="text-2xl font-semibold">
-      Changes are ready
+      Review changes
     </h3>
     <p class="text-quiet mt-3 text-sm">
-      {% if gate.ordinary %}
-        These changes are isolated. Review them before you apply them.
-      {% else %}
-        Review this exact candidate before approval.
-      {% endif %}
+      Approval covers all {{ gate.total_changes }} changed files, not just the
+      selected file. It binds this exact candidate and its original baseline.
     </p>
-    <p class="text-quiet mt-2 text-xs">
-      Direct writes and host command effects remain after Discard.
-    </p>
-    {% if gate.total_changes > 0 %}
-      <p class="mt-4 text-sm font-semibold">
-        {{ gate.total_changes }}
-        {% if gate.total_changes == 1 %}file{% else %}files{% endif %}
-        changed
-      </p>
-      {% if gate.changes_truncated %}
-        <p class="text-quiet mt-1 text-xs">
-          This companion shows the first {{ gate.changes.len() }} paths. The
-          canonical gate page holds the complete list.
-        </p>
-      {% endif %}
-    {% endif %}
-    {% if !gate.changes.is_empty() %}
-      <h4 class="mt-6 mb-3 text-sm font-semibold">Changed files</h4>
-      <ul class="workspace-file-list">
-        {% for change in gate.changes %}
-          <li>
-            <a
-              href="{{ gate.diff_href }}?change={{ loop.index0 }}"
-              data-graft
-              data-review-file="{{ loop.index0 }}"
-              {% if loop.first %}aria-current="true"{% endif %}
-              class="flex items-center justify-between gap-3 px-3 py-3 text-sm"
-            >
-              <span class="min-w-0">
-                <span class="block break-all">{{ change.name }}</span>
-                {% if !change.directory.is_empty() %}
-                  <span class="text-quiet block text-xs break-all"
-                    >{{ change.directory }}</span
-                  >
-                {% endif %}
-                <span class="text-quiet block text-xs break-all"
-                  >{{ change.path }}</span
-                >
-              </span>
-              <span class="flex shrink-0 items-center gap-2 text-xs">
-                {% if change.has_counts %}
-                  <span
-                    class="workspace-diff-count"
-                    aria-label="{{ change.additions }} additions, {{ change.removals }} removals"
-                  >
-                    <b class="workspace-diff-add-text"
-                      >+{{ change.additions }}</b
-                    >
-                    <i class="workspace-diff-remove-text"
-                      >−{{ change.removals }}</i
-                    >
-                  </span>
-                {% endif %}
-                <span class="text-quiet">{{ change.status }}</span>
-              </span>
-            </a>
-          </li>
-        {% endfor %}
-      </ul>
-      {% for change in gate.changes %}
-        <div
-          data-review-diff="{{ loop.index0 }}"
-          {% if !loop.first %}hidden{% endif %}
-        >
-          <p
-            class="text-quiet border-base-300 mt-4 border border-b-0 px-3 py-2 font-mono text-xs break-all"
-          >
-            {{ change.path }} · Unified diff
+    <div class="workspace-review-browser mt-5 grid min-w-0 gap-5">
+      <div class="min-w-0">
+        <h4 class="mb-3 text-base font-semibold">
+          Changed files
+          <span class="text-quiet font-normal">({{ gate.total_changes }})</span>
+        </h4>
+        {% if gate.changes_truncated %}
+          <p class="text-quiet mb-3 text-sm">
+            The first {{ gate.changes.len() }} files appear here. The full
+            review contains all {{ gate.total_changes }}.
           </p>
-          <pre
-            class="workspace-diff"
-            tabindex="0"
-            role="region"
-            aria-label="Diff for {{ change.path }}"
-          ><code>{{ change.preview }}</code></pre>
+        {% endif %}
+        {% if !gate.changes.is_empty() %}
+          <ul class="workspace-file-list max-h-48 overflow-y-auto">
+            {% for change in gate.changes %}
+              <li>
+                <a
+                  href="{{ gate.diff_href }}?change={{ loop.index0 }}"
+                  data-graft
+                  data-review-file="{{ loop.index0 }}"
+                  {% if loop.first %}aria-current="true"{% endif %}
+                  class="block px-3 py-3 text-sm"
+                >
+                  <span class="block font-mono break-all"
+                    >{{ change.path }}</span
+                  >
+                  {% if !change.directory.is_empty() %}
+                    <span class="text-quiet mt-1 block text-xs break-all"
+                      >{{ change.directory }}</span
+                    >
+                  {% endif %}
+                  <span
+                    class="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs"
+                  >
+                    <span>{{ change.status }}</span>
+                    {% if change.has_counts %}
+                      <span
+                        class="workspace-diff-count"
+                        aria-label="{{ change.additions }} additions, {{ change.removals }} removals"
+                      >
+                        <b class="workspace-diff-add-text"
+                          >+{{ change.additions }}</b
+                        >
+                        <i class="workspace-diff-remove-text"
+                          >−{{ change.removals }}</i
+                        >
+                      </span>
+                    {% endif %}
+                  </span>
+                </a>
+              </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p class="text-quiet text-sm">The candidate has no changed files.</p>
+        {% endif %}
+      </div>
+      {% if !gate.changes.is_empty() %}
+        <div class="min-w-0">
+          {% for change in gate.changes %}
+            <section
+              data-review-diff="{{ loop.index0 }}"
+              {% if !loop.first %}hidden{% endif %}
+              aria-label="File preview"
+              tabindex="-1"
+            >
+              <h4 class="mb-3 text-base font-semibold">Diff preview</h4>
+              <p
+                class="border-base-300 bg-base-200 border border-b-0 px-3 py-3 font-mono text-xs break-all"
+              >
+                {% if !change.directory.is_empty() %}{{ change.directory }}/{% endif %}{{ change.path }}
+              </p>
+              {% if change.preview_note.is_empty() %}
+                <pre
+                  class="workspace-diff"
+                  tabindex="0"
+                  role="region"
+                  aria-label="Diff for {{ change.path }}"
+                ><code>{{ change.preview }}</code></pre>
+              {% else %}
+                <p class="text-quiet border-base-300 border p-4 text-sm">
+                  {{ change.preview_note }}
+                </p>
+              {% endif %}
+              <a
+                href="{{ gate.diff_href }}?change={{ loop.index0 }}"
+                data-graft
+                class="link mt-3 inline-block text-sm"
+                >Full review for this file</a
+              >
+            </section>
+          {% endfor %}
         </div>
-      {% endfor %}
-    {% else %}
-      <p class="text-quiet my-5 text-sm">The candidate has no changed files.</p>
-    {% endif %}
-    <div class="mt-4 flex flex-wrap gap-3 text-xs">
-      <button
-        type="button"
-        data-expand-review
-        aria-expanded="false"
-        aria-label="Expand review"
-        class="link"
-      >
-        Expand review
-      </button>
-      <a href="{{ gate.diff_href }}" data-graft class="link"
-        >Browse the full candidate diff</a
+      {% endif %}
+    </div>
+    <div class="mt-5">
+      <a href="{{ gate.diff_href }}" data-graft class="btn btn-outline w-full"
+        >Open full review</a
       >
     </div>
     <details class="file-disclosure mt-5">
       <summary>Candidate details</summary>
+      <p class="text-quiet mt-3 text-sm">
+        Discard ends this work without application of this candidate. Earlier
+        direct writes and host command effects remain.
+      </p>
       <dl class="mt-3 space-y-2 text-xs">
-        <dt>Diff base</dt>
+        <dt>Original baseline</dt>
         <dd class="font-mono break-all">{{ gate.diff_base }}</dd>
         <dt>Candidate</dt>
         <dd class="font-mono break-all">{{ gate.candidate }}</dd>
@@ -137,17 +144,32 @@
     aria-label="Candidate decisions"
     {% if prepared_recovery.is_some() %}disabled{% endif %}
   >
-    <p class="text-quiet mb-3 text-center text-xs">
-      {% if gate.commit_on_approval %}
-        Apply and commit · one commit per changed repository
-      {% else if gate.ordinary || gate.quick_task %}
-        Apply reviewed files · no Git commit
-      {% else %}
-        Approval continues the configured run
-      {% endif %}<br /><span class="mt-1 inline-block font-mono break-all"
-        >{{ gate.application_destination }}</span
-      >
-    </p>
+    <div class="mb-3 space-y-2 text-sm">
+      <p>
+        {% if gate.commit_on_approval %}
+          Approval applies these files and creates one local Git commit per
+          changed repository. Earlier commits remain if another repository
+          fails.
+        {% else if gate.apply_on_approval %}
+          Approval applies these files. It creates no Git commit.
+        {% else %}
+          Approval continues the configured run. This decision does not itself
+          apply files or create a Git commit.
+        {% endif %}
+      </p>
+      {% if !gate.application_destination.is_empty() %}
+        <p class="text-quiet text-xs">
+          {% if gate.commit_on_approval || gate.apply_on_approval %}
+            Destination
+          {% else %}
+            Review directories
+          {% endif %}
+          <span class="mt-1 block font-mono break-all"
+            >{{ gate.application_destination }}</span
+          >
+        </p>
+      {% endif %}
+    </div>
     <form
       data-graft
       method="post"
@@ -159,7 +181,7 @@
       <button class="btn btn-primary w-full" type="submit">
         {% if gate.commit_on_approval %}
           Apply and commit
-        {% else if gate.ordinary || gate.quick_task %}
+        {% else if gate.apply_on_approval %}
           Apply changes
         {% else %}
           Approve candidate
@@ -169,7 +191,7 @@
     <div class="mt-2 flex flex-wrap items-start justify-between gap-3">
       {% if gate.can_request_revision %}
         <details class="workspace-revision min-w-0 flex-1">
-          <summary class="cursor-pointer py-2 text-xs">Request changes</summary>
+          <summary class="cursor-pointer py-3 text-sm">Request changes</summary>
           <form
             data-graft
             method="post"
@@ -187,6 +209,10 @@
               value="{{ gate.candidate }}"
             />
             <input type="hidden" name="surface" value="conversation" />
+            <p class="text-quiet text-sm">
+              Feedback follows the configured revision route for this exact
+              candidate.
+            </p>
             <label class="flex flex-col gap-1"
               ><span class="text-sm">What needs to change?</span
               ><textarea
@@ -225,5 +251,8 @@
         </button>
       </form>
     </div>
+    <p class="text-quiet mt-3 text-xs">
+      Discard does not undo direct writes or host command effects.
+    </p>
   </fieldset>
 </section>

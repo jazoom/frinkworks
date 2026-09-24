@@ -34,9 +34,9 @@
       </section>
     {% else if block.kind == "tool" %}
       <details
-        class="collapse-arrow border-base-300 bg-base-200 collapse rounded-sm border"
+        class="chat-tool-record collapse-arrow border-base-300 collapse rounded-sm border"
       >
-        <summary class="collapse-title min-h-0 py-3 text-sm">
+        <summary class="collapse-title min-h-11 py-3">
           <span class="text-quiet">Tool result · </span
           ><span class="font-mono break-words">{{ block.label }}</span>
           {% if let Some(command) = block.command %}
@@ -116,7 +116,9 @@
     {% else if block.kind == "incomplete" %}
       <p class="text-quiet text-sm" role="status">Incomplete response</p>
     {% else %}
-      <div class="text-quiet flex flex-wrap items-center gap-2 text-sm">
+      <div
+        class="chat-tool-record border-base-300 flex flex-wrap items-center gap-2 rounded-sm border px-4 py-3"
+      >
         {% if block.active %}
           <span
             class="loading loading-dots loading-xs motion-reduce:hidden"

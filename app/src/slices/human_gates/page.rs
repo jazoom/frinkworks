@@ -18,6 +18,7 @@ pub(super) struct ChangeRow {
     pub(super) additions: usize,
     pub(super) removals: usize,
     pub(super) has_counts: bool,
+    pub(super) selected: bool,
 }
 
 pub(super) struct TextRow {
@@ -52,6 +53,7 @@ pub(super) struct GatePage {
     pub(super) text_next: String,
     pub(super) binary: bool,
     pub(super) text_too_large: bool,
+    pub(super) preview_unavailable: bool,
     pub(super) awaiting: bool,
     pub(super) needs_recovery: bool,
     pub(super) error: &'static str,
@@ -64,8 +66,8 @@ pub(super) struct GatePage {
     pub(super) revision_target: String,
     pub(super) revision_attempt_limit: u8,
     pub(super) host_unchanged: &'static str,
-    pub(super) ordinary: bool,
     pub(super) commit_on_approval: bool,
+    pub(super) apply_on_approval: bool,
     pub(super) exclusions: Vec<String>,
     pub(super) application_destination: String,
 }
@@ -128,6 +130,7 @@ impl GatePage {
                         additions,
                         removals,
                         has_counts,
+                        selected: query.change.unwrap_or(start) == index,
                     }
                 })
                 .collect();
@@ -141,17 +144,22 @@ impl GatePage {
         let mut text_next = String::new();
         let mut binary = false;
         let mut text_too_large = false;
-        if let Some(index) = query.change {
+        let mut preview_unavailable = false;
+        if let Some(index) = query.change.or_else(|| (total > start).then_some(start)) {
             let diff = diff.as_ref()?;
-            let change = diff.change(index, store).ok()?;
-            selected_path = if change.directory.is_empty() {
-                change.path.clone()
+            // Validate selection against the manifest, independently of object availability.
+            let (_, entries) = diff.manifest_page(index, 1).ok()?;
+            let entry = entries.first()?;
+            selected_path = if entry.directory.is_empty() {
+                entry.path.clone()
             } else {
-                format!("{}/{}", change.directory, change.path)
+                format!("{}/{}", entry.directory, entry.path)
             };
-            binary = change.binary;
-            text_too_large = change.text_too_large;
-            if let Some(fragments) = &change.text {
+            let change = diff.change(index, store).ok();
+            preview_unavailable = change.is_none();
+            binary = change.as_ref().is_some_and(|change| change.binary);
+            text_too_large = change.as_ref().is_some_and(|change| change.text_too_large);
+            if let Some(fragments) = change.as_ref().and_then(|change| change.text.as_ref()) {
                 let line_start = query.line.checked_mul(TEXT_PAGE_FRAGMENTS)?;
                 if line_start > fragments.len() {
                     return None;
@@ -192,7 +200,6 @@ impl GatePage {
             String::new()
         };
         let quick_task = run.kind == RunKind::QuickTask;
-        let ordinary = diff.as_ref().is_some_and(CandidateDiff::ordinary);
         let exclusions = diff
             .as_ref()
             .map(|diff| diff.exclusions().to_vec())
@@ -253,6 +260,7 @@ impl GatePage {
             text_next,
             binary,
             text_too_large,
+            preview_unavailable,
             awaiting: gate.state == crate::workflows::gates::HumanGateState::AwaitingDecision,
             needs_recovery: false,
             error,
@@ -278,10 +286,12 @@ impl GatePage {
             } else {
                 crate::workflows::HOST_UNCHANGED
             },
-            ordinary,
             exclusions,
             application_destination,
-            commit_on_approval: super::approval_commits(run, gate),
+            commit_on_approval: super::approval_command(run, gate)
+                == Some(crate::workflows::commands::SystemCommandId::CommitCandidate),
+            apply_on_approval: super::approval_command(run, gate)
+                == Some(crate::workflows::commands::SystemCommandId::ApplyChanges),
         })
     }
 }

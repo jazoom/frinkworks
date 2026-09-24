@@ -2200,6 +2200,11 @@ async fn cancel_message(
     job.request_cancel();
     state.host_approvals.invalidate_job(job.id());
     state.conversations.invalidate_questions_for_job(job.id());
+    // Observation must follow cancellation before the question waiter settles.
+    // The cancellation flag remains set. This starts no replacement work.
+    if job.snapshot().status == crate::sessions::JobStatus::AwaitingQuestion {
+        let _ = job.resume();
+    }
     render_detail_command(
         graft,
         PatchStatus::Ok,
@@ -3032,6 +3037,22 @@ fn render_detail(
         )?),
     }
 }
+pub(super) fn refresh_detail_after_decision(
+    state: &AppState,
+    session: crate::sessions::SessionId,
+    graft: PatchGraft,
+    conversation: ConversationId,
+) -> AppResult<Response> {
+    let Some(record) = state.conversations.get(&conversation) else {
+        return Ok(responses::command_navigation("/conversations"));
+    };
+    render_detail_command(
+        graft,
+        PatchStatus::Ok,
+        detail_view(state, session, &record, &record.title, ""),
+    )
+}
+
 fn render_detail_command(
     _graft: PatchGraft,
     status: PatchStatus,

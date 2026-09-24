@@ -8,14 +8,16 @@ function usesCommandKey(): boolean {
     return /Mac|iPhone|iPad|iPod/.test(platform);
 }
 
-function sendShortcutHint(): string {
+function sendShortcutHint(action: string): string {
     const key = usesCommandKey() ? "⌘" : "Ctrl";
-    return `${key} + Enter to send.`;
+    return `${key} + Enter to ${action}.`;
 }
 
 export function initShortcutHint(root: HTMLElement): IslandInstance {
     const sync = () => {
-        root.textContent = sendShortcutHint();
+        root.textContent = sendShortcutHint(
+            root.dataset.shortcutAction === "queue" ? "queue" : "send",
+        );
     };
     sync();
     return { reconcile: sync, destroy() {} };
@@ -130,11 +132,15 @@ export function initComposer(
     const commandStatus = root.querySelector<HTMLElement>(
         "[data-composer-command-status]",
     );
-    const defaultLabel = submitLabel?.textContent?.trim() ?? "Send";
-    const defaultAriaLabel =
-        submitButton?.dataset.defaultAriaLabel?.trim() ?? defaultLabel;
+    const initialLabel = submitLabel?.textContent?.trim() ?? "Send";
 
     const syncCommandMode = () => {
+        // A retained composer can switch between Send and Queue after a patch.
+        // Its server-authored defaults, not the previous label, own that state.
+        const defaultLabel =
+            submitButton?.dataset.defaultLabel?.trim() ?? initialLabel;
+        const defaultAriaLabel =
+            submitButton?.dataset.defaultAriaLabel?.trim() ?? defaultLabel;
         const mode = classifyComposerInput(messageField(root)?.value ?? "");
         if (mode.kind !== "command" || !message || message.disabled) {
             if (submitLabel) submitLabel.textContent = defaultLabel;

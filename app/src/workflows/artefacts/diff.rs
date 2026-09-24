@@ -134,10 +134,6 @@ impl CandidateDiff {
         })
     }
 
-    pub(crate) fn ordinary(&self) -> bool {
-        self.roots.iter().all(|root| root.target.ordinary)
-    }
-
     pub(crate) fn exclusions(&self) -> &[String] {
         &self.exclusions
     }

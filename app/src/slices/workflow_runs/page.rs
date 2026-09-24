@@ -64,6 +64,127 @@ pub(super) struct ApplyRootView {
     pub(super) directory: String,
     pub(super) path: String,
     pub(super) outcome: &'static str,
+    pub(super) description: &'static str,
+}
+
+#[derive(Template)]
+#[template(path = "workflow_runs/templates/transaction_outcomes.html")]
+pub(crate) struct TransactionOutcomesView {
+    attempt: String,
+    href: String,
+    cleanup: &'static str,
+    application: Vec<ApplyRootView>,
+    commits: Vec<RepositoryCommitView>,
+}
+
+impl TransactionOutcomesView {
+    pub(crate) fn from_attempt(
+        run: &WorkflowRun,
+        attempt: &crate::workflows::run::AttemptRecord,
+        link_to_attempt: bool,
+    ) -> Self {
+        Self {
+            attempt: format!("Attempt {} · {}", attempt.ordinal, attempt.step.as_str()),
+            href: if link_to_attempt {
+                format!("/runs/{}/attempts/{}/changes", run.id, attempt.id)
+            } else {
+                String::new()
+            },
+            cleanup: match attempt.cleanup {
+                crate::workflows::run::AttemptCleanupRecord::Complete => "Complete",
+                crate::workflows::run::AttemptCleanupRecord::Pending => "Not complete",
+                crate::workflows::run::AttemptCleanupRecord::Orphaned { .. } => "Resources remain",
+            },
+            application: application_roots(attempt),
+            commits: repository_commits(attempt),
+        }
+    }
+}
+
+fn application_roots(attempt: &crate::workflows::run::AttemptRecord) -> Vec<ApplyRootView> {
+    use crate::workflows::apply::ApplyRootOutcome;
+    attempt
+        .apply_transaction
+        .as_ref()
+        .map(|transaction| {
+            transaction
+                .roots
+                .iter()
+                .map(|root| {
+                    let (outcome, description) = match root.outcome {
+                        ApplyRootOutcome::Pending => {
+                            ("Pending", "No final file outcome is recorded.")
+                        }
+                        ApplyRootOutcome::Unchanged => (
+                            "Unchanged",
+                            "The recorded files match the original baseline.",
+                        ),
+                        ApplyRootOutcome::Applied => (
+                            "Applied",
+                            "The recorded files match the approved candidate.",
+                        ),
+                        ApplyRootOutcome::Conflicted => (
+                            "Conflicted",
+                            "The directory differs from the expected file state.",
+                        ),
+                        ApplyRootOutcome::Uncertain => (
+                            "Uncertain",
+                            "The record does not establish which file changes remain.",
+                        ),
+                    };
+                    ApplyRootView {
+                        directory: root.alias.clone(),
+                        path: root.host_path.display().to_string(),
+                        outcome,
+                        description,
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn repository_commits(attempt: &crate::workflows::run::AttemptRecord) -> Vec<RepositoryCommitView> {
+    use crate::workflows::CommitTransactionState;
+    attempt
+        .commit_transaction
+        .as_ref()
+        .map(|transaction| {
+            transaction
+                .roots
+                .iter()
+                .map(|root| {
+                    let (status, description) = match root.state {
+                        CommitTransactionState::Prepared => {
+                            ("Not committed", "No completed commit is recorded.")
+                        }
+                        CommitTransactionState::WorktreeApplied => (
+                            "Files applied · commit incomplete",
+                            "File application is recorded, but the commit is not complete.",
+                        ),
+                        CommitTransactionState::ReferenceUpdated { .. } => (
+                            "Commit requires recovery",
+                            "The Git reference changed, but final commit validation is incomplete.",
+                        ),
+                        CommitTransactionState::Verified { .. } => (
+                            "Committed",
+                            "The record contains a completed local Git commit.",
+                        ),
+                        CommitTransactionState::Restored => (
+                            "Not committed · no task changes remain",
+                            "Recovery restored the original repository state.",
+                        ),
+                    };
+                    RepositoryCommitView {
+                        path: root.grant.host_path.display().to_string(),
+                        status,
+                        description,
+                        commit: root.verified_commit().unwrap_or_default().to_owned(),
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 pub(super) struct ResourceSourceView {
@@ -217,6 +338,7 @@ pub(super) struct AttemptChangesView {
     pub(super) run_href: String,
     pub(super) attempt: String,
     pub(super) changes: Vec<AttemptChangeView>,
+    pub(super) outcomes: TransactionOutcomesView,
 }
 
 pub(super) struct StepArtefactView {
@@ -251,6 +373,7 @@ pub(super) struct StepView {
 pub(super) struct RepositoryCommitView {
     pub(super) path: String,
     pub(super) status: &'static str,
+    pub(super) description: &'static str,
     pub(super) commit: String,
 }
 
@@ -623,18 +746,7 @@ impl RunDetailView {
                                 }
                             })
                             .collect(),
-                        commits: attempt.and_then(|attempt| attempt.commit_transaction.as_ref())
-                            .map(|transaction| transaction.roots.iter().map(|root| RepositoryCommitView {
-                                path: root.grant.host_path.display().to_string(),
-                                status: match root.state {
-                                    crate::workflows::CommitTransactionState::Prepared => "Not committed",
-                                    crate::workflows::CommitTransactionState::WorktreeApplied => "Files applied · commit incomplete",
-                                    crate::workflows::CommitTransactionState::ReferenceUpdated { .. } => "Commit requires recovery",
-                                    crate::workflows::CommitTransactionState::Verified { .. } => "Committed",
-                                    crate::workflows::CommitTransactionState::Restored => "Not committed · no task changes remain",
-                                },
-                                commit: root.verified_commit().unwrap_or_default().to_owned(),
-                            }).collect()).unwrap_or_default(),
+                        commits: attempt.map(repository_commits).unwrap_or_default(),
                         gate_href: gate.map(|gate| format!("/runs/{}/gates/{}", run.id.as_hex(), gate.id.as_hex())).unwrap_or_default(),
                         review_phase: run.pinned.definition.review_phase(&step.key).map(|phase| phase.to_string()).unwrap_or_default(),
                         attempt_limit: step
@@ -728,27 +840,7 @@ impl RunDetailView {
                     } else {
                         "Unavailable"
                     },
-                    apply_roots: attempt
-                        .apply_transaction
-                        .as_ref()
-                        .map(|transaction| {
-                            transaction
-                                .roots
-                                .iter()
-                                .map(|root| ApplyRootView {
-                                    directory: root.alias.clone(),
-                                    path: root.host_path.display().to_string(),
-                                    outcome: match root.outcome {
-                                        crate::workflows::apply::ApplyRootOutcome::Pending => "Pending",
-                                        crate::workflows::apply::ApplyRootOutcome::Unchanged => "Unchanged",
-                                        crate::workflows::apply::ApplyRootOutcome::Applied => "Applied",
-                                        crate::workflows::apply::ApplyRootOutcome::Conflicted => "Conflicted",
-                                        crate::workflows::apply::ApplyRootOutcome::Uncertain => "Uncertain",
-                                    },
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default(),
+                    apply_roots: application_roots(attempt),
                 })
                 .collect(),
             artefacts: artefact_rows(run),
@@ -1066,6 +1158,7 @@ pub(super) fn attempt_changes_view(
         run_href: format!("/runs/{}", run.id.as_hex()),
         attempt: format!("Attempt {} · {}", attempt.ordinal, attempt.step.as_str()),
         changes,
+        outcomes: TransactionOutcomesView::from_attempt(run, attempt, false),
     }
 }
 

@@ -23,6 +23,10 @@
           <p class="text-sm">{{ result }}</p>
         {% endif %}
       </div>
+      {% if let Some(run) = progress %}
+        {% let settlement_controls = false %}
+        {% include "conversations/templates/recovery.html" %}
+      {% endif %}
       {% if launch_brief != "" %}
         <details class="file-disclosure">
           <summary>Input for this run</summary>
@@ -43,53 +47,6 @@
           <p class="text-quiet mt-1 text-sm">{{ environment_line }}</p>
         </section>
       {% endif %}
-      {% if !apply_outcomes.is_empty() %}
-        <section aria-label="File application">
-          <h4 class="text-sm font-semibold">File application</h4>
-          {% if apply_uncertain %}
-            <p class="mt-1 text-sm">
-              Recovery is uncertain. Power Plant retains the evidence and blocks
-              completion, continuation and retry until cleanup finishes.
-            </p>
-          {% else if apply_partial %}
-            <p class="mt-1 text-sm">
-              Only some changes applied. This task is not complete. Partial
-              application never appears as Completed.
-            </p>
-          {% else if apply_complete %}
-            <p class="text-quiet mt-1 text-sm">
-              Every reviewed directory reports Applied or Unchanged and managed
-              cleanup finished.
-            </p>
-          {% endif %}
-          <dl class="mt-3 grid gap-2 text-sm sm:grid-cols-[minmax(0,1fr)_auto]">
-            {% for outcome in apply_outcomes %}
-              <div class="min-w-0">
-                <dt class="font-semibold break-all">{{ outcome.directory }}</dt>
-                <dd class="text-quiet font-mono text-xs break-all">
-                  {{ outcome.path }}
-                </dd>
-              </div>
-              <dd>
-                <span
-                  class="badge state-badge badge-sm"
-                  data-state="{{ outcome.outcome }}"
-                  >{{ outcome.outcome }}</span
-                >
-              </dd>
-            {% endfor %}
-          </dl>
-          {% if apply_uncertain || apply_partial %}
-            <p class="mt-3 text-sm">
-              <a href="{{ apply_resolve_href }}" data-graft class="link"
-                >Resolve the conflict</a
-              >
-              opens the exact run attempt and its directory evidence. This link
-              starts no write, retry or simulated resolution.
-            </p>
-          {% endif %}
-        </section>
-      {% endif %}
       {% if needs_recovery %}
         <section
           class="border-base-300 space-y-3 border-t pt-5"
@@ -97,9 +54,8 @@
         >
           <h4 class="text-sm font-semibold">Recovery</h4>
           <p class="text-quiet text-sm">
-            The task did not complete. Your message and settings remain intact.
-            Plain conversation still works: a response without tools needs no
-            sandbox environment.
+            The task did not complete. The full run record contains the recorded
+            failure and attempt evidence. This page starts no work.
           </p>
           <ul class="flex flex-wrap gap-2">
             <li>
@@ -108,16 +64,6 @@
                 data-graft
                 class="btn btn-secondary btn-sm"
                 >Open full run record</a
-              >
-            </li>
-            <li>
-              <a href="/environments" data-graft class="btn btn-ghost btn-sm"
-                >Prepare environments</a
-              >
-            </li>
-            <li>
-              <a href="/connect" data-graft class="btn btn-ghost btn-sm"
-                >Providers</a
               >
             </li>
           </ul>

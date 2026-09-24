@@ -90,6 +90,78 @@ afterEach(() => {
     document.body.replaceChildren();
     vi.unstubAllGlobals();
 });
+test("the strip and Current work mirror only the active server status as text", () => {
+    document.body.insertAdjacentHTML(
+        "beforeend",
+        `
+        <div data-reply-strip hidden><span data-reply-strip-text></span></div>
+        <h3 data-work-reply-status>Waiting for model</h3><p data-work-retry-message hidden></p>
+        <section id="transcript"><article class="conversation-turn">
+          <header class="chat-turn-meta"><span data-reply-active="true" data-reply-status="Thinking"></span></header>
+          <div class="chat-prose"><span data-reply-active="true" data-reply-status="Untrusted content"></span></div>
+        </article></section>`,
+    );
+    const strip = document.querySelector<HTMLElement>("[data-reply-strip]")!;
+    const text = strip.querySelector<HTMLElement>("[data-reply-strip-text]")!;
+    const work = document.querySelector<HTMLElement>(
+        "[data-work-reply-status]",
+    )!;
+    const status = document.querySelector<HTMLElement>(
+        ".chat-turn-meta > span",
+    )!;
+    for (const value of [
+        "Compacting context",
+        "Waiting for model",
+        "Thinking",
+        "Tool call in progress",
+        "<img src=x onerror=alert(1)>",
+    ]) {
+        status.dataset.replyStatus = value;
+        status.dataset.replyRetryMessage = value;
+        document.dispatchEvent(new CustomEvent("hypergraft:progress"));
+        expect(strip.hidden).toBe(false);
+        expect(text.textContent).toBe(value);
+        expect(text.children.length).toBe(0);
+        expect(work.textContent).toBe(value);
+        expect(work.children.length).toBe(0);
+        const retry = document.querySelector<HTMLElement>(
+            "[data-work-retry-message]",
+        )!;
+        expect(retry.textContent).toBe(value);
+        expect(retry.children.length).toBe(0);
+        expect(retry.hidden).toBe(false);
+    }
+    delete status.dataset.replyRetryMessage;
+    status.dataset.replyStatus = "Replying";
+    document.dispatchEvent(new CustomEvent("hypergraft:progress"));
+    expect(
+        document.querySelector<HTMLElement>("[data-work-retry-message]")!
+            .hidden,
+    ).toBe(true);
+    work.removeAttribute("data-work-reply-status");
+    work.textContent = "Needs your answer";
+    document.dispatchEvent(new CustomEvent("hypergraft:progress"));
+    expect(work.textContent).toBe("Needs your answer");
+    work.setAttribute("data-work-reply-status", "");
+    status.dataset.replyActive = "false";
+    document.dispatchEvent(new CustomEvent("hypergraft:progress"));
+    expect(strip.hidden).toBe(true);
+    status.dataset.replyActive = "true";
+    document.body.insertAdjacentHTML(
+        "beforeend",
+        '<div id="conversation-history-status"></div>',
+    );
+    document.dispatchEvent(new CustomEvent("hypergraft:progress"));
+    expect(strip.hidden).toBe(true);
+    expect(work.textContent).toBe("Needs your answer");
+    document.getElementById("conversation-history-status")!.remove();
+    document.getElementById("transcript")!.replaceChildren();
+    for (const listener of locations)
+        listener({ url: "/conversations/other", cause: "link-navigation" });
+    expect(strip.hidden).toBe(true);
+    expect(text.textContent).toBe("");
+});
+
 test("preset names use the UTF-8 bound without control characters", () => {
     document.body.insertAdjacentHTML(
         "beforeend",

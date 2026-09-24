@@ -477,22 +477,15 @@ async fn discard_and_switch(
     )))
 }
 
-pub(in crate::slices) fn approval_commits(
+pub(in crate::slices) fn approval_command(
     run: &crate::workflows::WorkflowRun,
     gate: &crate::workflows::gates::HumanGateRecord,
-) -> bool {
-    if run.kind == crate::workflows::RunKind::QuickTask {
-        return false;
+) -> Option<crate::workflows::commands::SystemCommandId> {
+    let key = run.pinned.definition.next_step(&gate.step)?;
+    match &run.pinned.definition.step(key)?.action {
+        crate::workflows::definition::StepAction::SystemCommand(action) => Some(action.command),
+        _ => None,
     }
-    run.pinned
-        .definition
-        .next_step(&gate.step)
-        .and_then(|key| run.pinned.definition.step(key))
-        .is_some_and(|step| {
-            matches!(&step.action,
-            crate::workflows::definition::StepAction::SystemCommand(action)
-                if action.command == crate::workflows::commands::SystemCommandId::CommitCandidate)
-        })
 }
 
 pub(in crate::slices) fn application_destination(
@@ -692,6 +685,7 @@ async fn decide(
             form.conversation_surface,
         );
     }
+    let response_state = state.clone();
     let leases = if matches!(action, DecisionAction::Approve | DecisionAction::Revision) {
         let execution = match state.workflow_execution.acquire() {
             Ok(execution) => execution,
@@ -783,7 +777,13 @@ async fn decide(
                 settle_cancelled_job(&state, &continuation);
             }
         }
-        return Ok(responses::command_navigation(&destination));
+        return decision_response(
+            &response_state,
+            session,
+            graft,
+            &run,
+            form.conversation_surface,
+        );
     }
 
     if plan_gate {
@@ -919,7 +919,13 @@ async fn decide(
                 });
             }
         }
-        return Ok(responses::command_navigation(&destination));
+        return decision_response(
+            &response_state,
+            session,
+            graft,
+            &run,
+            form.conversation_surface,
+        );
     }
 
     let kind = if matches!(action, DecisionAction::Approve) {
@@ -1055,7 +1061,31 @@ async fn decide(
             });
         }
     }
-    Ok(responses::command_navigation(&destination))
+    decision_response(
+        &response_state,
+        session,
+        graft,
+        &run,
+        form.conversation_surface,
+    )
+}
+
+fn decision_response(
+    state: &AppState,
+    session: SessionId,
+    graft: PatchGraft,
+    run: &crate::workflows::WorkflowRun,
+    conversation_surface: bool,
+) -> AppResult<Response> {
+    if conversation_surface && let Some(conversation) = run.conversation_id {
+        return super::conversations::refresh_detail_after_decision(
+            state,
+            session,
+            graft,
+            conversation,
+        );
+    }
+    Ok(responses::command_navigation(&decision_destination(run)))
 }
 
 fn decision_record(
