@@ -90,6 +90,28 @@ afterEach(() => {
     document.body.replaceChildren();
     vi.unstubAllGlobals();
 });
+test("catalogue selection receives focus after the runtime navigation target", async () => {
+    document.body.insertAdjacentHTML(
+        "beforeend",
+        `<main class="workspace-catalogue"><div><h2 id="workflow-destination-heading" tabindex="-1">Destination</h2></div></main>`,
+    );
+    const content = document.querySelector("main > div")!;
+    const target = document.getElementById("workflow-destination-heading")!;
+    const message =
+        document.querySelector<HTMLTextAreaElement>("#composer-message")!;
+    message.focus();
+    content.scrollTop = 500;
+    for (const listener of locations) {
+        listener({ url: "/workflows?workflow=one", cause: "link-navigation" });
+    }
+    message.focus();
+    expect(document.activeElement).toBe(message);
+    await Promise.resolve();
+    expect(document.activeElement).toBe(target);
+    expect(content.scrollTop).toBe(0);
+    expect(message.value).toBe("Unsent text");
+});
+
 test("the strip and Current work mirror only the active server status as text", () => {
     document.body.insertAdjacentHTML(
         "beforeend",

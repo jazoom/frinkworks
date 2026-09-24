@@ -142,6 +142,60 @@ test.each([
     controller.abort();
 });
 
+test.each(["same", "other", "revision", "submitted", "new"])(
+    "a detached composer restores only its ordinary conversation draft: %s",
+    (destination) => {
+        const mount = (owner: string, revision = false) => {
+            const detail = document.createElement("section");
+            detail.id = "conversation-detail";
+            const identity = document.createElement("template");
+            if (owner) identity.dataset.conversationUrl = owner;
+            const form = composerForm();
+            if (revision) {
+                const state = document.createElement("div");
+                state.dataset.revisionState = "";
+                form.append(state);
+            }
+            detail.append(identity, form);
+            const controller = new AbortController();
+            const island = initComposer(form, { signal: controller.signal });
+            return { form, controller, island };
+        };
+        const first = mount("/conversations/one");
+        const textarea = first.form.querySelector("textarea")!;
+        textarea.value = "Private unsent draft";
+        textarea.dispatchEvent(new InputEvent("input", { bubbles: true }));
+        if (destination === "submitted") {
+            first.island?.reconcile?.({
+                cause: "patch",
+                detail: {
+                    requestKind: "patch",
+                    form: first.form,
+                    url: "/conversations/one/messages",
+                    outcome: "applied-patch",
+                    status: 200,
+                    targetIds: ["conversation-detail"],
+                },
+            });
+        }
+        first.controller.abort();
+        first.island?.destroy?.();
+        const next = mount(
+            destination === "other"
+                ? "/conversations/two"
+                : destination === "new"
+                  ? ""
+                  : "/conversations/one",
+            destination === "revision",
+        );
+        expect(next.form.querySelector("textarea")!.value).toBe(
+            destination === "same" ? "Private unsent draft" : "",
+        );
+        next.controller.abort();
+        next.island?.destroy?.();
+    },
+);
+
 test.each(["start", "one/access", "one/remove", "consent"])(
     "a directory command at %s retains the unsent draft",
     (action) => {

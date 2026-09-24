@@ -529,12 +529,17 @@ async fn workflow_selection_is_non_mutating_and_validates_context_without_a_prov
     let state = test_state();
     let conversation = state
         .conversations
-        .create("Destination".to_owned())
+        .create("Destination <script>alert(1)</script>".to_owned())
         .unwrap();
-    let workflow = state
-        .workflows
-        .create(one_agent_definition(crate::tests::test_environment_id()))
-        .unwrap();
+    let definition = one_agent_definition(crate::tests::test_environment_id());
+    let definition = crate::workflows::definition::WorkflowDefinition::from_parts(
+        "Workflow <script>alert(2)</script>".to_owned(),
+        definition.default_environment(),
+        definition.roles().to_vec(),
+        definition.steps().to_vec(),
+    )
+    .unwrap();
+    let workflow = state.workflows.create(definition).unwrap();
     let selection = crate::workflows::WorkflowSelection {
         workflow_id: workflow.id,
         definition_version: workflow.definition_version,
@@ -573,9 +578,20 @@ async fn workflow_selection_is_non_mutating_and_validates_context_without_a_prov
                 conversation.id.as_hex()
             )));
             assert!(!body.contains("example.com"));
+            assert!(body.contains("Destination &#60;script&#62;alert(1)&#60;/script&#62;"));
+            assert!(body.contains("Workflow &#60;script&#62;alert(2)&#60;/script&#62;"));
+            assert!(!body.contains("<script>alert("));
         }
     }
-    for token in ["invalid".to_owned(), format!("{unknown}:1")] {
+    state
+        .workflows
+        .update(
+            &workflow.id,
+            workflow.revision,
+            one_agent_definition(crate::tests::test_environment_id()),
+        )
+        .unwrap();
+    for token in ["invalid".to_owned(), format!("{unknown}:1"), selection] {
         let response = app(&state)
             .oneshot(
                 Request::builder()

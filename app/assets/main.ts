@@ -3019,7 +3019,26 @@ document.addEventListener("submit", (event) => {
     reconcileCommandPreview();
 });
 
+function focusWorkflowSelection() {
+    const target = document.querySelector<HTMLElement>(
+        "#workflow-destination-heading, #workflow-selection-error",
+    );
+    if (!target) return;
+    // Navigation can retain the catalogue's inner scroll offset. The chooser
+    // or rejection must not remain above the visible records.
+    const content = target
+        .closest(".workspace-catalogue")
+        ?.querySelector(":scope > div");
+    if (content) content.scrollTop = 0;
+    target.focus({ preventScroll: true });
+}
+
 startApp();
+focusWorkflowSelection();
+listenForLocationChanges(() => {
+    // The installed runtime focuses its patch target after this event.
+    queueMicrotask(focusWorkflowSelection);
+});
 // Consent must reflect requested fields after the conversation island restores them.
 listenForRequestSettled(syncExecutionConsent);
 listenForLivePatches(syncExecutionConsent);

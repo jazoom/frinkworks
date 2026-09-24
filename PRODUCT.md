@@ -141,6 +141,12 @@ The resource navigation links directly to Workflows, Presets, Environments, Agen
 
 Catalogue navigation creates no conversation or execution. It grants no access.
 
+The workflow catalogue shows saved phase names and kinds. Phase purposes describe the definition, not completed activity or effective file access.
+
+Workflow selection opens setup for the validated conversation. Without that context, the catalogue offers a conversation chooser before the existing launch review.
+
+An ordinary unsent message in a saved conversation survives catalogue navigation within the current document. Reload and another conversation do not retain it.
+
 Agents supply reusable instructions and requested settings. A saved agent is not a subagent or an implicit workflow participant.
 
 A skill is an ordinary `SKILL.md` file with YAML frontmatter. Global skills live at `<data_root>/skills/<skill-folder>/SKILL.md`. Users can copy skill folders directly or edit complete files on the Skills page. No Power Plant identifiers or revision fields are required. The next request discovers copied files without a restart.

@@ -14,19 +14,21 @@ Existing capabilities and authority boundaries remain intact. Missing behaviour 
 
 Only one bounded pass is active. Each pass ends with a user review before the next pass starts.
 
-| Stage | Scope                                                         | Status               |
-| ----- | ------------------------------------------------------------- | -------------------- |
-| 1     | Shared sidebar, conversation header, empty state and composer | Approved             |
-| 2a    | Configured draft and directory setup                          | Completed            |
-| 2b    | Execution setup, host consent and execution review            | Completed            |
-| 2c    | Instructions setup and recorded sources                       | Completed            |
-| 2d    | Presets setup                                                 | Completed            |
-| 3a    | Active conversation                                           | Completed            |
-| 3b    | Current work                                                  | Approved and staged  |
-| 4a    | Candidate review                                              | Approved             |
-| 4b    | Recovery                                                      | Awaiting user review |
-| 5     | Workflows and resource catalogues                             | Queued               |
-| 6     | Attention, history, providers and settings                    | Queued               |
+| Stage | Scope                                                         | Status                 |
+| ----- | ------------------------------------------------------------- | ---------------------- |
+| 1     | Shared sidebar, conversation header, empty state and composer | Approved               |
+| 2a    | Configured draft and directory setup                          | Completed              |
+| 2b    | Execution setup, host consent and execution review            | Completed              |
+| 2c    | Instructions setup and recorded sources                       | Completed              |
+| 2d    | Presets setup                                                 | Completed              |
+| 3a    | Active conversation                                           | Completed              |
+| 3b    | Current work                                                  | Approved and committed |
+| 4a    | Candidate review                                              | Approved and committed |
+| 4b    | Recovery                                                      | Approved and committed |
+| 5a    | Workflow catalogue                                            | Awaiting user review   |
+| 5b    | Workflow editor                                               | Queued                 |
+| 5c    | Other resource catalogues and preset catalogue                | Separate passes queued |
+| 6     | Attention, history, providers and settings                    | Queued                 |
 
 Later stages require their own bounded scope and design decisions. Theme expansion remains outside Stage 1.
 
@@ -693,6 +695,93 @@ The mechanical detector used its degraded parser and reported 26 advisory findin
 
 The named browser session closed and the isolated server stopped. The original server remains available at `http://localhost:4000`.
 
-Stage 4b awaits user review. The Git index remains byte-identical to its initial snapshot. No Stage 4a or Stage 4b change is staged or committed.
+The user approved and committed Stage 4b before Stage 5a. Commit `a6b33db` contains the conversation status, candidate review and recovery work.
+
+Stage 5a began from that commit with a clean working tree and index. Approval grants no permission to stage or commit further changes.
 
 The Impeccable sidecar refresh remains outside the authorised scope.
+
+## Stage 5a decisions
+
+This pass covers the workflow catalogue and its path to existing launch review. The workflow editor and other resource catalogues remain separate passes.
+
+Workflow names lead ruled records. The visible sequence uses saved phase names and kinds. It describes the definition, not completed activity.
+
+Definitions contain no purpose-description field. Existing phase purposes remain inside a disclosure, beside their context boundaries and decision routes. No generated descriptions appear.
+
+Open workflow setup uses validated conversation context. Without that context, Choose conversation opens the existing chooser on the canonical catalogue route.
+
+Edit remains a separate action. New workflow retains its editor route. Neither editor receives a redesign.
+
+The catalogue separates selection from launch. It grants no access and makes no effective file-access claim from an unresolved definition.
+
+The removed catalogue-only effects summary inferred file guarantees without effective conversation settings. Launch review retains effective settings, direct-write warnings and exact run-only consent.
+
+Desktop sequences wrap within their records. Mobile sequences use one column. Long names wrap without loss of actions.
+
+The conversation chooser and selection errors receive focus after successful navigation. Their scroll area returns to the top instead of the previous record position.
+
+One ordinary composer draft survives removal of its form in tab memory. Its conversation identity prevents restoration into another conversation or a revision draft.
+
+Successful submission clears that draft. It creates no persisted record or browser storage entry. Reload does not retain it.
+
+Launch routes and execution checks remain unchanged. Revision-bound execution review and exact-configuration consent retain their existing commands.
+
+## Stage 5a evidence
+
+Initial inspection used the existing server at `http://localhost:4000`. The protected user conversation remained untouched.
+
+Command exercises used ephemeral stores at `http://127.0.0.1:4400`. The fixture compiled copied application code with the actual router and security middleware.
+
+Synthetic conversations supplied host settings without directory grants. The fixture also supplied a long workflow name with escaped HTML-like text.
+
+Those records served as preview data only. No model request, host execution, file application or Git commit ran during browser tests.
+
+Browser exercises covered:
+
+- Catalogue navigation with and without conversation context.
+- Conversation choice and the return path to the owning conversation.
+- Recorded sequences and the phase-details disclosure.
+- Brief entry and Back controls through existing launch review.
+- Fresh run-only consent and rejection of an invalid consent token.
+- Stale revision rejection without a run or execution reservation.
+- Unsent-message retention across catalogue navigation and rejected commands.
+- Draft isolation when another conversation becomes the destination.
+- Mobile exclusion, Escape and focus restoration.
+- Long names and stale workflow identities without substitution.
+- Empty catalogue and conversation chooser states, without a saved draft record.
+- The unchanged New workflow editor link.
+
+The first pass exposed draft loss and a chooser outside the visible scroll area. Both received corrections.
+
+The correction also stacks mobile context and sequence rows. It retains the full-width setup action and separate Edit control.
+
+Early fixture preparation used an invalid long name. An early review rejected a model selection without an available effort. Corrected synthetic inputs supplied the final evidence.
+
+Early automation used the wrong closure property and an invalid selector expression. The final exercises used the actual companion state and completed successfully.
+
+The browser reported no console or page errors in the completed exercises. Earlier asset rebuilds produced transient asset 404 responses.
+
+Frontend regression tests pin draft identity and navigation focus after the runtime's target focus. Rust coverage pins catalogue representations, escaped names and stale definition rejection.
+
+The installed browser package lacks the newer navigation observer. The implementation uses its existing location event and defers focus until the runtime completes synchronous navigation.
+
+The frontend suite passed all 161 tests. The Rust suites passed 1,351 tests. Development and production asset builds passed.
+
+Final authority tests returned the expected 409 responses for stale revision and invalid consent. No run appeared in the isolated history.
+
+Final browser diagnostics contained no console or page errors. The final network record contained no failed asset request.
+
+Final accessibility scans reported zero violations, with zero or one incomplete check. Desktop, compact desktop, mobile, narrow mobile and Sector 7-G received visual inspection.
+
+The named browser session closed and the isolated server stopped. Temporary fixture sources and logs remain under `/tmp/powerplant-stage5a/`.
+
+The original server remains available at `http://localhost:4000`. No fixture hook entered application code.
+
+The Impeccable detector used its degraded parser and reported 26 advisory findings in existing workspace styles. It did not evaluate computed contrast.
+
+The visual review and documentation ran in-thread because this harness has no subagent tool. Evidence lives in `.impeccable/review/ui-overhaul/stage5a/`.
+
+`mise run clean` completed without errors or warnings. Staged and unstaged diff checks passed. The index remains byte-identical to the baseline.
+
+The in-thread review disposition is `ship` for the inspected states. Stage 5a awaits user review, and no new change is staged or committed.

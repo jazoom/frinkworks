@@ -279,43 +279,6 @@ pub(crate) fn process_summary(definition: &WorkflowDefinition) -> String {
         .join(" · ")
 }
 
-pub(crate) fn code_effects(definition: &WorkflowDefinition) -> String {
-    if definition
-        .directory_grants()
-        .any(|grant| grant.access == crate::execution::DirectoryAccess::DirectWrite)
-    {
-        return "Direct write roots change immediately. Candidate approval covers reviewed roots only. Direct changes remain after failure, discard or cancellation.".to_owned();
-    }
-    if definition.steps().iter().any(|step| {
-        matches!(&step.action,
-        StepAction::SystemCommand(action) if action.command == SystemCommandId::ApplyChanges)
-    }) {
-        return "Prepares isolated changes across authorised directories. Approval applies the exact candidate set without a Git commit.".to_owned();
-    }
-    let edits_candidate = definition
-        .steps()
-        .iter()
-        .any(|step| step.writes_primary_source());
-    let commits = definition.steps().iter().any(|step| {
-        matches!(
-            &step.action,
-            StepAction::SystemCommand(command) if command.command == SystemCommandId::CommitCandidate
-        )
-    });
-
-    match (edits_candidate, commits) {
-        (false, false) => "Read-only. Does not change project files.".to_owned(),
-        (true, false) => {
-            "Can propose candidate changes. Does not commit project changes.".to_owned()
-        }
-        (true, true) => {
-            "Can propose and commit candidate changes after the commit step's required assurance."
-                .to_owned()
-        }
-        (false, true) => "Can commit a candidate after its required assurance.".to_owned(),
-    }
-}
-
 pub(crate) fn approval_stops(definition: &WorkflowDefinition) -> String {
     let stops: Vec<_> = definition
         .steps()

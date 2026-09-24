@@ -43,8 +43,6 @@ pub(super) const CONFIG_TITLE: &str = "Configure workflow | Power Plant";
 pub(super) struct CatalogueItem {
     pub(super) id: String,
     pub(super) name: String,
-    pub(super) summary: String,
-    pub(super) effects: String,
     pub(super) inputs: String,
     pub(super) approvals: String,
     pub(super) roles: usize,
@@ -116,8 +114,6 @@ impl CatalogueView {
                 .map(|record| CatalogueItem {
                     id: record.id.as_hex(),
                     name: record.definition.name().to_owned(),
-                    summary: summary::process_summary(&record.definition),
-                    effects: summary::code_effects(&record.definition),
                     inputs: summary::required_inputs(&record.definition).to_owned(),
                     approvals: summary::approval_stops(&record.definition),
                     roles: record.definition.roles().len(),

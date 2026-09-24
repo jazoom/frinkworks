@@ -139,8 +139,10 @@ The error has its own grid row. Recovery controls retain the larger workspace sc
 
 ## Review boundary
 
-The user approved and staged Stage 3b. The staged patch remains unchanged during Stages 4a and 4b.
+The user approved and committed Stages 3b–4b in `a6b33db` before Stage 5a.
 
-The user approved Stage 4a without permission to stage or commit. Stage 4b awaits review. The preset catalogue remains outside this pass.
+Stage 5a covers the workflow catalogue. Ordinary unsent text survives catalogue navigation in tab memory, bound to its conversation.
+
+The workflow editor and preset catalogue remain separate passes. Stage 5a grants no permission to stage or commit.
 
 The workload and browser evidence live in `docs/ui-overhaul.md`.

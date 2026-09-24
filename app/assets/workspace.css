@@ -504,6 +504,22 @@ body:has(.workspace-catalogue) .app-frame {
     color: var(--workspace-muted);
     font-size: 12px;
 }
+.workflow-catalogue {
+    font-size: 16px;
+    line-height: 1.55;
+}
+.app-frame .workflow-catalogue .btn,
+.app-frame .workspace-catalogue:has(.workflow-catalogue) .catalogue-head .btn {
+    min-height: 44px;
+    height: auto;
+    border-radius: 7px;
+    font-size: 14px;
+    white-space: normal;
+}
+.workflow-catalogue summary:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 3px;
+}
 .page-description {
     max-width: 65ch;
     margin-bottom: 35px;

@@ -59,6 +59,10 @@ function commandLocationLabel(root: HTMLElement): string {
         : "Sandbox";
 }
 
+// Catalogue navigation removes the composer. Keep one ordinary draft in this
+// document only, and never restore it into another conversation or revision.
+let rememberedDraft: { owner: string; text: string } | undefined;
+
 export function initComposer(
     root: HTMLElement,
     { signal }: IslandMountContext,
@@ -74,6 +78,17 @@ export function initComposer(
             .conversationUrl;
     let owner = conversationIdentity();
     let draft = messageField(root)?.value ?? "";
+    if (
+        owner &&
+        rememberedDraft?.owner === owner &&
+        draft === "" &&
+        !root.querySelector("[data-revision-state]")
+    ) {
+        draft = rememberedDraft.text;
+        const message = messageField(root);
+        if (message) message.value = draft;
+    }
+    rememberedDraft = undefined;
     let selectionStart = 0;
     let selectionEnd = 0;
 
@@ -85,6 +100,10 @@ export function initComposer(
         draft = message.value;
         selectionStart = message.selectionStart;
         selectionEnd = message.selectionEnd;
+        rememberedDraft =
+            owner && !root.querySelector("[data-revision-state]")
+                ? { owner, text: draft }
+                : undefined;
     };
 
     const restoreDraft = () => {
@@ -209,6 +228,7 @@ export function initComposer(
     root.addEventListener("input", syncCommandMode, { signal });
     root.addEventListener("click", onInsertClick, { signal });
     syncCommandMode();
+    captureDraft();
 
     root.addEventListener("input", captureDraft, { signal });
     root.addEventListener("focusin", captureDraft, { signal });
@@ -222,8 +242,8 @@ export function initComposer(
             if (context.cause === "location") {
                 const nextOwner = conversationIdentity();
                 if (owner && nextOwner === owner) restoreDraft();
-                else captureDraft();
                 owner = nextOwner;
+                captureDraft();
                 return;
             }
             if (context.cause === "live-patch") {
@@ -277,6 +297,7 @@ export function initComposer(
                 return;
             }
             draft = "";
+            rememberedDraft = undefined;
             message.value = "";
             message.focus();
         },

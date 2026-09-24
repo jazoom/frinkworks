@@ -426,6 +426,22 @@ An expired runtime displays Restore prepared changes in the owner companion. The
 
 The handoff page uses the existing type scale and controls. It introduces no new palette or panel system.
 
+### Workflow catalogue
+
+Workflow names lead ruled records with visible ordered sequences. Phase names pair with their recorded kinds. Decision routes remain visible below the sequence.
+
+The catalogue uses 20-pixel record headings and 16-pixel body text. Its controls retain a 44-pixel minimum height and seven-pixel corners.
+
+Open workflow setup carries validated conversation context. Without context, Choose conversation opens the existing chooser. Edit remains separate from the primary setup action.
+
+Phase purposes and details use a disclosure. These details describe the saved definition rather than effective access or completed work.
+
+Desktop phases wrap within the record. Mobile phases form one column. Conversation context stacks above its return link on narrow screens.
+
+Long names wrap without loss of actions. The chooser and selection errors receive focus after navigation, with their content scroll area at the top.
+
+The catalogue adds no execution control. Launch review retains the effective settings and required consent.
+
 ### Workflow setup
 
 Workflow setup occupies the 400-pixel companion. Choose, inputs and review retain the brief through Back controls.
