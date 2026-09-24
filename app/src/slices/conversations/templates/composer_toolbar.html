@@ -1,0 +1,140 @@
+<div
+  class="workspace-composer-toolbar flex flex-wrap items-center justify-between gap-3"
+>
+  <div
+    class="workspace-composer-tools flex min-w-0 flex-wrap items-center gap-3"
+  >
+    <button
+      type="button"
+      class="btn btn-outline btn-square"
+      data-attachment-picker
+      aria-label="Add images"
+      title="Add images"
+      {% if !self.attachments.has_room %}disabled{% endif %}
+    >
+      <svg class="workspace-icon" aria-hidden="true">
+        <use href="/static/images/workspace-icons.svg#paperclip" />
+      </svg>
+    </button>
+    <button
+      type="button"
+      class="btn btn-outline btn-square"
+      data-composer-insert="/"
+      aria-label="Skills and prompts"
+      title="Skills and prompts"
+    >
+      /
+    </button>
+    {% include "conversations/templates/model_picker.html" %}
+    <button
+      type="button"
+      class="btn btn-ghost btn-square"
+      popovertarget="composer-help"
+      aria-label="Composer help"
+      title="Composer help"
+    >
+      <svg class="workspace-icon" aria-hidden="true">
+        <use href="/static/images/workspace-icons.svg#help" />
+      </svg>
+    </button>
+    <section
+      id="composer-help"
+      popover
+      aria-label="Composer help"
+      class="border-base-300 bg-base-100 text-base-content rounded-box fixed inset-x-3 top-auto bottom-28 m-auto max-h-[50dvh] w-80 max-w-[calc(100vw-2rem)] overflow-y-auto border p-4 text-left text-sm shadow-lg"
+    >
+      <button
+        type="button"
+        class="btn btn-outline mb-3"
+        data-composer-insert="@"
+      >
+        Reference a file
+      </button>
+      <p class="font-medium">Message prefixes</p>
+      <dl class="mt-2 space-y-2">
+        <div>
+          <dt><code>/skill:name</code></dt>
+          <dd class="text-quiet">
+            Expand a saved skill into the message. Use
+            <code>/skill:scope/name</code> when two skills share a name.
+          </dd>
+        </div>
+        <div>
+          <dt><code>/name</code></dt>
+          <dd class="text-quiet">
+            Expand a prompt template. Use <code>/scope/name</code> when two
+            templates share a name.
+          </dd>
+        </div>
+        <div>
+          <dt><code>@path</code></dt>
+          <dd class="text-quiet">
+            Reference a file or folder. Selection inserts the path only. It does
+            not upload the file or grant access.
+          </dd>
+        </div>
+        <div>
+          <dt><code>!command</code></dt>
+          <dd class="text-quiet">
+            Run a command now in the selected location. The command and output
+            join the model context. No provider connection is needed.
+          </dd>
+        </div>
+        <div>
+          <dt><code>!!command</code></dt>
+          <dd class="text-quiet">
+            Run a command now without its output in automatic model context.
+            Other tools can still read the files.
+          </dd>
+        </div>
+      </dl>
+      <p class="text-quiet mt-3">
+        Start an ordinary message with a backslash before <code>/</code> or
+        <code>!</code> to keep the text literal.
+      </p>
+      <p class="text-quiet mt-3">
+        Run must be enabled and the location approved. Commands keep the current
+        approval and consent requirements.
+      </p>
+    </section>
+  </div>
+  <div
+    class="workspace-composer-actions ml-auto flex flex-wrap items-center justify-end gap-3"
+  >
+    <span data-island="shortcut-hint" class="shortcut-hint text-quiet"></span>
+    {# Explicit ARIA values replace the transport overlay on a retained submitter. #}
+    <button
+      class="btn btn-primary"
+      type="submit"
+      name="action"
+      value="{{ self.follow_up_submit_value() }}"
+      aria-label="{{ self.follow_up_submit_label() }}"
+      aria-disabled="{{ self.composer_disabled() }}"
+      data-composer-submit
+      data-default-aria-label="{{ self.follow_up_submit_label() }}"
+      {% if self.composer_disabled() %}disabled{% endif %}
+    >
+      <svg class="workspace-icon" aria-hidden="true">
+        <use href="/static/images/workspace-icons.svg#send" />
+      </svg>
+      <span data-composer-submit-label
+        >{% if self.queue.follow_up && self.revision.is_none() %}Queue{% else %}Send{% endif %}</span
+      >
+    </button>
+    {% if observe_active %}
+      {% if let Some(saved) = self.saved() %}
+        <button
+          class="btn btn-outline"
+          type="submit"
+          form="conversation-stop"
+          aria-label="Stop"
+        >
+          <svg class="workspace-icon" aria-hidden="true">
+            <use href="/static/images/workspace-icons.svg#stop" />
+          </svg>
+          Stop
+        </button>
+      {% endif %}
+    {% endif %}
+  </div>
+</div>

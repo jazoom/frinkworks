@@ -59,6 +59,23 @@ async fn context_view_reports_the_sources_of_one_request() {
         .settle_message(&record.id, job.id(), reply, MessageStatus::Complete, None)
         .expect("settle");
     let path = format!("/conversations/{}/context/{request_id}", record.id);
+    let conversation = format!("/conversations/{}", record.id);
+    for request in [
+        document(&conversation, &token),
+        navigation(&conversation, &token),
+    ] {
+        let response = app(&state).oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = text(response).await;
+        let section = body
+            .split("id=\"instruction-sources-heading\"")
+            .nth(1)
+            .unwrap();
+        let section = section.split("</section>").next().unwrap();
+        assert!(section.contains("/project/AGENTS.md"));
+        assert!(section.contains(&path));
+        assert!(!section.contains("Authorised root"));
+    }
 
     for request in [document(&path, &token), navigation(&path, &token)] {
         let response = app(&state).oneshot(request).await.expect("page");

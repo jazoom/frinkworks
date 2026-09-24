@@ -20,6 +20,7 @@ pub(super) struct NewForm {
     pub(super) environment: String,
     pub(super) network: String,
     pub(super) network_domains: String,
+    pub(super) start_directory: String,
     pub(super) directory_0: String,
     pub(super) directory_1: String,
     pub(super) directory_2: String,
@@ -370,7 +371,8 @@ pub(super) fn settings_snapshot(
         super::settings::parse_tools(&form.tool_values())?,
         environment,
     )
-    .and_then(|settings| settings.with_network(network))
+    .ok_or("Enter instructions within 32 KiB without unsupported control characters.")?
+    .with_network(network)
     .and_then(|settings| settings.with_directories(form.directories().ok()?))
     .map(|settings| {
         settings

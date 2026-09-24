@@ -381,6 +381,219 @@ async fn settings_update_validates_the_complete_form_and_revision() {
 }
 
 #[tokio::test]
+async fn network_changes_require_review_and_invalidate_consent_only_after_revision_bound_apply() {
+    let state = test_state();
+    let token = connected(&state);
+    let session = super::super::tests::session_id(&token);
+    let record = state.conversations.create("Network review".into()).unwrap();
+    let effort = state
+        .models_dev
+        .effective_effort(ProviderKind::Xai, "grok-4.6", None)
+        .unwrap();
+    let settings = crate::execution::ExecutionSettings::new(
+        ModelSelection::new(ProviderKind::Xai, "grok-4.6".into(), Some(effort.clone())).unwrap(),
+        String::new(),
+        vec![ToolId::Run],
+        super::super::default_environment(&state).unwrap(),
+    )
+    .unwrap()
+    .with_location(crate::execution::ToolLocation::Host);
+    let record = state
+        .conversations
+        .update_execution_settings(&record.id, record.revision, settings.clone())
+        .unwrap();
+    let request = state
+        .access_consent
+        .request_host_conversation(session, record.id, &settings)
+        .unwrap();
+    state
+        .access_consent
+        .approve_host_conversation(&request, session, record.id, &settings)
+        .unwrap();
+    let path = format!("/conversations/{}/settings/environment", record.id);
+    let fields = format!(
+        "revision={}&environment={}&network=restricted&network_domains=DOCS.RS%0Acrates.io",
+        record.revision, settings.environment
+    );
+    let ordinary = app(&state)
+        .oneshot(command(
+            &format!("/conversations/{}/settings", record.id),
+            &token,
+            &format!(
+                "{fields}&provider=xai&model=grok-4.6&location=host&tool_run=run&thinking={}",
+                effort.as_str()
+            ),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(ordinary.status(), StatusCode::OK);
+    assert!(text(ordinary).await.contains("data-execution-switch"));
+    assert_eq!(state.conversations.get(&record.id).unwrap(), record);
+    let preview = app(&state)
+        .oneshot(command(&path, &token, &fields))
+        .await
+        .unwrap();
+    assert_eq!(preview.status(), StatusCode::OK);
+    let body = text(preview).await;
+    assert!(body.contains("name=\"network\""));
+    assert!(body.contains("docs.rs"));
+    assert_eq!(state.conversations.get(&record.id).unwrap(), record);
+    assert!(
+        state
+            .access_consent
+            .authorised_host_conversation(session, record.id, &settings)
+    );
+    for invalid in [
+        fields.replace("DOCS.RS%0Acrates.io", "https%3A%2F%2Fdocs.rs"),
+        fields.replace(&format!("revision={}", record.revision), "revision=0"),
+        fields.replace("network=restricted", "network=invalid"),
+    ] {
+        let response = app(&state)
+            .oneshot(command(&path, &token, &format!("{invalid}&confirm=true")))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert_eq!(state.conversations.get(&record.id).unwrap(), record);
+        assert!(
+            state
+                .access_consent
+                .authorised_host_conversation(session, record.id, &settings)
+        );
+    }
+    let response = app(&state)
+        .oneshot(command(&path, &token, &format!("{fields}&confirm=true")))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let updated = state.conversations.get(&record.id).unwrap();
+    let stored = &updated.model.as_ref().unwrap().settings;
+    assert_eq!(
+        stored.network,
+        NetworkAccess::Restricted(vec!["docs.rs".into(), "crates.io".into()])
+    );
+    assert!(
+        !state
+            .access_consent
+            .authorised_host_conversation(session, record.id, stored)
+    );
+    assert!(
+        !state
+            .access_consent
+            .authorised_host_conversation(session, record.id, &settings)
+    );
+    let replay = app(&state)
+        .oneshot(command(&path, &token, &format!("{fields}&confirm=true")))
+        .await
+        .unwrap();
+    assert_eq!(replay.status(), StatusCode::CONFLICT);
+    assert_eq!(state.conversations.get(&record.id).unwrap(), updated);
+}
+
+#[tokio::test]
+async fn saved_preset_snapshot_is_revision_bound_and_ignores_unreviewed_fields() {
+    let state = test_state();
+    let token = connected(&state);
+    let record = state
+        .conversations
+        .create("Snapshot source".to_owned())
+        .unwrap();
+    let settings = crate::execution::ExecutionSettings::new(
+        ModelSelection::new(ProviderKind::Xai, "grok-4.6".to_owned(), None).unwrap(),
+        "Saved instructions".to_owned(),
+        vec![ToolId::Read],
+        super::super::default_environment(&state).unwrap(),
+    )
+    .unwrap();
+    let record = state
+        .conversations
+        .update_execution_settings(&record.id, record.revision, settings.clone())
+        .unwrap();
+    let path = format!("/conversations/{}/settings/presets/save", record.id);
+    let invalid_name = "é".repeat(41);
+    for (revision, name, expected) in [
+        (0, "Snapshot", StatusCode::CONFLICT),
+        (
+            record.revision,
+            invalid_name.as_str(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+    ] {
+        let fields = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("revision", &revision.to_string())
+            .append_pair("name", name)
+            .finish();
+        let response = app(&state)
+            .oneshot(command(&path, &token, &fields))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected);
+        assert!(text(response).await.contains(name));
+        assert!(state.presets.list().is_empty());
+        assert_eq!(state.conversations.get(&record.id), Some(record.clone()));
+    }
+    let fields = format!(
+        "revision={}&name=Saved%20snapshot&instructions=Unreviewed&location=host&host_approval=automatic",
+        record.revision
+    );
+    let mut native = command(&path, &token, &fields);
+    native.headers_mut().remove("graft-request");
+    assert_eq!(
+        app(&state).oneshot(native).await.unwrap().status(),
+        StatusCode::BAD_REQUEST
+    );
+    let response = app(&state)
+        .oneshot(command(&path, &token, &fields))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let preset = state.presets.list().pop().unwrap();
+    assert_eq!(preset.settings, settings);
+    assert_eq!(state.conversations.get(&record.id), Some(record.clone()));
+    let mut later = settings.clone();
+    later.instructions = "Later saved edit".to_owned();
+    state
+        .conversations
+        .update_execution_settings(&record.id, record.revision, later)
+        .unwrap();
+    assert_eq!(state.presets.get(&preset.id).unwrap().settings, settings);
+}
+
+#[tokio::test]
+async fn draft_preset_save_retains_validation_and_creates_no_conversation() {
+    let state = test_state();
+    let token = connected(&state);
+    let path = "/conversations/new/settings/presets/save";
+    let base = format!(
+        "provider=xai&model=grok-4.6&environment={}&instructions=Draft%20instructions&message=Unsent%20message",
+        super::super::default_environment(&state).unwrap()
+    );
+    let invalid = format!("{base}&preset_name=Invalid%01name");
+    let response = app(&state)
+        .oneshot(command(path, &token, &invalid))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body = text(response).await;
+    assert!(body.contains("Draft instructions"));
+    assert!(body.contains("Unsent message"));
+    assert!(state.presets.list().is_empty());
+    let response = app(&state)
+        .oneshot(command(
+            path,
+            &token,
+            &format!("{base}&preset_name=Draft%20snapshot"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let preset = state.presets.list().pop().unwrap();
+    assert_eq!(preset.name, "Draft snapshot");
+    assert_eq!(preset.settings.instructions, "Draft instructions");
+    assert!(preset.settings.tools.is_empty());
+    assert!(state.conversations.list().is_empty());
+}
+
+#[tokio::test]
 async fn draft_preset_replacement_retains_its_reference_without_creating_a_conversation() {
     let state = test_state();
     let token = connected(&state);
@@ -622,7 +835,7 @@ async fn host_approval_policy_needs_fresh_consent_and_does_not_settle_pending_co
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let body = text(response).await;
-    assert!(body.contains("Pending approval"));
+    assert!(body.contains("Not approved"));
     assert!(body.contains("Run without approval"));
     let updated = state.conversations.get(&record.id).unwrap();
     let stored = updated.model.as_ref().unwrap().settings.clone();
@@ -700,7 +913,7 @@ async fn host_approval_policy_needs_fresh_consent_and_does_not_settle_pending_co
     assert!(body.contains("Stop task and switch"));
     assert!(body.contains("Unrestricted host access · Run without approval"));
     assert!(!body.contains("Unrestricted host access · Ask each time"));
-    assert!(body.contains("Host command approval changes from"));
+    assert!(body.contains("data-execution-switch"));
     assert_eq!(
         state
             .conversations
@@ -873,7 +1086,23 @@ async fn strategy_switch_binds_existing_roots_and_waits_for_cancelled_commands()
             .finish_conversation_job(&session, record.id, settling_job.id());
     });
     let stop_path = format!("{path}/stop-and-switch");
-    let stop = format!("{fields}&job={}", job.id());
+    let stop = format!(
+        "{fields}&job={}&network=restricted&network_domains=docs.rs",
+        job.id()
+    );
+    let invalid = app(&state)
+        .oneshot(command(
+            &stop_path,
+            &token,
+            &stop.replace(
+                "network_domains=docs.rs",
+                "network_domains=https%3A%2F%2Fdocs.rs",
+            ),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(invalid.status(), StatusCode::CONFLICT);
+    assert!(!job.cancel_requested());
     let response = app(&state)
         .oneshot(command(&stop_path, &token, &stop))
         .await
@@ -885,6 +1114,10 @@ async fn strategy_switch_binds_existing_roots_and_waits_for_cancelled_commands()
     let settings = &updated.model.as_ref().unwrap().settings;
     assert_eq!(settings.location, crate::execution::ToolLocation::Sandbox);
     assert_eq!(
+        settings.network,
+        NetworkAccess::Restricted(vec!["docs.rs".into()])
+    );
+    assert_eq!(
         settings.directories[0].access,
         crate::execution::DirectoryAccess::DirectWrite
     );
@@ -895,6 +1128,41 @@ async fn strategy_switch_binds_existing_roots_and_waits_for_cancelled_commands()
         .unwrap();
     assert_eq!(response.status(), StatusCode::CONFLICT);
     assert_eq!(state.conversations.get(&active.id).unwrap(), updated);
+}
+
+#[tokio::test]
+async fn invalid_instructions_retain_text_and_empty_tools_without_a_settings_change() {
+    let state = test_state();
+    let token = connected(&state);
+    let record = state
+        .conversations
+        .create("Instructions".to_owned())
+        .unwrap();
+    let effort = state
+        .models_dev
+        .effective_effort(ProviderKind::Xai, "grok-4.6", None)
+        .unwrap();
+    for instructions in ["é".repeat(16385), "Unsupported\0control".to_owned()] {
+        let fields = format!(
+            "revision={}&provider=xai&model=grok-4.6&thinking={}&instructions={}",
+            record.revision,
+            effort.as_str(),
+            super::super::tests::form_value(&instructions)
+        );
+        let response = app(&state)
+            .oneshot(command(
+                &format!("/conversations/{}/settings", record.id),
+                &token,
+                &fields,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let body = text(response).await;
+        assert!(body.contains("32 KiB"));
+        assert!(body.contains(&instructions));
+        assert_eq!(state.conversations.get(&record.id).unwrap(), record);
+    }
 }
 
 #[tokio::test]

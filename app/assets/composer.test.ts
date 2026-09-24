@@ -97,6 +97,58 @@ test.each([
     controller.abort();
 });
 
+test.each(["start", "one/access", "one/remove", "consent"])(
+    "a directory command at %s retains the unsent draft",
+    (action) => {
+        const form = composerForm();
+        const controller = new AbortController();
+        const island = initComposer(form, { signal: controller.signal });
+        const textarea = form.querySelector("textarea")!;
+        textarea.value = "Unsent message, not a directory command";
+        textarea.dispatchEvent(new InputEvent("input", { bubbles: true }));
+        textarea.value = "";
+        island?.reconcile?.({
+            cause: "patch",
+            detail: {
+                requestKind: "patch",
+                form,
+                url: `/conversations/new/directories/${action}`,
+                outcome: "applied-patch",
+                status: 200,
+                targetIds: ["conversation-detail"],
+            },
+        });
+        expect(textarea.value).toBe("Unsent message, not a directory command");
+        controller.abort();
+    },
+);
+
+test.each(["host-consent", "host-consent/approve"])(
+    "a draft host consent command at %s retains the unsent message",
+    (action) => {
+        const form = composerForm();
+        const controller = new AbortController();
+        const island = initComposer(form, { signal: controller.signal });
+        const textarea = form.querySelector("textarea")!;
+        textarea.value = "Unsent message";
+        textarea.dispatchEvent(new InputEvent("input", { bubbles: true }));
+        textarea.value = "";
+        island?.reconcile?.({
+            cause: "patch",
+            detail: {
+                requestKind: "patch",
+                form,
+                url: `/conversations/new/settings/${action}`,
+                outcome: "applied-patch",
+                status: 200,
+                targetIds: ["conversation-detail"],
+            },
+        });
+        expect(textarea.value).toBe("Unsent message");
+        controller.abort();
+    },
+);
+
 test("a sandbox projection preserves the unsent message", () => {
     const form = composerForm();
     document.body.append(form);

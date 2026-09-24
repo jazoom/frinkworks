@@ -2,23 +2,31 @@
 name: Power Plant
 description: A local conversation workspace with an optional work companion.
 colors:
-    canvas: "#f6f7ef"
-    paper: "#fbfcf6"
-    paperGreen: "#f0f2e7"
-    cover: "#293625"
-    coverText: "#f0f3e3"
-    coverMuted: "#bfc9b3"
-    ink: "#26352c"
-    quietInk: "#586853"
-    rule: "#d6dccc"
-    action: "#edcf49"
-    actionInk: "#283321"
+    canvas: "#f5f5ed"
+    paper: "#fefcf6"
+    paperGreen: "#eeeee5"
+    cover: "#28321f"
+    coverText: "#f5f6ef"
+    coverMuted: "#c4c8bc"
+    ink: "#171a16"
+    quietInk: "#65695f"
+    rule: "#d9dad2"
+    action: "#b3f04e"
+    actionInk: "#18210c"
     error: "#a63b32"
 typography:
     title:
         fontFamily: "IBM Plex Sans, ui-sans-serif, system-ui, sans-serif"
         fontSize: "18px"
         fontWeight: 600
+    conversationTitle:
+        fontSize: "28px"
+        fontWeight: 600
+    conversationWelcome:
+        fontSize: "34px"
+        fontWeight: 600
+    navigation:
+        fontSize: "16px"
     result:
         fontSize: "24px"
         fontWeight: 600
@@ -39,9 +47,10 @@ typography:
     small:
         fontSize: "11px"
 rounded:
-    control: "2px"
+    control: "3px"
+    workspaceControl: "7px"
     record: "3px"
-    composer: "4px"
+    composer: "9px"
 spacing:
     sm: "8px"
     md: "16px"
@@ -61,7 +70,7 @@ The conversation and workflow setup share the companion structure. Catalogue aut
 
 ## Colors
 
-Springfield uses pale green paper and sunshine actions. Thin rules separate the transcript, companion and controls.
+Springfield uses pale paper and lime actions. Thin rules separate the transcript, companion and controls.
 
 The default setting follows the system preference. Light mode uses Springfield. Dark mode uses Sector 7-G.
 
@@ -87,7 +96,11 @@ Error panels use a pale error surface and readable recovery links. Action colour
 
 IBM Plex Sans carries the interface. IBM Plex Mono identifies paths and code.
 
-Conversation text has a maximum measure of 70 characters. Page titles remain compact. Result headings identify the next decision.
+Conversation text has a maximum measure of 70 characters. Result headings identify the next decision.
+
+Conversation titles use 28-pixel text. The empty-state heading uses 34-pixel text with a 20-pixel description. Navigation uses 16-pixel text.
+
+Mobile conversation titles use 24-pixel text. The empty-state heading uses 26-pixel text with a 16-pixel description.
 
 Catalogue forms retain their existing type scale. The workspace's smaller metadata is not a new standard for all form text.
 
@@ -95,13 +108,21 @@ First-use chooser headings use 30px, and connection headings use 28px. Narrow sc
 
 ## Layout
 
-The desktop index occupies 230 pixels. The optional work companion occupies 400 pixels. The conversation fills the remaining width.
+The desktop index occupies 300 pixels. Current work occupies 400 pixels. Setup uses 400 to 488 pixels according to viewport width.
+
+The conversation fills the remaining width.
 
 Setup and Current work open with a 320 ms slide and close in 240 ms. Reduced motion removes the slide.
 
 The transcript and companion content scroll independently. The composer stays outside the transcript scroll area.
 
-The index leaves the page below 1021 pixels. Menu provides the same navigation destinations.
+The index leaves the page below 1021 pixels. A branded mobile bar supplies Menu on conversation pages. Menu provides the same navigation destinations.
+
+The composer reaches a maximum width of 1110 pixels. Its controls share one desktop row and wrap on narrower screens.
+
+Short mobile screens omit the empty-state description and reduce its heading. The composer remains available without a page scroll.
+
+Configured drafts show a directory summary above the composer. Short mobile screens retain its heading and the access strip, with full details in Setup.
 
 Below 701 pixels, the companion fills the conversation area. The hidden transcript, composer and conversation toolbar become inert.
 
@@ -109,13 +130,15 @@ Expanded review occupies the conversation width without a new conversation or UR
 
 ## Elevation & Depth
 
-Surface tones and thin rules establish boundaries. The composer has a low shadow. Setup has no modal backdrop or centred dialog shadow.
+Surface tones and thin rules establish boundaries. A thin border defines the composer without a shadow. Setup has no modal backdrop or centred dialog shadow.
 
-Protected consent and destructive actions retain their existing explicit forms and confirmations. A companion transition grants no authority.
+Protected consent and destructive actions retain their explicit forms and confirmations. A companion transition grants no authority.
+
+Host consent uses a native modal above Setup with a dimmed backdrop. Its content scrolls within the viewport. Cancel grants no authority.
 
 ## Shapes
 
-Controls retain DaisyUI's slight corners. Recent records and user messages have three-pixel corners. The composer has four-pixel corners.
+Controls retain DaisyUI primitives. Workspace controls use seven-pixel corners. Recent records use five-pixel corners. User messages retain three-pixel corners. The composer uses nine-pixel corners.
 
 The existing Power Plant mark remains unchanged. Workspace icons use the approved reference's stroke geometry.
 
@@ -124,6 +147,8 @@ The existing Power Plant mark remains unchanged. Workspace icons use the approve
 ### Navigation
 
 New conversation remains prominent. The index contains up to twelve server-derived recent conversations with real titles and status.
+
+The search field has a visible boundary. Recent rows pair a conversation icon with a title and status dot. Resource links have a Resources heading.
 
 The sidebar search filters those recent titles live as plain text. The catalogue link beside it stays the native fallback. The filter survives live replacement of recent records.
 
@@ -149,13 +174,29 @@ Stale workflow or preset identities report an error without substitution. Resour
 
 ### Transcript and composer
 
+Header and composer controls use a neutral hover tint. Outlined controls also darken their border on hover. Primary actions retain the theme accent.
+
+Directory actions retain transparent backgrounds on hover. Button text has no hover underline. The separator stays outside the button and its keyboard focus outline.
+
+The paperclip uses a continuous diagonal stroke. The help icon uses a centred question mark and a separate dot. Both retain labelled controls.
+
 User messages use a tinted, ruled surface. Assistant messages identify Power Plant with its mark.
 
 The model control opens a searchable popover above the composer. It lists connected providers with an optional provider filter. Favourites appear first, with a separate star control on each row. The active Favourites filter uses a soft tint and a check mark. Local application data stores favourites across browser sessions.
 
-Thinking effort stays visible beside the model as a borderless Thinking label, value and caret. Both controls use identical buttons with the same hover size. The effort popover uses padded options and a tick for the current value. Models without adjustable effort show a disabled Not available control. Saved conversations apply model and effort changes immediately without changes to other settings. Unsent messages and unsaved setup fields survive those commands.
+Thinking effort stays visible beside the model as an outlined control with its label, value and caret. Both controls share the same height. The effort popover uses padded options and a tick for the current value. Models without adjustable effort show a disabled Not available control. Saved conversations apply model and effort changes immediately without changes to other settings. Unsent messages and unsaved setup fields survive those commands.
 
-The composer uses two rows with an 8000 character editor limit. The persisted message bound stays in the conversation store. The send control reads Send message. Effective directory access appears below it with a directory or shield icon and a visible Sandbox label. Host mode names unrestricted access. Job-bound cancellation reads Stop in the composer in place of Send. It posts without a confirmation step. Current work keeps the same Stop control when the composer is inert. The composer stays locked while a candidate or host command awaits a decision.
+The composer places its editor above a compact toolbar. The editor limit is 32768 characters. The persisted message bound stays in the conversation store.
+
+The paperclip opens image selection. Selection uploads automatically. The slash control opens skills and prompts. Composer help retains file references and prefix explanations.
+
+Send uses an accessible Send message label. An empty composer disables Send unless it contains an attachment or prepared-change handoff.
+
+Effective directory access appears below the composer. Add a directory stays beside it. The execution label stays visible even without directory access. Host mode names unrestricted access.
+
+Job-bound cancellation reads Stop beside the composer submit control. It posts without a confirmation step. Current work keeps the same Stop control when the composer is inert.
+
+Pending decisions retain their existing queue and consent rules.
 
 Jump to latest appears when the reader leaves the transcript end. New output does not move the reader away from earlier messages.
 
@@ -163,7 +204,13 @@ Jump to latest appears when the reader leaves the transcript end. New output doe
 
 New conversations show the title without an explanatory subtitle. Saved records identify their directory context beside the conversation title.
 
-The header offers Handoff, Setup and Conversation actions. Conversation actions contains an independent draft copy, rename and explicit deletion.
+The new-conversation empty state asks what the user wants to work on. It contains no starter buttons or decorative mark.
+
+New drafts omit the transcript toolbar. Saved conversations retain its controls.
+
+The header offers Handoff, Setup and a labelled menu for Conversation actions. The menu uses a vertical ellipsis.
+
+Conversation actions contains an independent draft copy, rename and explicit deletion.
 
 Current work appears when work is non-idle and its companion is closed. Initial page loads and reloads keep the companion closed. A message does not open the companion. A Needs your review strip opens the companion without approval.
 
@@ -198,9 +245,35 @@ The visible sections are:
 - Instructions.
 - Presets.
 
-The Presets section opens the preset list and the save action. Preset replacement retains its preview and explicit confirmation.
+The Presets section offers a preview for each preset and a separate Save this setup as a preset action.
 
-Directories opens with a state summary. The summary shows the empty state or the directory count, the environment context and the Add directory action.
+Replacement hides the list and shows current and preset values. Each setting labels two value columns within the existing companion width.
+
+A tint and Changed identify different values. Long values wrap. Instruction text retains a bounded scroll region with keyboard focus.
+
+Cancel returns to the list without a command. Apply replacement remains explicit. Its explanation separates settings from directory approval and runtime consent.
+
+The save panel contains a name field and a settings summary. A separate disclosure contains the instructions. Back to presets retains the name.
+
+Saved snapshots show stored settings only, even when execution changes await review. Draft snapshots show current choices. Both retain the unsent message.
+
+The name accepts up to 80 UTF-8 bytes without control characters. An empty name uses the existing suggestion. Validation retains the entered name.
+
+Preset controls retain the larger workspace scale and theme accent. Narrow screens stack the decision buttons. Every action remains accessible through the panel scroll area.
+
+Directories opens with a Directory access heading and Add a directory. Empty conversations explain the absence of directory access.
+
+Each directory has a bordered record with labelled paths and radio controls. The record separates requested access from current access and retains explicit approval actions.
+
+The command start-directory selector moves the chosen directory first. It retains each access mode and requires fresh consent where applicable.
+
+Unavailable directories remain visible but cannot become a new command location. Active work disables the selector.
+
+Saved access changes retain Review changes and the existing execution review. A radio selection alone grants no authority.
+
+Configured drafts show the actual directory paths and access states. The summary names the execution location and network setting without a readiness claim.
+
+Directory commands retain the unsent message. Add, remove and Change setup retain transparent hover backgrounds without text underlines.
 
 Add a directory below the composer opens the native directory picker directly. The response opens Directories with the applicable access controls and approval steps.
 
@@ -210,15 +283,47 @@ Explicit workflow commit steps detect each changed repository. Approval names th
 
 New forms select the available tools by default. An explicit empty tool choice stays empty after validation and on copied records.
 
+Instructions uses a labelled editor above single-column tool rows. Each row pairs a checkbox with a short description. Select all shows a mixed state for partial choices.
+
+The editor retains the workspace control scale and corners. Selected checkboxes use the theme accent. Labels provide larger pointer targets and retain keyboard focus outlines.
+
+The editor distinguishes unsaved drafts from saved conversation settings. Save feedback reflects the command result. Rejected saves retain later edits without an automatic retry.
+
+Validation counts UTF-8 bytes and rejects unsupported control characters. The error appears beside the editor. A blocked message submission reveals Instructions before focus moves.
+
+Tool explanations distinguish authorised sandbox directories from unrestricted host access. The empty selection explains that a model reply needs no sandbox.
+
+Instruction sources shows recorded file paths and a native request-context link. It names the active branch and makes no current-access claim.
+
+The list shows at most eight paths. The context page retains the complete list. Empty and unavailable records have distinct explanations.
+
 Host and sandbox modes expose the same tool selections. Host consent covers file tools as well as Run. Host file changes take effect immediately. Command approval applies only to Run.
 
 Ordinary setup controls apply when they change. There is no Save, Done, Keep draft or Cancel action. Close hides Setup. The application requires JavaScript.
 
 Save as future defaults is a separate explicit action in the companion footer. Its explanation distinguishes stored conversation settings from access approval.
 
-The execution-switch preview retains its existing settlement paths. Requested execution values stay uncommitted until the review command succeeds. Consent and preset replacement keep their own confirmations.
+Execution uses labelled radio choices for the location and command policy. Sandbox network choices expose the domain field only for Restricted domains.
 
-Setup and workflow companions follow the actual header height. Long mobile titles remain visible above the open companion.
+The environment selector shows recorded preparation and snapshot status. It makes no readiness claim without the corresponding records.
+
+Saved network changes join the execution review. Requested execution values stay uncommitted until the review command succeeds. Drafts retain choices without a separate save confirmation.
+
+Review execution change replaces the Setup sections within the companion. A Current/Requested table marks changed rows with a tint and the word Changed.
+
+Each directory retains its own access row. Sandbox settings remain explicitly labelled in host mode. Keep current settings resets requested execution values without a command.
+
+Active work retains Stop task and switch. Prepared changes retain their exact-candidate decision and Discard changes and switch. Neither action reverses existing host effects.
+
+Host consent displays the process identity and privileges beside the actual start directory. It explains unrestricted access and immediate file changes.
+
+The consent modal shows a fixed command policy. Change policy returns to Setup. Requested saved changes require review before host consent becomes available.
+
+Cancel and Escape close consent without a settings change. Approval binds the displayed configuration to the session. Execution commands retain the unsent message.
+
+Execution controls use the larger workspace scale. Narrow screens retain scroll access to every decision. Button text has no hover underline.
+
+Setup and workflow companions follow the actual header height. The header retains its full content height on short screens. Wrapped mobile actions remain above the companion.
 
 Section changes retain uncommitted execution fields. Validation reveals affected controls before focus moves. Effective summaries follow applied ordinary settings. Model and effort controls remain in the composer, outside Setup.
 

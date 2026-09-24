@@ -1,0 +1,323 @@
+<section
+  id="settings-presets"
+  data-settings-panel
+  aria-labelledby="conversation-preset-heading"
+  hidden
+  class="presets-setup mt-5 pb-2"
+>
+  {% if self.is_new() %}
+    <div data-preset-directories hidden>
+      {% for directory in directories %}{% if !directory.transient %}
+        <span
+          data-path="{{ directory.host_path }}"
+          data-access="{{ directory.access_label }}"
+          data-available="{{ directory.available }}"
+        ></span>
+      {% endif %}{% endfor %}
+    </div>
+  {% endif %}
+  <div
+    data-preset-list
+    {% if preset_preview.is_some() || preset_save_open %}hidden{% endif %}
+  >
+    <h3
+      id="conversation-preset-heading"
+      class="text-xl font-semibold"
+      tabindex="-1"
+    >
+      Presets
+    </h3>
+    <p class="text-quiet mt-2 text-base">
+      Reuse a setup or save this one. Preview a preset before it replaces your
+      settings.
+    </p>
+    {% if !preset_source.is_empty() %}
+      <p class="text-quiet mt-3 text-sm">
+        {{ preset_source }}. Changes here do not update that preset.
+      </p>
+    {% endif %}
+    <div class="border-base-300 mt-5 border-y">
+      {% for preset in presets %}
+        <button
+          type="submit"
+          name="preset"
+          value="{{ preset.id }}"
+          form="{% if self.is_new() %}conversation-composer{% else %}conversation-preset-form{% endif %}"
+          {% if self.is_new() %}formaction="/conversations/new/settings/presets/preview"{% endif %}
+          formmethod="post"
+          class="btn btn-ghost preset-choice flex h-auto w-full items-center gap-3 px-1 py-4 text-left font-normal"
+          {% if job_active %}disabled{% endif %}
+        >
+          <span class="min-w-0 flex-1"
+            ><strong class="block text-base break-words"
+              >{{ preset.name }}</strong
+            ><small class="text-quiet mt-1 block text-sm break-words"
+              >{{ preset.description }}</small
+            ></span
+          >
+          <span class="text-sm"
+            >Preview<span class="sr-only"> {{ preset.name }}</span></span
+          >
+        </button>
+      {% endfor %}
+      {% if presets.is_empty() %}
+        <p class="text-quiet py-5 text-base">No presets are saved yet.</p>
+      {% endif %}
+    </div>
+    {% if job_active %}
+      <p class="text-quiet mt-3 text-sm">
+        Finish the current work before preset replacement.
+      </p>
+    {% endif %}
+    <button
+      type="button"
+      class="btn btn-outline mt-6 w-full"
+      data-preset-save-toggle
+      aria-controls="conversation-preset-save"
+      aria-expanded="false"
+    >
+      Save this setup as a preset
+    </button>
+    <a
+      href="{% if let Some(saved) = self.saved() %}/presets?conversation={{ saved.id }}{% else %}/presets{% endif %}"
+      data-graft
+      class="link mt-5 inline-block text-sm"
+      >Manage presets</a
+    >
+  </div>
+
+  {% if let Some(preview) = preset_preview %}
+    <div
+      data-preset-preview
+      role="region"
+      tabindex="-1"
+      aria-labelledby="preset-replacement-heading"
+    >
+      <h3
+        id="preset-replacement-heading"
+        class="text-xl font-semibold break-words"
+      >
+        Replace with {{ preview.name }}
+      </h3>
+      <p class="text-quiet mt-2 text-base">
+        Every setting below is replaced. This is not a merge.
+      </p>
+      {% if !self.is_new() %}
+        <p class="text-quiet mt-2 text-sm">
+          Current values are saved settings. Replacement also discards
+          unreviewed setup edits.
+        </p>
+      {% endif %}
+      <table
+        class="preset-comparison mt-5 w-full table-fixed text-left text-sm"
+      >
+        <caption class="sr-only">
+          Current settings and the preset replacement
+        </caption>
+        <thead>
+          <tr>
+            <th id="preset-current-column" scope="col">Current</th>
+            <th id="preset-requested-column" scope="col" class="break-words">
+              {{ preview.name }}
+            </th>
+          </tr>
+        </thead>
+        {% for row in preview.rows %}
+          <tbody
+            data-preset-row="{{ row.key }}"
+            data-preset-requested-identity="{{ row.requested_identity }}"
+            {% if row.changed %}class="preset-changed"{% endif %}
+          >
+            <tr>
+              <th
+                id="preset-setting-{{ row.key }}"
+                colspan="2"
+                scope="rowgroup"
+              >
+                {{ row.label }}
+                <span
+                  data-preset-changed
+                  class="text-quiet ml-1 text-xs font-normal"
+                  {% if !row.changed %}hidden{% endif %}
+                  >Changed</span
+                >
+              </th>
+            </tr>
+            <tr>
+              <td headers="preset-setting-{{ row.key }} preset-current-column">
+                <div
+                  data-preset-current="{{ row.key }}"
+                  class="preset-value"
+                  {% if row.key == "instructions" %}
+                    tabindex="0" role="region" aria-label="Current instructions"
+                  {% endif %}
+                >
+                  {%- if row.current.is_empty() -%}None{%- else -%}{{- row.current -}}{%- endif -%}
+                </div>
+              </td>
+              <td
+                headers="preset-setting-{{ row.key }} preset-requested-column"
+              >
+                <div
+                  data-preset-requested
+                  class="preset-value"
+                  {% if row.key == "instructions" %}
+                    tabindex="0" role="region" aria-label="Preset instructions"
+                  {% endif %}
+                >
+                  {%- if row.requested.is_empty() -%}None{%- else -%}{{- row.requested -}}{%- endif -%}
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        {% endfor %}
+      </table>
+      <div
+        class="border-base-300 bg-base-200 mt-5 rounded-[7px] border p-4 text-sm"
+      >
+        <h4 class="font-semibold">Access approval is separate</h4>
+        <p class="mt-1">
+          Replacement copies no directory approval or runtime consent. Direct
+          write and sensitive directories need fresh approval.
+        </p>
+        <p class="mt-2">
+          Host tools need separate consent for unrestricted access. Sandbox
+          settings do not restrict host tools.
+        </p>
+      </div>
+      <div
+        class="mt-6 grid grid-cols-1 gap-3 min-[380px]:grid-cols-[1fr_1.4fr]"
+      >
+        <button type="button" class="btn btn-outline" data-preset-cancel>
+          Cancel
+        </button>
+        <button
+          form="{% if self.is_new() %}conversation-composer{% else %}conversation-preset-apply-form{% endif %}"
+          {% if self.is_new() %}
+            formaction="/conversations/new/settings/presets/apply" name="preset"
+            value="{{ preview.id }}"
+          {% endif %}
+          formmethod="post"
+          class="btn btn-primary"
+          type="submit"
+        >
+          Apply replacement
+        </button>
+      </div>
+      <p class="text-quiet mt-3 text-sm">
+        Your unsent message stays. Replacement starts no work and grants no
+        consent.
+      </p>
+    </div>
+  {% endif %}
+
+  <div
+    id="conversation-preset-save"
+    {% if !preset_save_open %}hidden{% endif %}
+    aria-labelledby="preset-save-heading"
+    role="region"
+    tabindex="-1"
+  >
+    <h3 id="preset-save-heading" class="text-xl font-semibold">
+      Save current setup as a preset
+    </h3>
+    <p class="text-quiet mt-2 text-sm">
+      {% if self.is_new() %}
+        This copies the current draft settings.
+      {% else %}
+        This copies saved settings only. Unreviewed execution changes and
+        unsaved edits are not included.
+      {% endif %}
+    </p>
+    <label
+      class="mt-5 block text-base font-semibold"
+      for="conversation-preset-name"
+      >Preset name</label
+    >
+    <input
+      id="conversation-preset-name"
+      name="{% if self.is_new() %}preset_name{% else %}name{% endif %}"
+      form="{% if self.is_new() %}conversation-composer{% else %}conversation-preset-save-form{% endif %}"
+      class="input input-bordered mt-2 w-full"
+      value="{{ preset_name }}"
+      maxlength="80"
+      aria-describedby="preset-name-help preset-name-error"
+      {% if !preset_save_open %}disabled{% endif %}
+    />
+    <p id="preset-name-help" class="text-quiet mt-2 text-sm">
+      Up to 80 UTF-8 bytes. An empty name uses the directory name or Untitled
+      preset.
+    </p>
+    <p id="preset-name-error" class="text-error mt-2 text-sm" hidden></p>
+    <section
+      class="border-base-300 mt-5 rounded-[7px] border px-4 py-3"
+      aria-labelledby="preset-snapshot-heading"
+    >
+      <h4 id="preset-snapshot-heading" class="mb-2 text-base font-semibold">
+        Settings to save
+      </h4>
+      <dl class="preset-summary text-sm">
+        {% for row in preset_setup %}
+          {% if row.key != "instructions" %}
+            <div
+              class="grid grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)] gap-3 py-2"
+            >
+              <dt class="text-quiet">{{ row.label }}</dt>
+              <dd
+                data-preset-summary="{{ row.key }}"
+                class="whitespace-pre-wrap"
+              >
+                {%- if row.value.is_empty() -%}None{%- else -%}{{- row.value -}}{%- endif -%}
+              </dd>
+            </div>
+          {% endif %}
+        {% endfor %}
+      </dl>
+    </section>
+    {% for row in preset_setup %}
+      {% if row.key == "instructions" %}
+        <details class="border-base-300 mt-4 rounded-[7px] border px-4">
+          <summary class="cursor-pointer py-3 text-base font-semibold">
+            Conversation instructions
+          </summary>
+          <div
+            data-preset-summary="instructions"
+            class="preset-value mb-4 text-sm"
+            tabindex="0"
+            role="region"
+            aria-label="Instructions to save"
+          >
+            {%- if row.value.is_empty() -%}None{%- else -%}{{- row.value -}}{%- endif -%}
+          </div>
+        </details>
+      {% endif %}
+    {% endfor %}
+    <div
+      class="border-base-300 bg-base-200 mt-5 rounded-[7px] border p-4 text-sm"
+    >
+      <p>
+        Only requested settings enter the preset. Directory approvals and
+        runtime consent stay separate.
+      </p>
+      <p class="text-quiet mt-2">
+        This preset is an independent snapshot. Later conversation edits do not
+        update it.
+      </p>
+    </div>
+    <div class="mt-6 grid grid-cols-1 gap-3 min-[380px]:grid-cols-2">
+      <button type="button" class="btn btn-outline" data-preset-save-cancel>
+        Back to presets
+      </button>
+      <button
+        form="{% if self.is_new() %}conversation-composer{% else %}conversation-preset-save-form{% endif %}"
+        {% if self.is_new() %}formaction="/conversations/new/settings/presets/save"{% endif %}
+        {% if job_active %}disabled{% endif %}
+        formmethod="post"
+        class="btn btn-primary"
+        type="submit"
+      >
+        Save preset
+      </button>
+    </div>
+  </div>
+</section>

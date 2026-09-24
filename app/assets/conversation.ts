@@ -40,6 +40,8 @@ export function initConversation(
         "location",
         "host_approval",
         "directory_access",
+        "network",
+        "network_domains",
     ];
     const ordinaryNames = [
         "instructions",
@@ -48,8 +50,6 @@ export function initConversation(
         "tool_edit",
         "tool_write",
         "tool_run",
-        "network",
-        "network_domains",
     ];
     let unsavedSettings:
         | Map<string, { value: string; checked: boolean; disabled: boolean }>
@@ -57,6 +57,42 @@ export function initConversation(
     let submittedSettings: typeof unsavedSettings;
     let ordinarySavePending = false;
     let ordinarySaveQueued = false;
+    let ordinaryFailure = "";
+    function ordinaryValues() {
+        const form = modelForm();
+        return JSON.stringify(
+            ordinaryNames.map((name) => {
+                const field = form?.elements.namedItem(name);
+                if (field instanceof HTMLInputElement)
+                    return [name, field.checked];
+                if (field instanceof HTMLTextAreaElement)
+                    return [name, field.value];
+                return [name, null];
+            }),
+        );
+    }
+    let savedOrdinary = ordinaryValues();
+    function syncSettingsStatus() {
+        const status = root.querySelector<HTMLElement>(
+            "[data-instructions-status]",
+        );
+        if (!status) return;
+        const invalid =
+            root.querySelector<HTMLTextAreaElement>(
+                "#conversation-instructions",
+            )?.validity.valid === false;
+        const text = draftSettings
+            ? invalid
+                ? "Draft retained. The instructions need correction."
+                : "Draft · saved with your first message."
+            : ordinaryFailure ||
+              (ordinarySavePending
+                  ? "Save in progress"
+                  : invalid || ordinaryValues() !== savedOrdinary
+                    ? "Unsaved changes"
+                    : "Saved");
+        if (status.textContent !== text) status.textContent = text;
+    }
     function syncEnableTools() {
         const toggle = root.querySelector<HTMLInputElement>(
             "[data-enable-tools]",
@@ -170,23 +206,33 @@ export function initConversation(
             "#conversation-settings-form",
         );
         if (!form || typeof form.requestSubmit !== "function") return;
+        if (
+            !ordinaryFailure &&
+            ordinaryValues() === savedOrdinary &&
+            !ordinarySavePending
+        )
+            return;
         if (ordinarySavePending || commandBlockReason()) {
             ordinarySaveQueued = true;
             return;
         }
-        if (!form.checkValidity()) return;
         retainSettings();
-        // Ordinary fields apply on change. Pin execution fields to the last
-        // saved values so this submit cannot open an execution review.
+        // Pin execution fields before validation and submission. Requested
+        // execution settings cannot enter an ordinary save.
         applyDefaults(form, executionNames);
-        submittedSettings = new Map(unsavedSettings);
-        ordinarySavePending = true;
-        form.requestSubmit();
-        if (!unsavedSettings) return;
-        for (const name of executionNames) {
-            const saved = unsavedSettings.get(name);
-            if (saved) applyField(form, name, saved);
+        if (form.checkValidity()) {
+            submittedSettings = new Map(unsavedSettings);
+            ordinaryFailure = "";
+            ordinarySavePending = true;
+            form.requestSubmit();
         }
+        if (unsavedSettings) {
+            for (const name of executionNames) {
+                const saved = unsavedSettings.get(name);
+                if (saved) applyField(form, name, saved);
+            }
+        }
+        syncSettingsStatus();
     }
 
     function syncConversation() {
@@ -199,10 +245,10 @@ export function initConversation(
         const field = (name: string) =>
             form.elements.namedItem(name) as
                 HTMLInputElement | HTMLSelectElement | null;
-        const networkSummary = root.querySelector(
+        const networkSummaries = root.querySelectorAll(
             "[data-conversation-network-summary]",
         );
-        if (networkSummary) {
+        if (networkSummaries.length) {
             const network = form.elements.namedItem("network");
             const value =
                 network instanceof RadioNodeList
@@ -210,79 +256,23 @@ export function initConversation(
                     : network instanceof HTMLSelectElement
                       ? network.value
                       : "none";
-            networkSummary.textContent =
-                value === "restricted"
-                    ? "Restricted domains"
-                    : value === "public"
-                      ? "Public internet"
-                      : "Off";
+            for (const summary of networkSummaries)
+                summary.textContent =
+                    value === "restricted"
+                        ? "Restricted domains"
+                        : value === "public"
+                          ? "Public internet"
+                          : "Off";
         }
         const environment = field("environment") as HTMLSelectElement | null;
-        const environmentSummary = root.querySelector(
-            "[data-conversation-environment-summary]",
-        );
-        if (environmentSummary && environment) {
-            environmentSummary.textContent =
-                environment.selectedOptions[0]?.dataset.environmentName ||
-                "Choose environment";
-        }
+        if (environment)
+            for (const summary of root.querySelectorAll(
+                "[data-conversation-environment-summary]",
+            ))
+                summary.textContent =
+                    environment.selectedOptions[0]?.dataset.environmentName ||
+                    "Choose environment";
     }
-
-    root.addEventListener(
-        "click",
-        (event) => {
-            if (!(event.target instanceof Element)) return;
-            const saveToggle = event.target.closest<HTMLButtonElement>(
-                "[data-preset-save-toggle]",
-            );
-            if (saveToggle) {
-                const panel = root.querySelector<HTMLElement>(
-                    "#conversation-preset-save",
-                );
-                if (panel) {
-                    panel.hidden = false;
-                    saveToggle.setAttribute("aria-expanded", "true");
-                    panel
-                        .querySelector<HTMLElement>("#conversation-preset-name")
-                        ?.focus();
-                }
-                return;
-            }
-            const saveCancel = event.target.closest<HTMLElement>(
-                "[data-preset-save-cancel]",
-            );
-            if (saveCancel) {
-                const panel = root.querySelector<HTMLElement>(
-                    "#conversation-preset-save",
-                );
-                if (panel) panel.hidden = true;
-                const toggle = root.querySelector<HTMLButtonElement>(
-                    "[data-preset-save-toggle]",
-                );
-                toggle?.setAttribute("aria-expanded", "false");
-                toggle?.focus();
-                return;
-            }
-            const previewCancel = event.target.closest<HTMLElement>(
-                "[data-preset-cancel]",
-            );
-            if (previewCancel) {
-                // Preview grants no authority, so Cancel only hides the
-                // replacement description and keeps the effective setup.
-                previewCancel.closest("[data-preset-preview]")?.remove();
-                const fallback =
-                    root.querySelector<HTMLElement>(
-                        "#settings-presets .choice-row",
-                    ) ??
-                    root.querySelector<HTMLElement>(
-                        "[data-preset-save-toggle]",
-                    );
-                fallback?.focus();
-                return;
-            }
-        },
-        { signal },
-    );
 
     root.addEventListener(
         "input",
@@ -293,8 +283,10 @@ export function initConversation(
                     field instanceof HTMLSelectElement ||
                     field instanceof HTMLTextAreaElement) &&
                 settingsNames.includes(field.name)
-            )
+            ) {
                 retainSettings();
+                syncSettingsStatus();
+            }
             if (
                 event.target instanceof HTMLInputElement &&
                 event.target.form?.id === "conversation-composer"
@@ -326,6 +318,7 @@ export function initConversation(
                     }
                 }
                 event.target.indeterminate = false;
+                retainSettings();
                 queueOrdinarySave();
                 return;
             }
@@ -354,6 +347,17 @@ export function initConversation(
     );
 
     root.addEventListener(
+        "submit",
+        (event) => {
+            if (draftSettings && event.target === modelForm()) {
+                retainSettings();
+                submittedSettings = new Map(unsavedSettings);
+            }
+        },
+        { signal, capture: true },
+    );
+
+    root.addEventListener(
         "focusout",
         (event) => {
             const field = event.target;
@@ -371,8 +375,22 @@ export function initConversation(
 
     syncConversation();
     syncEnableTools();
+    syncSettingsStatus();
     return {
         reconcile(context) {
+            if (
+                context.cause === "patch" &&
+                context.detail.outcome !== "applied-patch"
+            ) {
+                if (context.detail.form.id === "conversation-settings-form") {
+                    ordinarySavePending = false;
+                    ordinarySaveQueued = false;
+                    ordinaryFailure =
+                        "Save result unknown. Further changes are blocked.";
+                    syncSettingsStatus();
+                }
+                return;
+            }
             if (
                 context.cause !== "location" &&
                 (!("targetIds" in context.detail) ||
@@ -384,8 +402,15 @@ export function initConversation(
             const ordinaryResponse =
                 context.cause === "patch" &&
                 context.detail.form.id === "conversation-settings-form";
-            if (ordinaryResponse || context.cause === "location")
+            if (ordinaryResponse || context.cause === "location") {
                 ordinarySavePending = false;
+                ordinaryFailure =
+                    ordinaryResponse && context.detail.status !== 200
+                        ? "Changes are not saved. Resolve the error before another change."
+                        : "";
+                if (ordinaryFailure) ordinarySaveQueued = false;
+                else savedOrdinary = ordinaryValues();
+            }
             const settingsResponse =
                 (context.cause === "patch" &&
                     [
@@ -415,29 +440,79 @@ export function initConversation(
                         sent &&
                         (saved?.value !== sent.value ||
                             saved?.checked !== sent.checked);
-                    if (!executionNames.includes(name) && !changedAfterSubmit)
+                    if (
+                        !executionNames.includes(name) &&
+                        !changedAfterSubmit &&
+                        !(ordinaryFailure && ordinaryNames.includes(name))
+                    )
                         unsavedSettings.delete(name);
                 }
                 if (unsavedSettings.size === 0) unsavedSettings = undefined;
-            } else if (settingsResponse) unsavedSettings = undefined;
+            } else if (
+                context.cause === "patch" &&
+                /\/presets\/(preview|save|apply)$/.test(context.detail.url) &&
+                (!draftSettings || context.detail.status !== 200) &&
+                !(
+                    context.detail.url.endsWith("/presets/apply") &&
+                    context.detail.status === 200
+                )
+            ) {
+                // Preview and save cannot discard requested setup. A rejected
+                // replacement must also retain edits without an automatic retry.
+                ordinarySaveQueued = false;
+            } else if (settingsResponse) {
+                const laterDraftEdits =
+                    draftSettings &&
+                    submittedSettings &&
+                    context.cause === "patch" &&
+                    !context.detail.url.endsWith("/presets/apply");
+                unsavedSettings = laterDraftEdits
+                    ? new Map(
+                          [...(unsavedSettings ?? [])].filter(
+                              ([name, saved]) => {
+                                  const sent = submittedSettings?.get(name);
+                                  return (
+                                      ordinaryNames.includes(name) &&
+                                      sent &&
+                                      (saved.value !== sent.value ||
+                                          saved.checked !== sent.checked)
+                                  );
+                              },
+                          ),
+                      )
+                    : undefined;
+                if (
+                    context.cause === "patch" &&
+                    context.detail.status === 200
+                ) {
+                    savedOrdinary = ordinaryValues();
+                    ordinaryFailure = "";
+                }
+            }
             if (unsavedSettings) {
                 const form = modelForm();
                 for (const [name, saved] of unsavedSettings) {
                     if (
                         name === "revision" &&
                         context.cause === "patch" &&
-                        context.detail.form.id === "conversation-model-form"
+                        [
+                            "conversation-model-form",
+                            "command-directory-form",
+                        ].includes(context.detail.form.id)
                     )
                         continue;
                     if (form) applyField(form, name, saved);
                 }
                 const label = root.querySelector("#conversation-model-value");
-                if (label && draftSettings)
-                    label.textContent =
-                        unsavedSettings.get("model")?.value ?? "";
+                const model = unsavedSettings.get("model");
+                if (label && draftSettings && model)
+                    label.textContent = model.value;
                 if (
                     context.cause === "patch" &&
-                    context.detail.form.id === "conversation-model-form"
+                    [
+                        "conversation-model-form",
+                        "command-directory-form",
+                    ].includes(context.detail.form.id)
                 )
                     retainSettings();
             }
@@ -447,13 +522,13 @@ export function initConversation(
             if (access) {
                 try {
                     const values = new Map<string, string>(JSON.parse(access));
-                    root.querySelectorAll<HTMLSelectElement>(
+                    root.querySelectorAll<HTMLInputElement>(
                         "[data-execution-directory]",
-                    ).forEach((select) => {
+                    ).forEach((radio) => {
                         const value = values.get(
-                            select.dataset.executionDirectory ?? "",
+                            radio.dataset.executionDirectory ?? "",
                         );
-                        if (value) select.value = value;
+                        if (value) radio.checked = radio.value === value;
                     });
                 } catch {
                     // The server rejects malformed strategy values. The editor keeps its current rows.
@@ -487,19 +562,20 @@ export function initConversation(
                         label.classList.toggle("selected", input.checked);
                 },
             );
-            const networkSelect = root.querySelector<HTMLSelectElement>(
-                "[data-network-select]",
+            const networkSelect = root.querySelector<HTMLInputElement>(
+                "[data-network-select]:checked",
             );
             const domains = root.querySelector<HTMLElement>(
                 "[data-network-domains]",
             );
             if (networkSelect && domains)
                 domains.hidden = networkSelect.value !== "restricted";
-            if (ordinaryResponse) submittedSettings = undefined;
+            if (settingsResponse) submittedSettings = undefined;
             if (ordinarySaveQueued && !ordinarySavePending) {
                 ordinarySaveQueued = false;
                 queueOrdinarySave();
             }
+            syncSettingsStatus();
         },
         destroy() {},
     };

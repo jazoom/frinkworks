@@ -1,15 +1,18 @@
-<p class="recent-heading">Recent conversations</p>
+<p class="recent-heading">Recent</p>
 <ul class="recent-list">
   {% for conversation in conversations %}
     <li>
       <a href="{{ conversation.href }}" data-graft data-recent-conversation>
+        <svg class="workspace-icon" aria-hidden="true">
+          <use href="/static/images/workspace-icons.svg#chat" />
+        </svg>
         <strong>{{ conversation.title }}</strong>
-        <span class="recent-meta"
+        <span class="recent-meta" title="{{ conversation.status }}"
           ><span
             class="state-dot {{ conversation.dot }}"
             aria-hidden="true"
           ></span
-          >{{ conversation.status }}</span
+          ><span class="sr-only">{{ conversation.status }}</span></span
         >
       </a>
     </li>

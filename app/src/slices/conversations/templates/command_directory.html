@@ -1,0 +1,51 @@
+{% if let Some(saved) = self.saved() %}
+  <form
+    id="command-directory-form"
+    method="post"
+    action="/conversations/{{ saved.id }}/directories/start"
+    data-graft
+    hidden
+  >
+    <input type="hidden" name="revision" value="{{ saved.revision }}" />
+  </form>
+{% endif %}
+<div class="pt-2">
+  <label for="command-start-directory" class="mb-2 block text-base"
+    >Command start directory</label
+  >
+  <select
+    id="command-start-directory"
+    class="select select-bordered w-full"
+    name="start_directory"
+    form="{% if self.is_new() %}conversation-composer{% else %}command-directory-form{% endif %}"
+    data-command-directory
+    aria-describedby="command-start-directory-help"
+    {% if job_active || (consent_request != "" && !consent_existing) %}disabled{% endif %}
+  >
+    {% for directory in directories %}
+      {% if !directory.transient %}
+        <option
+          value="{{ directory.id }}"
+          {% if loop.first %}selected{% endif %}
+          {% if !directory.available %}disabled{% endif %}
+        >
+          {{ directory.name }}{% if !directory.available %}· Unavailable{% endif %}
+        </option>
+      {% endif %}
+    {% endfor %}
+  </select>
+  <button
+    id="command-directory-submit"
+    form="{% if self.is_new() %}conversation-composer{% else %}command-directory-form{% endif %}"
+    {% if self.is_new() %}formaction="/conversations/new/directories/start"{% endif %}
+    formmethod="post"
+    type="submit"
+    hidden
+  >
+    Change command start directory
+  </button>
+  <p id="command-start-directory-help" class="text-quiet mt-2 text-sm">
+    Commands start here. A change moves this directory first and requires fresh
+    approval where applicable.
+  </p>
+</div>

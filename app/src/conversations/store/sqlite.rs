@@ -161,6 +161,40 @@ impl Database {
         record_from_parts(metadata, messages, summary_requests, true).map(Some)
     }
 
+    pub(crate) fn latest_reply_request(
+        &self,
+        id: &ConversationId,
+    ) -> Result<Option<RequestUsage>, ConversationError> {
+        let Some(leaf) = self.metadata(id)?.and_then(|record| record.active_leaf) else {
+            return Ok(None);
+        };
+        // Read one request, not the transcript. The active path excludes other branches.
+        let json: Option<String> = self
+            .connection
+            .query_row(
+                &format!(
+                    "{PATH_CTE}
+                SELECT json_extract(m.message, '$.requests[#-1]')
+                FROM path JOIN messages m ON m.conversation_id = ?1 AND m.id = path.id
+                WHERE json_array_length(m.message, '$.requests') > 0
+                ORDER BY path.depth ASC LIMIT 1"
+                ),
+                params![id.as_hex(), leaf.as_hex()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(map_error)?;
+        json.map(|json| {
+            let request: RequestUsage =
+                serde_json::from_str(&json).map_err(|_| ConversationError::Corrupt)?;
+            if !request.valid() {
+                return Err(ConversationError::Corrupt);
+            }
+            Ok(request)
+        })
+        .transpose()
+    }
+
     /// Metadata and summary requests without any message body. The caller
     /// pairs this shell with one bounded transcript window.
     pub(crate) fn load_shell(

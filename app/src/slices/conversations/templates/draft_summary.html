@@ -1,0 +1,76 @@
+<div class="configured-draft m-auto w-full max-w-3xl py-8 text-center">
+  <h2 class="font-semibold text-balance">Work on your files</h2>
+  <p class="text-quiet mt-3 text-lg">Describe the change you want to make.</p>
+  <section
+    class="draft-configuration mt-7 text-left"
+    aria-label="Draft configuration"
+  >
+    <div class="flex flex-wrap items-start gap-x-5 gap-y-3 p-5">
+      <ul
+        class="min-w-0 flex-1 space-y-4 max-[700px]:basis-full"
+        aria-label="Configured directories"
+      >
+        {% for directory in directories %}
+          <li class="flex flex-wrap items-center gap-3">
+            <svg class="workspace-icon shrink-0" aria-hidden="true">
+              <use href="/static/images/workspace-icons.svg#folder" />
+            </svg>
+            <div class="min-w-0 flex-[1_1_12rem]">
+              <p class="text-lg font-semibold break-words">
+                {{ directory.name }}
+              </p>
+              <p class="text-quiet mt-0.5 font-mono text-sm break-all">
+                {{ directory.host_path }}
+              </p>
+            </div>
+            <span
+              class="directory-access-label {% if directory.available && !directory.pending_approval && !location_host %}directory-access-approved{% endif %}"
+            >
+              {% if location_host %}Work location{% else %}{{ directory.access_label }}{% endif %}
+              {% if !directory.available %}
+                · Unavailable
+              {% else if directory.pending_approval && !location_host %}
+                · Pending approval
+              {% endif %}
+            </span>
+          </li>
+        {% endfor %}
+      </ul>
+      <button
+        type="button"
+        class="btn btn-ghost btn-sm draft-change-setup"
+        popovertarget="conversation-settings"
+        popovertargetaction="show"
+        data-settings-section="conversation-directory-heading"
+      >
+        Change setup
+      </button>
+    </div>
+    <div
+      class="border-base-300 flex flex-wrap gap-x-6 gap-y-3 border-t px-5 py-4"
+    >
+      <p class="flex min-w-0 flex-1 items-center gap-3">
+        <svg class="workspace-icon shrink-0" aria-hidden="true">
+          <use href="/static/images/workspace-icons.svg#cube" />
+        </svg>
+        <span class="break-words"
+          >{% if location_host %}
+            {{ host_summary }}
+          {% else %}
+            Sandbox ·
+            <span data-conversation-environment-summary
+              >{{ environment_summary }}</span
+            >
+          {% endif %}</span
+        >
+      </p>
+      {% if !location_host %}
+        <p class="text-quiet">
+          Network:
+          <span data-conversation-network-summary>{{ network_summary }}</span>
+        </p>
+      {% endif %}
+    </div>
+  </section>
+  <p class="text-quiet mt-5 text-base">{{ self.draft_access_note() }}</p>
+</div>

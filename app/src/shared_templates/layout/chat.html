@@ -45,12 +45,12 @@
         <label class="workspace-search-field" for="recent-filter-input">
           <svg class="workspace-icon" aria-hidden="true">
             <use href="/static/images/workspace-icons.svg#search" /></svg
-          ><span>Find a conversation</span>
+          ><span>Search conversations</span>
           <input
             id="recent-filter-input"
             name="q"
             type="search"
-            placeholder="Find a conversation"
+            placeholder="Search conversations"
             autocomplete="off"
           />
         </label>
@@ -58,7 +58,7 @@
       <nav class="workspace-navigation" aria-label="Primary navigation">
         <a href="/attention" data-graft data-attention-link
           ><svg class="workspace-icon" aria-hidden="true">
-            <use href="/static/images/workspace-icons.svg#attention" /></svg
+            <use href="/static/images/workspace-icons.svg#bell" /></svg
           >Needs your attention<span
             id="attention-count"
             class="attention-count"
@@ -73,7 +73,7 @@
         >
         <a href="/runs" data-graft
           ><svg class="workspace-icon" aria-hidden="true">
-            <use href="/static/images/workspace-icons.svg#clock" /></svg
+            <use href="/static/images/workspace-icons.svg#play" /></svg
           >Runs</a
         >
         <div id="recent-conversations">{{ recent|safe }}</div>
@@ -88,14 +88,15 @@
           <input type="hidden" name="index" value="true" />
         </form>
         <div class="workspace-resources">
+          <p class="workspace-resources-heading">Resources</p>
           <a href="/environments" data-graft
             ><svg class="workspace-icon" aria-hidden="true">
-              <use href="/static/images/workspace-icons.svg#code" /></svg
+              <use href="/static/images/workspace-icons.svg#database" /></svg
             >Environments</a
           >
           <a href="/workflows" data-graft data-workflows-link
             ><svg class="workspace-icon" aria-hidden="true">
-              <use href="/static/images/workspace-icons.svg#play" /></svg
+              <use href="/static/images/workspace-icons.svg#workflow" /></svg
             >Workflows</a
           >
           <a href="/presets" data-graft data-presets-link
@@ -105,29 +106,29 @@
           >
           <a href="/agents" data-graft
             ><svg class="workspace-icon" aria-hidden="true">
-              <use href="/static/images/workspace-icons.svg#agent" /></svg
+              <use href="/static/images/workspace-icons.svg#robot" /></svg
             >Agents</a
           >
           <a href="/skills" data-graft
             ><svg class="workspace-icon" aria-hidden="true">
-              <use href="/static/images/workspace-icons.svg#file" /></svg
+              <use href="/static/images/workspace-icons.svg#puzzle" /></svg
             >Skills</a
           >
           <a href="/prompts" data-graft
             ><svg class="workspace-icon" aria-hidden="true">
-              <use href="/static/images/workspace-icons.svg#chat" /></svg
+              <use href="/static/images/workspace-icons.svg#file" /></svg
             >Prompts</a
           >
         </div>
         <div class="workspace-local">
           <a href="/connect" data-graft data-nav="providers"
             ><svg class="workspace-icon" aria-hidden="true">
-              <use href="/static/images/workspace-icons.svg#shield" /></svg
+              <use href="/static/images/workspace-icons.svg#plug" /></svg
             >Providers</a
           >
           <a href="/settings" data-graft
             ><svg class="workspace-icon" aria-hidden="true">
-              <use href="/static/images/workspace-icons.svg#sliders" /></svg
+              <use href="/static/images/workspace-icons.svg#settings" /></svg
             >Settings</a
           >
         </div>
@@ -146,8 +147,15 @@
           aria-controls="workspace-index"
           aria-expanded="false"
         >
+          <svg class="workspace-icon" aria-hidden="true" viewBox="0 0 24 24">
+            <path d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
           Menu
         </button>
+        <a href="/conversations" data-graft class="workspace-mobile-brand">
+          <img src="/static/images/logo.svg" alt="" width="40" height="30" />
+          <strong>Power Plant</strong>
+        </a>
         <div class="app-context-status" data-app-context-status hidden>
           <a href="/runs" data-graft data-app-context-status-link hidden></a>
           <span data-app-context-status-label hidden></span>

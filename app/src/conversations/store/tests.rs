@@ -1333,6 +1333,104 @@ fn seed_exchanges(
 }
 
 #[test]
+fn latest_reply_sources_follow_the_active_branch_not_the_visible_window_or_other_records() {
+    use crate::conversations::{RequestId, RequestUsage};
+    use crate::providers::{AssistantReply, AuthMethod, ModelUsage};
+    let store = ConversationStore::in_memory();
+    let selection = ModelSelection::new(ProviderKind::Xai, "model".to_owned(), None).unwrap();
+    let first = store.create("Sources".to_owned()).unwrap();
+    let other = store.create("Other".to_owned()).unwrap();
+    let request = RequestUsage {
+        id: RequestId::generate().unwrap(),
+        usage: ModelUsage::new(ProviderKind::Xai, "model"),
+        auth: AuthMethod::ApiKey,
+        prices: None,
+        sources: vec![crate::execution::ResourceSource::new(
+            crate::execution::ResourceKind::Instruction,
+            "project",
+            "/project/AGENTS.md",
+            b"Rules",
+        )],
+        advertised: Vec::new(),
+    };
+    let job = JobId::generate().unwrap();
+    store
+        .begin_message(
+            &first.id,
+            first.revision,
+            selection.clone(),
+            job,
+            "Question".to_owned(),
+        )
+        .unwrap();
+    store
+        .settle_message(
+            &first.id,
+            job,
+            AssistantReply {
+                usage: vec![request.clone()],
+                ..Default::default()
+            },
+            MessageStatus::Complete,
+            None,
+        )
+        .unwrap();
+    let first = store.get(&first.id).unwrap();
+    let boundary = first.messages.last().unwrap().id;
+    let record = seed_exchanges(&store, &first.id, selection.clone(), TRANSCRIPT_WINDOW);
+    assert_eq!(
+        store.latest_reply_request(&record.id).unwrap(),
+        Some(request.clone())
+    );
+    assert!(store.latest_reply_request(&other.id).unwrap().is_none());
+    let (_, window) = store
+        .transcript_window(&record.id, None, None)
+        .unwrap()
+        .unwrap();
+    assert!(!window.messages.iter().any(|message| message.id == boundary));
+
+    let mut empty = request.clone();
+    empty.id = RequestId::generate().unwrap();
+    empty.sources.clear();
+    let job = JobId::generate().unwrap();
+    store
+        .begin_message(
+            &record.id,
+            record.revision,
+            selection,
+            job,
+            "No files".to_owned(),
+        )
+        .unwrap();
+    store
+        .settle_message(
+            &record.id,
+            job,
+            AssistantReply {
+                usage: vec![empty.clone()],
+                ..Default::default()
+            },
+            MessageStatus::Complete,
+            None,
+        )
+        .unwrap();
+    let record = store.get(&record.id).unwrap();
+    assert_eq!(store.latest_reply_request(&record.id).unwrap(), Some(empty));
+    store
+        .continue_from(
+            &record.id,
+            record.revision,
+            record.messages.last().map(|message| message.id),
+            boundary,
+        )
+        .unwrap();
+    assert_eq!(
+        store.latest_reply_request(&record.id).unwrap(),
+        Some(request)
+    );
+}
+
+#[test]
 fn transcript_windows_bind_to_one_conversation_and_follow_append_order() {
     let store = ConversationStore::in_memory();
     let selection = ModelSelection::new(ProviderKind::Xai, "model".to_owned(), None).unwrap();

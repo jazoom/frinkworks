@@ -1,7 +1,4 @@
-<div
-  id="conversation-model-controls"
-  class="flex min-w-0 flex-wrap items-center gap-1"
->
+<div id="conversation-model-controls" class="contents">
   <input
     form="{{ self.selection_form() }}"
     id="conversation-provider"
@@ -19,7 +16,7 @@
   <button
     id="conversation-model-toggle"
     type="button"
-    class="btn btn-ghost btn-sm min-h-10 max-w-full min-w-0 gap-3 font-normal"
+    class="btn btn-outline min-h-11 max-w-full min-w-0 gap-3 font-normal"
     popovertarget="conversation-model-options"
     aria-label="Choose model"
     aria-controls="conversation-model-options"
@@ -64,7 +61,7 @@
   <button
     id="conversation-thinking-toggle"
     type="button"
-    class="btn btn-ghost btn-sm min-h-10 max-w-full min-w-0 gap-3 font-normal"
+    class="btn btn-outline min-h-11 max-w-full min-w-0 gap-3 font-normal"
     popovertarget="conversation-thinking-options"
     aria-label="Thinking effort"
     aria-describedby="conversation-thinking-value"
@@ -74,7 +71,7 @@
     {% if job_active || self.needs_review() || model_picker.efforts.is_empty() %}disabled{% endif %}
   >
     <span class="flex min-w-0 items-baseline gap-1">
-      <span class="text-quiet">Thinking</span>
+      <span>Thinking:</span>
       <span id="conversation-thinking-value">
         {% if model_picker.efforts.is_empty() %}Not available{% endif %}
         {% for effort in model_picker.efforts %}{% if effort.value == model_picker.thinking %}{{ effort.label }}{% endif %}{% endfor %}

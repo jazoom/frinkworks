@@ -1497,7 +1497,7 @@ async fn environment_switch_discards_only_the_current_candidate_after_readiness(
         })
         .unwrap();
     let body = format!(
-        "{}&conversation-revision={}&environment={}",
+        "{}&conversation-revision={}&environment={}&network=restricted&network_domains=docs.rs",
         fixture.decision_body(&fixture.candidate),
         before.revision,
         replacement.id,
@@ -1545,11 +1545,40 @@ async fn environment_switch_discards_only_the_current_candidate_after_readiness(
             before
         );
     }
+    let invalid_network = post_decision(
+        &fixture,
+        "discard-and-switch",
+        body.replace(
+            "network_domains=docs.rs",
+            "network_domains=https%3A%2F%2Fdocs.rs",
+        ),
+        None,
+    )
+    .await;
+    assert_eq!(invalid_network.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        fixture.state.conversations.get(&conversation).unwrap(),
+        before
+    );
+    assert_eq!(
+        fixture
+            .state
+            .workflow_runs
+            .get(&fixture.run_id)
+            .unwrap()
+            .state,
+        run_before.state
+    );
     let response = post_decision(&fixture, "discard-and-switch", body.clone(), None).await;
     assert_eq!(response.status(), StatusCode::OK);
     let settled = fixture.state.conversations.get(&conversation).unwrap();
     assert!(settled.active_job.is_none());
-    assert_eq!(settled.model.unwrap().settings.environment, replacement.id);
+    let settings = settled.model.unwrap().settings;
+    assert_eq!(settings.environment, replacement.id);
+    assert_eq!(
+        settings.network,
+        crate::agents::NetworkAccess::Restricted(vec!["docs.rs".into()])
+    );
     let run_after = fixture.state.workflow_runs.get(&fixture.run_id).unwrap();
     assert_eq!(run_after.environments, run_before.environments);
     assert!(run_after.artefact(&fixture.candidate_id).is_some());

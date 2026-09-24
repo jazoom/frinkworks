@@ -594,6 +594,39 @@ async fn template_first_send_rejects_invalid_arguments_before_creation() {
 }
 
 #[tokio::test]
+async fn invalid_instructions_preserve_an_unsaved_draft_without_tool_defaults() {
+    let state = test_state();
+    let token = connected(&state);
+    let effort = state
+        .models_dev
+        .effective_effort(ProviderKind::Xai, "grok-4.6", None)
+        .unwrap();
+    for instructions in ["é".repeat(16385), "Unsupported\0control".to_owned()] {
+        let response = app(&state).oneshot(command("/conversations/new", &token, &format!(
+            "action=send&message=Unsent+draft&provider=xai&model=grok-4.6&thinking={}&instructions={}",
+            effort.as_str(), form_value(&instructions),
+        ))).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let body = text(response).await;
+        assert!(body.contains("32 KiB"));
+        assert!(body.contains(&instructions));
+        assert!(body.contains("Unsent draft</textarea>"));
+        for tool in ["list", "read", "edit", "write", "run"] {
+            let field = body.split(&format!("name=\"tool_{tool}\"")).nth(1).unwrap();
+            assert!(
+                !field
+                    .split("data-tool-field")
+                    .next()
+                    .unwrap()
+                    .contains("checked")
+            );
+        }
+        assert!(state.conversations.list().is_empty());
+        assert!(!state.sessions.busy(&session_id(&token)));
+    }
+}
+
+#[tokio::test]
 async fn first_send_persists_message_and_model_then_replaces_location() {
     let state = test_state();
     ready_starter_environment(&state).await;
@@ -1078,7 +1111,8 @@ async fn host_first_message_runs_without_a_sandbox_runtime() {
         .unwrap();
     assert_eq!(preview.status(), StatusCode::OK);
     let body = text(preview).await;
-    assert!(body.contains("Approve unrestricted host access"));
+    assert!(body.contains("Allow this computer"));
+    assert!(body.contains("Each Run command requires separate approval"));
     let request = host_consent_request(&body);
     let approved = app(&state)
         .oneshot(command(
@@ -1216,7 +1250,7 @@ async fn copied_host_policy_requires_new_consent() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let body = text(response).await;
-    assert!(body.contains("Pending approval"));
+    assert!(body.contains("Not approved"));
     assert!(body.contains("Run without approval"));
     assert!(
         body.split_whitespace()
@@ -1282,7 +1316,13 @@ async fn automatic_host_first_message_runs_without_command_approval() {
         .unwrap();
     assert_eq!(preview.status(), StatusCode::OK);
     let body = text(preview).await;
-    assert!(body.contains("Approve Run without approval"));
+    assert!(body.contains("Allow this computer"));
+    assert!(
+        body.split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .contains("The model can run commands without an individual decision")
+    );
     let request = host_consent_request(&body);
     let approved = app(&state)
         .oneshot(command(

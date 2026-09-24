@@ -700,6 +700,13 @@ impl ConversationStore {
         self.database().load(id).ok().flatten()
     }
 
+    pub(crate) fn latest_reply_request(
+        &self,
+        id: &ConversationId,
+    ) -> Result<Option<super::history::RequestUsage>, ConversationError> {
+        self.database().latest_reply_request(id)
+    }
+
     /// The model projection for the next provider dispatch. It loads the
     /// summary and the retained suffix without reading covered message bodies.
     pub(crate) fn context_record(&self, id: &ConversationId) -> Option<ConversationRecord> {

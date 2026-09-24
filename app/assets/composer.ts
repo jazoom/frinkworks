@@ -230,6 +230,19 @@ export function initComposer(
             ) {
                 return;
             }
+            if (
+                context.detail.form === root &&
+                (new URL(
+                    context.detail.url,
+                    window.location.href,
+                ).pathname.match(/\/(directories|settings)\//) ||
+                    root
+                        .closest("#conversation-detail")
+                        ?.querySelector('[data-conversation-state="new"]'))
+            ) {
+                restoreDraft();
+                return;
+            }
             if (context.detail.form !== root) {
                 if (
                     context.detail.targetIds.includes("composer") ||

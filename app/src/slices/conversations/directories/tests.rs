@@ -439,6 +439,291 @@ async fn sensitive_saved_grant_needs_exact_single_use_consent() {
     );
 }
 
+#[tokio::test]
+async fn draft_command_directory_preserves_grants_but_not_consent() {
+    use crate::execution::{DirectoryAccess, DirectoryGrant};
+
+    let state = test_state();
+    let token = connected(&state);
+    let session = session_id(&token);
+    let first = tempfile::tempdir().unwrap();
+    let second = tempfile::tempdir().unwrap();
+    let mut one = DirectoryGrant::from_selected(first.path(), &[]).unwrap();
+    one.access = DirectoryAccess::DirectWrite;
+    let two = DirectoryGrant::from_selected(second.path(), std::slice::from_ref(&one)).unwrap();
+    let grants = vec![one.clone(), two.clone()];
+    let mut form = super::super::new::NewForm {
+        draft_nonce: "draft".to_owned(),
+        ..Default::default()
+    };
+    form.set_directories(&grants);
+    let nonce = form.consent_nonce();
+    let request = state
+        .access_consent
+        .request_draft(session, &nonce, &grants, &one)
+        .unwrap();
+    let reference = state
+        .access_consent
+        .approve_draft(&request, session, &nonce, &grants, &one)
+        .unwrap();
+    let fields = format!(
+        "draft_nonce=draft&message=Unsent+text&directory_0={}&directory_1={}&consent_reference={}",
+        form_value(&one.form_value()),
+        form_value(&two.form_value()),
+        reference
+    );
+    let path = "/conversations/new/directories/start";
+    let mut native = command(
+        path,
+        &token,
+        &format!("{fields}&start_directory={}", two.id.as_hex()),
+    );
+    native.headers_mut().remove("graft-request");
+    assert_eq!(
+        app(&state).oneshot(native).await.unwrap().status(),
+        StatusCode::BAD_REQUEST
+    );
+    for selected in [
+        "invalid".to_owned(),
+        crate::execution::DirectoryGrantId::generate()
+            .unwrap()
+            .as_hex(),
+    ] {
+        let response = app(&state)
+            .oneshot(command(
+                path,
+                &token,
+                &format!("{fields}&start_directory={selected}"),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(
+            DirectoryGrant::parse_form(&hidden_value(&text(response).await, "directory_0")),
+            Some(one.clone())
+        );
+    }
+    let response = app(&state)
+        .oneshot(command(
+            path,
+            &token,
+            &format!("{fields}&start_directory={}", two.id.as_hex()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = text(response).await;
+    assert!(body.contains("target=\"conversation-detail\""));
+    assert!(body.contains("Unsent text"));
+    assert_eq!(
+        DirectoryGrant::parse_form(&hidden_value(&body, "directory_0")),
+        Some(two.clone())
+    );
+    assert_eq!(
+        DirectoryGrant::parse_form(&hidden_value(&body, "directory_1")),
+        Some(one.clone())
+    );
+    assert!(hidden_value(&body, "consent_reference").is_empty());
+    assert!(!state.access_consent.authorised_draft(
+        &reference,
+        session,
+        &nonce,
+        &[two.clone(), one.clone()],
+        &one
+    ));
+    assert!(state.conversations.list().is_empty());
+
+    drop(second);
+    let response = app(&state)
+        .oneshot(command(
+            path,
+            &token,
+            &format!("{fields}&start_directory={}", two.id.as_hex()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn saved_command_directory_is_revision_bound_and_invalidates_authority() {
+    use crate::execution::{DirectoryAccess, DirectoryGrant, ToolLocation};
+
+    let state = test_state();
+    let token = connected(&state);
+    let session = session_id(&token);
+    let record = conversation(&state);
+    let first = tempfile::tempdir().unwrap();
+    let second = tempfile::tempdir().unwrap();
+    let mut one = DirectoryGrant::from_selected(first.path(), &[]).unwrap();
+    one.access = DirectoryAccess::DirectWrite;
+    let two = DirectoryGrant::from_selected(second.path(), std::slice::from_ref(&one)).unwrap();
+    let settings = record
+        .model
+        .unwrap()
+        .settings
+        .with_directories(vec![one.clone(), two.clone()])
+        .unwrap()
+        .with_location(ToolLocation::Host);
+    let current = state
+        .conversations
+        .update_execution_settings(&record.id, record.revision, settings.clone())
+        .unwrap();
+    let current = state
+        .conversations
+        .record_directory_approval(
+            &record.id,
+            current.revision,
+            crate::conversations::DirectoryApproval::for_grant(&settings, &one),
+        )
+        .unwrap();
+    let request = state
+        .access_consent
+        .request_host_conversation(session, record.id, &settings)
+        .unwrap();
+    state
+        .access_consent
+        .approve_host_conversation(&request, session, record.id, &settings)
+        .unwrap();
+    let path = format!("/conversations/{}/directories/start", record.id);
+    let body = format!(
+        "revision={}&start_directory={}",
+        current.revision,
+        two.id.as_hex()
+    );
+    let mut native = command(&path, &token, &body);
+    native.headers_mut().remove("graft-request");
+    assert_eq!(
+        app(&state).oneshot(native).await.unwrap().status(),
+        StatusCode::BAD_REQUEST
+    );
+    for (body, status) in [
+        (
+            format!("revision=1&start_directory={}", two.id.as_hex()),
+            StatusCode::CONFLICT,
+        ),
+        (
+            format!(
+                "revision={}&start_directory={}",
+                current.revision,
+                crate::execution::DirectoryGrantId::generate()
+                    .unwrap()
+                    .as_hex()
+            ),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+    ] {
+        assert_eq!(
+            app(&state)
+                .oneshot(command(&path, &token, &body))
+                .await
+                .unwrap()
+                .status(),
+            status
+        );
+        assert_eq!(
+            state
+                .conversations
+                .get(&record.id)
+                .unwrap()
+                .model
+                .unwrap()
+                .settings,
+            settings
+        );
+    }
+    let unchanged = app(&state)
+        .oneshot(command(
+            &path,
+            &token,
+            &format!(
+                "revision={}&start_directory={}",
+                current.revision,
+                one.id.as_hex()
+            ),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(unchanged.status(), StatusCode::OK);
+    assert_eq!(
+        state.conversations.get(&record.id).unwrap().revision,
+        current.revision
+    );
+    assert!(
+        state
+            .access_consent
+            .authorised_host_conversation(session, record.id, &settings)
+    );
+
+    let response = app(&state)
+        .oneshot(command(&path, &token, &body))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let updated = state.conversations.get(&record.id).unwrap();
+    let mut expected = settings.clone();
+    expected.directories = vec![two.clone(), one.clone()];
+    assert_eq!(updated.model.as_ref().unwrap().settings, expected);
+    assert_eq!(
+        crate::execution::command_directory(&expected.directories),
+        two.host_path
+    );
+    assert!(updated.directory_approvals.is_empty());
+    assert!(
+        !state
+            .access_consent
+            .authorised_host_conversation(session, record.id, &settings)
+    );
+    assert!(
+        !state
+            .access_consent
+            .authorised_host_conversation(session, record.id, &expected)
+    );
+    assert!(
+        !state
+            .conversations
+            .directory_approved(&record.id, &expected, &one)
+    );
+
+    let job = state
+        .sessions
+        .begin_conversation_job(&session, record.id)
+        .unwrap();
+    let active = state
+        .conversations
+        .begin_message_with_model(
+            &record.id,
+            updated.revision,
+            updated.model.clone(),
+            job.id(),
+            "No model request".to_owned(),
+        )
+        .unwrap();
+    let response = app(&state)
+        .oneshot(command(
+            &path,
+            &token,
+            &format!(
+                "revision={}&start_directory={}",
+                active.revision,
+                one.id.as_hex()
+            ),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        state
+            .conversations
+            .get(&record.id)
+            .unwrap()
+            .model
+            .unwrap()
+            .settings,
+        expected
+    );
+}
+
 fn hidden_value(body: &str, name: &str) -> String {
     let marker = format!("name=\"{name}\"");
     let tail = &body[body.find(&marker).expect("hidden field") + marker.len()..];

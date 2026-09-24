@@ -1,0 +1,184 @@
+<section
+  id="settings-instructions"
+  data-settings-panel
+  aria-labelledby="conversation-instructions-heading"
+  hidden
+  class="instructions-setup mt-5 space-y-5"
+>
+  <div>
+    <h3
+      id="conversation-instructions-heading"
+      class="text-lg font-semibold"
+      tabindex="-1"
+    >
+      <label for="conversation-instructions">Conversation instructions</label>
+    </h3>
+    <p id="conversation-instructions-help" class="text-quiet mt-1 text-sm">
+      These instructions guide the model in this conversation.
+    </p>
+    <textarea
+      form="{{ self.model_form() }}"
+      id="conversation-instructions"
+      name="instructions"
+      class="textarea textarea-bordered mt-3 min-h-36 w-full"
+      rows="5"
+      maxlength="32768"
+      data-instruction-limit="32768"
+      aria-describedby="conversation-instructions-help conversation-instructions-limit conversation-instructions-error"
+      placeholder="For example: Keep changes focused on the request. Follow the project conventions."
+      {% if job_active %}disabled{% endif %}
+    >
+{{ instructions }}</textarea>
+    <p id="conversation-instructions-limit" class="text-quiet mt-2 text-xs">
+      Optional. Maximum 32 KiB of text.
+    </p>
+    <p
+      id="conversation-instructions-error"
+      class="text-error mt-2 text-sm"
+      hidden
+    ></p>
+    <p data-instructions-status role="status" class="text-quiet mt-2 text-sm">
+      {% if self.is_new() %}
+        Draft · saved with your first message.
+      {% else if error.is_empty() %}
+        Saved
+      {% else %}
+        Changes are not saved.
+      {% endif %}
+    </p>
+    {% if job_active %}
+      <p class="text-quiet mt-2 text-sm">
+        Instructions and tools stay fixed until the current work ends.
+      </p>
+    {% endif %}
+  </div>
+
+  <fieldset
+    class="border-base-300 border-t pt-4"
+    {% if job_active %}disabled{% endif %}
+    aria-describedby="conversation-tools-access"
+  >
+    <legend class="sr-only">Tools</legend>
+    <div class="flex flex-wrap items-center justify-between gap-x-3">
+      <h4 class="text-base font-semibold" aria-hidden="true">Tools</h4>
+      <label class="flex min-h-11 cursor-pointer items-center gap-3 text-sm">
+        <input
+          id="conversation-enable-tools"
+          form="{{ self.model_form() }}"
+          class="checkbox checkbox-sm"
+          type="checkbox"
+          data-enable-tools
+        />
+        Select all
+      </label>
+    </div>
+    <div class="flex flex-col">
+      {% for tool in tool_options %}
+        <label
+          class="instruction-tool grid min-h-11 cursor-pointer grid-cols-[22px_3rem_minmax(0,1fr)] items-start gap-3 py-2.5"
+        >
+          <input
+            form="{{ self.model_form() }}"
+            type="checkbox"
+            class="checkbox checkbox-sm mt-0.5"
+            name="{{ tool.field_name }}"
+            value="{{ tool.value }}"
+            aria-labelledby="conversation-tool-{{ tool.value }}-label"
+            aria-describedby="conversation-tool-{{ tool.value }}-detail"
+            {% if tool.selected %}checked{% endif %}
+            data-tool-field
+          />
+          <span
+            id="conversation-tool-{{ tool.value }}-label"
+            class="font-medium"
+            >{{ tool.label }}</span
+          >
+          <span
+            id="conversation-tool-{{ tool.value }}-detail"
+            class="text-quiet text-sm"
+          >
+            {% match tool.value %}
+              {% when "list" %}List
+              files and directories {% when "read" %}Read file contents
+              {% when "edit" %}Replace exact text {% when "write" %}Create or
+              replace files {% when "run" %}Run shell commands
+              {% when _ %}{{ tool.detail }}
+            {% endmatch %}
+          </span>
+        </label>
+      {% endfor %}
+    </div>
+    <div
+      id="conversation-tools-access"
+      class="text-quiet mt-3 space-y-2 text-sm"
+    >
+      <p>
+        Tool choices grant no access or consent. Changes can require fresh
+        consent.
+      </p>
+      <p data-instructions-sandbox {% if location_host %}hidden{% endif %}>
+        Sandbox tools use authorised directories. Each directory’s access mode
+        controls file changes.
+      </p>
+      <p data-instructions-host {% if !location_host %}hidden{% endif %}>
+        Host tools have unrestricted access as the Power Plant process user.
+        File changes take effect immediately. Command approval applies only to
+        Run.
+      </p>
+      <p data-instructions-no-tools hidden>
+        No tools selected. The model can reply without a sandbox or environment.
+      </p>
+    </div>
+  </fieldset>
+
+  <section
+    class="border-base-300 border-t pt-4"
+    aria-labelledby="instruction-sources-heading"
+  >
+    <h4 id="instruction-sources-heading" class="text-base font-semibold">
+      Instruction sources
+    </h4>
+    {% if let Some(request) = instruction_sources %}
+      <p class="text-quiet mt-1 text-sm">
+        From the latest recorded reply request on the active branch.
+      </p>
+      {% if request.paths.is_empty() %}
+        <p class="text-quiet mt-3 text-sm">
+          That request recorded no instruction files.
+        </p>
+      {% else %}
+        <ul class="mt-3 space-y-3">
+          {% for path in request.paths %}
+            <li class="border-base-300 border-l pl-3">
+              <span class="font-mono text-sm [overflow-wrap:anywhere]"
+                >{{ path }}</span
+              >
+            </li>
+          {% endfor %}
+        </ul>
+        {% if request.truncated %}
+          <p class="text-quiet mt-2 text-sm">
+            The request context contains the remaining sources.
+          </p>
+        {% endif %}
+      {% endif %}
+      <a
+        href="{{ request.href }}"
+        data-graft
+        class="link mt-3 inline-block text-sm"
+        >View request context</a
+      >
+      <p class="text-quiet mt-2 text-sm">
+        Files and access can change before the next request.
+      </p>
+    {% else if instruction_sources_error %}
+      <p class="text-error mt-2 text-sm">Recorded sources are unavailable.</p>
+    {% else %}
+      <p class="text-quiet mt-2 text-sm">No request sources recorded yet.</p>
+      <p class="text-quiet mt-2 text-sm">
+        After a model reply, this section shows the instruction files that its
+        request used.
+      </p>
+    {% endif %}
+  </section>
+</section>

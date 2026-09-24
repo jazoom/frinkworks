@@ -1,0 +1,293 @@
+<section
+  id="settings-execution"
+  data-settings-panel
+  aria-labelledby="conversation-execution-heading"
+  hidden
+  class="execution-setup mt-5 space-y-5"
+>
+  <h3 id="conversation-execution-heading" class="sr-only" tabindex="-1">
+    Execution
+  </h3>
+  {% if self.is_new() %}
+    <button
+      form="conversation-composer"
+      data-location-preview
+      type="submit"
+      name="action"
+      value="settings"
+      formnovalidate
+      hidden
+    >
+      Update settings
+    </button>
+  {% endif %}
+  <fieldset>
+    <legend class="mb-2 font-semibold">Execution location</legend>
+    <div class="grid grid-cols-2 gap-3 max-[380px]:grid-cols-1">
+      <label
+        class="execution-location flex cursor-pointer items-start gap-3 rounded-[7px] border p-3"
+      >
+        <input
+          form="{{ self.model_form() }}"
+          class="radio mt-0.5"
+          type="radio"
+          name="location"
+          value="sandbox"
+          {% if !location_host %}checked{% endif %}
+        />
+        <span
+          >Sandbox<small class="text-quiet mt-1 block"
+            >Isolated environment</small
+          ></span
+        >
+      </label>
+      <label
+        class="execution-location flex cursor-pointer items-start gap-3 rounded-[7px] border p-3"
+      >
+        <input
+          form="{{ self.model_form() }}"
+          class="radio mt-0.5"
+          type="radio"
+          name="location"
+          value="host"
+          {% if location_host %}checked{% endif %}
+        />
+        <span
+          >This computer<small class="text-quiet mt-1 block"
+            >Power Plant process user</small
+          ></span
+        >
+      </label>
+    </div>
+  </fieldset>
+  <section
+    data-execution-sandbox-settings
+    {% if location_host %}hidden{% endif %}
+    class="space-y-2"
+  >
+    <label for="conversation-environment" class="font-semibold"
+      >Environment</label
+    >
+    <select
+      form="{{ self.model_form() }}"
+      id="conversation-environment"
+      name="environment"
+      class="select select-bordered w-full"
+      required
+    >
+      {% if environment_options.is_empty() %}
+        <option value="">No environments available</option>
+      {% endif %}
+      {% for option in environment_options %}
+        <option
+          value="{{ option.id }}"
+          data-environment-name="{{ option.name }}"
+          data-environment-status="{{ option.readiness }}{% if option.availability != "Available" %}
+            · {{ option.availability }}
+          {% endif %}"
+          {% if option.selected %}selected{% endif %}
+        >
+          {{ option.name }}
+        </option>
+      {% endfor %}
+    </select>
+    {% for option in environment_options %}
+      <p
+        data-environment-problem="{{ option.id }}"
+        {% if !option.selected %}hidden{% endif %}
+        role="status"
+        class="text-quiet text-sm"
+      >
+        <span
+          class="environment-status {% if option.readiness == "Ready" && option.availability == "Available" %}environment-ready{% endif %}"
+          >{{ option.readiness }}</span
+        >{% if option.availability != "Available" %}· {{ option.availability }}{% endif %}
+      </p>
+    {% endfor %}
+    <p class="text-quiet text-sm">Used for the next sandbox attempt.</p>
+    <a href="/environments" data-graft class="link text-sm"
+      >Manage environments</a
+    >
+  </section>
+  <fieldset
+    data-execution-sandbox-settings
+    {% if location_host %}hidden{% endif %}
+  >
+    <legend class="mb-2 font-semibold">Sandbox network</legend>
+    <div class="space-y-2">
+      {% for option in network_options %}
+        <label class="flex min-h-10 cursor-pointer items-center gap-3">
+          <input
+            form="{{ self.model_form() }}"
+            type="radio"
+            class="radio"
+            name="network"
+            value="{{ option.value }}"
+            data-network-select
+            {% if option.selected %}checked{% endif %}
+          />
+          <span>{{ option.label }}</span>
+        </label>
+        {% if option.value == "restricted" %}
+          <div
+            data-network-domains
+            {% if !network_restricted %}hidden{% endif %}
+            class="ml-[34px] space-y-1"
+          >
+            <label
+              for="conversation-settings-network-domains"
+              class="block text-sm"
+              >Allowed domains</label
+            >
+            <textarea
+              form="{{ self.model_form() }}"
+              id="conversation-settings-network-domains"
+              class="textarea textarea-bordered min-h-20 w-full"
+              name="network_domains"
+              maxlength="8127"
+              aria-describedby="execution-domains-help"
+            >
+{{ network_domains }}</textarea>
+            <p id="execution-domains-help" class="text-quiet text-sm">
+              One domain per line. Includes subdomains and all ports.
+            </p>
+          </div>
+        {% endif %}
+      {% endfor %}
+    </div>
+    <p class="text-quiet mt-3 text-sm">
+      Private and host networks stay blocked. This setting does not restrict
+      model requests.
+    </p>
+  </fieldset>
+  <section
+    data-execution-host-policy
+    {% if !location_host %}hidden{% endif %}
+    class="space-y-4"
+  >
+    <div class="execution-warning rounded-[7px] border p-3 text-sm">
+      <p class="font-semibold">Unrestricted host access</p>
+      <p class="mt-1">
+        Tools run as the Power Plant process user. Work locations do not confine
+        access. File changes take effect immediately.
+      </p>
+      <p class="mt-2">Sandbox network settings do not restrict host tools.</p>
+    </div>
+    <fieldset>
+      <legend
+        id="conversation-host-approval"
+        tabindex="-1"
+        class="mb-2 font-semibold"
+      >
+        Command approval
+      </legend>
+      <label class="flex cursor-pointer items-start gap-3 py-2">
+        <input
+          form="{{ self.model_form() }}"
+          class="radio mt-0.5"
+          type="radio"
+          name="host_approval"
+          value="ask-each-time"
+          {% if !host_approval_automatic %}checked{% endif %}
+        />
+        <span
+          >Ask each time<small class="text-quiet mt-1 block"
+            >Each Run command requires separate approval.</small
+          ></span
+        >
+      </label>
+      <label class="flex cursor-pointer items-start gap-3 py-2">
+        <input
+          form="{{ self.model_form() }}"
+          class="radio mt-0.5"
+          type="radio"
+          name="host_approval"
+          value="automatic"
+          {% if host_approval_automatic %}checked{% endif %}
+        />
+        <span
+          >Run without approval<small class="text-quiet mt-1 block"
+            >Commands run without an individual decision.</small
+          ></span
+        >
+      </label>
+    </fieldset>
+    <p class="text-quiet text-sm">
+      Host consent covers file tools and Run. This policy applies only to Run
+      and does not approve commands that await a decision.
+    </p>
+  </section>
+  {% if !self.is_new() %}
+    <p class="text-quiet text-sm">
+      Choices remain requested until you review and apply them. The current
+      configuration stays in effect.
+    </p>
+  {% endif %}
+  <section
+    class="border-base-300 space-y-3 border-t pt-4"
+    aria-labelledby="execution-current-heading"
+  >
+    <h4 id="execution-current-heading" class="font-semibold">
+      {% if self.is_new() %}Draft configuration{% else %}Current configuration{% endif %}
+    </h4>
+    <dl
+      class="execution-summary grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm"
+    >
+      <dt class="text-quiet">Execution</dt>
+      <dd>{% if location_host %}This computer{% else %}Sandbox{% endif %}</dd>
+      {% if location_host %}
+        <dt class="text-quiet">Host commands</dt>
+        <dd>
+          {% if host_approval_automatic %}
+            Run without approval
+          {% else %}
+            Ask each time
+          {% endif %}
+        </dd>
+        <dt class="text-quiet">Host consent</dt>
+        <dd>
+          {% if host_pending_approval %}Not approved{% else %}No consent pending{% endif %}
+        </dd>
+      {% else %}
+        <dt class="text-quiet">Environment</dt>
+        <dd data-conversation-environment-summary>{{ environment_summary }}</dd>
+        <dt class="text-quiet">Network</dt>
+        <dd data-conversation-network-summary>{{ network_summary }}</dd>
+      {% endif %}
+    </dl>
+    {% if location_host && host_pending_approval %}
+      {% if !self.is_new() %}
+        <p data-consent-review-note hidden class="text-quiet text-sm">
+          Review and apply the requested changes before host consent.
+        </p>
+      {% endif %}
+      {% if let Some(saved) = self.saved() %}
+        <form
+          data-graft
+          method="post"
+          action="/conversations/{{ saved.id }}/settings/host-consent"
+        >
+          <input type="hidden" name="revision" value="{{ saved.revision }}" />
+          <button
+            id="conversation-host-consent-preview"
+            class="btn btn-secondary w-full"
+            type="submit"
+          >
+            Review host access
+          </button>
+        </form>
+      {% else %}
+        <button
+          form="conversation-composer"
+          id="conversation-host-consent-preview"
+          formaction="/conversations/new/settings/host-consent"
+          formmethod="post"
+          class="btn btn-secondary w-full"
+          type="submit"
+        >
+          Review host access
+        </button>
+      {% endif %}
+    {% endif %}
+  </section>
+</section>

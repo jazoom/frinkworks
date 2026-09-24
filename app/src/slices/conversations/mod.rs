@@ -120,6 +120,10 @@ pub(super) fn router() -> Router<AppState> {
             post(settings::apply_draft_preset),
         )
         .route(
+            "/conversations/new/directories/start",
+            post(directories::start_new),
+        )
+        .route(
             "/conversations/new/directories/pick",
             post(directories::pick_new),
         )
@@ -284,6 +288,10 @@ pub(super) fn router() -> Router<AppState> {
         .route(
             "/conversations/{conversation_id}/settings/environment/stop-and-switch",
             post(settings::stop_and_switch_environment),
+        )
+        .route(
+            "/conversations/{conversation_id}/directories/start",
+            post(directories::start_saved),
         )
         .route(
             "/conversations/{conversation_id}/directories/pick",
@@ -2858,6 +2866,7 @@ fn detail_view_with_transcript(
         leaf,
     )
     .with_access_status(state, session, record)
+    .with_instruction_sources(state, record)
     .with_pending_question(
         record
             .active_job

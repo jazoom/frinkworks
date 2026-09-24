@@ -26,6 +26,24 @@ Conversation settings stay local. Use saved settings as future defaults explicit
 
 New drafts copy those requested defaults without authority. Ordinary setup controls apply when they change. Execution review, consent and preset replacement stay behind their own confirmations.
 
+Saved network changes require execution review with the other execution settings. Host consent authorises the exact configuration after that review.
+
+Preset replacement shows current and replacement values before explicit confirmation. It replaces every requested setting rather than merges selected fields.
+
+A named preset stores an independent snapshot. Saved conversations supply stored settings only. Unreviewed execution changes and unsaved edits stay excluded.
+
+Drafts supply their current settings without a conversation record. Presets contain no directory approval or runtime consent.
+
+Preview and save retain uncommitted setup edits. Successful replacement supersedes those edits but retains the unsent message. Rejected replacement retains the edits.
+
+Conversation instructions are optional and accept up to 32 KiB of UTF-8 text. Drafts retain instructions and tool choices without a conversation record.
+
+Saved conversations apply instructions after the editor loses focus. Tool choices apply on change. Tool changes can invalidate consent, but instruction edits do not grant authority.
+
+Setup shows instruction files from the latest recorded reply request on the active branch. The files describe past context, not current access or the next request.
+
+The source list excludes summarisation requests and advertised skills. The request context retains the complete recorded sources.
+
 The transcript retains complete history. Model context is a separate projection. Automatic compaction replaces earlier exchanges with a summary. It runs when the input reaches the configured percentage of a known model context window. The default is enabled at 95 percent. Settings can disable automation or set a whole percentage from 1 through 100.
 
 Automatic compaction applies only when the model catalogue publishes a context window. Unknown capacity keeps the request on the operational bound and never triggers a percentage. Below the threshold, a request can still lack output headroom. Power Plant then reports the shortage and offers manual compaction. Manual compaction is independent of the automatic policy.

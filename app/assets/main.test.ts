@@ -90,6 +90,196 @@ afterEach(() => {
     document.body.replaceChildren();
     vi.unstubAllGlobals();
 });
+test("preset names use the UTF-8 bound without control characters", () => {
+    document.body.insertAdjacentHTML(
+        "beforeend",
+        `<input id="conversation-preset-name"><p id="preset-name-error" hidden></p><button data-preset-save-cancel></button>`,
+    );
+    const field = document.querySelector<HTMLInputElement>(
+        "#conversation-preset-name",
+    )!;
+    for (const [value, valid] of [
+        ["é".repeat(40), true],
+        ["é".repeat(41), false],
+        ["Bad\u0001name", false],
+        ["", true],
+        ["  Review  ", true],
+    ] as const) {
+        field.value = value;
+        field.dispatchEvent(new Event("input", { bubbles: true }));
+        expect(field.validity.valid).toBe(valid);
+        expect(field.value).toBe(value);
+    }
+    field.value = "é".repeat(41);
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    document
+        .querySelector<HTMLButtonElement>("[data-preset-save-cancel]")!
+        .click();
+    expect(field.disabled).toBe(true);
+    expect(field.validationMessage).toBe("");
+});
+
+test.each(["new", "saved"])(
+    "%s preset snapshots keep the correct source of settings",
+    (state) => {
+        document.body.insertAdjacentHTML(
+            "beforeend",
+            `<template data-conversation-state="${state}"></template>
+        <textarea name="instructions" form="conversation-composer">&lt;img src=x&gt;</textarea>
+        <select name="environment" form="conversation-composer"><option value="second-id" data-environment-name="Same name" selected>Same name</option></select>
+        <button data-settings-tab="settings-presets"></button>
+        <p data-preset-summary="instructions">Saved instructions</p>
+        <p data-preset-summary="tools">Read</p>
+        <div data-preset-directories hidden><span data-path="/tmp/review-specs" data-access="Direct write" data-available="true"></span></div>
+        <p data-preset-summary="directories">Saved directories</p>
+        <div data-preset-row="environment" data-preset-requested-identity="first-id"><p data-preset-current="environment">Same name</p><span data-preset-changed hidden>Changed</span></div>`,
+        );
+        document
+            .querySelector<HTMLButtonElement>(
+                '[data-settings-tab="settings-presets"]',
+            )!
+            .click();
+        expect(
+            document.querySelector('[data-preset-summary="instructions"]')!
+                .textContent,
+        ).toBe(state === "new" ? "<img src=x>" : "Saved instructions");
+        expect(
+            document.querySelector('[data-preset-summary="tools"]')!
+                .textContent,
+        ).toBe(state === "new" ? "None" : "Read");
+        expect(
+            document.querySelector<HTMLElement>("[data-preset-changed]")!
+                .hidden,
+        ).toBe(state !== "new");
+        expect(
+            document.querySelector('[data-preset-summary="directories"]')!
+                .textContent,
+        ).toBe(
+            state === "new"
+                ? "Start: /tmp/review-specs\nDirect write requested"
+                : "Saved directories",
+        );
+        expect(
+            document.querySelector('[data-preset-summary="instructions"] img'),
+        ).toBeNull();
+    },
+);
+
+test("instruction validation counts UTF-8 bytes and retains invalid text", () => {
+    document.body.insertAdjacentHTML(
+        "beforeend",
+        `
+        <textarea id="conversation-instructions" data-instruction-limit="32768"></textarea>
+        <p id="conversation-instructions-error" hidden></p>`,
+    );
+    const field = document.querySelector<HTMLTextAreaElement>(
+        "#conversation-instructions",
+    )!;
+    for (const [text, valid] of [
+        ["é".repeat(16384), true],
+        ["é".repeat(16385), false],
+        ["Rules\n\tNext line", true],
+        ["Bad\u0000rule", false],
+        ["Bad\u0085rule", false],
+        ["", true],
+    ] as const) {
+        field.value = text;
+        field.dispatchEvent(new Event("input", { bubbles: true }));
+        expect(field.validity.valid).toBe(valid);
+        expect(field.value).toBe(text);
+        expect(field.getAttribute("aria-invalid")).toBe(String(!valid));
+        expect(
+            document.getElementById("conversation-instructions-error")!.hidden,
+        ).toBe(valid);
+    }
+});
+
+test("requested execution changes block consent for the old configuration without a command", () => {
+    document.body.insertAdjacentHTML(
+        "beforeend",
+        `
+        <form id="conversation-settings-form"></form>
+        <input form="conversation-settings-form" type="radio" name="host_approval" value="ask-each-time" checked>
+        <input form="conversation-settings-form" type="radio" name="host_approval" value="automatic">
+        <button id="conversation-host-consent-preview">Review host access</button>
+        <p data-consent-review-note hidden></p>`,
+    );
+    const form = document.querySelector<HTMLFormElement>(
+        "#conversation-settings-form",
+    )!;
+    const submit = vi.spyOn(form, "requestSubmit");
+    const automatic = document.querySelector<HTMLInputElement>(
+        '[name="host_approval"][value="automatic"]',
+    )!;
+    const consent = document.querySelector<HTMLButtonElement>(
+        "#conversation-host-consent-preview",
+    )!;
+    automatic.checked = true;
+    automatic.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(consent.disabled).toBe(true);
+    expect(
+        document.querySelector<HTMLElement>("[data-consent-review-note]")!
+            .hidden,
+    ).toBe(false);
+    const ask = document.querySelector<HTMLInputElement>(
+        '[name="host_approval"][value="ask-each-time"]',
+    )!;
+    ask.checked = true;
+    ask.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(consent.disabled).toBe(false);
+    expect(submit).not.toHaveBeenCalled();
+});
+
+test("directory radios stage saved access without a consent or execution command", () => {
+    document.body.insertAdjacentHTML(
+        "beforeend",
+        `
+        <form id="conversation-settings-form"><input id="execution-directory-access" name="directory_access"></form>
+        <input type="radio" name="access-one" data-execution-directory="one" value="read-only" checked>
+        <input type="radio" name="access-one" data-execution-directory="one" value="direct-write">
+        <input type="radio" name="access-two" data-execution-directory="two" value="review-before-apply" checked>`,
+    );
+    const form = document.querySelector<HTMLFormElement>(
+        "#conversation-settings-form",
+    )!;
+    const submit = vi.spyOn(form, "requestSubmit");
+    const radio = document.querySelector<HTMLInputElement>(
+        '[data-execution-directory][value="direct-write"]',
+    )!;
+    radio.checked = true;
+    radio.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(new FormData(form).get("directory_access")).toBe(
+        JSON.stringify([
+            ["one", "direct-write"],
+            ["two", "review-before-apply"],
+        ]),
+    );
+    expect(submit).not.toHaveBeenCalled();
+});
+
+test("draft directory radios use the access command rather than the message command", () => {
+    document.body.insertAdjacentHTML(
+        "beforeend",
+        `
+        <input type="radio" data-draft-directory-access="directory-access-one" value="direct-write">
+        <button id="directory-access-one" form="conversation-composer" formaction="/conversations/new/directories/one/access" type="submit" name="action" hidden></button>`,
+    );
+    const form = document.querySelector<HTMLFormElement>(
+        "#conversation-composer",
+    )!;
+    const submit = vi.spyOn(form, "requestSubmit").mockImplementation(() => {});
+    const radio = document.querySelector<HTMLInputElement>(
+        "[data-draft-directory-access]",
+    )!;
+    radio.checked = true;
+    radio.dispatchEvent(new Event("change", { bubbles: true }));
+    const button = document.querySelector<HTMLButtonElement>(
+        "#directory-access-one",
+    )!;
+    expect(button.value).toBe("direct-write");
+    expect(submit).toHaveBeenCalledExactlyOnceWith(button);
+});
+
 function search(query: string) {
     const input = document.querySelector<HTMLInputElement>(
         "#conversation-model-search",

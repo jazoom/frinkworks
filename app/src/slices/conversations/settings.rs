@@ -55,6 +55,7 @@ struct RequestedExecutionMode {
     host_approval: crate::execution::HostApprovalPolicy,
     environment: crate::environments::EnvironmentId,
     directory_access: String,
+    network: NetworkAccess,
 }
 
 #[derive(Deserialize)]
@@ -71,6 +72,10 @@ pub(super) struct EnvironmentSwitchForm {
     pub(super) directory_access: String,
     #[serde(default)]
     pub(super) confirm: bool,
+    #[serde(default)]
+    pub(super) network: String,
+    #[serde(default)]
+    pub(super) network_domains: String,
 }
 
 pub(super) fn parse_tools(values: &[String]) -> Result<Vec<ToolId>, &'static str> {
@@ -301,6 +306,7 @@ pub(super) async fn update(
                 || model.settings.host_approval != settings.host_approval
                 || model.settings.environment != settings.environment
                 || model.settings.directories != settings.directories
+                || model.settings.network != settings.network
         })
     {
         let Some(current) = record.model.as_ref() else {
@@ -330,6 +336,7 @@ pub(super) async fn update(
             },
             environment: settings.environment,
             directory_access: form.directory_access.clone(),
+            network: settings.network.clone(),
         };
         if execution_mode_changed(&current.settings, &requested) {
             if let Err(error) = replacement_execution_ready(
@@ -426,14 +433,7 @@ pub(super) async fn preview_environment_switch(
     let Some(current) = record.model.as_ref() else {
         return switch_error(&state, session.0, graft, &record, "Choose a model first.");
     };
-    let requested = match execution_mode_from_form(
-        &state,
-        &form.location,
-        &form.host_approval,
-        &form.environment,
-        &form.directory_access,
-        &current.settings,
-    ) {
+    let requested = match execution_mode_from_form(&state, &form, &current.settings) {
         Ok(mode) => mode,
         Err(error) => return switch_error(&state, session.0, graft, &record, error),
     };
@@ -443,7 +443,7 @@ pub(super) async fn preview_environment_switch(
             session.0,
             graft,
             &record,
-            "Choose a different backend, approval policy, directory strategy or environment.",
+            "Choose a different execution location, policy, directory access, environment or network setting.",
         );
     }
     if let Err(error) =
@@ -482,14 +482,7 @@ pub(super) async fn stop_and_switch_environment(
     let Some(current_settings) = record.model.as_ref() else {
         return switch_error(&state, session.0, graft, &record, "Choose a model first.");
     };
-    let requested = match execution_mode_from_form(
-        &state,
-        &form.location,
-        &form.host_approval,
-        &form.environment,
-        &form.directory_access,
-        &current_settings.settings,
-    ) {
+    let requested = match execution_mode_from_form(&state, &form, &current_settings.settings) {
         Ok(requested) => requested,
         Err(error) => return switch_error(&state, session.0, graft, &record, error),
     };
@@ -593,12 +586,16 @@ pub(crate) async fn replacement_execution_ready(
 
 fn execution_mode_from_form(
     state: &AppState,
-    location: &str,
-    host_approval: &str,
-    environment: &str,
-    directory_access: &str,
+    form: &EnvironmentSwitchForm,
     current: &crate::execution::ExecutionSettings,
 ) -> Result<RequestedExecutionMode, &'static str> {
+    let EnvironmentSwitchForm {
+        location,
+        host_approval,
+        environment,
+        directory_access,
+        ..
+    } = form;
     let location = if location.trim().is_empty() {
         current.location
     } else {
@@ -624,6 +621,7 @@ fn execution_mode_from_form(
         host_approval,
         environment,
         directory_access: directory_access.to_owned(),
+        network: replacement_network(&current.network, &form.network, &form.network_domains)?,
     })
 }
 
@@ -634,8 +632,21 @@ fn execution_mode_changed(
     current.location != requested.location
         || current.host_approval != requested.host_approval
         || current.environment != requested.environment
+        || current.network != requested.network
         || replacement_directory_access(current, &requested.directory_access)
             .is_ok_and(|settings| settings.directories != current.directories)
+}
+
+pub(crate) fn replacement_network(
+    current: &NetworkAccess,
+    mode: &str,
+    domains: &str,
+) -> Result<NetworkAccess, &'static str> {
+    if mode.is_empty() && domains.is_empty() {
+        return Ok(current.clone());
+    }
+    NetworkAccess::parse_form(mode, domains)
+        .map_err(|_| "Choose valid network access. Restricted access needs 1 to 32 domains.")
 }
 
 pub(crate) fn replacement_directory_access(
@@ -682,6 +693,7 @@ fn render_switch_preview(
         .with_location(requested.location)
         .with_host_approval(requested.host_approval);
     replacement.environment = requested.environment;
+    replacement.network = requested.network;
     render_detail_command(
         graft,
         PatchStatus::Ok,
@@ -740,6 +752,7 @@ async fn save_execution_mode(
         .with_location(requested.location)
         .with_host_approval(requested.host_approval);
     settings.environment = requested.environment;
+    settings.network = requested.network;
     let Ok(_permit) = state.local_data.begin_host_path_mutation().await else {
         return switch_error(
             state,
@@ -786,27 +799,28 @@ pub(super) async fn save_preset(
     let Some(record) = load_conversation(&state, &conversation_id) else {
         return Ok(responses::command_navigation("/conversations"));
     };
-    let Some(revision) = parse_revision(&form.revision) else {
-        return preset_saved_error(&state, session.0, graft, &record, REVISION_MESSAGE);
+    let render = |status, error| {
+        let mut view =
+            detail_view(&state, session.0, &record, &record.title, error).open_settings();
+        view.preset_name = form.name.clone();
+        view.preset_save_open = status != PatchStatus::Ok;
+        if status == PatchStatus::Ok {
+            view.notice = "Preset saved. It is an independent copy without access approval or runtime consent.";
+        }
+        render_detail_command(graft, status, view)
     };
-    if revision != record.revision {
-        return preset_saved_error(&state, session.0, graft, &record, REVISION_MESSAGE);
+    if parse_revision(&form.revision) != Some(record.revision) {
+        return render(PatchStatus::Conflict, REVISION_MESSAGE);
     }
     let Some(configuration) = &record.model else {
-        return preset_saved_error(
-            &state,
-            session.0,
-            graft,
-            &record,
+        return render(
+            PatchStatus::UnprocessableEntity,
             "Choose conversation settings first.",
         );
     };
     let Ok(_permit) = state.local_data.begin_host_path_mutation().await else {
-        return preset_saved_error(
-            &state,
-            session.0,
-            graft,
-            &record,
+        return render(
+            PatchStatus::Conflict,
             crate::local_data::HOST_PATH_RESET_PENDING,
         );
     };
@@ -823,12 +837,8 @@ pub(super) async fn save_preset(
             title: record.title.clone(),
         },
     ) {
-        Ok(_) => render_detail_command(
-            graft,
-            PatchStatus::Ok,
-            detail_view(&state, session.0, &record, &record.title, "").open_settings(),
-        ),
-        Err(error) => preset_saved_error(&state, session.0, graft, &record, error.message()),
+        Ok(_) => render(PatchStatus::Ok, ""),
+        Err(error) => render(PatchStatus::UnprocessableEntity, error.message()),
     }
 }
 
@@ -871,7 +881,7 @@ pub(super) async fn preview_preset(
             graft,
             PatchStatus::Ok,
             detail_view(&state, session.0, &record, &record.title, "")
-                .with_preset_preview(preset_preview_view(&state, preview)),
+                .with_preset_preview(&state, preview),
         ),
         Err(error) => preset_saved_error(&state, session.0, graft, &record, error.message()),
     }
@@ -996,7 +1006,16 @@ pub(super) async fn save_draft_preset(
             .err()
             .unwrap_or("Choose conversation settings first.");
     }
-    render_draft_preset(&state, session.0, form, status, error)
+    let name = form.preset_name.clone();
+    let mut view = super::page::ConversationDetailView::from_new(&state, session.0, form, error)
+        .open_settings();
+    view.preset_name = name;
+    view.preset_save_open = status != PatchStatus::Ok;
+    if status == PatchStatus::Ok {
+        view.notice =
+            "Preset saved. It is an independent copy without access approval or runtime consent.";
+    }
+    super::render_detail(&state, session.0, GraftRequest::Patch, status, view)
 }
 
 pub(super) async fn preview_draft_preset(
@@ -1017,7 +1036,7 @@ pub(super) async fn preview_draft_preset(
     match preview {
         Ok(preview) => {
             let view = super::page::ConversationDetailView::from_new(&state, session.0, form, "")
-                .with_preset_preview(preset_preview_view(&state, preview));
+                .with_preset_preview(&state, preview);
             super::render_detail(
                 &state,
                 session.0,
@@ -1062,7 +1081,18 @@ pub(super) async fn apply_draft_preset(
     form.consent_reference.clear();
     form.consent_request.clear();
     form.pending_directory.clear();
-    render_draft_preset(&state, session.0, form, PatchStatus::Ok, "")
+    form.host_consent_request.clear();
+    form.consent_existing.clear();
+    let mut view =
+        super::page::ConversationDetailView::from_new(&state, session.0, form, "").open_settings();
+    view.notice = "Preset applied. Access approval and runtime consent remain separate.";
+    super::render_detail(
+        &state,
+        session.0,
+        GraftRequest::Patch,
+        PatchStatus::Ok,
+        view,
+    )
 }
 
 fn apply_settings_to_draft(form: &mut super::new::NewForm, preset: &crate::presets::PresetRecord) {
@@ -1114,76 +1144,6 @@ pub(super) fn copy_settings_to_draft(
     form.network = settings.network.as_str().to_owned();
     form.network_domains = settings.network.domains().join("\n");
     form.set_directories(&settings.directories);
-}
-
-fn preset_preview_view(
-    state: &AppState,
-    preview: crate::presets::PresetPreview,
-) -> super::page::PresetPreviewView {
-    let settings = &preview.record.settings;
-    super::page::PresetPreviewView {
-        token: preview.token,
-        id: preview.record.id.as_hex(),
-        name: preview.record.name,
-        model: format!(
-            "{} · {}",
-            settings.model.provider.label(),
-            settings.model.model
-        ),
-        thinking: settings
-            .model
-            .thinking
-            .as_ref()
-            .map(|effort| effort.as_str().to_owned())
-            .unwrap_or_else(|| "Default".to_owned()),
-        instructions: settings.instructions.clone(),
-        environment: state
-            .environments
-            .get(&settings.environment)
-            .map(|record| record.name)
-            .unwrap_or_else(|| "Unavailable environment".to_owned()),
-        tools: if settings.tools.is_empty() {
-            "No tools".to_owned()
-        } else {
-            settings
-                .tools
-                .iter()
-                .map(|tool| tool.label())
-                .collect::<Vec<_>>()
-                .join(", ")
-        },
-        network: match &settings.network {
-            NetworkAccess::None => "Off".to_owned(),
-            NetworkAccess::Public => "Public internet".to_owned(),
-            NetworkAccess::Restricted(domains) => format!("Restricted: {}", domains.join(", ")),
-        },
-        location: match settings.location {
-            crate::execution::ToolLocation::Sandbox => "Sandbox".to_owned(),
-            crate::execution::ToolLocation::Host => {
-                if settings.host_approval.automatic() {
-                    "This computer · Run without approval".to_owned()
-                } else {
-                    "This computer · Ask each time".to_owned()
-                }
-            }
-        },
-        directories: settings
-            .directories
-            .iter()
-            .map(|grant| {
-                format!(
-                    "{} · {} · {}",
-                    grant.host_path.display(),
-                    crate::slices::execution_settings::page::directory_access_label(grant.access),
-                    if grant.is_available() {
-                        "Available"
-                    } else {
-                        "Unavailable"
-                    }
-                )
-            })
-            .collect(),
-    }
 }
 
 fn render_draft_preset(

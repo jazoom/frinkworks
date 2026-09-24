@@ -850,7 +850,20 @@ function syncReviewModels(section: HTMLElement, resetModel: boolean) {
     syncReviewEfforts(section, catalogue);
 }
 
+function syncEnvironmentStatus() {
+    const field = document.querySelector<HTMLSelectElement>(
+        "#conversation-environment",
+    );
+    if (!field) return;
+    document
+        .querySelectorAll<HTMLElement>("[data-environment-problem]")
+        .forEach((problem) => {
+            problem.hidden = problem.dataset.environmentProblem !== field.value;
+        });
+}
+
 function syncExecutionModeFields() {
+    syncEnvironmentStatus();
     const location = document.querySelector<HTMLInputElement>(
         'input[form="conversation-settings-form"][name="location"]:checked',
     );
@@ -876,9 +889,53 @@ function syncExecutionModeFields() {
         });
 }
 
+function syncInstructionsFields() {
+    const field = document.querySelector<HTMLTextAreaElement>(
+        "#conversation-instructions",
+    );
+    if (!field) return;
+    const limit = Number(field.dataset.instructionLimit);
+    const tooLong = new TextEncoder().encode(field.value).length > limit;
+    const controls = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/u.test(
+        field.value,
+    );
+    const message = tooLong
+        ? "The instructions exceed 32 KiB. Remove some text."
+        : controls
+          ? "The instructions contain unsupported control characters. Remove those characters."
+          : "";
+    field.setCustomValidity(message);
+    field.setAttribute("aria-invalid", String(!!message));
+    const error = document.getElementById("conversation-instructions-error");
+    if (error) {
+        error.textContent = message;
+        error.hidden = !message;
+    }
+    const saved = !!document.getElementById("conversation-settings-form");
+    const host = Array.from(
+        document.querySelectorAll<HTMLInputElement>('input[name="location"]'),
+    ).some(
+        (input) =>
+            input.value === "host" &&
+            (saved ? input.defaultChecked : input.checked),
+    );
+    const noTools = !document.querySelector("[data-tool-field]:checked");
+    for (const [selector, hidden] of [
+        ["[data-instructions-host]", !host || noTools],
+        ["[data-instructions-sandbox]", host || noTools],
+        ["[data-instructions-no-tools]", !noTools],
+    ] as const) {
+        const note = document.querySelector<HTMLElement>(selector);
+        if (note) note.hidden = hidden;
+    }
+}
+
+document.addEventListener("input", syncInstructionsFields, true);
+document.addEventListener("change", syncInstructionsFields);
+
 function syncNetworkDomains() {
-    const select = document.querySelector<HTMLSelectElement>(
-        "[data-network-select]",
+    const select = document.querySelector<HTMLInputElement>(
+        "[data-network-select]:checked",
     );
     const domains = document.querySelector<HTMLElement>(
         "[data-network-domains]",
@@ -900,6 +957,16 @@ function selectConversationSettingsSection(panel: HTMLElement, id: string) {
             tab.setAttribute("aria-pressed", String(selected));
             tab.classList.toggle("selected", selected);
         });
+    const presetName = panel.querySelector<HTMLInputElement>(
+        "#conversation-preset-name",
+    );
+    if (presetName) {
+        presetName.disabled =
+            id !== "settings-presets" ||
+            !!panel.querySelector<HTMLElement>("#conversation-preset-save")
+                ?.hidden;
+        validatePresetName();
+    }
     const actions = panel.querySelector<HTMLElement>(
         "[data-execution-actions]",
     );
@@ -952,6 +1019,8 @@ document.addEventListener("click", (event) => {
     if (tab) {
         const panel = tab.closest<HTMLElement>("#conversation-settings");
         if (panel && tab.dataset.settingsTab) {
+            if (settingsSection !== undefined)
+                settingsSection = tab.dataset.settingsTab;
             selectConversationSettingsSection(panel, tab.dataset.settingsTab);
             panel
                 .querySelector<HTMLElement>("[data-settings-scroll]")
@@ -981,11 +1050,309 @@ document.addEventListener("click", (event) => {
     requestAnimationFrame(() => revealConversationSetting(target));
 });
 
+function syncExecutionConsent() {
+    const form = document.querySelector<HTMLFormElement>(
+        "#conversation-settings-form",
+    );
+    const consent = document.querySelector<HTMLButtonElement>(
+        "#conversation-host-consent-preview",
+    );
+    const note = document.querySelector<HTMLElement>(
+        "[data-consent-review-note]",
+    );
+    if (!form || !consent) return;
+    const fields = Array.from(form.elements).filter(
+        (field) =>
+            field instanceof HTMLInputElement ||
+            field instanceof HTMLSelectElement ||
+            field instanceof HTMLTextAreaElement,
+    );
+    const dirty = fields.some((field) => {
+        if (
+            ![
+                "location",
+                "host_approval",
+                "environment",
+                "network",
+                "network_domains",
+                "directory_access",
+            ].includes(field.name)
+        )
+            return false;
+        if (field instanceof HTMLSelectElement)
+            return Array.from(field.options).some(
+                (option) => option.selected !== option.defaultSelected,
+            );
+        if (field instanceof HTMLInputElement && field.type === "radio")
+            return field.checked !== field.defaultChecked;
+        return field.value !== field.defaultValue;
+    });
+    consent.disabled = dirty;
+    if (note) note.hidden = !dirty;
+}
+
+document.addEventListener("input", syncExecutionConsent);
+document.addEventListener("change", syncExecutionConsent);
+
+function syncExecutionReview() {
+    const panel = document.getElementById("conversation-settings");
+    if (!panel) return;
+    const review = panel.querySelector<HTMLElement>(
+        "[data-execution-switch]:not([hidden])",
+    );
+    panel.classList.toggle("execution-review-open", !!review);
+    const title = panel.querySelector<HTMLElement>("[data-setup-title]");
+    const reviewTitle = panel.querySelector<HTMLElement>(
+        "[data-execution-review-title]",
+    );
+    if (title) title.hidden = !!review;
+    if (reviewTitle) reviewTitle.hidden = !review;
+}
+
+function closeHostConsent(policy = false) {
+    const dialog = document.querySelector<HTMLDialogElement>(
+        "#conversation-host-consent",
+    );
+    dialog?.close();
+    dialog?.remove();
+    const request = document.querySelector<HTMLInputElement>(
+        '[name="host_consent_request"]',
+    );
+    if (request) request.value = "";
+    const target =
+        document.getElementById(
+            policy
+                ? "conversation-host-approval"
+                : "conversation-host-consent-preview",
+        ) ?? document.getElementById("conversation-execution-heading");
+    if (target) revealConversationSetting(target);
+}
+
+document.addEventListener(
+    "cancel",
+    (event) => {
+        if (
+            event.target instanceof HTMLDialogElement &&
+            event.target.id === "conversation-host-consent"
+        ) {
+            event.preventDefault();
+            closeHostConsent();
+        }
+    },
+    true,
+);
+
+document.addEventListener("click", (event) => {
+    if (!(event.target instanceof Element)) return;
+    const close = event.target.closest<HTMLElement>(
+        "[data-host-consent-close]",
+    );
+    if (close) closeHostConsent(close.dataset.hostConsentClose === "policy");
+    if (!event.target.closest("[data-execution-cancel]")) return;
+    document.querySelector("[data-execution-switch]")?.remove();
+    for (const name of [
+        "location",
+        "host_approval",
+        "environment",
+        "directory_access",
+        "network",
+        "network_domains",
+    ]) {
+        document
+            .querySelectorAll<
+                HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+            >(`[form="conversation-settings-form"][name="${name}"]`)
+            .forEach((field) => {
+                if (field instanceof HTMLSelectElement) {
+                    for (const option of field.options)
+                        option.selected = option.defaultSelected;
+                } else if (
+                    field instanceof HTMLInputElement &&
+                    field.type === "radio"
+                )
+                    field.checked = field.defaultChecked;
+                else field.value = field.defaultValue;
+                field.dispatchEvent(new Event("input", { bubbles: true }));
+            });
+    }
+    document
+        .querySelectorAll<HTMLInputElement>("[data-execution-directory]")
+        .forEach((field) => {
+            field.checked = field.defaultChecked;
+        });
+    syncExecutionModeFields();
+    syncNetworkDomains();
+    syncExecutionReview();
+    const heading = document.getElementById("conversation-execution-heading");
+    if (heading) revealConversationSetting(heading);
+});
+
+function syncPresetSummary() {
+    if (!document.querySelector('[data-conversation-state="new"]')) return;
+    const form = document.querySelector<HTMLFormElement>(
+        "#conversation-composer",
+    );
+    if (!form) return;
+    const data = new FormData(form);
+    const value = (name: string) => String(data.get(name) ?? "");
+    const provider = document.querySelector<HTMLSelectElement>(
+        "#conversation-model-provider-filter",
+    );
+    const environment = form.elements.namedItem("environment");
+    const directories = document.querySelector<HTMLElement>(
+        "[data-preset-directories]",
+    );
+    const values: Record<string, string> = {
+        provider:
+            Array.from(provider?.options ?? []).find(
+                (option) => option.value === value("provider"),
+            )?.textContent ?? value("provider"),
+        model: value("model"),
+        thinking: value("thinking") || "Default / not available",
+        tools: ["list", "read", "edit", "write", "run"]
+            .filter((tool) => value(`tool_${tool}`))
+            .map((tool) => tool[0]!.toUpperCase() + tool.slice(1))
+            .join(", "),
+        location: value("location") === "host" ? "This computer" : "Sandbox",
+        host_approval:
+            value("host_approval") === "automatic"
+                ? "Run without approval"
+                : "Ask each time",
+        environment:
+            environment instanceof HTMLSelectElement
+                ? (environment.selectedOptions[0]?.dataset.environmentName ??
+                  "None")
+                : "None",
+        network:
+            value("network") === "restricted"
+                ? `Restricted: ${value("network_domains")
+                      .split(/\r?\n/)
+                      .map((domain) => domain.trim())
+                      .filter(Boolean)
+                      .join(", ")}`
+                : value("network") === "public"
+                  ? "Public internet"
+                  : "Off",
+        directories: Array.from(
+            directories?.querySelectorAll<HTMLElement>("[data-path]") ?? [],
+        )
+            .map(
+                (directory, index) =>
+                    `${index === 0 ? "Start: " : ""}${directory.dataset.path}\n${directory.dataset.access} requested${directory.dataset.available === "false" ? " · Unavailable" : ""}`,
+            )
+            .join("\n\n"),
+        instructions: value("instructions"),
+    };
+    for (const [key, text] of Object.entries(values)) {
+        for (const target of document.querySelectorAll<HTMLElement>(
+            `[data-preset-summary="${key}"], [data-preset-current="${key}"]`,
+        ))
+            target.textContent = text || "None";
+        const row = document.querySelector<HTMLElement>(
+            `[data-preset-row="${key}"]`,
+        );
+        if (row) {
+            const changed =
+                (key === "environment" ? value("environment") : text) !==
+                row.dataset.presetRequestedIdentity;
+            row.classList.toggle("preset-changed", changed);
+            const marker = row.querySelector<HTMLElement>(
+                "[data-preset-changed]",
+            );
+            if (marker) marker.hidden = !changed;
+        }
+    }
+}
+
+function validatePresetName() {
+    const field = document.querySelector<HTMLInputElement>(
+        "#conversation-preset-name",
+    );
+    if (!field) return;
+    const name = field.value.trim();
+    const invalid =
+        !field.disabled &&
+        (new TextEncoder().encode(name).length > 80 || /[\p{Cc}]/u.test(name));
+    const message = invalid
+        ? "Use at most 80 UTF-8 bytes without control characters."
+        : "";
+    field.setCustomValidity(message);
+    field.setAttribute("aria-invalid", String(invalid));
+    const error = document.getElementById("preset-name-error");
+    if (error) {
+        error.textContent = message;
+        error.hidden = !invalid;
+    }
+}
+
+function showPresetSave(open: boolean) {
+    const panel = document.getElementById("conversation-preset-save");
+    const list = document.querySelector<HTMLElement>("[data-preset-list]");
+    const field = document.querySelector<HTMLInputElement>(
+        "#conversation-preset-name",
+    );
+    if (panel) panel.hidden = !open;
+    if (list)
+        list.hidden = open || !!document.querySelector("[data-preset-preview]");
+    if (field) field.disabled = !open;
+    document
+        .querySelector("[data-preset-save-toggle]")
+        ?.setAttribute("aria-expanded", String(open));
+    validatePresetName();
+    syncPresetSummary();
+}
+
+let retainedPresetName: string | undefined;
+let retainedPresetSave = false;
+let submittedPresetName: string | undefined;
+document.addEventListener("input", (event) => {
+    if (
+        event.target instanceof HTMLInputElement &&
+        event.target.id === "conversation-preset-name"
+    ) {
+        retainedPresetName = event.target.value;
+        validatePresetName();
+    }
+});
+document.addEventListener("click", (event) => {
+    if (!(event.target instanceof Element)) return;
+    if (event.target.closest("[data-preset-save-toggle]")) {
+        retainedPresetSave = true;
+        showPresetSave(true);
+        const field = document.getElementById("conversation-preset-name");
+        if (field) revealConversationSetting(field);
+    } else if (
+        event.target.closest("[data-preset-save-cancel], [data-preset-cancel]")
+    ) {
+        // Cancellation grants no authority and sends no command.
+        document.querySelector("[data-preset-preview]")?.remove();
+        retainedPresetSave = false;
+        showPresetSave(false);
+        const heading = document.getElementById("conversation-preset-heading");
+        if (heading) revealConversationSetting(heading);
+    }
+    if (event.target.closest('[data-settings-tab="settings-presets"]'))
+        syncPresetSummary();
+});
+listenForLocationChanges(() => {
+    retainedPresetName = undefined;
+    retainedPresetSave = false;
+    submittedPresetName = undefined;
+});
+
 let settingsScroll: number | undefined;
 let settingsSection: string | undefined;
 document.addEventListener(
     "submit",
     () => {
+        const name = document.querySelector<HTMLInputElement>(
+            "#conversation-preset-name",
+        );
+        submittedPresetName = name?.value;
+        retainedPresetName = name?.value;
+        retainedPresetSave = !!document.querySelector(
+            "#conversation-preset-save:not([hidden])",
+        );
         const panel = document.querySelector<HTMLElement>(
             "#conversation-settings:popover-open",
         );
@@ -1006,8 +1373,15 @@ listenForRequestSettled((detail) => {
     ) {
         return;
     }
+    document
+        .querySelector<HTMLDialogElement>("#conversation-host-consent[open]")
+        ?.close();
     const previousScroll = settingsScroll;
-    const previousSection = settingsSection;
+    const previousSection =
+        settingsSection ??
+        (detail.url.includes("/settings/host-consent")
+            ? "settings-execution"
+            : undefined);
     settingsScroll = undefined;
     settingsSection = undefined;
     syncExecutionModeFields();
@@ -1024,6 +1398,21 @@ listenForRequestSettled((detail) => {
             )
                 button.removeAttribute("aria-disabled");
         });
+    if (detail.outcome === "applied-patch") {
+        const name = document.querySelector<HTMLInputElement>(
+            "#conversation-preset-name",
+        );
+        const saved =
+            detail.url.endsWith("/presets/save") && detail.status === 200;
+        const laterName = retainedPresetName !== submittedPresetName;
+        if (saved && !laterName) retainedPresetSave = false;
+        if (name && retainedPresetName !== undefined)
+            name.value = retainedPresetName;
+        showPresetSave(
+            retainedPresetSave ||
+                (detail.status !== 200 && detail.url.endsWith("/presets/save")),
+        );
+    }
     const requestedPanel = document.querySelector<HTMLElement>(
         '#conversation-settings[data-settings-open="true"]',
     );
@@ -1041,17 +1430,26 @@ listenForRequestSettled((detail) => {
             requestedPanel.showPopover();
         const destination =
             requestedPanel.querySelector<HTMLElement>(
-                "[data-execution-switch]:not([hidden]), [data-preset-preview], #conversation-directory-consent",
+                "[data-execution-switch]:not([hidden]), [data-preset-preview], #conversation-preset-save:not([hidden]), #conversation-directory-consent",
             ) ??
             (requestedPanel.dataset.directoriesOpen === "true"
                 ? document.getElementById("conversation-directory-heading")
-                : null);
+                : detail.url.includes("/presets/")
+                  ? document.getElementById("conversation-preset-heading")
+                  : null);
         const scroll = requestedPanel.querySelector<HTMLElement>(
             "[data-settings-scroll]",
         );
         if (destination) revealConversationSetting(destination);
         else if (scroll && previousScroll !== undefined)
             scroll.scrollTop = previousScroll;
+    }
+    syncExecutionReview();
+    if (detail.outcome === "applied-patch" && detail.status === 200) {
+        const consent = document.querySelector<HTMLDialogElement>(
+            "[data-host-consent]",
+        );
+        if (consent && !consent.open) consent.showModal();
     }
     if (detail.outcome === "applied-patch" && detail.status !== 200) {
         (
@@ -1083,7 +1481,8 @@ document.addEventListener("change", (event) => {
         if (section) syncReviewEfforts(section, reviewCatalogue(section));
     }
     if (
-        field instanceof HTMLSelectElement &&
+        field instanceof HTMLInputElement &&
+        field.checked &&
         field.matches("[data-draft-directory-access]")
     ) {
         const submitter = document.getElementById(
@@ -1096,26 +1495,17 @@ document.addEventListener("change", (event) => {
     }
     if (
         field instanceof HTMLSelectElement &&
+        field.matches("[data-command-directory]")
+    ) {
+        const submitter = document.getElementById("command-directory-submit");
+        if (submitter instanceof HTMLButtonElement && submitter.form)
+            submitter.form.requestSubmit(submitter);
+    }
+    if (
+        field instanceof HTMLSelectElement &&
         field.id === "conversation-environment"
     ) {
-        document
-            .querySelectorAll<HTMLElement>("[data-environment-problem]")
-            .forEach((problem) => {
-                problem.hidden =
-                    problem.dataset.environmentProblem !== field.value;
-            });
-        const status = document.querySelector<HTMLElement>(
-            "[data-conversation-environment-status]",
-        );
-        if (
-            status &&
-            document.querySelector('[data-conversation-state="new"]')
-        ) {
-            const label = field.selectedOptions[0]?.dataset.environmentStatus;
-            status.textContent = label ?? "";
-            status.setAttribute("aria-label", `Status: ${label ?? ""}`);
-            status.hidden = !label;
-        }
+        syncEnvironmentStatus();
     }
     if (
         field instanceof HTMLInputElement &&
@@ -1132,7 +1522,7 @@ document.addEventListener("change", (event) => {
         field instanceof HTMLInputElement &&
         field.form?.id === "conversation-composer" &&
         (field.name === "location" ||
-            field.name === "tool_run" ||
+            field.matches("[data-tool-field], [data-enable-tools]") ||
             field.name === "host_approval")
     ) {
         const preview = document.querySelector<HTMLButtonElement>(
@@ -1141,7 +1531,7 @@ document.addEventListener("change", (event) => {
         if (preview?.form === field.form) field.form.requestSubmit(preview);
     }
     if (
-        field instanceof HTMLSelectElement &&
+        field instanceof HTMLInputElement &&
         field.matches("[data-network-select]")
     ) {
         syncNetworkDomains();
@@ -1154,7 +1544,8 @@ document.addEventListener("change", (event) => {
         syncExecutionModeFields();
     }
     if (
-        field instanceof HTMLSelectElement &&
+        field instanceof HTMLInputElement &&
+        field.checked &&
         field.matches("[data-execution-directory]")
     ) {
         const value = document.querySelector<HTMLInputElement>(
@@ -1163,13 +1554,10 @@ document.addEventListener("change", (event) => {
         if (value) {
             value.value = JSON.stringify(
                 Array.from(
-                    document.querySelectorAll<HTMLSelectElement>(
-                        "[data-execution-directory]",
+                    document.querySelectorAll<HTMLInputElement>(
+                        "[data-execution-directory]:checked",
                     ),
-                    (select) => [
-                        select.dataset.executionDirectory,
-                        select.value,
-                    ],
+                    (radio) => [radio.dataset.executionDirectory, radio.value],
                 ),
             );
             value.dispatchEvent(new Event("input", { bubbles: true }));
@@ -1178,12 +1566,13 @@ document.addEventListener("change", (event) => {
     if (
         (event.target instanceof HTMLSelectElement &&
             (event.target.id === "conversation-environment" ||
-                event.target.matches("[data-execution-directory]") ||
                 event.target.matches("[data-network-select]") ||
                 event.target.name === "host_approval")) ||
         (event.target instanceof HTMLInputElement &&
             (event.target.name === "location" ||
-                event.target.name === "host_approval"))
+                event.target.name === "host_approval" ||
+                event.target.name === "network" ||
+                event.target.matches("[data-execution-directory]")))
     ) {
         document
             .querySelector<HTMLElement>("[data-execution-switch]")
@@ -1441,6 +1830,58 @@ const SUPPORTED_IMAGE_TYPES = new Set([
 let pendingAttachmentUpload:
     { form: HTMLFormElement; action: string; warning: string } | undefined;
 
+function syncComposerActions() {
+    const form = document.querySelector<HTMLFormElement>(
+        "#conversation-composer",
+    );
+    const field = form?.querySelector<HTMLTextAreaElement>("#composer-message");
+    const send = form?.querySelector<HTMLButtonElement>(
+        "[data-composer-submit]",
+    );
+    const prepared = form?.querySelector<HTMLInputElement>(
+        'input[name="prepared_run"]',
+    );
+    if (field && send) {
+        const empty =
+            field.value.trim() === "" &&
+            !document.querySelector("[data-attachment]") &&
+            !prepared?.value;
+        send.disabled = field.disabled || empty;
+        send.setAttribute("aria-disabled", String(send.disabled));
+    }
+    const picker = form?.querySelector<HTMLButtonElement>(
+        "[data-attachment-picker]",
+    );
+    if (picker) {
+        picker.disabled =
+            !document.querySelector("[data-attachment-input]") ||
+            attachmentForm()?.getAttribute("aria-busy") === "true";
+    }
+}
+
+document.addEventListener("input", (event) => {
+    if (
+        event.target instanceof HTMLTextAreaElement &&
+        event.target.id === "composer-message"
+    ) {
+        syncComposerActions();
+    }
+});
+
+document.addEventListener("click", (event) => {
+    if (!(event.target instanceof Element)) return;
+    if (event.target.closest("[data-attachment-picker]")) {
+        if (commandBlockReason()) return;
+        attachmentForm()
+            ?.querySelector<HTMLInputElement>("[data-attachment-input]")
+            ?.click();
+    }
+    if (event.target.closest("[data-composer-insert]")) {
+        const help = document.getElementById("composer-help");
+        if (help?.matches(":popover-open")) help.hidePopover();
+    }
+});
+
 function attachmentForm(): HTMLFormElement | null {
     return document.querySelector<HTMLFormElement>("[data-attachment-upload]");
 }
@@ -1470,6 +1911,7 @@ function setAttachmentPending(pending: boolean) {
         if (pending) form.setAttribute("aria-busy", "true");
         else form.removeAttribute("aria-busy");
     }
+    syncComposerActions();
     // A disabled file input is omitted from the multipart body, so the
     // pending state never disables it.
     const input = form?.querySelector<HTMLInputElement>(
@@ -2548,8 +2990,19 @@ document.addEventListener("submit", (event) => {
 });
 
 startApp();
+// Consent must reflect requested fields after the conversation island restores them.
+listenForRequestSettled(syncExecutionConsent);
+listenForLivePatches(syncExecutionConsent);
+syncInstructionsFields();
+listenForLocationChanges(syncInstructionsFields);
+listenForRequestSettled(syncInstructionsFields);
+listenForLivePatches(syncInstructionsFields);
 reconcileRevision();
 syncImageCompatibility();
+syncComposerActions();
+listenForLivePatches(syncComposerActions);
+listenForLocationChanges(syncComposerActions);
+listenForRequestSettled(syncComposerActions);
 listenForLivePatches(() => reconcileRevision());
 
 // Link navigation emits no settlement, so the revision target is reconciled

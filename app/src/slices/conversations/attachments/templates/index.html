@@ -49,10 +49,10 @@
     enctype="multipart/form-data"
     method="post"
     action="{{ view.upload_action }}"
-    class="flex flex-wrap items-center gap-2"
+    hidden
     data-attachment-upload
   >
-    <label class="btn btn-outline btn-sm min-h-11 cursor-pointer">
+    <label>
       Add images
       <input
         type="file"
@@ -63,6 +63,5 @@
         data-attachment-input
       />
     </label>
-    <button type="submit" class="btn btn-ghost btn-sm min-h-11">Upload</button>
   </form>
 {% endif %}

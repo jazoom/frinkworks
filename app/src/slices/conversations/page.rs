@@ -1,4 +1,6 @@
 pub(crate) mod model_picker;
+mod presets;
+use presets::{PresetPreviewView, PresetSettingView, setup_rows};
 
 use askama::Template;
 use model_picker::ModelPicker;
@@ -428,20 +430,6 @@ pub(super) struct PresetOption {
     pub(super) selected: bool,
 }
 
-pub(super) struct PresetPreviewView {
-    pub(super) token: String,
-    pub(super) id: String,
-    pub(super) name: String,
-    pub(super) model: String,
-    pub(super) thinking: String,
-    pub(super) instructions: String,
-    pub(super) environment: String,
-    pub(super) tools: String,
-    pub(super) network: String,
-    pub(super) location: String,
-    pub(super) directories: Vec<String>,
-}
-
 pub(super) struct ProviderOption {
     pub(super) value: &'static str,
     pub(super) label: &'static str,
@@ -476,21 +464,22 @@ pub(super) struct ExecutionSwitchView {
     pub(super) requested_host_approval: String,
     pub(super) requested_environment: String,
     pub(super) directory_access: String,
-    pub(super) current_backend: &'static str,
-    pub(super) requested_backend: &'static str,
-    pub(super) current_approval: &'static str,
-    pub(super) requested_approval: &'static str,
-    pub(super) current_environment: String,
-    pub(super) requested_environment_name: String,
-    pub(super) environment_changes: bool,
-    pub(super) backend_changes: bool,
-    pub(super) approval_changes: bool,
+    pub(super) requested_network: String,
+    pub(super) requested_network_domains: String,
+    pub(super) rows: Vec<ExecutionChangeRow>,
     pub(super) access_lines: Vec<String>,
     pub(super) host_effects_remain: bool,
     pub(super) needs_new_consent: bool,
     pub(super) active_job: bool,
     pub(super) job_id: String,
     pub(super) gate: Option<EnvironmentSwitchGateView>,
+}
+
+pub(super) struct ExecutionChangeRow {
+    pub(super) label: String,
+    pub(super) current: String,
+    pub(super) requested: String,
+    pub(super) changed: bool,
 }
 
 pub(super) struct EnvironmentSwitchGateView {
@@ -554,7 +543,9 @@ pub(super) struct ConversationDetailView {
     pub(super) presets: Vec<PresetOption>,
     pub(super) preset_name: String,
     pub(super) preset_source: String,
-    pub(super) preset_preview: Option<PresetPreviewView>,
+    preset_preview: Option<PresetPreviewView>,
+    preset_setup: Vec<PresetSettingView>,
+    pub(super) preset_save_open: bool,
     pub(super) directories: Vec<DirectoryView>,
     pub(super) data_root: String,
     pub(super) consent_path: String,
@@ -573,6 +564,8 @@ pub(super) struct ConversationDetailView {
     pub(super) draft_preset_reference: String,
     pub(super) consent_reference: String,
     pub(super) instructions: String,
+    instruction_sources: Option<InstructionSourcesView>,
+    instruction_sources_error: bool,
     pub(super) tool_options: Vec<ToolOption>,
     pub(super) environment_options: Vec<EnvironmentOption>,
     pub(super) environment_summary: String,
@@ -581,10 +574,9 @@ pub(super) struct ConversationDetailView {
     pub(super) network_restricted: bool,
     pub(super) network_domains: String,
     pub(super) network_summary: String,
-    pub(super) network_detail: String,
     pub(super) location_host: bool,
     pub(super) host_summary: String,
-    pub(super) host_identity: String,
+    pub(super) host_user: String,
     pub(super) host_elevated: bool,
     pub(super) host_approval_automatic: bool,
     pub(super) host_pending_approval: bool,
@@ -636,6 +628,12 @@ pub(super) struct ContextView {
     pub(super) compacting: bool,
 }
 
+pub(super) struct InstructionSourcesView {
+    paths: Vec<String>,
+    href: String,
+    truncated: bool,
+}
+
 pub(super) struct RetryView {
     pub(super) message: String,
 }
@@ -672,6 +670,14 @@ impl ConversationDetailView {
             .flatten()
             .map(|run| super::handoff::transfer::settings_text(&run))
             .unwrap_or_default();
+        let preset_setup = setup_rows(
+            super::new::settings_snapshot(state, session, &form)
+                .ok()
+                .flatten()
+                .as_ref()
+                .map(|model| &model.settings),
+            &state.environments,
+        );
         let selected_tools = form.tool_values();
         let host_identity = crate::execution::HostIdentity::current();
         let location_host = form.location == crate::execution::ToolLocation::Host.as_str();
@@ -775,6 +781,8 @@ impl ConversationDetailView {
                 form.preset_name.clone()
             },
             preset_preview: None,
+            preset_setup,
+            preset_save_open: false,
             state: ConversationPageState::New {
                 message: form.message,
             },
@@ -812,6 +820,8 @@ impl ConversationDetailView {
             draft_preset_reference: form.preset_preview,
             consent_reference: form.consent_reference,
             instructions: form.instructions.clone(),
+            instruction_sources: None,
+            instruction_sources_error: false,
             tool_options: tool_options(&selected_tools),
             environment_options: environment_options(
                 &state.environments,
@@ -827,10 +837,12 @@ impl ConversationDetailView {
             network_restricted: network_restricted(&form.network),
             network_domains: form.network_domains,
             network_summary: network_summary_from_form(&form.network),
-            network_detail: String::new(),
             location_host,
             host_summary: host_access_summary(location_host, host_approval_automatic),
-            host_identity: host_identity.authority_summary(),
+            host_user: format!(
+                "{} (uid {}, effective uid {})",
+                host_identity.username, host_identity.uid, host_identity.euid
+            ),
             host_elevated: host_identity.elevated(),
             host_approval_automatic,
             host_pending_approval,
@@ -862,6 +874,53 @@ impl ConversationDetailView {
             fork,
             revision: None,
         }
+    }
+
+    fn draft_access_note(&self) -> &'static str {
+        if self
+            .directories
+            .iter()
+            .any(|directory| !directory.available)
+        {
+            "A directory is unavailable. Open Setup to review your directories."
+        } else if self.location_host {
+            if self.host_pending_approval {
+                "Host execution requires approval. Host tools have unrestricted access."
+            } else {
+                "Host tools have unrestricted access. File changes take effect immediately."
+            }
+        } else if self
+            .directories
+            .iter()
+            .any(|directory| directory.pending_approval)
+        {
+            "Directory access requires approval. Open Setup to review the requested access."
+        } else if self
+            .directories
+            .iter()
+            .any(|directory| directory.direct_write)
+        {
+            "Direct write changes files immediately. Discard cannot undo those changes."
+        } else if self
+            .directories
+            .iter()
+            .any(|directory| directory.review_before_apply)
+        {
+            "Review before apply keeps changes isolated until you choose to apply them."
+        } else {
+            "Your directories are read-only. The agent can inspect files without changes."
+        }
+    }
+
+    fn host_start_directory(&self) -> String {
+        self.directories.first().map_or_else(
+            || {
+                crate::execution::command_directory(&[])
+                    .display()
+                    .to_string()
+            },
+            |directory| directory.host_path.clone(),
+        )
     }
 
     fn fresh_draft_href(&self) -> String {
@@ -1090,7 +1149,6 @@ impl ConversationDetailView {
         let _ = agents;
         let effective_network = &record.network;
         let network_summary = network_summary_from_form(effective_network.as_str());
-        let network_detail = String::new();
         let model_picker = ModelPicker::new(
             sources.vault,
             sources.preferences,
@@ -1289,6 +1347,11 @@ impl ConversationDetailView {
                 .map(|configuration| crate::presets::suggested_name(&configuration.settings))
                 .unwrap_or_else(|| "Untitled preset".to_owned()),
             preset_preview: None,
+            preset_setup: setup_rows(
+                configuration.map(|model| &model.settings),
+                sources.environments,
+            ),
+            preset_save_open: false,
             directories: configuration
                 .map(|configuration| directory_views(&configuration.settings.directories))
                 .unwrap_or_default(),
@@ -1311,6 +1374,8 @@ impl ConversationDetailView {
             instructions: configuration
                 .map(|configuration| configuration.settings.instructions.clone())
                 .unwrap_or_default(),
+            instruction_sources: None,
+            instruction_sources_error: false,
             tool_options: tool_options(
                 &configuration
                     .map(|configuration| {
@@ -1334,10 +1399,12 @@ impl ConversationDetailView {
             network_restricted: effective_network.as_str() == "restricted",
             network_domains: network_domains.clone(),
             network_summary,
-            network_detail,
             location_host,
             host_summary: host_access_summary(location_host, host_approval_automatic),
-            host_identity: host_identity.authority_summary(),
+            host_user: format!(
+                "{} (uid {}, effective uid {})",
+                host_identity.username, host_identity.uid, host_identity.euid
+            ),
             host_elevated: host_identity.elevated(),
             host_approval_automatic,
             host_pending_approval: false,
@@ -1401,9 +1468,33 @@ impl ConversationDetailView {
         }
     }
 
-    pub(super) fn with_preset_preview(mut self, preview: PresetPreviewView) -> Self {
-        self.preset_preview = Some(preview);
-        self.settings_open = true;
+    pub(super) fn with_instruction_sources(
+        mut self,
+        state: &crate::state::AppState,
+        record: &ConversationRecord,
+    ) -> Self {
+        match state.conversations.latest_reply_request(&record.id) {
+            Ok(request) => {
+                self.instruction_sources = request.map(|request| {
+                    let paths: Vec<_> = request
+                        .sources
+                        .iter()
+                        .filter(|source| source.kind == crate::execution::ResourceKind::Instruction)
+                        .map(|source| source.path.clone())
+                        .collect();
+                    InstructionSourcesView {
+                        truncated: paths.len() > 8,
+                        paths: paths.into_iter().take(8).collect(),
+                        href: format!(
+                            "/conversations/{}/context/{}",
+                            record.id,
+                            request.id.as_hex()
+                        ),
+                    }
+                });
+            }
+            Err(_) => self.instruction_sources_error = true,
+        }
         self
     }
 
@@ -1650,19 +1741,14 @@ impl ConversationDetailView {
             requested_host_approval: host_approval.as_str().to_owned(),
             requested_environment: environment.as_hex(),
             directory_access: directory_access.to_owned(),
-            current_backend: backend_label(current.location),
-            requested_backend: backend_label(location),
-            current_approval: crate::slices::execution_settings::page::host_approval_label(
-                current.host_approval,
+            requested_network: replacement.network.as_str().to_owned(),
+            requested_network_domains: replacement.network.domains().join("\n"),
+            rows: execution_change_rows(
+                current,
+                replacement,
+                current_environment,
+                requested_environment_name,
             ),
-            requested_approval: crate::slices::execution_settings::page::host_approval_label(
-                host_approval,
-            ),
-            current_environment,
-            requested_environment_name,
-            environment_changes: current.environment != environment,
-            backend_changes: current.location != location,
-            approval_changes: current.host_approval != host_approval,
             access_lines: execution_access_lines(state, current, replacement, location),
             host_effects_remain: current.location == crate::execution::ToolLocation::Host
                 || current
@@ -1742,6 +1828,63 @@ fn backend_label(location: crate::execution::ToolLocation) -> &'static str {
         crate::execution::ToolLocation::Sandbox => "Sandbox",
         crate::execution::ToolLocation::Host => "This computer",
     }
+}
+
+fn execution_change_rows(
+    current: &crate::execution::ExecutionSettings,
+    replacement: &crate::execution::ExecutionSettings,
+    current_environment: String,
+    requested_environment: String,
+) -> Vec<ExecutionChangeRow> {
+    let mut rows = Vec::new();
+    let mut row = |label: String, current: String, requested: String| {
+        rows.push(ExecutionChangeRow {
+            label,
+            changed: current != requested,
+            current,
+            requested,
+        });
+    };
+    row(
+        "Location".into(),
+        backend_label(current.location).into(),
+        backend_label(replacement.location).into(),
+    );
+    row(
+        "Environment".into(),
+        current_environment,
+        requested_environment,
+    );
+    for (before, after) in current.directories.iter().zip(&replacement.directories) {
+        let access = crate::slices::execution_settings::page::directory_access_label;
+        row(
+            format!("{} · sandbox access", before.alias),
+            access(before.access).into(),
+            access(after.access).into(),
+        );
+    }
+    let network = |settings: &crate::execution::ExecutionSettings| {
+        let label = network_summary_from_form(settings.network.as_str());
+        if settings.network.domains().is_empty() {
+            label
+        } else {
+            format!("{label}: {}", settings.network.domains().join(", "))
+        }
+    };
+    row(
+        "Sandbox network".into(),
+        network(current),
+        network(replacement),
+    );
+    if current.host_tools() || replacement.host_tools() {
+        let approval = crate::slices::execution_settings::page::host_approval_label;
+        row(
+            "Host commands".into(),
+            approval(current.host_approval).into(),
+            approval(replacement.host_approval).into(),
+        );
+    }
+    rows
 }
 
 fn execution_access_lines(

@@ -28,6 +28,7 @@ pub(super) struct DirectoryForm {
     pending_directory: String,
     existing: String,
     access: String,
+    start_directory: String,
 }
 
 struct PendingDirectory {
@@ -961,6 +962,167 @@ pub(super) async fn remove_saved(
             error.message(),
         ),
     }
+}
+
+pub(super) async fn start_new(
+    State(state): State<AppState>,
+    session: RequiredSession,
+    _graft: PatchGraft,
+    Form(mut form): Form<super::new::NewForm>,
+) -> AppResult<Response> {
+    let Ok(_permit) = state.local_data.begin_host_path_mutation().await else {
+        return render_new(
+            &state,
+            session.0,
+            form,
+            PatchStatus::Conflict,
+            HOST_PATH_RESET_PENDING,
+        );
+    };
+    let mut directories = match form.directories() {
+        Ok(directories) => directories,
+        Err(error) => {
+            return render_new(
+                &state,
+                session.0,
+                form,
+                PatchStatus::UnprocessableEntity,
+                error,
+            );
+        }
+    };
+    match select_start_directory(&mut directories, &form.start_directory) {
+        Ok(true) => {
+            form.set_directories(&directories);
+            form.consent_reference.clear();
+            form.consent_request.clear();
+            form.pending_directory.clear();
+            form.consent_existing.clear();
+            form.host_consent_request.clear();
+        }
+        Ok(false) => {}
+        Err(error) => {
+            return render_new(
+                &state,
+                session.0,
+                form,
+                directory_status(error),
+                error.message(),
+            );
+        }
+    }
+    render_new(&state, session.0, form, PatchStatus::Ok, "")
+}
+
+pub(super) async fn start_saved(
+    State(state): State<AppState>,
+    session: RequiredSession,
+    graft: PatchGraft,
+    Path(conversation_id): Path<String>,
+    Form(form): Form<DirectoryForm>,
+) -> AppResult<Response> {
+    let Some(record) = load_conversation(&state, &conversation_id) else {
+        return Ok(responses::command_navigation("/conversations"));
+    };
+    let Some(revision) = parse_revision(&form.revision) else {
+        return render_saved(
+            &state,
+            session.0,
+            graft,
+            &record,
+            PatchStatus::UnprocessableEntity,
+            REVISION_MESSAGE,
+        );
+    };
+    if revision != record.revision || record.active_job.is_some() {
+        let error = if revision != record.revision {
+            ConversationError::Conflict
+        } else {
+            ConversationError::Active
+        };
+        return render_saved(
+            &state,
+            session.0,
+            graft,
+            &record,
+            status_for(error),
+            error.message(),
+        );
+    }
+    let Some(model) = &record.model else {
+        return render_saved(
+            &state,
+            session.0,
+            graft,
+            &record,
+            PatchStatus::UnprocessableEntity,
+            DirectoryGrantError::Invalid.message(),
+        );
+    };
+    let Ok(_permit) = state.local_data.begin_host_path_mutation().await else {
+        return render_saved(
+            &state,
+            session.0,
+            graft,
+            &record,
+            PatchStatus::Conflict,
+            HOST_PATH_RESET_PENDING,
+        );
+    };
+    let mut settings = model.settings.clone();
+    match select_start_directory(&mut settings.directories, &form.start_directory) {
+        Ok(true) => {}
+        Ok(false) => return render_saved(&state, session.0, graft, &record, PatchStatus::Ok, ""),
+        Err(error) => {
+            return render_saved(
+                &state,
+                session.0,
+                graft,
+                &record,
+                directory_status(error),
+                error.message(),
+            );
+        }
+    }
+    match state
+        .conversations
+        .update_execution_settings(&record.id, revision, settings)
+    {
+        Ok(updated) => {
+            state.access_consent.invalidate_conversation(record.id);
+            state.host_approvals.invalidate_conversation(record.id);
+            state
+                .conversations
+                .invalidate_questions_for_conversation(record.id);
+            render_saved(&state, session.0, graft, &updated, PatchStatus::Ok, "")
+        }
+        Err(error @ (ConversationError::Persist | ConversationError::Corrupt)) => {
+            Err(AppError::new("store command start directory", error))
+        }
+        Err(error) => render_saved(
+            &state,
+            session.0,
+            graft,
+            &record,
+            status_for(error),
+            error.message(),
+        ),
+    }
+}
+
+fn select_start_directory(
+    directories: &mut [DirectoryGrant],
+    selected: &str,
+) -> Result<bool, DirectoryGrantError> {
+    let id = DirectoryGrantId::parse(selected).ok_or(DirectoryGrantError::Invalid)?;
+    let index = directories
+        .iter()
+        .position(|grant| grant.id == id)
+        .ok_or(DirectoryGrantError::Invalid)?;
+    directories[index].revalidate()?;
+    // The first grant selects the command location. Keep every grant and its authority unchanged.
+    directories[..=index].rotate_right(1);
+    Ok(index != 0)
 }
 
 fn needs_consent(state: &AppState, grant: &DirectoryGrant) -> bool {

@@ -10,9 +10,9 @@
   >
     <svg class="workspace-icon" aria-hidden="true">
       {% if directories.is_empty() %}
-        <use href="/static/images/workspace-icons.svg#folder" />
+        <use href="/static/images/workspace-icons.svg#no-access" />
       {% else %}
-        <use href="/static/images/workspace-icons.svg#shield" />
+        <use href="/static/images/workspace-icons.svg#folder" />
       {% endif %}
     </svg>
     {% if directories.is_empty() %}
@@ -24,7 +24,8 @@
     {% else %}
       <span class="flex flex-wrap gap-x-2"
         >{% for directory in directories %}
-          <span class="break-all"
+          <span
+            class="directory-access-label {% if directory.available && !directory.pending_approval && !location_host %}directory-access-approved{% endif %} break-all"
             >{{ directory.name }} ·
             {% if location_host %}Work location{% else %}{{ directory.access_label }}{% endif %}{% if !directory.available %}
               · Unavailable
@@ -36,20 +37,25 @@
       >
     {% endif %}
   </button>
-  {% if directories.is_empty() %}
+  <div class="border-base-300 border-l pl-3">
     <button
       type="submit"
-      class="btn btn-ghost btn-sm"
+      class="btn btn-ghost btn-sm workspace-add-directory"
       form="{% if self.is_new() %}conversation-composer{% else %}conversation-directory-picker{% endif %}"
       {% if self.is_new() %}formaction="/conversations/new/directories/pick"{% endif %}
       formmethod="post"
-      {% if job_active %}disabled{% endif %}
+      {% if job_active || directories.len() >= 8 %}disabled{% endif %}
     >
+      <svg class="workspace-icon" aria-hidden="true">
+        <use href="/static/images/workspace-icons.svg#plus" />
+      </svg>
       Add a directory
     </button>
-  {% else if location_host %}
-    <span class="text-quiet ml-auto">{{ host_summary }}</span>
-  {% else %}
-    <span class="text-quiet ml-auto">Sandbox</span>
-  {% endif %}
+  </div>
+  <span class="ml-auto flex items-center gap-2">
+    <svg class="workspace-icon" aria-hidden="true">
+      <use href="/static/images/workspace-icons.svg#cube" />
+    </svg>
+    {% if location_host %}{{ host_summary }}{% else %}Sandbox{% endif %}
+  </span>
 </div>

@@ -1,0 +1,212 @@
+<li class="directory-card min-w-0 p-4">
+  <div class="flex items-start gap-3">
+    <svg class="workspace-icon mt-0.5 shrink-0" aria-hidden="true">
+      <use href="/static/images/workspace-icons.svg#folder" />
+    </svg>
+    <div class="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
+      <h4 class="text-base font-semibold break-words">{{ directory.name }}</h4>
+      <span class="directory-availability flex items-center gap-2 text-sm">
+        {% if !directory.available %}
+          <span class="status status-error" aria-hidden="true"></span
+          >Unavailable
+        {% else %}
+          <span class="status status-success" aria-hidden="true"></span
+          >Available
+        {% endif %}
+      </span>
+    </div>
+  </div>
+  <dl class="mt-4 space-y-2 text-sm">
+    <div class="grid grid-cols-[5rem_minmax(0,1fr)] gap-3">
+      <dt class="text-quiet">Host path</dt>
+      <dd class="font-mono text-xs break-all">{{ directory.host_path }}</dd>
+    </div>
+    {% if !location_host %}
+      <div class="grid grid-cols-[5rem_minmax(0,1fr)] gap-3">
+        <dt class="text-quiet">Guest path</dt>
+        <dd class="font-mono text-xs break-all">{{ directory.guest_path }}</dd>
+      </div>
+    {% endif %}
+  </dl>
+  {% if (!location_host || !self.is_new()) && !directory.transient %}
+    <fieldset
+      class="directory-access-options border-base-300 mt-5 space-y-1 border-t pt-3 text-base"
+      {% if !self.is_new() %}data-execution-sandbox-settings{% endif %}
+      {% if location_host %}hidden{% endif %}
+    >
+      <legend class="sr-only">
+        {% if !self.is_new() %}Requested{% endif %}Access for
+        {{ directory.name }}
+      </legend>
+      <label class="flex cursor-pointer items-start gap-3 py-2">
+        <input
+          type="radio"
+          class="radio radio-primary mt-0.5 shrink-0"
+          name="directory-access-{{ directory.id }}"
+          value="read-only"
+          {% if self.is_new() %}data-draft-directory-access="directory-access-{{ directory.id }}"{% else %}data-execution-directory="{{ directory.id }}"{% endif %}
+          {% if !directory.review_before_apply && !directory.direct_write %}checked{% endif %}
+        />
+        <span
+          >Read only<small class="text-quiet mt-0.5 block text-sm"
+            >Inspect files without changes.</small
+          ></span
+        >
+      </label>
+      <label class="flex cursor-pointer items-start gap-3 py-2">
+        <input
+          type="radio"
+          class="radio radio-primary mt-0.5 shrink-0"
+          name="directory-access-{{ directory.id }}"
+          value="review-before-apply"
+          {% if self.is_new() %}data-draft-directory-access="directory-access-{{ directory.id }}"{% else %}data-execution-directory="{{ directory.id }}"{% endif %}
+          {% if directory.review_before_apply %}checked{% endif %}
+        />
+        <span
+          >Review before apply<small class="text-quiet mt-0.5 block text-sm"
+            >Work in an isolated copy. Apply changes after review.</small
+          ></span
+        >
+      </label>
+      <label class="flex cursor-pointer items-start gap-3 py-2">
+        <input
+          type="radio"
+          class="radio radio-primary mt-0.5 shrink-0"
+          name="directory-access-{{ directory.id }}"
+          value="direct-write"
+          {% if self.is_new() %}data-draft-directory-access="directory-access-{{ directory.id }}"{% else %}data-execution-directory="{{ directory.id }}"{% endif %}
+          {% if directory.direct_write %}checked{% endif %}
+        />
+        <span
+          >Direct write<small class="text-quiet mt-0.5 block text-sm"
+            >Changes affect your files immediately.</small
+          ></span
+        >
+      </label>
+    </fieldset>
+  {% endif %}
+  {% if !location_host && directory.direct_write %}
+    <p class="directory-card-warning">
+      Writes reach this directory immediately. Discard cannot undo them.
+    </p>
+  {% endif %}
+  {% if !location_host && directory.review_before_apply && !directory.exclusions.is_empty() %}
+    <div class="mt-3 text-sm">
+      <p class="font-medium">Excluded engine paths</p>
+      <ul class="text-quiet mt-1 space-y-1">
+        {% for exclusion in directory.exclusions %}
+          <li class="font-mono text-xs break-all">{{ exclusion }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+  <div class="border-base-300 mt-4 border-t pt-4 text-sm">
+    <p class="font-semibold">
+      {% if directory.pending_approval && !location_host %}
+        Requested access
+      {% else %}
+        Current access
+      {% endif %}
+    </p>
+    <p class="mt-1">
+      {% if location_host %}{{ host_summary }}{% else %}{{ directory.access_label }}{% endif %}
+    </p>
+    <p class="text-quiet mt-1">
+      {% if !directory.available %}
+        This directory is unavailable.
+      {% else if location_host %}
+        {% if host_pending_approval %}
+          Host execution requires approval.
+        {% else %}
+          Host tools have unrestricted access.
+        {% endif %}
+      {% else if directory.pending_approval %}
+        Approval is required before tools can use this access.
+      {% else if directory.sensitive || directory.direct_write %}
+        Access approved.
+      {% else if directory.review_before_apply %}
+        Changes stay isolated until application approval.
+      {% else %}
+        Files remain read-only.
+      {% endif %}
+    </p>
+    {% if !self.is_new() && !location_host && !directory.transient %}
+      <p class="text-quiet mt-2">
+        Review changes previews the requested access mode.
+      </p>
+    {% endif %}
+    <div class="mt-3 flex flex-wrap items-center gap-2">
+      {% if self.is_new() %}
+        <button
+          id="directory-access-{{ directory.id }}"
+          form="conversation-composer"
+          formaction="/conversations/new/directories/{{ directory.id }}/access"
+          formmethod="post"
+          name="action"
+          value="read-only"
+          type="submit"
+          hidden
+        >
+          Change access
+        </button>
+        {% if !location_host && directory.pending_approval && consent_request == "" %}
+          <button
+            form="conversation-composer"
+            formaction="/conversations/new/directories/{{ directory.id }}/consent"
+            formmethod="post"
+            class="btn btn-warning btn-sm min-h-11"
+            type="submit"
+          >
+            Review access
+          </button>
+        {% endif %}
+        <button
+          form="conversation-composer"
+          formaction="/conversations/new/directories/{{ directory.id }}/remove"
+          formmethod="post"
+          class="btn btn-ghost btn-sm directory-remove"
+          type="submit"
+          aria-label="Remove {{ directory.name }}"
+        >
+          Remove directory
+        </button>
+      {% else if let Some(saved) = self.saved() %}
+        {% if directory.transient %}
+          <a
+            data-graft
+            href="/conversations/{{ saved.id }}"
+            class="btn btn-ghost btn-sm min-h-11"
+            >Cancel</a
+          >
+        {% else %}
+          <form
+            data-graft
+            method="post"
+            action="/conversations/{{ saved.id }}/directories/{{ directory.id }}/remove"
+            class="flex flex-wrap items-center gap-2"
+          >
+            <input type="hidden" name="revision" value="{{ saved.revision }}" />
+            {% if !location_host && directory.pending_approval && consent_request == "" %}
+              <button
+                class="btn btn-warning btn-sm min-h-11"
+                type="submit"
+                formaction="/conversations/{{ saved.id }}/directories/{{ directory.id }}/consent"
+                {% if job_active %}disabled{% endif %}
+              >
+                Review access
+              </button>
+            {% endif %}
+            <button
+              class="btn btn-ghost btn-sm directory-remove"
+              type="submit"
+              aria-label="Remove {{ directory.name }}"
+              {% if job_active %}disabled{% endif %}
+            >
+              Remove directory
+            </button>
+          </form>
+        {% endif %}
+      {% endif %}
+    </div>
+  </div>
+</li>

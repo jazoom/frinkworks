@@ -68,6 +68,8 @@ pub(super) struct EnvironmentSwitchDecisionForm {
     pub(super) location: Option<crate::execution::ToolLocation>,
     pub(super) host_approval: Option<crate::execution::HostApprovalPolicy>,
     pub(super) directory_access: String,
+    pub(super) network: String,
+    pub(super) network_domains: String,
     pub(super) conversation_surface: bool,
 }
 
@@ -80,6 +82,8 @@ impl EnvironmentSwitchDecisionForm {
         let mut location = None;
         let mut host_approval = None;
         let mut directory_access = String::new();
+        let mut network = String::new();
+        let mut network_domains = String::new();
         let mut conversation_surface = false;
         let mut seen = Vec::new();
         for (key, value) in pairs {
@@ -93,6 +97,8 @@ impl EnvironmentSwitchDecisionForm {
                 "conversation-revision" => conversation_revision = value.parse().ok(),
                 "environment" => environment = crate::environments::EnvironmentId::parse(&value),
                 "directory_access" if value.len() <= 4096 => directory_access = value,
+                "network" => network = value,
+                "network_domains" => network_domains = value,
                 "location" if !value.is_empty() => {
                     location = Some(
                         crate::execution::ToolLocation::parse(&value).ok_or(FormError::Invalid)?,
@@ -116,6 +122,8 @@ impl EnvironmentSwitchDecisionForm {
             location,
             host_approval,
             directory_access,
+            network,
+            network_domains,
             conversation_surface,
         })
     }

@@ -318,6 +318,21 @@ async fn discard_and_switch(
             "conversation-settings",
         );
     }
+    let network = match crate::slices::conversations::settings::replacement_network(
+        &current_settings.settings.network,
+        &form.network,
+        &form.network_domains,
+    ) {
+        Ok(network) => network,
+        Err(error) => {
+            return command_error_target(
+                graft,
+                PatchStatus::UnprocessableEntity,
+                error,
+                "conversation-settings",
+            );
+        }
+    };
     let location = form.location.unwrap_or(current_settings.settings.location);
     let host_approval = form
         .host_approval
@@ -437,6 +452,7 @@ async fn discard_and_switch(
         .with_location(location)
         .with_host_approval(host_approval);
     settings.environment = form.environment;
+    settings.network = network;
     if state
         .conversations
         .update_execution_settings(&conversation_id, settled.revision, settings)

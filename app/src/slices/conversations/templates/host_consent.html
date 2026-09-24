@@ -1,0 +1,151 @@
+<dialog
+  id="conversation-host-consent"
+  class="modal execution-consent"
+  aria-labelledby="host-consent-heading"
+  aria-describedby="host-consent-warning"
+  data-host-consent
+>
+  <div class="modal-box space-y-5">
+    <header class="flex items-start justify-between gap-3">
+      <div>
+        <h2
+          id="host-consent-heading"
+          class="text-2xl font-semibold"
+          tabindex="-1"
+          autofocus
+        >
+          Allow execution on this computer?
+        </h2>
+        <p class="text-quiet mt-1">This consent covers file tools and Run.</p>
+      </div>
+      <button
+        type="button"
+        data-host-consent-close
+        class="btn btn-ghost btn-square shrink-0"
+        aria-label="Close host consent"
+      >
+        <svg class="workspace-icon" aria-hidden="true">
+          <use href="/static/images/workspace-icons.svg#close" />
+        </svg>
+      </button>
+    </header>
+    <dl
+      class="execution-facts grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-3 rounded-[7px] border p-3 text-sm"
+    >
+      <dt class="text-quiet">Process user</dt>
+      <dd>{{ host_user }}</dd>
+      <dt class="text-quiet">Privileges</dt>
+      <dd>
+        {% if host_elevated %}Elevated process privileges{% else %}Standard user{% endif %}.
+        Power Plant adds no privileges.
+      </dd>
+      <dt class="text-quiet">Start directory</dt>
+      <dd><code class="break-all">{{ self.host_start_directory() }}</code></dd>
+    </dl>
+    <div
+      id="host-consent-warning"
+      class="execution-warning rounded-[7px] border p-4"
+    >
+      <p class="font-semibold">Tools have this user's host permissions.</p>
+      <ul class="mt-2 list-disc space-y-1 pl-5 text-sm">
+        <li>Tools can access files outside the start directory.</li>
+        <li>File changes take effect immediately.</li>
+        <li>Sandbox network settings do not restrict host tools.</li>
+      </ul>
+      {% if host_elevated %}
+        <p class="mt-2 text-sm">
+          This process already has elevated privileges. Host tools inherit that
+          authority.
+        </p>
+      {% endif %}
+    </div>
+    <section class="space-y-2" aria-labelledby="host-consent-policy">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <h3 id="host-consent-policy" class="font-semibold">Shell commands</h3>
+        <button
+          type="button"
+          data-host-consent-close="policy"
+          class="btn btn-ghost btn-sm"
+        >
+          Change policy
+        </button>
+      </div>
+      <p class="font-semibold">
+        {% if host_approval_automatic %}
+          Run without approval
+        {% else %}
+          Ask each time
+        {% endif %}
+      </p>
+      <p class="text-quiet text-sm">
+        {% if host_approval_automatic %}
+          The model can run commands without an individual decision from you.
+        {% else %}
+          Each Run command requires separate approval. File tools do not require
+          that command approval.
+        {% endif %}
+      </p>
+      <p class="text-quiet text-sm">
+        Power Plant does not inspect script internals. The hosted model receives
+        tool output.
+      </p>
+    </section>
+    <footer class="border-base-300 space-y-3 border-t pt-4">
+      <p class="text-sm">
+        Allow these exact execution settings for this conversation in this
+        session.
+      </p>
+      {% if let Some(saved) = self.saved() %}
+        <form
+          id="conversation-host-consent-form"
+          data-graft
+          method="post"
+          action="/conversations/{{ saved.id }}/settings/host-consent/approve"
+        >
+          <input type="hidden" name="revision" value="{{ saved.revision }}" />
+          <input
+            type="hidden"
+            name="consent_request"
+            value="{{ host_consent_request }}"
+          />
+          <div class="grid grid-cols-2 gap-3 max-[380px]:grid-cols-1">
+            <button
+              type="button"
+              data-host-consent-close
+              class="btn btn-secondary"
+            >
+              Cancel
+            </button>
+            <button type="submit" class="btn btn-primary">
+              Allow this computer
+            </button>
+          </div>
+        </form>
+      {% else %}
+        <div class="grid grid-cols-2 gap-3 max-[380px]:grid-cols-1">
+          <button
+            type="button"
+            data-host-consent-close
+            class="btn btn-secondary"
+          >
+            Cancel
+          </button>
+          <button
+            form="conversation-composer"
+            id="conversation-host-consent-approve"
+            formaction="/conversations/new/settings/host-consent/approve"
+            formmethod="post"
+            type="submit"
+            class="btn btn-primary"
+          >
+            Allow this computer
+          </button>
+        </div>
+      {% endif %}
+      <p class="text-quiet text-sm">
+        Cancel grants no consent and does not change settings. A later execution
+        change does not reverse earlier file changes.
+      </p>
+    </footer>
+  </div>
+</dialog>
