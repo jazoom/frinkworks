@@ -60,7 +60,7 @@ Additional access requires explicit run-only approval. Workflow preferences neve
 
 Workflow outputs can include ordinary text and structured assessment reports. These outputs belong to the execution, not a conversation document catalogue.
 
-A human decision can return to a declared revision step. The next attempt retains the exact candidate, original baseline and candidate-bound feedback.
+A plan decision can return to a declared revision step. The next attempt retains the exact plan and its decision feedback.
 
 Required assessment and approval steps repeat after a revision. Their attempt bounds remain explicit.
 
@@ -74,64 +74,47 @@ The authority boundaries are:
 
 - Directory access approval.
 - Runtime consent for the selected execution location.
-- Approval for an individual host command.
-- Assessment of proposed code.
-- Approval to apply exact prepared file changes.
+- Approval for an individual shell command.
+- Plan review.
 
-Conversation directories support Read only, Review before apply and Direct write.
+Conversation directories have exactly two modes: **Read** and **Write**. Read is the default.
 
-Review before apply keeps proposals isolated until approval. Direct write changes the named directory immediately.
+Read permits shell commands in Microsandbox with read-only mounts. Write mounts the original directories read-write. Changes take effect immediately.
 
-Diffs are the primary code result. The interface must distinguish isolated proposals from files that the agent already changed.
+Authorised tools can access ignored files. Frinkworks applies no implicit file exclusions and performs no full-tree hashing, copying or capture.
 
-File application does not implicitly create a Git commit. Explicit Git operations remain separate from file application.
+The application provides no directory snapshots, file candidates, file-application review, rollback or automatic commits. Plan acceptance approves a plan, not file changes.
 
-Candidate approval binds the exact candidate and original baseline. A newer host state cannot silently replace that baseline.
+Microsandbox environment-image snapshots remain. They contain the prepared environment, not copies of authorised directories. Private scratch space remains writable in Read mode.
 
-File selection changes the preview, not the approval scope. Approval consequences follow the pinned next command rather than the candidate format.
+Host execution requires explicit consent. Host tools run as the Frinkworks process user without path confinement. Host execution cannot enforce Read and rejects Read grants.
 
-Application transactions retain recovery journals and preimages. Uncertain file outcomes or incomplete cleanup block further work.
+A direct `!command` or `!!command` runs in the selected location without a provider connection. Sandbox commands require a ready environment.
 
-Recovery views distinguish recorded directory results, repository results and managed cleanup. These records describe past attempts, not the current files.
+**Ask each time** is the default command policy in both locations. **Automatic (YOLO)** omits individual command decisions but never increases directory permissions.
 
-A stopped application does not imply that any directory changed. Evidence links start no write or retry.
+Setup and presets expose both command policies. An explicit action saves requested settings as future defaults. Saved defaults contain no runtime consent.
 
-Existing settlement keeps known file outcomes and ends the task through cancellation. The interface adds no retry, rollback or recovery authority.
+Command approval covers the submitted command, not script internals. Direct commands, model Run calls and repository-status workflow commands use the same approval gate.
 
-Cancellation and discarded proposals do not undo direct writes or other host effects.
+Evidence records requests, arguments, timestamps and results. Output is bounded and redacted. Evidence is not a filesystem audit or permission to replay a command.
 
-Sandbox tools use authorised mounts. Host tools run as the Frinkworks process user, without additional privileges or path confinement.
+Cancellation stops execution without reversal of file changes. Incomplete sandbox cleanup retains its reservation until recovery establishes that the runtime is absent.
 
-Both modes offer the selected file and command tools. Host file changes take effect immediately. Host command approval applies only to Run.
-
-A direct `!command` or `!!command` runs in the selected location. It needs no provider connection. A host command writes directly and keeps baseline and final snapshots as evidence. A sandbox command uses a ready environment. A **Review before apply** directory opens the exact-candidate decision before any host write. A **Direct write** directory exposes the authorised host directory to guest writes immediately. A failed preparation starts nothing on the host. Cancellation never reverses a direct write.
-
-Ask each time is the default host command policy. Run without approval requires fresh consent for the destination settings.
-
-Command approval covers the submitted command. Frinkworks does not inspect script internals. The hosted model receives command output.
-
-The catalogue supplies no file authority. Conversations point at directories only through directory grants.
-
-Explicit commit steps detect changed Git repositories within the approved candidate. Each repository retains its own result and recovery state.
-
-Directory order selects the command location, not a commit target. Detection grants no permission to commit.
+The catalogue supplies no file authority. Directory order selects the initial command location. Explicit version-control commands follow ordinary command approval and directory permissions.
 
 ## Handoff
 
 Handoff generates an editable prompt and an unsent draft for a fresh conversation. The next agent does not start before the user sends it.
 
-When isolated changes exist, the target system offers two choices:
+At a safe workflow decision, handoff offers two choices:
 
-- Continue those exact prepared changes.
-- Carry context only and leave isolated changes in the source conversation.
+- Transfer workflow ownership.
+- Carry context only and leave ownership with the source conversation.
 
-Neither choice applies or discards changes. Neither choice undoes direct writes.
+Neither choice changes files. One conversation owns a workflow at a time.
 
-Transfer must preserve the original baseline, provenance and remaining workflow steps. One owner controls the prepared changes at a time.
-
-Draft settings convey no consent. Stale or concurrent changes must prevent an unsafe transfer.
-
-Handoff supports both choices at a safe decision. Transfer preserves the existing run, its original baseline and its remaining progression.
+Transfer preserves the pinned workflow, provenance and remaining steps. Draft settings convey no consent. Stale or concurrent changes prevent an unsafe transfer.
 
 Restart preserves safe gates. The destination requires fresh run-only consent before it restores a pending decision.
 
@@ -221,7 +204,7 @@ Each conversation can run one unfinished operation. Conversations do not share t
 
 Conversations can execute at the same time. A local data reset requires that no execution is active. Safe gates keep their conversation reservation. They do not block other conversations.
 
-File application serialises baseline validation and writes. This protects approved changes from another application with the same baseline. Model work remains concurrent.
+Live mounts expose concurrent host changes directly. Frinkworks does not provide filesystem transactions or restore an earlier file state.
 
 The implementation status and evidence boundary are in `docs/conversation-system.md`. Hosted-model execution remains outside the current validation evidence.
 

@@ -237,7 +237,7 @@
           <legend class="text-sm font-medium">Where tools run</legend>
           <p class="text-quiet text-xs">
             This computer stores the preference only. It does not authorise host
-            commands or Run without approval.
+            commands or bypass directory permissions.
           </p>
           <label class="flex items-center gap-2 text-sm"
             ><input
@@ -258,15 +258,7 @@
             />This computer</label
           >
         </fieldset>
-        {% if form.location == "host" %}
-          {% include "execution_settings/templates/host_approval.html" %}
-        {% else %}
-          <input
-            type="hidden"
-            name="host_approval"
-            value="{% if host_approval_automatic %}automatic{% else %}ask-each-time{% endif %}"
-          />
-        {% endif %}
+        {% include "execution_settings/templates/host_approval.html" %}
         <label class="flex flex-col gap-1"
           >Environment<select
             class="select select-bordered w-full"
@@ -331,23 +323,16 @@
             <p class="text-quiet text-sm break-all">{{ directory }}</p>
           {% endfor %}
           <label class="flex flex-col gap-1"
-            >Read only<textarea
+            >Read<textarea
               class="textarea textarea-bordered w-full"
               name="read_only"
               maxlength="32768"
             >
 {{ form.read_only }}</textarea>
           </label>
+
           <label class="flex flex-col gap-1"
-            >Review before apply<textarea
-              class="textarea textarea-bordered w-full"
-              name="reviewed"
-              maxlength="32768"
-            >
-{{ form.reviewed }}</textarea>
-          </label>
-          <label class="flex flex-col gap-1"
-            >Direct write<textarea
+            >Write<textarea
               class="textarea textarea-bordered w-full"
               name="direct_write"
               maxlength="32768"
@@ -355,8 +340,8 @@
 {{ form.direct_write }}</textarea>
           </label>
           <p class="text-quiet text-sm">
-            Direct write requests immediate host changes. Each conversation
-            needs separate consent.
+            Write requests immediate changes to the original files. Each
+            conversation needs separate consent.
           </p>
         </fieldset>
         <div class="flex flex-wrap gap-3">

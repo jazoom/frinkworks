@@ -275,68 +275,6 @@ test("revision Cancel closes the inline form and returns focus to Request change
     controller.abort();
 });
 
-test("diff colours preserve untrusted text without HTML interpretation", () => {
-    vi.stubGlobal("matchMedia", () => ({
-        matches: false,
-        addEventListener() {},
-    }));
-    const root = document.createElement("div");
-    const pre = document.createElement("pre");
-    pre.className = "workspace-diff";
-    const code = document.createElement("code");
-    const text = "-<script>alert(1)</script>\n+<img src=x onerror=alert(1)>\n";
-    code.textContent = text;
-    pre.append(code);
-    root.append(pre);
-    document.body.append(root);
-    const controller = new AbortController();
-    const island = initWorkspace(root, {
-        signal: controller.signal,
-    } as Parameters<typeof initWorkspace>[1]);
-    const preserved = Array.from(root.querySelectorAll(".diff-text"))
-        .map((line) => line.textContent ?? "")
-        .join("");
-    expect(preserved).toBe(text);
-    expect(root.querySelector("script, img")).toBeNull();
-    island.destroy?.();
-    controller.abort();
-});
-
-test("file preview selection grants no authority and retains native modified navigation", () => {
-    const { root, island, controller } = mountSidebar(
-        false,
-        `<a href="/runs/run/gates/gate?change=0" data-review-file="0" aria-current="true">One</a><a href="/runs/run/gates/gate?change=1" data-review-file="1">Two</a><section data-review-diff="0" tabindex="-1"></section><section data-review-diff="1" tabindex="-1" hidden></section><form action="/runs/run/gates/gate/approve"><input name="candidate" value="exact-candidate"><input name="gate-revision" value="7"></form>`,
-    );
-    const link = root.querySelector<HTMLAnchorElement>(
-        '[data-review-file="1"]',
-    )!;
-    const preview = root.querySelector<HTMLElement>('[data-review-diff="1"]')!;
-    const scroll = vi.spyOn(preview, "scrollIntoView");
-    const submit = vi.fn();
-    root.addEventListener("submit", submit);
-    const event = new MouseEvent("click", { bubbles: true, cancelable: true });
-    link.dispatchEvent(event);
-    expect(event.defaultPrevented).toBe(true);
-    expect(preview.hidden).toBe(false);
-    expect(document.activeElement).toBe(preview);
-    expect(scroll).toHaveBeenCalledWith({ block: "nearest" });
-    expect(link.getAttribute("aria-current")).toBe("true");
-    expect(submit).not.toHaveBeenCalled();
-    expect([...new FormData(root.querySelector("form")!)]).toEqual([
-        ["candidate", "exact-candidate"],
-        ["gate-revision", "7"],
-    ]);
-    const modified = new MouseEvent("click", {
-        bubbles: true,
-        cancelable: true,
-        ctrlKey: true,
-    });
-    link.dispatchEvent(modified);
-    expect(modified.defaultPrevented).toBe(false);
-    island.destroy?.();
-    controller.abort();
-});
-
 test.each([
     "/runs/run/gates/gate/cancel",
     "/conversations/one/runs/run/settle-partial",

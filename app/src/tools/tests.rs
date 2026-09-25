@@ -319,6 +319,8 @@ struct HostFixture {
 impl HostFixture {
     fn new(directory: &std::path::Path, global: Option<&std::path::Path>) -> Self {
         let state = crate::tests::test_state(crate::config::RuntimeConfig::development());
+        let mut grant = crate::execution::DirectoryGrant::from_selected(directory, &[]).unwrap();
+        grant.access = crate::execution::DirectoryAccess::Write;
         let settings = crate::execution::ExecutionSettings::new(
             crate::providers::ModelSelection::new(
                 crate::providers::ProviderKind::Xai,
@@ -332,9 +334,7 @@ impl HostFixture {
         )
         .unwrap()
         .with_location(ToolLocation::Host)
-        .with_directories(vec![
-            crate::execution::DirectoryGrant::from_selected(directory, &[]).unwrap(),
-        ])
+        .with_directories(vec![grant])
         .unwrap();
         let session = crate::sessions::generate_session_token().unwrap().id();
         state.sessions.insert(session);

@@ -18,7 +18,7 @@ async fn future_defaults_require_an_explicit_revision_bound_command_without_acce
         .unwrap();
     let directory = tempfile::tempdir().unwrap();
     let mut grant = crate::execution::DirectoryGrant::from_selected(directory.path(), &[]).unwrap();
-    grant.access = crate::execution::DirectoryAccess::DirectWrite;
+    grant.access = crate::execution::DirectoryAccess::Write;
     let mut settings = crate::execution::ExecutionSettings::new(
         ModelSelection::new(
             ProviderKind::Xai,
@@ -658,7 +658,7 @@ async fn preset_application_uses_the_preview_snapshot_and_requires_fresh_access_
     let record = state.conversations.create("Saved".to_owned()).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let mut grant = crate::execution::DirectoryGrant::from_selected(directory.path(), &[]).unwrap();
-    grant.access = crate::execution::DirectoryAccess::DirectWrite;
+    grant.access = crate::execution::DirectoryAccess::Write;
     let settings = crate::execution::ExecutionSettings::new(
         ModelSelection::new(
             ProviderKind::Xai,
@@ -836,7 +836,7 @@ async fn host_approval_policy_needs_fresh_consent_and_does_not_settle_pending_co
     assert_eq!(response.status(), StatusCode::OK);
     let body = text(response).await;
     assert!(body.contains("Not approved"));
-    assert!(body.contains("Run without approval"));
+    assert!(body.contains("Automatic (YOLO)"));
     let updated = state.conversations.get(&record.id).unwrap();
     let stored = updated.model.as_ref().unwrap().settings.clone();
     assert_eq!(
@@ -911,7 +911,7 @@ async fn host_approval_policy_needs_fresh_consent_and_does_not_settle_pending_co
     assert_eq!(response.status(), StatusCode::OK);
     let body = text(response).await;
     assert!(body.contains("Stop task and switch"));
-    assert!(body.contains("Unrestricted host access · Run without approval"));
+    assert!(body.contains("Unrestricted host access · Automatic (YOLO)"));
     assert!(!body.contains("Unrestricted host access · Ask each time"));
     assert!(body.contains("data-execution-switch"));
     assert_eq!(
@@ -1020,7 +1020,7 @@ async fn strategy_switch_binds_existing_roots_and_waits_for_cancelled_commands()
     };
     let pending = state.host_approvals.submit(request).unwrap();
     let path = format!("/conversations/{}/settings/environment", record.id);
-    let access = serde_json::to_string(&vec![(grant.id.as_hex(), "direct-write")]).unwrap();
+    let access = serde_json::to_string(&vec![(grant.id.as_hex(), "write")]).unwrap();
     let fields = format!(
         "revision={}&environment={}&location=sandbox&directory_access={}",
         active.revision,
@@ -1119,7 +1119,7 @@ async fn strategy_switch_binds_existing_roots_and_waits_for_cancelled_commands()
     );
     assert_eq!(
         settings.directories[0].access,
-        crate::execution::DirectoryAccess::DirectWrite
+        crate::execution::DirectoryAccess::Write
     );
     assert!(text(response).await.contains("Pending approval"));
     let response = app(&state)

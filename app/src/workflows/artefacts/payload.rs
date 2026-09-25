@@ -1,10 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use super::id::{ArtefactHash, CandidateHash, ObjectHash};
+use super::id::{ArtefactHash, ObjectHash};
 use crate::workflows::definition::ArtefactKind;
 
 pub(crate) const PLAN_SCHEMA: u32 = 1;
-pub(crate) const HUMAN_DECISION_SCHEMA: u32 = 1;
 pub(crate) const PLAN_DECISION_SCHEMA: u32 = 1;
 pub(crate) const MAXIMUM_PLAN_BYTES: usize = 256 * 1024;
 const ARTEFACT_DOMAIN: &[u8] = b"frinkworks.artefact.v1";
@@ -20,7 +19,6 @@ pub(crate) struct PlanArtefact {
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub(crate) struct ReviewReportArtefact {
     pub(crate) format_version: u32,
-    pub(crate) candidate: String,
     pub(crate) verdict: ReviewVerdict,
     pub(crate) markdown: String,
 }
@@ -47,7 +45,6 @@ impl ReviewVerdict {
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub(crate) struct TestReportArtefact {
     pub(crate) format_version: u32,
-    pub(crate) candidate: String,
     pub(crate) outcome: TestOutcome,
     pub(crate) markdown: String,
 }
@@ -75,7 +72,6 @@ pub(crate) enum TypedPayload {
     Plan(PlanArtefact),
     Review(ReviewReportArtefact),
     Test(TestReportArtefact),
-    HumanDecision(crate::workflows::gates::HumanDecisionPayload),
     PlanDecision(crate::workflows::gates::PlanDecisionPayload),
 }
 
@@ -86,7 +82,6 @@ pub(crate) enum PayloadError {
     Format,
     Text,
     Bound,
-    Candidate,
     Credential,
 }
 
@@ -103,7 +98,6 @@ pub(crate) fn encode_plan(
 }
 
 pub(crate) fn encode_review(
-    candidate: CandidateHash,
     verdict: ReviewVerdict,
     markdown: &str,
     secret: Option<&str>,
@@ -111,7 +105,6 @@ pub(crate) fn encode_review(
     let markdown = normalise_text(markdown, MAXIMUM_PLAN_BYTES, secret)?;
     let payload = ReviewReportArtefact {
         format_version: PLAN_SCHEMA,
-        candidate: candidate.as_str(),
         verdict,
         markdown,
     };
@@ -119,7 +112,6 @@ pub(crate) fn encode_review(
 }
 
 pub(crate) fn encode_test(
-    candidate: CandidateHash,
     outcome: TestOutcome,
     markdown: &str,
     secret: Option<&str>,
@@ -127,7 +119,6 @@ pub(crate) fn encode_test(
     let markdown = normalise_text(markdown, MAXIMUM_PLAN_BYTES, secret)?;
     let payload = TestReportArtefact {
         format_version: PLAN_SCHEMA,
-        candidate: candidate.as_str(),
         outcome,
         markdown,
     };
@@ -167,41 +158,6 @@ pub(crate) fn encode_plan_decision(
     encode(ArtefactKind::PlanDecision, PLAN_DECISION_SCHEMA, &payload)
 }
 
-pub(crate) fn encode_human_decision(
-    candidate: CandidateHash,
-    diff_base: CandidateHash,
-    decision: crate::workflows::gates::HumanDecisionKind,
-    note: Option<&str>,
-    decided_at_ms: u64,
-    secret: Option<&str>,
-) -> Result<(Vec<u8>, ObjectHash, ArtefactHash), PayloadError> {
-    let note = match (decision, note) {
-        (crate::workflows::gates::HumanDecisionKind::Approved, None) => None,
-        (crate::workflows::gates::HumanDecisionKind::RevisionRequested, Some(note)) => {
-            Some(crate::workflows::gates::normalise_revision_note(note).ok_or(PayloadError::Text)?)
-        }
-        _ => return Err(PayloadError::Format),
-    };
-    if let Some(secret) = secret.filter(|value| !value.is_empty())
-        && note.as_ref().is_some_and(|note| {
-            note.as_bytes()
-                .windows(secret.len())
-                .any(|window| window == secret.as_bytes())
-        })
-    {
-        return Err(PayloadError::Credential);
-    }
-    let payload = crate::workflows::gates::HumanDecisionPayload {
-        format_version: HUMAN_DECISION_SCHEMA,
-        candidate: candidate.as_str(),
-        diff_base: diff_base.as_str(),
-        decision,
-        note,
-        decided_at_ms,
-    };
-    encode(ArtefactKind::HumanDecision, HUMAN_DECISION_SCHEMA, &payload)
-}
-
 pub(crate) fn parse_typed_payload(
     kind: ArtefactKind,
     bytes: &[u8],
@@ -223,7 +179,6 @@ pub(crate) fn parse_typed_payload(
             if payload.format_version != PLAN_SCHEMA {
                 return Err(PayloadError::Format);
             }
-            CandidateHash::parse(&payload.candidate).ok_or(PayloadError::Candidate)?;
             let _ = normalise_text(&payload.markdown, MAXIMUM_PLAN_BYTES, None)?;
             Ok(TypedPayload::Review(payload))
         }
@@ -233,27 +188,8 @@ pub(crate) fn parse_typed_payload(
             if payload.format_version != PLAN_SCHEMA {
                 return Err(PayloadError::Format);
             }
-            CandidateHash::parse(&payload.candidate).ok_or(PayloadError::Candidate)?;
             let _ = normalise_text(&payload.markdown, MAXIMUM_PLAN_BYTES, None)?;
             Ok(TypedPayload::Test(payload))
-        }
-        ArtefactKind::HumanDecision => {
-            let payload: crate::workflows::gates::HumanDecisionPayload =
-                serde_json::from_slice(bytes).map_err(|_| PayloadError::Encoding)?;
-            if payload.format_version != HUMAN_DECISION_SCHEMA
-                || crate::workflows::gates::hashes(&payload).is_none()
-                || payload.decided_at_ms == 0
-            {
-                return Err(PayloadError::Format);
-            }
-            match (payload.decision, payload.note.as_deref()) {
-                (crate::workflows::gates::HumanDecisionKind::Approved, None) => {}
-                (crate::workflows::gates::HumanDecisionKind::RevisionRequested, Some(note))
-                    if crate::workflows::gates::normalise_revision_note(note).as_deref()
-                        == Some(note) => {}
-                _ => return Err(PayloadError::Text),
-            }
-            Ok(TypedPayload::HumanDecision(payload))
         }
         ArtefactKind::PlanDecision => {
             let payload: crate::workflows::gates::PlanDecisionPayload =
@@ -273,7 +209,6 @@ pub(crate) fn parse_typed_payload(
             }
             Ok(TypedPayload::PlanDecision(payload))
         }
-        ArtefactKind::CandidateRevision => Err(PayloadError::Format),
     }
 }
 

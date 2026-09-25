@@ -414,7 +414,6 @@ async fn project_skill_preview_rejects_links_replaced_roots_and_private_data() {
         scope: grant.alias.clone(),
         model_path: "/access/project".to_owned(),
         host_path: Some(root.path().to_path_buf()),
-        candidate_paths: Vec::new(),
     }];
     let (skills, _) = crate::execution::resources::preview_project_skills(
         &roots,

@@ -149,13 +149,13 @@ fn effective_roots_skip_the_private_data_directory() {
     }];
     grants.extend(policy.grants().iter().cloned());
     let combined = crate::agents::DirectoryPolicy::from_grants(grants, grant.alias.clone());
-    let roots = super::effective_roots(&combined, &[], &data_root);
+    let roots = super::effective_roots(&combined, &data_root);
     assert_eq!(roots.len(), 1);
     assert_eq!(roots[0].scope, grant.alias);
 }
 
 #[test]
-fn effective_roots_prefer_an_immutable_candidate_over_the_host() {
+fn effective_roots_use_live_host_paths() {
     let root = tempfile::tempdir().expect("root");
     std::fs::write(root.path().join("host.txt"), b"host").expect("host file");
     let grant = crate::execution::DirectoryGrant::from_selected(root.path(), &[]).expect("grant");
@@ -168,13 +168,7 @@ fn effective_roots_prefer_an_immutable_candidate_over_the_host() {
         }],
         grant.alias.clone(),
     );
-    let candidates = vec![super::CandidateRoot {
-        alias: grant.alias.clone(),
-        entries: vec!["candidate.txt".to_owned()],
-    }];
-    let roots = super::effective_roots(&policy, &candidates, std::path::Path::new("/nonexistent"));
+    let roots = super::effective_roots(&policy, std::path::Path::new("/nonexistent"));
     assert_eq!(roots.len(), 1);
-    assert!(roots[0].candidate());
-    assert!(roots[0].host_path.is_none());
-    assert_eq!(roots[0].candidate_paths, vec!["candidate.txt".to_owned()]);
+    assert_eq!(roots[0].host_path.as_deref(), Some(root.path()));
 }

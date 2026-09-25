@@ -99,17 +99,6 @@ pub(crate) async fn start_saved(
             "Reload the conversation and try again.",
         ));
     }
-    if record.candidate_review_context.is_some()
-        || record
-            .forked_from
-            .as_ref()
-            .is_some_and(|source| source.candidate_review)
-    {
-        return Err(StartMessageError::User(
-            PatchStatus::Conflict,
-            "Candidate reviews use immutable evidence only. Use a separate conversation for file access.",
-        ));
-    }
     if record.active_job.is_some()
         || record.continuation.is_some()
         || !record.queue.items.is_empty()

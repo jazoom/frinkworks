@@ -91,7 +91,6 @@ pub(crate) enum SandboxError {
     Start,
     Inspect,
     Ownership,
-    NeedProject,
     DirectoryMissing,
     NotADirectory,
     DirectoryAccess,
@@ -114,7 +113,6 @@ impl SandboxError {
             Self::Ownership => {
                 "Frinkworks cannot use the sandbox name because another sandbox owns it."
             }
-            Self::NeedProject => "Choose a project directory.",
             Self::DirectoryMissing => "That directory does not exist.",
             Self::NotADirectory => "That path is not a directory.",
             Self::DirectoryAccess => "Frinkworks cannot access that directory.",
@@ -124,7 +122,7 @@ impl SandboxError {
             Self::Exec => "Frinkworks could not run the command. Try again.",
             Self::Stop => "Frinkworks could not stop the sandbox. Try again.",
             Self::Remove => "Frinkworks could not remove the sandbox. Try again.",
-            Self::UserProjectWrite => "The host directory lacks Direct write authority.",
+            Self::UserProjectWrite => "The host directory lacks Write authority.",
         }
     }
 }
@@ -192,11 +190,6 @@ impl GuestExec {
 
     pub(crate) fn in_dir(mut self, cwd: impl Into<String>) -> Self {
         self.cwd = cwd.into();
-        self
-    }
-
-    pub(crate) fn with_env(mut self, env: Vec<(String, String)>) -> Self {
-        self.env = env;
         self
     }
 }
@@ -628,10 +621,23 @@ pub(crate) fn confirm_host_write_access(
 }
 
 fn confirm_mounts(spec: &SandboxSpec) -> Result<(), SandboxError> {
-    if spec.mounts.is_empty() {
-        return Err(SandboxError::NeedProject);
-    }
+    let mut destinations = vec![Path::new(crate::execution::GUEST_WORKSPACE)];
     for mount in &spec.mounts {
+        let guest = Path::new(&mount.guest);
+        if !guest.is_absolute()
+            || guest.components().any(|part| {
+                matches!(
+                    part,
+                    std::path::Component::ParentDir | std::path::Component::CurDir
+                )
+            })
+            || destinations
+                .iter()
+                .any(|path| guest.starts_with(path) || path.starts_with(guest))
+        {
+            return Err(SandboxError::StaleMount);
+        }
+        destinations.push(guest);
         let resolved = resolve_dir(&mount.host)?;
         if resolved != mount.host {
             return Err(SandboxError::StaleMount);
@@ -683,7 +689,8 @@ async fn create_detached(
     builder = apply_owner_labels(builder, run_id, attempt_id)
         .workdir(&spec.workdir)
         .network(|network| network.policy(access::network_policy(&spec.network)))
-        .detached(true);
+        .detached(true)
+        .volume(crate::execution::GUEST_WORKSPACE, |volume| volume.tmpfs());
     for mount in &spec.mounts {
         let guest = mount.guest.clone();
         let host_path = mount.host.clone();

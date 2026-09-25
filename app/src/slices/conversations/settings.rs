@@ -162,7 +162,7 @@ fn validate(
         } else {
             form.host_approval.trim()
         })
-        .ok_or("Choose host command approval.")?;
+        .ok_or("Choose a command approval policy.")?;
     ExecutionSettings::new(
         selection,
         form.instructions.clone(),
@@ -605,7 +605,7 @@ fn execution_mode_from_form(
         current.host_approval
     } else {
         crate::execution::HostApprovalPolicy::parse(host_approval.trim())
-            .ok_or("Choose host command approval.")?
+            .ok_or("Choose a command approval policy.")?
     };
     let environment = if environment.trim().is_empty() {
         current.environment

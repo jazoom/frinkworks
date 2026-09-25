@@ -1,54 +1,21 @@
 <section class="space-y-4 p-5" aria-labelledby="conversation-workflow-heading">
-  {% if run.run_terminal %}
-    <h3 id="conversation-workflow-heading" class="text-sm font-semibold">
-      {{ run.name }} · {{ run.state }}
-    </h3>
-    <dl class="grid gap-2 text-sm sm:grid-cols-[8rem_1fr]">
-      <dt class="text-quiet">Current phase</dt>
-      <dd>{{ run.current_step }}</dd>
-      {% if run.task_progress != "" %}
-        <dt class="text-quiet">Tasks</dt>
-        <dd>{{ run.task_progress }}</dd>
-      {% endif %}
-      <dt class="text-quiet">Result</dt>
-      <dd>{{ run.result }}</dd>
-    </dl>
-  {% else %}
-    <div class="space-y-3">
-      <h3
-        id="conversation-workflow-heading"
-        class="text-xl font-semibold break-words"
-      >
-        {{ run.name }}
-      </h3>
-      <p>
-        <span class="badge state-badge" data-state="{{ run.state }}"
-          >{{ run.state }}</span
-        >
-      </p>
-    </div>
-    <dl class="workspace-phase border-base-300 space-y-1 border-y py-4 text-sm">
-      <dt class="text-quiet">Current phase</dt>
-      <dd class="text-lg font-semibold break-words">{{ run.current_step }}</dd>
-    </dl>
-    {% if run.state == "Paused" %}
-      <p class="text-quiet text-sm">
-        The model phase waits for Continue. Approval phases stay later in the
-        sequence.
-      </p>
-    {% endif %}
-  {% endif %}
-  {% let settlement_controls = true %}
-  {% include "conversations/templates/recovery.html" %}
-  {% if run.conversation_id != "" && !observe_active %}
-    <p class="text-sm">
-      <a
-        href="/conversations/{{ run.conversation_id }}/activity"
-        data-graft
-        class="link"
-        >View activity and evidence</a
-      >
-      opens in this companion. The transcript and composer stay in place.
-    </p>
-  {% endif %}
+  <h3
+    id="conversation-workflow-heading"
+    class="text-xl font-semibold break-words"
+  >
+    {{ run.name }}
+  </h3>
+  <p>
+    <span class="badge state-badge" data-state="{{ run.state }}"
+      >{{ run.state }}</span
+    >
+  </p>
+  <dl class="border-base-300 space-y-1 border-y py-4 text-sm">
+    <dt class="text-quiet">Current phase</dt>
+    <dd class="text-lg font-semibold break-words">{{ run.current_step }}</dd>
+  </dl>
+  {% if run.run_terminal %}<p class="text-sm">{{ run.result }}</p>{% endif %}
+  <a href="{{ run.run_href }}" data-graft class="link text-sm"
+    >View workflow activity</a
+  >
 </section>

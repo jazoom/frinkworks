@@ -10,7 +10,7 @@ use crate::{
     providers::{ProviderConnection, ProviderKind},
     sessions,
     state::AppState,
-    workflows::seeds::one_agent_definition,
+    workflows::seeds::implement_a_change_definition as one_agent_definition,
 };
 
 fn test_state() -> AppState {
@@ -82,15 +82,10 @@ fn create_body(environment_id: crate::environments::EnvironmentId) -> String {
         "step_0_action=agent",
         "step_0_review-policy=none",
         "step_0_role=coding-agent",
-        "step_0_candidate-access=edit-candidate",
+        "step_0_directory-access=write",
         "step_0_tool_list=on",
-        "step_0_input_0_key=candidate",
-        "step_0_input_0_kind=candidate-revision",
-        "step_0_input_0_source=run-initial-candidate",
         "step_0_output_0_key=assistant-reply",
         "step_0_output_0_kind=assistant-reply",
-        "step_0_output_1_key=candidate",
-        "step_0_output_1_kind=candidate-revision",
     ]
     .join("&")
 }
@@ -117,15 +112,10 @@ fn review_body(
         "step_0_action=agent".to_owned(),
         "step_0_review-policy=none".to_owned(),
         "step_0_role=coding-agent".to_owned(),
-        "step_0_candidate-access=edit-candidate".to_owned(),
+        "step_0_directory-access=write".to_owned(),
         "step_0_tool_list=on".to_owned(),
-        "step_0_input_0_key=candidate".to_owned(),
-        "step_0_input_0_kind=candidate-revision".to_owned(),
-        "step_0_input_0_source=run-current-candidate".to_owned(),
         "step_0_output_0_key=assistant-reply".to_owned(),
         "step_0_output_0_kind=assistant-reply".to_owned(),
-        "step_0_output_1_key=candidate".to_owned(),
-        "step_0_output_1_kind=candidate-revision".to_owned(),
         "step_1_key=review".to_owned(),
         "step_1_name=Review".to_owned(),
         "step_1_action=agent".to_owned(),
@@ -134,11 +124,8 @@ fn review_body(
         "step_1_revision-target=work-on-task".to_owned(),
         "step_1_attempt-limit=3".to_owned(),
         "step_1_role=reviewer".to_owned(),
-        "step_1_candidate-access=read-only".to_owned(),
+        "step_1_directory-access=read".to_owned(),
         "step_1_tool_list=on".to_owned(),
-        "step_1_input_0_key=candidate".to_owned(),
-        "step_1_input_0_kind=candidate-revision".to_owned(),
-        "step_1_input_0_source=run-current-candidate".to_owned(),
         "step_1_output_0_key=assistant-reply".to_owned(),
         "step_1_output_0_kind=assistant-reply".to_owned(),
         "step_1_output_1_key=review".to_owned(),
@@ -452,7 +439,7 @@ async fn edit_rejects_a_malformed_review_policy() {
     assert!(text.contains("target=\"workflow-form\""));
     assert!(text.contains("That review policy is not valid."));
     let stored = state.workflows.get(&record.id).expect("unchanged");
-    assert_eq!(stored.definition.name(), "One agent");
+    assert_eq!(stored.definition.name(), "Implement a change");
     assert_eq!(stored.revision, record.revision);
 }
 

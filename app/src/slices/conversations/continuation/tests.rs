@@ -114,7 +114,12 @@ fn paused_workflow(
         .settings
         .clone()
         .with_location(crate::execution::ToolLocation::Host);
-    let pinned = crate::workflows::pin_agent_work(&settings).unwrap();
+    let pinned = crate::workflows::definition::PinnedWorkflowDefinition::pin(
+        None,
+        crate::workflows::seeds::implement_a_change_definition(settings.environment)
+            .with_conversation_settings(&settings)
+            .unwrap(),
+    );
     let step = pinned.definition.first_step().clone();
     let environments = crate::tests::test_environment_set(&pinned.definition);
     let mut run = crate::workflows::WorkflowRun::create_source_free_for_conversation(
@@ -130,6 +135,7 @@ fn paused_workflow(
             preset: None,
             settings: Some(settings.clone()),
         }],
+        settings.clone(),
     );
     run.kind = RunKind::Configured;
     run.launch_brief = "Continue the assigned phase.".to_owned();

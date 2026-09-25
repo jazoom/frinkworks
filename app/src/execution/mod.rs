@@ -1,5 +1,5 @@
 pub(crate) mod agent;
-mod approval;
+pub(crate) mod approval;
 pub(crate) mod authority;
 pub(crate) mod budget;
 pub(crate) mod command;
@@ -16,7 +16,7 @@ pub(crate) use overrides::{SettingsOverrides, SettingsOverridesFile};
 
 pub(crate) use agent::{AgentOutcome, AgentRunSpec, StreamRedactor, bound_reply, run_agent_action};
 pub(crate) use approval::{
-    ApprovalError, HostApprovalStore, HostCommandDecision, HostCommandRequest, command_token,
+    ApprovalError, HostApprovalStore, HostCommandDecision, HostCommandRequest,
 };
 pub(crate) use authority::ProjectFreeAuthority;
 pub(crate) use budget::{Budget, BudgetPolicy, BudgetReason, BudgetSnapshot};
@@ -36,7 +36,7 @@ pub(crate) use resources::{
 pub(crate) use settings::{
     CanonicalDirectoryIdentity, DirectoryAccess, DirectoryGrant, DirectoryGrantError,
     DirectoryGrantId, ExecutionSettings, ExecutionSettingsFile, HostApprovalPolicy,
-    MAXIMUM_DIRECTORY_GRANTS, ToolLocation, valid_alias, validate_directories,
+    MAXIMUM_DIRECTORY_GRANTS, ToolLocation, validate_directories,
 };
 
 pub(crate) const GUEST_WORKSPACE: &str = "/workspace";

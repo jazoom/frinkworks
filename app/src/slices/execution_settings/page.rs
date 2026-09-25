@@ -9,15 +9,14 @@ use crate::{
 pub(crate) fn host_approval_label(policy: crate::execution::HostApprovalPolicy) -> &'static str {
     match policy {
         crate::execution::HostApprovalPolicy::AskEachTime => "Ask each time",
-        crate::execution::HostApprovalPolicy::Automatic => "Run without approval",
+        crate::execution::HostApprovalPolicy::Automatic => "Automatic (YOLO)",
     }
 }
 
 pub(crate) fn directory_access_label(access: crate::execution::DirectoryAccess) -> &'static str {
     match access {
-        crate::execution::DirectoryAccess::ReadOnly => "Read only",
-        crate::execution::DirectoryAccess::ReviewBeforeApply => "Review before apply",
-        crate::execution::DirectoryAccess::DirectWrite => "Direct write",
+        crate::execution::DirectoryAccess::Read => "Read",
+        crate::execution::DirectoryAccess::Write => "Write",
     }
 }
 

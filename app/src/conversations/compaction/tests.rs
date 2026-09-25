@@ -77,8 +77,6 @@ fn command(included: bool) -> ConversationMessage {
                 }],
                 CommandTermination::Exited(0),
             )),
-            before: None,
-            after: None,
         }),
         attachments: Vec::new(),
         activity: Vec::new(),

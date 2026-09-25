@@ -8,13 +8,11 @@ use crate::environments::{
 };
 use crate::providers::{ModelSelection, ProviderKind, ThinkingEffort};
 
-use super::apply::{ApplyRoot, ApplyRootOutcome, ApplyTransaction, ApplyTransactionState};
 use super::artefacts::{ArtefactRecord, ArtefactReference};
 use super::capabilities::{
     AttemptCapabilities, CapabilityDirectory, DirectoryRole, NetworkCapability,
     PrimarySourceLocation,
 };
-use super::commit::{CommitRoot, CommitTransaction, CommitTransactionState};
 use super::definition::{
     DefinitionFile, DefinitionVersion, InputKey, OutputKey, PinnedWorkflowDefinition, StepAction,
     StepDefinition, StepKey, WorkflowDefinition,
@@ -39,10 +37,10 @@ pub(crate) struct WorkflowRun {
     pub(crate) kind: RunKind,
     pub(crate) agent_id: Option<AgentId>,
     pub(crate) phase_models: Vec<PhaseModelSelection>,
+    pub(crate) settings: crate::execution::ExecutionSettings,
     pub(crate) pinned: PinnedWorkflowDefinition,
     pub(crate) environments: ResolvedEnvironmentSet,
     pub(crate) state: RunState,
-    pub(crate) source: RunSource,
     pub(crate) artefacts: Vec<ArtefactRecord>,
     pub(crate) attempts: Vec<AttemptRecord>,
     pub(crate) gates: Vec<HumanGateRecord>,
@@ -52,7 +50,6 @@ pub(crate) struct WorkflowRun {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RunKind {
     Configured,
-    QuickTask,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -78,7 +75,6 @@ pub(crate) struct RevisionReservation {
     pub(crate) target: StepKey,
     pub(crate) decision: ArtefactReference,
     pub(crate) candidate: ArtefactReference,
-    pub(crate) diff_base: ArtefactReference,
     pub(crate) feedback: String,
     pub(crate) started: bool,
 }
@@ -87,14 +83,12 @@ impl RunKind {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Configured => "configured",
-            Self::QuickTask => "quick-task",
         }
     }
 
     pub(crate) fn parse(value: &str) -> Option<Self> {
         match value {
             "configured" => Some(Self::Configured),
-            "quick-task" => Some(Self::QuickTask),
             _ => None,
         }
     }
@@ -102,7 +96,6 @@ impl RunKind {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum RunState {
-    InitialisingSource,
     Ready {
         step: StepKey,
     },
@@ -132,26 +125,6 @@ pub(crate) enum RunState {
     Failed,
     Cancelled,
     Interrupted,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum RunSource {
-    None,
-    Pending,
-    Captured { source: RunSourceState },
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct RunSourceState {
-    pub(crate) initial: ArtefactReference,
-    pub(crate) accepted: ArtefactReference,
-    pub(crate) observed: ObservedCandidate,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum ObservedCandidate {
-    Exact { artefact: ArtefactReference },
-    Unknown,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -207,11 +180,9 @@ pub(crate) struct AttemptRecord {
     pub(crate) sandbox: AttemptSandboxRecord,
     pub(crate) initial_context: Option<AttemptContextPacket>,
     pub(crate) cleanup: AttemptCleanupRecord,
-    pub(crate) apply_transaction: Option<ApplyTransaction>,
-    pub(crate) commit_transaction: Option<CommitTransaction>,
-    pub(crate) direct_changes: Option<super::direct::DirectChanges>,
+
     pub(crate) continuation: Option<crate::conversations::CheckpointId>,
-    pub(crate) paused_candidate: Option<crate::workflows::artefacts::ObjectHash>,
+
     pub(crate) paused_drafts: Vec<crate::conversations::PausedOutputDraft>,
 }
 
@@ -239,9 +210,6 @@ pub(crate) enum FailureCategory {
     Operational,
     Definition,
     Cleanup,
-    Assurance,
-    Apply,
-    Commit,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -253,7 +221,6 @@ pub(crate) struct AttemptSandboxRecord {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum AttemptSandboxKind {
     IsolatedAttempt,
-    FileApplication,
     HostExecution,
 }
 
@@ -296,12 +263,12 @@ pub(super) struct RunFile {
     #[serde(deserialize_with = "crate::storage::required_option")]
     agent_id: Option<String>,
     phase_models: Vec<PhaseModelFile>,
+    settings: crate::execution::ExecutionSettingsFile,
     workflow_id: Option<String>,
     version: String,
     definition: DefinitionFile,
     environments: ResolvedEnvironmentSetFile,
     state: RunStateFile,
-    source: RunSourceFile,
     artefacts: Vec<ArtefactFile>,
     attempts: Vec<AttemptFile>,
     gates: Vec<HumanGateFile>,
@@ -312,7 +279,6 @@ pub(super) struct RunFile {
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 enum RunStateFile {
-    InitialisingSource,
     Ready {
         step: String,
     },
@@ -376,8 +342,8 @@ struct HumanGateFile {
     revision: u64,
     opened_at_ms: u64,
     closed_at_ms: Option<u64>,
+    #[serde(rename = "plan")]
     candidate: ArtefactRefFile,
-    diff_base: ArtefactRefFile,
     state: String,
     decision: Option<ArtefactRefFile>,
     output: String,
@@ -390,8 +356,8 @@ struct RevisionReservationFile {
     gate: String,
     target: String,
     decision: ArtefactRefFile,
+    #[serde(rename = "plan")]
     candidate: ArtefactRefFile,
-    diff_base: ArtefactRefFile,
     feedback: String,
     started: bool,
 }
@@ -415,14 +381,10 @@ struct AttemptFile {
     sandbox: AttemptSandboxFile,
     initial_context: Option<AttemptContextPacket>,
     cleanup: AttemptCleanupFile,
-    #[serde(deserialize_with = "crate::storage::required_option")]
-    apply_transaction: Option<ApplyTransactionFile>,
-    commit_transaction: Option<CommitTransactionFile>,
-    direct_changes: Option<super::direct::DirectChanges>,
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     continuation: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    paused_candidate: Option<String>,
+
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     paused_drafts: Vec<PausedDraftFile>,
 }
@@ -437,56 +399,6 @@ struct PausedDraftFile {
     verdict: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     outcome: Option<String>,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "kebab-case")]
-struct ApplyTransactionFile {
-    state: String,
-    completed: Option<usize>,
-    path: Option<String>,
-    roots: Vec<ApplyRootFile>,
-    baseline: ArtefactRefFile,
-    candidate: ArtefactRefFile,
-    approval: ArtefactRefFile,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "kebab-case")]
-struct ApplyRootFile {
-    grant_id: String,
-    alias: String,
-    host_path: std::path::PathBuf,
-    device: u64,
-    inode: u64,
-    baseline_candidate: String,
-    candidate_hash: String,
-    exclusions: Vec<String>,
-    outcome: String,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "kebab-case")]
-struct CommitTransactionFile {
-    candidate: ArtefactRefFile,
-    reviews: Vec<ArtefactRefFile>,
-    approval: Option<ArtefactRefFile>,
-    roots: Vec<CommitRootFile>,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "kebab-case")]
-struct CommitRootFile {
-    grant_id: String,
-    alias: String,
-    host_path: std::path::PathBuf,
-    identity: crate::execution::CanonicalDirectoryIdentity,
-    state: String,
-    expected_reference: String,
-    old_object: Option<String>,
-    target_tree: Option<String>,
-    expected_commit: Option<String>,
-    timestamp: String,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -553,30 +465,6 @@ struct ArtefactRefFile {
 }
 
 #[derive(Deserialize, Serialize)]
-#[serde(tag = "state", rename_all = "kebab-case")]
-#[allow(clippy::large_enum_variant)]
-enum RunSourceFile {
-    None,
-    Pending,
-    Captured { source: RunSourceStateFile },
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(rename_all = "kebab-case")]
-struct RunSourceStateFile {
-    initial: ArtefactRefFile,
-    accepted: ArtefactRefFile,
-    observed: ObservedCandidateFile,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(tag = "state", rename_all = "kebab-case")]
-enum ObservedCandidateFile {
-    Exact { artefact: ArtefactRefFile },
-    Unknown,
-}
-
-#[derive(Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 struct ArtefactFile {
     id: String,
@@ -600,7 +488,6 @@ struct ProvenanceFile {
 #[derive(Deserialize, Serialize)]
 #[serde(tag = "producer", rename_all = "kebab-case")]
 enum ProducerFile {
-    RunSourceCapture,
     StepAttempt {
         attempt_id: String,
         step: String,
@@ -617,32 +504,10 @@ enum ProducerFile {
 #[derive(Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 enum SummaryFile {
-    Plan {
-        markdown_bytes: u64,
-    },
-    Review {
-        candidate: String,
-        verdict: String,
-    },
-    Test {
-        candidate: String,
-        outcome: String,
-    },
-    Candidate {
-        candidate: String,
-        entries: u64,
-        bytes: u64,
-        disposition: String,
-    },
-    HumanDecision {
-        candidate: String,
-        diff_base: String,
-        decision: String,
-    },
-    PlanDecision {
-        plan: String,
-        decision: String,
-    },
+    Plan { markdown_bytes: u64 },
+    Review { verdict: String },
+    Test { outcome: String },
+    PlanDecision { plan: String, decision: String },
 }
 
 #[derive(Deserialize, Serialize)]
@@ -699,40 +564,10 @@ struct PinnedIntegrityFile {
 }
 
 impl WorkflowRun {
-    #[cfg(test)]
-    pub(crate) fn create(
-        id: RunId,
-        created_at_ms: u64,
-        agent_id: Option<AgentId>,
-        kind: RunKind,
-        pinned: PinnedWorkflowDefinition,
-        environments: ResolvedEnvironmentSet,
-    ) -> Self {
-        let step = pinned.definition.first_step().clone();
-        Self {
-            id,
-            created_at_ms,
-            conversation_id: None,
-            ownership_history: Vec::new(),
-            pending_handoff: None,
-            launch_brief: String::new(),
-            command_message: None,
-
-            kind,
-            agent_id,
-            phase_models: Vec::new(),
-            pinned,
-            environments,
-            state: RunState::Ready { step },
-            source: RunSource::Pending,
-            artefacts: Vec::new(),
-            attempts: Vec::new(),
-            gates: Vec::new(),
-            revision_reservation: None,
-        }
-    }
-
     pub(crate) fn directory_settings(&self) -> Option<crate::execution::ExecutionSettings> {
+        if self.phase_models.is_empty() {
+            return Some(self.settings.clone());
+        }
         crate::execution::ExecutionSettings::combined(
             self.phase_models
                 .iter()
@@ -750,41 +585,6 @@ impl WorkflowRun {
             .and_then(|phase| phase.settings.as_ref())
     }
 
-    pub(crate) fn has_direct_writes(&self) -> bool {
-        self.phase_models
-            .iter()
-            .filter_map(|phase| phase.settings.as_ref())
-            .filter(|settings| settings.location == crate::execution::ToolLocation::Sandbox)
-            .any(|settings| {
-                settings
-                    .directories
-                    .iter()
-                    .any(|grant| grant.access == crate::execution::DirectoryAccess::DirectWrite)
-            })
-    }
-
-    pub(crate) fn reviewed_directories(&self) -> Vec<crate::execution::DirectoryGrant> {
-        let mut grants = Vec::new();
-        for phase in &self.phase_models {
-            let Some(settings) = phase.settings.as_ref() else {
-                continue;
-            };
-            for grant in &settings.directories {
-                if grant.access != crate::execution::DirectoryAccess::ReviewBeforeApply {
-                    continue;
-                }
-                if grants
-                    .iter()
-                    .any(|item: &crate::execution::DirectoryGrant| item.identity == grant.identity)
-                {
-                    continue;
-                }
-                grants.push(grant.clone());
-            }
-        }
-        grants
-    }
-
     pub(crate) fn create_source_free_for_conversation(
         id: RunId,
         created_at_ms: u64,
@@ -792,13 +592,9 @@ impl WorkflowRun {
         pinned: PinnedWorkflowDefinition,
         environments: ResolvedEnvironmentSet,
         phase_models: Vec<PhaseModelSelection>,
+        settings: crate::execution::ExecutionSettings,
     ) -> Self {
         let step = pinned.definition.first_step().clone();
-        let captures_source = pinned.definition.steps().iter().any(|step| {
-            step.inputs.iter().any(|input| {
-                input.kind == crate::workflows::definition::ArtefactKind::CandidateRevision
-            })
-        });
         Self {
             id,
             created_at_ms,
@@ -808,53 +604,18 @@ impl WorkflowRun {
             launch_brief: String::new(),
             command_message: None,
 
-            kind: RunKind::QuickTask,
+            kind: RunKind::Configured,
             agent_id: None,
             phase_models,
+            settings,
             pinned,
             environments,
             state: RunState::Ready { step },
-            source: if captures_source {
-                RunSource::Pending
-            } else {
-                RunSource::None
-            },
             artefacts: Vec::new(),
             attempts: Vec::new(),
             gates: Vec::new(),
             revision_reservation: None,
         }
-    }
-
-    pub(crate) fn record_initial_candidate(
-        &mut self,
-        record: crate::workflows::artefacts::ArtefactRecord,
-    ) -> Result<(), TransitionError> {
-        if !matches!(self.source, RunSource::Pending) {
-            return Err(TransitionError::Invalid);
-        }
-        if record.kind != crate::workflows::definition::ArtefactKind::CandidateRevision
-            || record.provenance.run_id != self.id
-            || self.artefacts.iter().any(|item| item.id == record.id)
-        {
-            return Err(TransitionError::Invalid);
-        }
-        let reference = ArtefactReference {
-            id: record.id,
-            kind: record.kind,
-            artefact_hash: record.artefact_hash,
-        };
-        self.artefacts.push(record);
-        self.source = RunSource::Captured {
-            source: RunSourceState {
-                initial: reference.clone(),
-                accepted: reference.clone(),
-                observed: ObservedCandidate::Exact {
-                    artefact: reference,
-                },
-            },
-        };
-        Ok(())
     }
 
     pub(crate) fn phase_model(&self, step: &StepKey) -> Option<&PhaseModelSelection> {
@@ -872,90 +633,6 @@ impl WorkflowRun {
         id: &crate::workflows::id::ArtefactId,
     ) -> Option<&crate::workflows::artefacts::ArtefactRecord> {
         self.artefacts.iter().find(|record| record.id == *id)
-    }
-
-    pub(crate) fn observed_candidate_hash(
-        &self,
-    ) -> Option<crate::workflows::artefacts::CandidateHash> {
-        let RunSource::Captured { source } = &self.source else {
-            return None;
-        };
-        let ObservedCandidate::Exact { artefact } = &source.observed else {
-            return None;
-        };
-        self.artefact(&artefact.id)
-            .and_then(crate::workflows::artefacts::ArtefactRecord::candidate_hash)
-    }
-
-    pub(crate) fn completed_without_changes(&self) -> bool {
-        self.state == RunState::Completed
-            && self
-                .pinned
-                .definition
-                .steps()
-                .iter()
-                .any(|step| unchanged_task_gate(self, &step.key))
-    }
-
-    pub(crate) fn complete_unchanged_task(&mut self) -> Result<(), TransitionError> {
-        let RunState::Ready { step } = &self.state else {
-            return Err(TransitionError::Invalid);
-        };
-        if !unchanged_task_gate(self, step) {
-            return Err(TransitionError::Invalid);
-        }
-        self.state = RunState::Completed;
-        Ok(())
-    }
-
-    pub(crate) fn open_gate(
-        &mut self,
-        gate_id: GateId,
-        candidate: ArtefactReference,
-        diff_base: ArtefactReference,
-        at_ms: u64,
-    ) -> Result<HumanGateRecord, TransitionError> {
-        if !self.accepts_time(at_ms) || self.gates.iter().any(|gate| gate.id == gate_id) {
-            return Err(TransitionError::Invalid);
-        }
-        let RunState::Ready { step } = self.state.clone() else {
-            return Err(TransitionError::Invalid);
-        };
-        let definition = self
-            .pinned
-            .definition
-            .step(&step)
-            .ok_or(TransitionError::Invalid)?;
-        let StepAction::HumanGate(action) = &definition.action else {
-            return Err(TransitionError::Invalid);
-        };
-        if action.is_plan_checkpoint()
-            || candidate.kind != super::definition::ArtefactKind::CandidateRevision
-            || diff_base.kind != super::definition::ArtefactKind::CandidateRevision
-        {
-            return Err(TransitionError::Invalid);
-        }
-        let sequence = u32::try_from(self.gates.len() + 1).map_err(|_| TransitionError::Invalid)?;
-        let revision = GateRevision::new(u64::from(sequence)).ok_or(TransitionError::Invalid)?;
-        let gate = HumanGateRecord {
-            id: gate_id,
-            step: step.clone(),
-            sequence,
-            revision,
-            opened_at_ms: at_ms,
-            closed_at_ms: None,
-            candidate,
-            diff_base,
-            state: HumanGateState::AwaitingDecision,
-            decision: None,
-            output: action.required_output.key.clone(),
-        };
-        self.gates.push(gate.clone());
-        self.state = RunState::AwaitingHuman {
-            step,
-            gate: gate_id,
-        };
-        Ok(gate)
     }
 
     pub(crate) fn open_plan_gate(
@@ -986,6 +663,10 @@ impl WorkflowRun {
                 .filter(|input| input.kind == super::definition::ArtefactKind::Plan)
                 .count()
                 != 1
+            || !self
+                .resolve_inputs_before(definition, self.attempts.len(), at_ms)?
+                .iter()
+                .any(|input| input.artefact == plan)
             || self
                 .artefact(&plan.id)
                 .is_none_or(|record| !artefact_matches_reference(record, &plan))
@@ -1001,8 +682,7 @@ impl WorkflowRun {
             revision,
             opened_at_ms: at_ms,
             closed_at_ms: None,
-            candidate: plan.clone(),
-            diff_base: plan,
+            candidate: plan,
             state: HumanGateState::AwaitingDecision,
             decision: None,
             output: action.required_output.key.clone(),
@@ -1048,128 +728,90 @@ impl WorkflowRun {
         })
     }
 
-    pub(crate) fn revision_feedback(&self, step: &StepKey) -> Option<&str> {
-        self.revision_reservation
-            .as_ref()
-            .filter(|reservation| reservation.target == *step)
-            .map(|reservation| reservation.feedback.as_str())
+    pub(super) fn accepts_missing_initial_review(
+        &self,
+        step: &StepDefinition,
+        input: &super::definition::RequiredInput,
+        attempt_count: usize,
+    ) -> bool {
+        let super::definition::ArtefactSource::StepOutput { step: source, .. } = &input.source
+        else {
+            return false;
+        };
+        step.is_review_feedback(input, self.pinned.definition.steps())
+            && !self.attempts[..attempt_count].iter().any(|attempt| {
+                (attempt.step == step.key || attempt.step == *source)
+                    && attempt.state == AttemptState::Completed
+            })
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn decide_gate(
-        &mut self,
-        gate_id: GateId,
-        revision: GateRevision,
-        record: ArtefactRecord,
-        kind: super::gates::HumanDecisionKind,
-        feedback: Option<String>,
-        reserved_attempt: Option<AttemptId>,
+    pub(super) fn resolve_inputs_before(
+        &self,
+        step: &StepDefinition,
+        attempt_count: usize,
         at_ms: u64,
-    ) -> Result<(), TransitionError> {
-        if !self.accepts_time(at_ms)
-            || record.provenance.run_id != self.id
-            || self.artefacts.iter().any(|item| item.id == record.id)
-        {
-            return Err(TransitionError::Invalid);
-        }
-        let RunState::AwaitingHuman { step, gate } = self.state.clone() else {
-            return Err(TransitionError::Invalid);
-        };
-        if gate != gate_id || record.kind != super::definition::ArtefactKind::HumanDecision {
-            return Err(TransitionError::Invalid);
-        }
-        let gate_record = self
-            .gates
-            .iter()
-            .find(|item| item.id == gate_id)
-            .ok_or(TransitionError::Invalid)?;
-        if gate_record.state != HumanGateState::AwaitingDecision || gate_record.revision != revision
-        {
-            return Err(TransitionError::Invalid);
-        }
-        let gate_definition = self
-            .pinned
-            .definition
-            .step(&step)
-            .ok_or(TransitionError::Invalid)?;
-        if matches!(
-            &gate_definition.action,
-            StepAction::HumanGate(action) if action.is_plan_checkpoint()
-        ) {
-            return Err(TransitionError::Invalid);
-        }
-        let reference = ArtefactReference {
-            id: record.id,
-            kind: record.kind,
-            artefact_hash: record.artefact_hash,
-        };
-        let next_state = match kind {
-            super::gates::HumanDecisionKind::Approved => {
-                if feedback.is_some() || reserved_attempt.is_some() {
-                    return Err(TransitionError::Invalid);
-                }
-                let definition = self
-                    .pinned
-                    .definition
-                    .step(&step)
-                    .ok_or(TransitionError::Invalid)?;
-                if definition.review.is_some() {
-                    return Err(TransitionError::Invalid);
-                }
-                advanced_state(&self.pinned.definition, &step)?
-            }
-            super::gates::HumanDecisionKind::RevisionRequested => {
-                let (revision_target, attempt_limit) = {
-                    let policy = self
-                        .human_revision_policy(&step)
-                        .ok_or(TransitionError::Invalid)?;
-                    (policy.revision_target.clone(), policy.attempt_limit)
-                };
-                let attempt = reserved_attempt.ok_or(TransitionError::Invalid)?;
-                let feedback = feedback
-                    .filter(|feedback| !feedback.is_empty())
-                    .ok_or(TransitionError::Invalid)?;
-                if self.revision_reservation.is_some() {
-                    return Err(TransitionError::Invalid);
-                }
-                if self.human_revision_count(&step) >= usize::from(attempt_limit.saturating_sub(1))
+    ) -> Result<Vec<AttemptArtefactInput>, TransitionError> {
+        let attempts = &self.attempts[..attempt_count];
+        let mut inputs = Vec::new();
+        for input in &step.inputs {
+            let reference = match &input.source {
+                super::definition::ArtefactSource::RunCurrentPlan => attempts
+                    .iter()
+                    .rev()
+                    .filter(|attempt| attempt.state == AttemptState::Completed)
+                    .flat_map(|attempt| attempt.outputs.iter().rev())
+                    .find(|output| output.artefact.kind == super::definition::ArtefactKind::Plan)
+                    .map(|output| output.artefact.clone()),
+                super::definition::ArtefactSource::StepOutput { step, output } => attempts
+                    .iter()
+                    .rev()
+                    .find(|attempt| {
+                        attempt.step == *step && attempt.state == AttemptState::Completed
+                    })
+                    .and_then(|attempt| attempt.outputs.iter().find(|item| item.key == *output))
+                    .map(|item| item.artefact.clone())
+                    .or_else(|| {
+                        self.gates
+                            .iter()
+                            .rev()
+                            .find(|gate| {
+                                gate.step == *step
+                                    && gate.output == *output
+                                    && gate.closed_at_ms.is_some_and(|closed| closed <= at_ms)
+                            })
+                            .and_then(|gate| gate.decision.clone())
+                    }),
+            };
+            let Some(reference) = reference else {
+                if step.accepts_missing_initial_plan(input)
+                    || self.accepts_missing_initial_review(step, input, attempt_count)
                 {
-                    RunState::Escalated {
-                        step,
-                        report: reference.clone(),
-                        reason: EscalationReason::AttemptLimit,
-                    }
-                } else {
-                    self.revision_reservation = Some(RevisionReservation {
-                        attempt,
-                        gate: gate_id,
-                        target: revision_target.clone(),
-                        decision: reference.clone(),
-                        candidate: gate_record.candidate.clone(),
-                        diff_base: gate_record.diff_base.clone(),
-                        feedback,
-                        started: false,
-                    });
-                    RunState::Ready {
-                        step: revision_target,
-                    }
+                    continue;
                 }
+                return Err(TransitionError::Invalid);
+            };
+            if reference.kind != input.kind {
+                return Err(TransitionError::Invalid);
             }
-        };
-        let gate = self
-            .gates
-            .iter_mut()
-            .find(|item| item.id == gate_id)
-            .ok_or(TransitionError::Invalid)?;
-        gate.closed_at_ms = Some(at_ms);
-        gate.decision = Some(reference.clone());
-        gate.state = match kind {
-            super::gates::HumanDecisionKind::Approved => HumanGateState::Approved,
-            super::gates::HumanDecisionKind::RevisionRequested => HumanGateState::RevisionRequested,
-        };
-        self.artefacts.push(record);
-        self.state = next_state;
-        Ok(())
+            inputs.push(AttemptArtefactInput {
+                key: input.key.clone(),
+                artefact: reference,
+            });
+        }
+        for decision in inputs
+            .iter()
+            .filter(|input| input.artefact.kind == super::definition::ArtefactKind::PlanDecision)
+        {
+            let record = self
+                .artefact(&decision.artefact.id)
+                .ok_or(TransitionError::Invalid)?;
+            if !matches!(record.summary, super::artefacts::ArtefactSummary::PlanDecision { plan, decision: super::gates::PlanDecisionKind::Accepted }
+                if inputs.iter().any(|input| input.artefact.kind == super::definition::ArtefactKind::Plan && input.artefact.artefact_hash == plan))
+            {
+                return Err(TransitionError::Invalid);
+            }
+        }
+        Ok(inputs)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1184,6 +826,7 @@ impl WorkflowRun {
         at_ms: u64,
     ) -> Result<(), TransitionError> {
         if !self.accepts_time(at_ms)
+            || record.created_at_ms != at_ms
             || record.provenance.run_id != self.id
             || self.artefacts.iter().any(|item| item.id == record.id)
         {
@@ -1203,7 +846,6 @@ impl WorkflowRun {
         if gate_record.state != HumanGateState::AwaitingDecision
             || gate_record.revision != revision
             || gate_record.candidate.kind != super::definition::ArtefactKind::Plan
-            || gate_record.diff_base != gate_record.candidate
             || !matches!(
                 &self.pinned.definition.step(&step).map(|step| &step.action),
                 Some(StepAction::HumanGate(action)) if action.is_plan_checkpoint()
@@ -1225,11 +867,7 @@ impl WorkflowRun {
                     && *step == gate_record.step
                     && *output == gate_record.output
             )
-            || !record
-                .provenance
-                .inputs
-                .iter()
-                .any(|input| input == &gate_record.candidate)
+            || record.provenance.inputs != [gate_record.candidate.clone()]
         {
             return Err(TransitionError::Invalid);
         }
@@ -1273,7 +911,6 @@ impl WorkflowRun {
                         target: revision_target.clone(),
                         decision: reference.clone(),
                         candidate: gate_record.candidate.clone(),
-                        diff_base: gate_record.diff_base.clone(),
                         feedback,
                         started: false,
                     });
@@ -1366,22 +1003,17 @@ impl WorkflowRun {
         {
             return Err(TransitionError::Invalid);
         }
-        if !capabilities_match_step(self, &capabilities, definition_step) {
+        if inputs != self.resolve_inputs_before(definition_step, self.attempts.len(), at_ms)?
+            || !capabilities_match_step(self, &capabilities, definition_step)
+        {
             return Err(TransitionError::Invalid);
         }
         let host_step = matches!(
             &definition_step.action,
             StepAction::Agent(action) if action.host_tools()
         );
-        let apply_step = matches!(
-            &definition_step.action,
-            StepAction::SystemCommand(action)
-                if action.command == crate::workflows::commands::SystemCommandId::ApplyChanges
-        );
         let expected_kind = if host_step {
             AttemptSandboxKind::HostExecution
-        } else if apply_step {
-            AttemptSandboxKind::FileApplication
         } else {
             AttemptSandboxKind::IsolatedAttempt
         };
@@ -1419,11 +1051,9 @@ impl WorkflowRun {
             sandbox,
             initial_context: None,
             cleanup: AttemptCleanupRecord::Pending,
-            apply_transaction: None,
-            commit_transaction: None,
-            direct_changes: None,
+
             continuation: None,
-            paused_candidate: None,
+
             paused_drafts: Vec::new(),
         });
         self.state = RunState::Active {
@@ -1448,7 +1078,12 @@ impl WorkflowRun {
         else {
             return Err(TransitionError::Invalid);
         };
-        if !context_matches_attempt(&context, attempt) {
+        let step = self
+            .pinned
+            .definition
+            .step(&attempt.step)
+            .ok_or(TransitionError::Invalid)?;
+        if !context_matches_attempt(&context, attempt, step) {
             return Err(TransitionError::Invalid);
         }
         if let Some(current) = &attempt.initial_context {
@@ -1459,48 +1094,6 @@ impl WorkflowRun {
             };
         }
         attempt.initial_context = Some(context);
-        Ok(())
-    }
-
-    pub(crate) fn record_apply_transaction(
-        &mut self,
-        attempt_id: AttemptId,
-        transaction: ApplyTransaction,
-    ) -> Result<(), TransitionError> {
-        let Some(attempt) = self
-            .attempts
-            .iter_mut()
-            .find(|attempt| attempt.id == attempt_id && attempt.state == AttemptState::Active)
-        else {
-            return Err(TransitionError::Invalid);
-        };
-        if let Some(current) = &attempt.apply_transaction
-            && !current.can_advance_to(&transaction)
-        {
-            return Err(TransitionError::Invalid);
-        }
-        attempt.apply_transaction = Some(transaction);
-        Ok(())
-    }
-
-    pub(crate) fn record_commit_transaction(
-        &mut self,
-        attempt_id: AttemptId,
-        transaction: CommitTransaction,
-    ) -> Result<(), TransitionError> {
-        let Some(attempt) = self
-            .attempts
-            .iter_mut()
-            .find(|attempt| attempt.id == attempt_id && attempt.state == AttemptState::Active)
-        else {
-            return Err(TransitionError::Invalid);
-        };
-        if let Some(current) = &attempt.commit_transaction
-            && !current.can_advance_to(&transaction)
-        {
-            return Err(TransitionError::Invalid);
-        }
-        attempt.commit_transaction = Some(transaction);
         Ok(())
     }
 
@@ -1533,8 +1126,6 @@ impl WorkflowRun {
         attempt_id: AttemptId,
         artefacts: Vec<crate::workflows::artefacts::ArtefactRecord>,
         outputs: Vec<AttemptArtefactOutput>,
-        accepted: Option<ArtefactReference>,
-        observed: ObservedCandidate,
     ) -> Result<(), TransitionError> {
         if artefacts.len()
             > crate::workflows::artefacts::MAXIMUM_ARTEFACTS.saturating_sub(self.artefacts.len())
@@ -1558,10 +1149,6 @@ impl WorkflowRun {
         if outputs
             .iter()
             .any(|output| !reference_exists(&output.artefact))
-            || accepted
-                .as_ref()
-                .is_some_and(|item| !reference_exists(item))
-            || matches!(&observed, ObservedCandidate::Exact { artefact } if !reference_exists(artefact))
         {
             return Err(TransitionError::Invalid);
         }
@@ -1574,12 +1161,6 @@ impl WorkflowRun {
         };
         attempt.outputs = outputs;
         self.artefacts.extend(artefacts);
-        if let RunSource::Captured { source } = &mut self.source {
-            source.observed = observed;
-            if let Some(accepted) = accepted {
-                source.accepted = accepted;
-            }
-        }
         Ok(())
     }
 
@@ -1729,17 +1310,13 @@ impl WorkflowRun {
         Ok(())
     }
 
-    pub(crate) fn fail_before_attempt(&mut self, at_ms: u64) -> Result<(), TransitionError> {
-        if !self.accepts_time(at_ms) {
+    pub(crate) fn fail_before_attempt(&mut self) -> Result<(), TransitionError> {
+        if !matches!(self.state, RunState::Ready { .. }) {
             return Err(TransitionError::Invalid);
         }
-        match self.state {
-            RunState::Ready { .. } | RunState::InitialisingSource => {
-                self.state = RunState::Failed;
-                Ok(())
-            }
-            _ => Err(TransitionError::Invalid),
-        }
+        self.revision_reservation = None;
+        self.state = RunState::Failed;
+        Ok(())
     }
 
     pub(crate) fn fail_attempt(
@@ -1781,6 +1358,7 @@ impl WorkflowRun {
         }
         match self.state.clone() {
             RunState::Ready { .. } => {
+                self.revision_reservation = None;
                 self.state = RunState::Cancelled;
                 Ok(())
             }
@@ -1799,10 +1377,6 @@ impl WorkflowRun {
                     None,
                 )?;
                 self.revision_reservation = None;
-                self.state = RunState::Cancelled;
-                Ok(())
-            }
-            RunState::InitialisingSource => {
                 self.state = RunState::Cancelled;
                 Ok(())
             }
@@ -1828,9 +1402,7 @@ impl WorkflowRun {
         if !self.accepts_time(at_ms) {
             return Err(TransitionError::Invalid);
         }
-        if matches!(self.state, RunState::InitialisingSource)
-            || matches!(self.state, RunState::Ready { .. }) && self.revision_reservation.is_some()
-        {
+        if matches!(self.state, RunState::Ready { .. }) {
             self.revision_reservation = None;
             self.state = RunState::Interrupted;
             return Ok(());
@@ -1895,77 +1467,6 @@ impl WorkflowRun {
                 | RunState::Cancelled
                 | RunState::Interrupted
         )
-    }
-
-    /// The latest attempt that carries a file-application transaction, if any.
-    /// Current work reads per-directory outcomes from this authoritative record.
-    pub(crate) fn latest_apply_attempt(&self) -> Option<&AttemptRecord> {
-        self.attempts
-            .iter()
-            .rev()
-            .find(|attempt| attempt.apply_transaction.is_some())
-    }
-
-    /// Uncertain recovery blocks settlement, retry and continuation.
-    pub(crate) fn apply_is_uncertain(&self) -> bool {
-        self.attempts.iter().any(|attempt| {
-            let Some(transaction) = attempt.apply_transaction.as_ref() else {
-                return false;
-            };
-            transaction.state == ApplyTransactionState::RecoveryUncertain
-                || !transaction.is_settled()
-                || transaction.roots.iter().any(|root| {
-                    matches!(
-                        root.outcome,
-                        ApplyRootOutcome::Pending | ApplyRootOutcome::Uncertain
-                    )
-                })
-                || attempt.cleanup != AttemptCleanupRecord::Complete
-        })
-    }
-
-    /// A known partial outcome shows the latest recovered transaction
-    /// with every stored transaction settled and cleanup complete.
-    pub(crate) fn apply_is_known_partial(&self) -> bool {
-        let Some(latest) = self.latest_apply_attempt() else {
-            return false;
-        };
-        let Some(transaction) = latest.apply_transaction.as_ref() else {
-            return false;
-        };
-        transaction.state == ApplyTransactionState::Recovered && !self.apply_is_uncertain()
-    }
-
-    /// Successful completion shows the latest verified transaction
-    /// over applied roots with every stored transaction settled.
-    pub(crate) fn apply_is_complete(&self) -> bool {
-        let Some(latest) = self.latest_apply_attempt() else {
-            return false;
-        };
-        let Some(transaction) = latest.apply_transaction.as_ref() else {
-            return false;
-        };
-        transaction.is_verified()
-            && transaction.roots.iter().all(|root| {
-                matches!(
-                    root.outcome,
-                    ApplyRootOutcome::Applied | ApplyRootOutcome::Unchanged
-                )
-            })
-            && !self.apply_is_uncertain()
-    }
-
-    /// Settlement keeps applied files and ends ownership without another write.
-    pub(crate) fn partial_settlement_eligible(&self) -> bool {
-        !self.is_terminal() && self.apply_is_known_partial()
-    }
-
-    /// End a known partial task through cancellation, never completion.
-    pub(crate) fn settle_known_partial(&mut self, at_ms: u64) -> Result<(), TransitionError> {
-        if !self.partial_settlement_eligible() {
-            return Err(TransitionError::Invalid);
-        }
-        self.cancel(at_ms)
     }
 
     pub(crate) fn current_step_name(&self) -> Option<&str> {
@@ -2053,12 +1554,12 @@ impl WorkflowRun {
             kind: self.kind.as_str().to_owned(),
             agent_id: self.agent_id.map(|id| id.as_hex()),
             phase_models: self.phase_models.iter().map(phase_model_to_file).collect(),
+            settings: self.settings.to_file(),
             workflow_id: self.pinned.workflow_id.map(|id| id.as_hex()),
             version: self.pinned.version.as_hex(),
             definition: self.pinned.definition.to_file(),
             environments: environment_set_to_file(&self.environments),
             state: RunStateFile::from_state(&self.state),
-            source: source_to_file(&self.source),
             artefacts: self.artefacts.iter().map(artefact_to_file).collect(),
             attempts: self.attempts.iter().map(AttemptRecord::to_file).collect(),
             gates: self.gates.iter().map(gate_to_file).collect(),
@@ -2116,7 +1617,6 @@ impl WorkflowRun {
             .map(revision_reservation_from_file)
             .transpose()?;
         let environments = environment_set_from_file(file.environments)?;
-        let source = source_from_file(file.source)?;
         let artefacts = file
             .artefacts
             .into_iter()
@@ -2141,6 +1641,8 @@ impl WorkflowRun {
             kind,
             agent_id,
             phase_models,
+            settings: crate::execution::ExecutionSettings::from_file(file.settings)
+                .ok_or(RunRecordError::Corrupt)?,
             pinned: PinnedWorkflowDefinition {
                 workflow_id,
                 version,
@@ -2148,7 +1650,6 @@ impl WorkflowRun {
             },
             environments,
             state,
-            source,
             artefacts,
             attempts,
             gates,
@@ -2178,43 +1679,14 @@ impl WorkflowRun {
             .len()
             .checked_add(self.gates.len())
             .ok_or(RunRecordError::Corrupt)?;
-        let source_free = matches!(self.source, RunSource::None);
-        let reviewed_directory =
-            matches!(self.source, RunSource::Pending | RunSource::Captured { .. })
-                && self.conversation_id.is_some()
-                && self.agent_id.is_none()
-                && self.pinned.definition.steps().iter().any(|step| {
-                    step.inputs.iter().any(|input| {
-                        input.kind == crate::workflows::definition::ArtefactKind::CandidateRevision
-                    })
-                });
-        let desk = self.conversation_id.is_none() && self.agent_id.is_some();
-        if (!source_free && !reviewed_directory && !desk)
-            || (self.conversation_id.is_none() && self.agent_id.is_none())
-            || (source_free
-                && (self.agent_id.is_some()
-                    || self.pinned.definition.steps().iter().any(|step| {
-                        step.writes_primary_source()
-                            || matches!(&step.action, StepAction::SystemCommand(_))
-                            || step.inputs.iter().any(|input| {
-                                input.kind
-                                    == crate::workflows::definition::ArtefactKind::CandidateRevision
-                            })
-                            || step.required_outputs().iter().any(|output| {
-                                output.kind
-                                    == crate::workflows::definition::OutputKind::CandidateRevision
-                            })
-                    })
-                    || self.attempts.iter().any(|attempt| {
-                        attempt.capabilities.source_location
-                            != PrimarySourceLocation::PrivateWorkspace
-                    })))
-            || (!source_free
-                && self.attempts.iter().any(|attempt| {
-                    attempt.capabilities.source_location == PrimarySourceLocation::PrivateWorkspace
-                }))
+        if self.conversation_id.is_none() == self.agent_id.is_none()
             || fact_count > self.pinned.definition.attempt_bound()
             || self.artefacts.len() > crate::workflows::artefacts::MAXIMUM_ARTEFACTS
+        {
+            return Err(RunRecordError::Corrupt);
+        }
+        if !self.settings.host_access_allowed()
+            || crate::execution::validate_directories(&self.settings.directories).is_err()
         {
             return Err(RunRecordError::Corrupt);
         }
@@ -2225,7 +1697,6 @@ impl WorkflowRun {
         validate_revision_reservation(self)?;
         validate_phase_models(self)?;
         validate_state_facts(self)?;
-        validate_source(self)?;
         validate_environments(self)
     }
 }
@@ -2233,7 +1704,6 @@ impl WorkflowRun {
 impl RunState {
     pub(crate) fn as_label(&self) -> &'static str {
         match self {
-            Self::InitialisingSource => "Source capture",
             Self::Ready { .. } => "Ready",
             Self::Active { .. } => "Active",
             Self::Paused { .. } => "Paused",
@@ -2252,7 +1722,6 @@ impl RunState {
 
     fn from_file(file: RunStateFile) -> Result<Self, RunRecordError> {
         Ok(match file {
-            RunStateFile::InitialisingSource => Self::InitialisingSource,
             RunStateFile::Ready { step } => Self::Ready {
                 step: StepKey::parse(&step).map_err(|_| RunRecordError::Corrupt)?,
             },
@@ -2298,7 +1767,6 @@ impl RunState {
 impl RunStateFile {
     fn from_state(state: &RunState) -> Self {
         match state {
-            RunState::InitialisingSource => Self::InitialisingSource,
             RunState::Ready { step } => Self::Ready {
                 step: step.as_str().to_owned(),
             },
@@ -2378,17 +1846,9 @@ impl AttemptRecord {
             },
             initial_context: self.initial_context.clone(),
             cleanup: cleanup_to_file(&self.cleanup),
-            apply_transaction: self
-                .apply_transaction
-                .as_ref()
-                .map(apply_transaction_to_file),
-            commit_transaction: self
-                .commit_transaction
-                .as_ref()
-                .map(commit_transaction_to_file),
-            direct_changes: self.direct_changes.clone(),
+
             continuation: self.continuation.map(|id| id.as_hex()),
-            paused_candidate: self.paused_candidate.map(|hash| hash.as_str()),
+
             paused_drafts: self
                 .paused_drafts
                 .iter()
@@ -2404,12 +1864,7 @@ impl AttemptRecord {
     }
 
     fn from_file(file: AttemptFile) -> Result<Self, RunRecordError> {
-        if file.ordinal == 0
-            || file
-                .direct_changes
-                .as_ref()
-                .is_some_and(|changes| !changes.valid())
-        {
+        if file.ordinal == 0 {
             return Err(RunRecordError::Corrupt);
         }
         Ok(Self {
@@ -2444,15 +1899,7 @@ impl AttemptRecord {
             },
             initial_context: file.initial_context,
             cleanup: cleanup_from_file(file.cleanup)?,
-            apply_transaction: file
-                .apply_transaction
-                .map(apply_transaction_from_file)
-                .transpose()?,
-            commit_transaction: file
-                .commit_transaction
-                .map(commit_transaction_from_file)
-                .transpose()?,
-            direct_changes: file.direct_changes,
+
             continuation: match file.continuation {
                 Some(value) => Some(
                     crate::conversations::CheckpointId::parse(&value)
@@ -2460,13 +1907,7 @@ impl AttemptRecord {
                 ),
                 None => None,
             },
-            paused_candidate: file
-                .paused_candidate
-                .map(|value| {
-                    crate::workflows::artefacts::ObjectHash::parse(&value)
-                        .ok_or(RunRecordError::Corrupt)
-                })
-                .transpose()?,
+
             paused_drafts: file
                 .paused_drafts
                 .into_iter()
@@ -2563,9 +2004,6 @@ impl FailureCategory {
             "operational" => Some(Self::Operational),
             "definition" => Some(Self::Definition),
             "cleanup" => Some(Self::Cleanup),
-            "assurance" => Some(Self::Assurance),
-            "apply" => Some(Self::Apply),
-            "commit" => Some(Self::Commit),
             _ => None,
         }
     }
@@ -2579,9 +2017,6 @@ impl FailureCategory {
             Self::Operational => "operational",
             Self::Definition => "definition",
             Self::Cleanup => "cleanup",
-            Self::Assurance => "assurance",
-            Self::Apply => "apply",
-            Self::Commit => "commit",
         }
     }
 
@@ -2594,9 +2029,6 @@ impl FailureCategory {
             Self::Operational => "operational",
             Self::Definition => "definition",
             Self::Cleanup => "cleanup",
-            Self::Assurance => "assurance",
-            Self::Apply => "file application",
-            Self::Commit => "commit",
         }
     }
 }
@@ -2703,7 +2135,21 @@ fn validate_phase_models(run: &WorkflowRun) -> Result<(), RunRecordError> {
             || (selection.preset.is_some() && selection.settings.is_none())
             || (run.kind == RunKind::Configured && selection.settings.is_none())
             || selection.settings.as_ref().is_some_and(|settings| {
-                settings.model != selection.selection
+                !settings.host_access_allowed()
+                    || run
+                        .pinned
+                        .definition
+                        .step(&selection.step)
+                        .is_none_or(|step| match &step.action {
+                            StepAction::Agent(action) => {
+                                action.settings.resolve(settings) != *settings
+                                    || (settings.location == crate::execution::ToolLocation::Host
+                                        && action.directory_access
+                                            == super::definition::StepAccess::Read)
+                            }
+                            _ => true,
+                        })
+                    || settings.model != selection.selection
                     || settings.instructions != selection.instructions
                     || crate::execution::validate_directories(&settings.directories).is_err()
                     || run
@@ -2753,21 +2199,15 @@ fn validate_gates(run: &WorkflowRun) -> Result<(), RunRecordError> {
         let StepAction::HumanGate(action) = &step.action else {
             return Err(RunRecordError::Corrupt);
         };
-        let plan_gate = action.is_plan_checkpoint();
-        if plan_gate {
-            if gate.candidate.kind != crate::workflows::definition::ArtefactKind::Plan
-                || gate.diff_base != gate.candidate
-            {
-                return Err(RunRecordError::Corrupt);
-            }
-        } else if gate.candidate.kind
-            != crate::workflows::definition::ArtefactKind::CandidateRevision
-            || gate.diff_base.kind != crate::workflows::definition::ArtefactKind::CandidateRevision
+        if !action.is_plan_checkpoint()
+            || gate.candidate.kind != crate::workflows::definition::ArtefactKind::Plan
         {
             return Err(RunRecordError::Corrupt);
         }
         let candidate = referenced_artefact(run, &gate.candidate)?;
-        let diff_base = referenced_artefact(run, &gate.diff_base)?;
+        if candidate.created_at_ms > gate.opened_at_ms {
+            return Err(RunRecordError::Corrupt);
+        }
         if let Some(previous) = index.checked_sub(1).map(|previous| &run.gates[previous]) {
             let previous_closed = previous.closed_at_ms.ok_or(RunRecordError::Corrupt)?;
             if gate.opened_at_ms < previous_closed {
@@ -2803,11 +2243,12 @@ fn validate_gates(run: &WorkflowRun) -> Result<(), RunRecordError> {
                 if *gate_id != gate.id
                     || *step != gate.step
                     || *output != gate.output
-                    || gate.closed_at_ms.is_none()
+                    || gate.closed_at_ms != Some(record.created_at_ms)
+                    || record.provenance.inputs != [gate.candidate.clone()]
                 {
                     return Err(RunRecordError::Corrupt);
                 }
-                if plan_gate {
+                {
                     let expected = if gate.state == HumanGateState::Approved {
                         super::gates::PlanDecisionKind::Accepted
                     } else {
@@ -2826,26 +2267,6 @@ fn validate_gates(run: &WorkflowRun) -> Result<(), RunRecordError> {
                                     .inputs
                                     .iter()
                                     .any(|input| input == &gate.candidate)
-                        )
-                    {
-                        return Err(RunRecordError::Corrupt);
-                    }
-                } else {
-                    let expected = if gate.state == HumanGateState::Approved {
-                        super::gates::HumanDecisionKind::Approved
-                    } else {
-                        super::gates::HumanDecisionKind::RevisionRequested
-                    };
-                    if decision.kind != crate::workflows::definition::ArtefactKind::HumanDecision
-                        || !matches!(
-                            &record.summary,
-                            crate::workflows::artefacts::ArtefactSummary::HumanDecision {
-                                candidate: decision_candidate,
-                                diff_base: decision_diff_base,
-                                decision,
-                            } if *decision == expected
-                                && Some(*decision_candidate) == candidate.candidate_hash()
-                                && Some(*decision_diff_base) == diff_base.candidate_hash()
                         )
                     {
                         return Err(RunRecordError::Corrupt);
@@ -3100,7 +2521,6 @@ fn gate_to_file(gate: &HumanGateRecord) -> HumanGateFile {
         opened_at_ms: gate.opened_at_ms,
         closed_at_ms: gate.closed_at_ms,
         candidate: ref_to_file(&gate.candidate),
-        diff_base: ref_to_file(&gate.diff_base),
         state: match gate.state {
             HumanGateState::AwaitingDecision => "awaiting-decision",
             HumanGateState::Approved => "approved",
@@ -3121,7 +2541,6 @@ fn revision_reservation_to_file(reservation: &RevisionReservation) -> RevisionRe
         target: reservation.target.as_str().to_owned(),
         decision: ref_to_file(&reservation.decision),
         candidate: ref_to_file(&reservation.candidate),
-        diff_base: ref_to_file(&reservation.diff_base),
         feedback: reservation.feedback.clone(),
         started: reservation.started,
     }
@@ -3136,7 +2555,6 @@ fn revision_reservation_from_file(
         target: StepKey::parse(&file.target).map_err(|_| RunRecordError::Corrupt)?,
         decision: ref_from_file(file.decision)?,
         candidate: ref_from_file(file.candidate)?,
-        diff_base: ref_from_file(file.diff_base)?,
         feedback: file.feedback,
         started: file.started,
     })
@@ -3151,7 +2569,6 @@ fn gate_from_file(file: HumanGateFile) -> Result<HumanGateRecord, RunRecordError
         opened_at_ms: file.opened_at_ms,
         closed_at_ms: file.closed_at_ms,
         candidate: ref_from_file(file.candidate)?,
-        diff_base: ref_from_file(file.diff_base)?,
         state: match file.state.as_str() {
             "awaiting-decision" => HumanGateState::AwaitingDecision,
             "approved" => HumanGateState::Approved,
@@ -3176,44 +2593,6 @@ fn output_from_file(file: AttemptOutputFile) -> Result<AttemptArtefactOutput, Ru
     Ok(AttemptArtefactOutput {
         key: OutputKey::parse(&file.key).map_err(|_| RunRecordError::Corrupt)?,
         artefact: ref_from_file(file.artefact)?,
-    })
-}
-
-fn source_to_file(source: &RunSource) -> RunSourceFile {
-    match source {
-        RunSource::None => RunSourceFile::None,
-        RunSource::Pending => RunSourceFile::Pending,
-        RunSource::Captured { source } => RunSourceFile::Captured {
-            source: RunSourceStateFile {
-                initial: ref_to_file(&source.initial),
-                accepted: ref_to_file(&source.accepted),
-                observed: match &source.observed {
-                    ObservedCandidate::Exact { artefact } => ObservedCandidateFile::Exact {
-                        artefact: ref_to_file(artefact),
-                    },
-                    ObservedCandidate::Unknown => ObservedCandidateFile::Unknown,
-                },
-            },
-        },
-    }
-}
-
-fn source_from_file(file: RunSourceFile) -> Result<RunSource, RunRecordError> {
-    Ok(match file {
-        RunSourceFile::None => RunSource::None,
-        RunSourceFile::Pending => RunSource::Pending,
-        RunSourceFile::Captured { source } => RunSource::Captured {
-            source: RunSourceState {
-                initial: ref_from_file(source.initial)?,
-                accepted: ref_from_file(source.accepted)?,
-                observed: match source.observed {
-                    ObservedCandidateFile::Exact { artefact } => ObservedCandidate::Exact {
-                        artefact: ref_from_file(artefact)?,
-                    },
-                    ObservedCandidateFile::Unknown => ObservedCandidate::Unknown,
-                },
-            },
-        },
     })
 }
 
@@ -3263,8 +2642,6 @@ fn artefact_from_file(file: ArtefactFile) -> Result<ArtefactRecord, RunRecordErr
 fn producer_to_file(producer: &crate::workflows::artefacts::ArtefactProducer) -> ProducerFile {
     use crate::workflows::artefacts::ArtefactProducer;
     match producer {
-        ArtefactProducer::RunSourceCapture => ProducerFile::RunSourceCapture,
-
         ArtefactProducer::StepAttempt {
             attempt_id,
             step,
@@ -3293,8 +2670,6 @@ fn producer_from_file(
 ) -> Result<crate::workflows::artefacts::ArtefactProducer, RunRecordError> {
     use crate::workflows::artefacts::{ArtefactProducer, ProductionDisposition};
     Ok(match file {
-        ProducerFile::RunSourceCapture => ArtefactProducer::RunSourceCapture,
-
         ProducerFile::StepAttempt {
             attempt_id,
             step,
@@ -3327,8 +2702,7 @@ fn summary_to_file(summary: &crate::workflows::artefacts::ArtefactSummary) -> Su
         ArtefactSummary::Plan { markdown_bytes } => SummaryFile::Plan {
             markdown_bytes: *markdown_bytes,
         },
-        ArtefactSummary::Review { candidate, verdict } => SummaryFile::Review {
-            candidate: candidate.as_str(),
+        ArtefactSummary::Review { verdict } => SummaryFile::Review {
             verdict: match verdict {
                 crate::workflows::artefacts::ReviewVerdict::Approved => "approved".to_owned(),
                 crate::workflows::artefacts::ReviewVerdict::RevisionRequired => {
@@ -3337,37 +2711,12 @@ fn summary_to_file(summary: &crate::workflows::artefacts::ArtefactSummary) -> Su
                 crate::workflows::artefacts::ReviewVerdict::Blocked => "blocked".to_owned(),
             },
         },
-        ArtefactSummary::Test { candidate, outcome } => SummaryFile::Test {
-            candidate: candidate.as_str(),
+        ArtefactSummary::Test { outcome } => SummaryFile::Test {
             outcome: match outcome {
                 crate::workflows::artefacts::TestOutcome::Passed => "passed".to_owned(),
                 crate::workflows::artefacts::TestOutcome::Failed => "failed".to_owned(),
                 crate::workflows::artefacts::TestOutcome::NotRun => "not-run".to_owned(),
             },
-        },
-        ArtefactSummary::Candidate {
-            candidate,
-            entries,
-            bytes,
-            disposition,
-        } => SummaryFile::Candidate {
-            candidate: candidate.as_str(),
-            entries: *entries,
-            bytes: *bytes,
-            disposition: disposition.as_str().to_owned(),
-        },
-        ArtefactSummary::HumanDecision {
-            candidate,
-            diff_base,
-            decision,
-        } => SummaryFile::HumanDecision {
-            candidate: candidate.as_str(),
-            diff_base: diff_base.as_str(),
-            decision: match decision {
-                super::gates::HumanDecisionKind::Approved => "approved",
-                super::gates::HumanDecisionKind::RevisionRequested => "revision-requested",
-            }
-            .to_owned(),
         },
         ArtefactSummary::PlanDecision { plan, decision } => SummaryFile::PlanDecision {
             plan: plan.as_str(),
@@ -3383,12 +2732,10 @@ fn summary_to_file(summary: &crate::workflows::artefacts::ArtefactSummary) -> Su
 fn summary_from_file(
     file: SummaryFile,
 ) -> Result<crate::workflows::artefacts::ArtefactSummary, RunRecordError> {
-    use crate::workflows::artefacts::{ArtefactSummary, ProductionDisposition};
+    use crate::workflows::artefacts::ArtefactSummary;
     Ok(match file {
         SummaryFile::Plan { markdown_bytes } => ArtefactSummary::Plan { markdown_bytes },
-        SummaryFile::Review { candidate, verdict } => ArtefactSummary::Review {
-            candidate: crate::workflows::artefacts::CandidateHash::parse(&candidate)
-                .ok_or(RunRecordError::Corrupt)?,
+        SummaryFile::Review { verdict } => ArtefactSummary::Review {
             verdict: match verdict.as_str() {
                 "approved" => crate::workflows::artefacts::ReviewVerdict::Approved,
                 "revision-required" => crate::workflows::artefacts::ReviewVerdict::RevisionRequired,
@@ -3396,41 +2743,11 @@ fn summary_from_file(
                 _ => return Err(RunRecordError::Corrupt),
             },
         },
-        SummaryFile::Test { candidate, outcome } => ArtefactSummary::Test {
-            candidate: crate::workflows::artefacts::CandidateHash::parse(&candidate)
-                .ok_or(RunRecordError::Corrupt)?,
+        SummaryFile::Test { outcome } => ArtefactSummary::Test {
             outcome: match outcome.as_str() {
                 "passed" => crate::workflows::artefacts::TestOutcome::Passed,
                 "failed" => crate::workflows::artefacts::TestOutcome::Failed,
                 "not-run" => crate::workflows::artefacts::TestOutcome::NotRun,
-                _ => return Err(RunRecordError::Corrupt),
-            },
-        },
-        SummaryFile::Candidate {
-            candidate,
-            entries,
-            bytes,
-            disposition,
-        } => ArtefactSummary::Candidate {
-            candidate: crate::workflows::artefacts::CandidateHash::parse(&candidate)
-                .ok_or(RunRecordError::Corrupt)?,
-            entries,
-            bytes,
-            disposition: ProductionDisposition::parse(&disposition)
-                .ok_or(RunRecordError::Corrupt)?,
-        },
-        SummaryFile::HumanDecision {
-            candidate,
-            diff_base,
-            decision,
-        } => ArtefactSummary::HumanDecision {
-            candidate: crate::workflows::artefacts::CandidateHash::parse(&candidate)
-                .ok_or(RunRecordError::Corrupt)?,
-            diff_base: crate::workflows::artefacts::CandidateHash::parse(&diff_base)
-                .ok_or(RunRecordError::Corrupt)?,
-            decision: match decision.as_str() {
-                "approved" => super::gates::HumanDecisionKind::Approved,
-                "revision-requested" => super::gates::HumanDecisionKind::RevisionRequested,
                 _ => return Err(RunRecordError::Corrupt),
             },
         },
@@ -3451,73 +2768,6 @@ pub(crate) fn now_ms() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX))
         .unwrap_or(0)
-}
-
-fn unchanged_task_gate(run: &WorkflowRun, step: &StepKey) -> bool {
-    let Some(definition) = run.pinned.definition.step(step) else {
-        return false;
-    };
-    let quick_task = run.kind == RunKind::QuickTask
-        && run.pinned.workflow_id.is_none()
-        && super::quick::is_expected_gate_step(definition);
-    if !quick_task {
-        return false;
-    }
-    let RunSource::Captured { source } = &run.source else {
-        return false;
-    };
-    let ObservedCandidate::Exact { artefact: observed } = &source.observed else {
-        return false;
-    };
-    let Some(candidate) = gate_input_candidate(run, definition) else {
-        return false;
-    };
-    if observed != &candidate {
-        return false;
-    }
-    let initial = run
-        .artefact(&source.initial.id)
-        .and_then(crate::workflows::artefacts::ArtefactRecord::candidate_hash);
-    let candidate = run
-        .artefact(&candidate.id)
-        .and_then(crate::workflows::artefacts::ArtefactRecord::candidate_hash);
-    initial.is_some() && candidate == initial
-}
-
-fn gate_input_candidate(run: &WorkflowRun, step: &StepDefinition) -> Option<ArtefactReference> {
-    let input = step.inputs.first()?;
-    Some(match &input.source {
-        crate::workflows::definition::ArtefactSource::RunInitialCandidate => {
-            let RunSource::Captured { source } = &run.source else {
-                return None;
-            };
-            source.initial.clone()
-        }
-        crate::workflows::definition::ArtefactSource::RunCurrentCandidate => {
-            let RunSource::Captured { source } = &run.source else {
-                return None;
-            };
-            source.accepted.clone()
-        }
-        crate::workflows::definition::ArtefactSource::RunCurrentPlan => return None,
-
-        crate::workflows::definition::ArtefactSource::StepOutput {
-            step: source_step,
-            output,
-        } => run
-            .attempts
-            .iter()
-            .rev()
-            .find(|attempt| {
-                attempt.step == *source_step
-                    && matches!(attempt.result, Some(AttemptResult::Completed { .. }))
-            })?
-            .outputs
-            .iter()
-            .find(|item| item.key == *output)?
-            .artefact
-            .clone(),
-    })
 }
 
 fn advanced_state(
@@ -3607,165 +2857,6 @@ fn next_ordinal(attempts: &[AttemptRecord], step: &StepKey) -> u32 {
         + 1
 }
 
-fn apply_transaction_to_file(transaction: &ApplyTransaction) -> ApplyTransactionFile {
-    let (state, completed, path) = match &transaction.state {
-        ApplyTransactionState::Prepared => ("prepared", None, None),
-        ApplyTransactionState::Applying { completed, path } => {
-            ("applying", Some(*completed), Some(path.clone()))
-        }
-        ApplyTransactionState::Applied { completed } => ("applied", Some(*completed), None),
-        ApplyTransactionState::Verified => ("verified", None, None),
-        ApplyTransactionState::Recovered => ("recovered", None, None),
-        ApplyTransactionState::RecoveryUncertain => ("recovery-uncertain", None, None),
-    };
-    ApplyTransactionFile {
-        state: state.to_owned(),
-        completed,
-        path,
-        roots: transaction
-            .roots
-            .iter()
-            .map(|root| ApplyRootFile {
-                grant_id: root.grant_id.as_hex(),
-                alias: root.alias.clone(),
-                host_path: root.host_path.clone(),
-                device: root.identity.device,
-                inode: root.identity.inode,
-                baseline_candidate: root.baseline_candidate.as_str(),
-                candidate_hash: root.candidate_hash.as_str(),
-                exclusions: root.exclusions.clone(),
-                outcome: match root.outcome {
-                    ApplyRootOutcome::Pending => "pending",
-                    ApplyRootOutcome::Unchanged => "unchanged",
-                    ApplyRootOutcome::Applied => "applied",
-                    ApplyRootOutcome::Conflicted => "conflicted",
-                    ApplyRootOutcome::Uncertain => "uncertain",
-                }
-                .to_owned(),
-            })
-            .collect(),
-        baseline: ref_to_file(&transaction.baseline),
-        candidate: ref_to_file(&transaction.candidate),
-        approval: ref_to_file(&transaction.approval),
-    }
-}
-
-fn apply_transaction_from_file(
-    file: ApplyTransactionFile,
-) -> Result<ApplyTransaction, RunRecordError> {
-    let state = match (file.state.as_str(), file.completed, file.path) {
-        ("prepared", None, None) => ApplyTransactionState::Prepared,
-        ("applying", Some(completed), Some(path)) if !path.is_empty() => {
-            ApplyTransactionState::Applying { completed, path }
-        }
-        ("applied", Some(completed), None) => ApplyTransactionState::Applied { completed },
-        ("verified", None, None) => ApplyTransactionState::Verified,
-        ("recovered", None, None) => ApplyTransactionState::Recovered,
-        ("recovery-uncertain", None, None) => ApplyTransactionState::RecoveryUncertain,
-        _ => return Err(RunRecordError::Corrupt),
-    };
-    Ok(ApplyTransaction {
-        state,
-        roots: file
-            .roots
-            .into_iter()
-            .map(|root| {
-                Ok(ApplyRoot {
-                    grant_id: crate::execution::DirectoryGrantId::parse(&root.grant_id)
-                        .ok_or(RunRecordError::Corrupt)?,
-                    alias: root.alias,
-                    host_path: root.host_path,
-                    identity: crate::execution::CanonicalDirectoryIdentity {
-                        device: root.device,
-                        inode: root.inode,
-                    },
-                    baseline_candidate: crate::workflows::artefacts::CandidateHash::parse(
-                        &root.baseline_candidate,
-                    )
-                    .ok_or(RunRecordError::Corrupt)?,
-                    candidate_hash: crate::workflows::artefacts::CandidateHash::parse(
-                        &root.candidate_hash,
-                    )
-                    .ok_or(RunRecordError::Corrupt)?,
-                    exclusions: root.exclusions,
-                    outcome: match root.outcome.as_str() {
-                        "pending" => ApplyRootOutcome::Pending,
-                        "unchanged" => ApplyRootOutcome::Unchanged,
-                        "applied" => ApplyRootOutcome::Applied,
-                        "conflicted" => ApplyRootOutcome::Conflicted,
-                        "uncertain" => ApplyRootOutcome::Uncertain,
-                        _ => return Err(RunRecordError::Corrupt),
-                    },
-                })
-            })
-            .collect::<Result<Vec<_>, RunRecordError>>()?,
-        baseline: ref_from_file(file.baseline)?,
-        candidate: ref_from_file(file.candidate)?,
-        approval: ref_from_file(file.approval)?,
-    })
-}
-
-fn commit_transaction_to_file(transaction: &CommitTransaction) -> CommitTransactionFile {
-    CommitTransactionFile {
-        candidate: ref_to_file(&transaction.candidate),
-        reviews: transaction.reviews.iter().map(ref_to_file).collect(),
-        approval: transaction.approval.as_ref().map(ref_to_file),
-        roots: transaction
-            .roots
-            .iter()
-            .map(|root| CommitRootFile {
-                grant_id: root.grant.id.as_hex(),
-                alias: root.grant.alias.clone(),
-                host_path: root.grant.host_path.clone(),
-                identity: root.grant.identity,
-                state: root.state.encode(),
-                expected_reference: root.expected_reference.clone(),
-                old_object: root.old_object.clone(),
-                target_tree: root.target_tree.clone(),
-                expected_commit: root.expected_commit.clone(),
-                timestamp: root.timestamp.clone(),
-            })
-            .collect(),
-    }
-}
-
-fn commit_transaction_from_file(
-    file: CommitTransactionFile,
-) -> Result<CommitTransaction, RunRecordError> {
-    Ok(CommitTransaction {
-        candidate: ref_from_file(file.candidate)?,
-        reviews: file
-            .reviews
-            .into_iter()
-            .map(ref_from_file)
-            .collect::<Result<_, _>>()?,
-        approval: file.approval.map(ref_from_file).transpose()?,
-        roots: file
-            .roots
-            .into_iter()
-            .map(|root| {
-                Ok(CommitRoot {
-                    grant: crate::execution::DirectoryGrant {
-                        id: crate::execution::DirectoryGrantId::parse(&root.grant_id)
-                            .ok_or(RunRecordError::Corrupt)?,
-                        alias: root.alias,
-                        host_path: root.host_path,
-                        identity: root.identity,
-                        access: crate::execution::DirectoryAccess::ReviewBeforeApply,
-                    },
-                    state: CommitTransactionState::parse(&root.state)
-                        .ok_or(RunRecordError::Corrupt)?,
-                    expected_reference: root.expected_reference,
-                    old_object: root.old_object,
-                    target_tree: root.target_tree,
-                    expected_commit: root.expected_commit,
-                    timestamp: root.timestamp,
-                })
-            })
-            .collect::<Result<_, RunRecordError>>()?,
-    })
-}
-
 fn validate_attempt_references(
     run: &WorkflowRun,
     attempt: &AttemptRecord,
@@ -3853,18 +2944,6 @@ fn validate_attempt_result(
 }
 
 fn durable_outputs_match(attempt: &AttemptRecord, step: &StepDefinition) -> bool {
-    let fixes_or_commits = step
-        .required_outputs()
-        .iter()
-        .any(|output| output.kind == crate::workflows::definition::OutputKind::ReviewReport)
-        || matches!(
-            &step.action,
-            StepAction::SystemCommand(action)
-                if action.command == crate::workflows::commands::SystemCommandId::CommitCandidate
-        );
-    if !fixes_or_commits {
-        return true;
-    }
     let durable: Vec<_> = step
         .required_outputs()
         .iter()
@@ -3884,110 +2963,17 @@ fn durable_outputs_match(attempt: &AttemptRecord, step: &StepDefinition) -> bool
         })
 }
 
-fn validate_report_binding(
-    attempt: &AttemptRecord,
-    step: &StepDefinition,
-    run: &WorkflowRun,
-) -> Result<(), RunRecordError> {
-    let StepAction::Agent(action) = &step.action else {
-        return Ok(());
-    };
-    let reports: Vec<_> = attempt
-        .outputs
-        .iter()
-        .filter(|output| {
-            output.artefact.kind == crate::workflows::definition::ArtefactKind::ReviewReport
-        })
-        .collect();
-    if reports.is_empty() {
-        return Ok(());
-    }
-    let candidate_reference = match action.candidate_authority {
-        crate::workflows::definition::CandidateAuthority::ReadOnly => attempt
-            .inputs
-            .iter()
-            .find(|input| {
-                input.artefact.kind == crate::workflows::definition::ArtefactKind::CandidateRevision
-            })
-            .map(|input| &input.artefact),
-        crate::workflows::definition::CandidateAuthority::Edit => attempt
-            .outputs
-            .iter()
-            .find(|output| {
-                output.artefact.kind
-                    == crate::workflows::definition::ArtefactKind::CandidateRevision
-            })
-            .map(|output| &output.artefact),
-    }
-    .ok_or(RunRecordError::Corrupt)?;
-    let candidate_record = run
-        .artefact(&candidate_reference.id)
-        .ok_or(RunRecordError::Corrupt)?;
-    let candidate = candidate_record
-        .candidate_hash()
-        .ok_or(RunRecordError::Corrupt)?;
-    if candidate_record.provenance.run_id != run.id {
-        return Err(RunRecordError::Corrupt);
-    }
-    if action.candidate_authority == crate::workflows::definition::CandidateAuthority::Edit
-        && !required_output_from_attempt(candidate_record, attempt)
-    {
-        return Err(RunRecordError::Corrupt);
-    }
-    for report in reports {
-        let record = run
-            .artefact(&report.artefact.id)
-            .ok_or(RunRecordError::Corrupt)?;
-        let bound = record.candidate_hash().ok_or(RunRecordError::Corrupt)?;
-        if bound != candidate
-            || record.provenance.run_id != run.id
-            || !required_output_from_attempt(record, attempt)
-            || !record
-                .provenance
-                .inputs
-                .iter()
-                .any(|input| input == candidate_reference)
-        {
-            return Err(RunRecordError::Corrupt);
-        }
-    }
-    Ok(())
-}
-
-fn required_output_from_attempt(
-    record: &crate::workflows::artefacts::ArtefactRecord,
-    attempt: &AttemptRecord,
-) -> bool {
-    matches!(
-        &record.provenance.producer,
-        crate::workflows::artefacts::ArtefactProducer::StepAttempt {
-            attempt_id,
-            step,
-            disposition: crate::workflows::artefacts::ProductionDisposition::RequiredOutput,
-            ..
-        } if *attempt_id == attempt.id && *step == attempt.step
-    )
-}
-
 fn validate_attempt_isolation(
     attempt: &AttemptRecord,
     step: &StepDefinition,
     run: &WorkflowRun,
 ) -> Result<(), RunRecordError> {
-    let file_application = matches!(
-        &step.action,
-        StepAction::SystemCommand(action)
-            if action.command == crate::workflows::commands::SystemCommandId::ApplyChanges
-    );
     let host_execution = matches!(
         &step.action,
         StepAction::Agent(action) if action.host_tools()
     );
-    if (file_application && attempt.sandbox.kind != AttemptSandboxKind::FileApplication)
-        || (host_execution && attempt.sandbox.kind != AttemptSandboxKind::HostExecution)
-        || (!file_application
-            && !host_execution
-            && attempt.sandbox.kind != AttemptSandboxKind::IsolatedAttempt)
+    if (host_execution && attempt.sandbox.kind != AttemptSandboxKind::HostExecution)
+        || (!host_execution && attempt.sandbox.kind != AttemptSandboxKind::IsolatedAttempt)
     {
         return Err(RunRecordError::Corrupt);
     }
@@ -4003,88 +2989,6 @@ fn validate_attempt_isolation(
         if attempt.sandbox.snapshot_digest != binding.snapshot_digest {
             return Err(RunRecordError::Corrupt);
         }
-    }
-    let apply = matches!(
-        &step.action,
-        StepAction::SystemCommand(action)
-            if action.command == crate::workflows::commands::SystemCommandId::ApplyChanges
-    );
-    let commit = matches!(
-        &step.action,
-        StepAction::SystemCommand(action)
-            if action.command == crate::workflows::commands::SystemCommandId::CommitCandidate
-    );
-    if apply {
-        if attempt.capabilities.git_admin != AccessMode::ReadOnly
-            || attempt.capabilities.source_location != PrimarySourceLocation::UserProject
-            || attempt.commit_transaction.is_some()
-            || attempt
-                .apply_transaction
-                .as_ref()
-                .is_some_and(|transaction| !valid_apply_transaction(run, attempt, transaction))
-            || (attempt.state == AttemptState::Completed
-                && !attempt
-                    .apply_transaction
-                    .as_ref()
-                    .is_some_and(ApplyTransaction::is_verified))
-        {
-            return Err(RunRecordError::Corrupt);
-        }
-    } else if commit {
-        if attempt.capabilities.git_admin != AccessMode::ReadWrite
-            || attempt.capabilities.source_location != PrimarySourceLocation::UserProject
-        {
-            return Err(RunRecordError::Corrupt);
-        }
-        if let Some(transaction) = &attempt.commit_transaction
-            && !valid_commit_transaction(attempt, transaction)
-        {
-            return Err(RunRecordError::Corrupt);
-        }
-        if let Some(transaction) = &attempt.commit_transaction {
-            if transaction.roots.is_empty() {
-                let RunSource::Captured { source } = &run.source else {
-                    return Err(RunRecordError::Corrupt);
-                };
-                let unchanged = matches!(
-                    (run.artefact(&source.initial.id).map(|record| &record.summary),
-                     run.artefact(&transaction.candidate.id).map(|record| &record.summary)),
-                    (Some(crate::workflows::artefacts::ArtefactSummary::Candidate { candidate: before, .. }),
-                     Some(crate::workflows::artefacts::ArtefactSummary::Candidate { candidate: after, .. })) if before == after
-                );
-                if !unchanged {
-                    return Err(RunRecordError::Corrupt);
-                }
-            }
-            let grants = run.reviewed_directories();
-            if transaction.roots.iter().any(|root| {
-                !grants.contains(&root.grant)
-                    || !attempt
-                        .capabilities
-                        .directories
-                        .iter()
-                        .any(|directory| directory.alias == root.grant.alias)
-            }) {
-                return Err(RunRecordError::Corrupt);
-            }
-        }
-        if attempt.state == AttemptState::Completed
-            && !attempt
-                .commit_transaction
-                .as_ref()
-                .is_some_and(CommitTransaction::is_verified)
-        {
-            return Err(RunRecordError::Corrupt);
-        }
-    } else if attempt.apply_transaction.is_some()
-        || attempt.commit_transaction.is_some()
-        || attempt.capabilities.git_admin != AccessMode::ReadOnly
-        || !matches!(
-            attempt.capabilities.source_location,
-            PrimarySourceLocation::AttemptWorkspace | PrimarySourceLocation::PrivateWorkspace
-        )
-    {
-        return Err(RunRecordError::Corrupt);
     }
     match attempt.action_kind {
         ActionKind::SystemCommand => {
@@ -4123,167 +3027,6 @@ fn validate_attempt_isolation(
     Ok(())
 }
 
-fn valid_apply_transaction(
-    run: &WorkflowRun,
-    attempt: &AttemptRecord,
-    transaction: &ApplyTransaction,
-) -> bool {
-    let candidate = attempt.inputs.iter().find(|input| {
-        input.artefact.kind == crate::workflows::definition::ArtefactKind::CandidateRevision
-    });
-    let approval = attempt.inputs.iter().find(|input| {
-        input.artefact.kind == crate::workflows::definition::ArtefactKind::HumanDecision
-    });
-    let source = match &run.source {
-        RunSource::Captured { source } => source,
-        RunSource::None | RunSource::Pending => return false,
-    };
-    let baseline_record = run.artefact(&transaction.baseline.id);
-    let candidate_record = run.artefact(&transaction.candidate.id);
-    let approval_record = run.artefact(&transaction.approval.id);
-    let summaries_match = match (
-        baseline_record.map(|record| &record.summary),
-        candidate_record.map(|record| &record.summary),
-        approval_record.map(|record| &record.summary),
-    ) {
-        (
-            Some(crate::workflows::artefacts::ArtefactSummary::Candidate {
-                candidate: baseline,
-                ..
-            }),
-            Some(crate::workflows::artefacts::ArtefactSummary::Candidate { candidate, .. }),
-            Some(crate::workflows::artefacts::ArtefactSummary::HumanDecision {
-                candidate: approved,
-                diff_base,
-                decision: crate::workflows::gates::HumanDecisionKind::Approved,
-            }),
-        ) => candidate == approved && baseline == diff_base,
-        _ => false,
-    };
-    if candidate.map(|input| &input.artefact) != Some(&transaction.candidate)
-        || approval.map(|input| &input.artefact) != Some(&transaction.approval)
-        || source.initial != transaction.baseline
-        // Later outputs can advance accepted and observed references. The transaction retains its exact approved inputs.
-        || !summaries_match
-        || transaction.baseline.kind
-            != crate::workflows::definition::ArtefactKind::CandidateRevision
-        || transaction.roots.is_empty()
-        || transaction.roots.iter().enumerate().any(|(index, root)| {
-            root.alias.is_empty()
-                || root.host_path.as_os_str().is_empty()
-                || !root.host_path.is_absolute()
-                || root.exclusions.windows(2).any(|pair| pair[0] >= pair[1])
-                || transaction.roots[..index].iter().any(|previous| {
-                    previous.grant_id == root.grant_id || previous.alias == root.alias
-                })
-        })
-    {
-        return false;
-    }
-    match &transaction.state {
-        ApplyTransactionState::Prepared => transaction.roots.iter().all(|root| {
-            matches!(
-                root.outcome,
-                ApplyRootOutcome::Pending | ApplyRootOutcome::Unchanged
-            )
-        }),
-        ApplyTransactionState::Verified => transaction.roots.iter().all(|root| {
-            matches!(
-                root.outcome,
-                ApplyRootOutcome::Applied | ApplyRootOutcome::Unchanged
-            )
-        }),
-        ApplyTransactionState::Recovered => true,
-        ApplyTransactionState::RecoveryUncertain => transaction.roots.iter().any(|root| {
-            matches!(
-                root.outcome,
-                ApplyRootOutcome::Conflicted | ApplyRootOutcome::Uncertain
-            )
-        }),
-        ApplyTransactionState::Applying { path, .. } => !path.is_empty(),
-        ApplyTransactionState::Applied { .. } => true,
-    }
-}
-
-fn valid_commit_transaction(attempt: &AttemptRecord, transaction: &CommitTransaction) -> bool {
-    let expected_reviews: Vec<_> = attempt
-        .inputs
-        .iter()
-        .filter(|input| {
-            input.artefact.kind == crate::workflows::definition::ArtefactKind::ReviewReport
-        })
-        .map(|input| &input.artefact)
-        .collect();
-    let expected_approval = attempt.inputs.iter().find_map(|input| {
-        (input.artefact.kind == crate::workflows::definition::ArtefactKind::HumanDecision)
-            .then_some(&input.artefact)
-    });
-    if transaction.candidate.kind != crate::workflows::definition::ArtefactKind::CandidateRevision
-        || (expected_reviews.is_empty() && expected_approval.is_none())
-        || transaction
-            .reviews
-            .iter()
-            .any(|review| review.kind != crate::workflows::definition::ArtefactKind::ReviewReport)
-        || transaction.approval.as_ref() != expected_approval
-        || !attempt
-            .inputs
-            .iter()
-            .any(|input| input.artefact == transaction.candidate)
-        || transaction.reviews.len() != expected_reviews.len()
-        || transaction
-            .reviews
-            .iter()
-            .zip(expected_reviews)
-            .any(|(stored, expected)| stored != expected)
-        || transaction.roots.len() > crate::execution::MAXIMUM_DIRECTORY_GRANTS
-        || transaction.roots.iter().enumerate().any(|(index, root)| {
-            transaction.roots[..index].iter().any(|previous| {
-                previous.grant.id == root.grant.id || previous.grant.identity == root.grant.identity
-            }) || !valid_commit_root(root)
-        })
-    {
-        return false;
-    }
-    true
-}
-
-fn valid_commit_root(root: &CommitRoot) -> bool {
-    if root.grant.access != crate::execution::DirectoryAccess::ReviewBeforeApply
-        || !root.grant.host_path.is_absolute()
-        || root.grant.alias.is_empty()
-        || root.expected_reference.is_empty()
-        || root.timestamp.split_once(' ').is_none()
-        || [&root.old_object, &root.target_tree, &root.expected_commit]
-            .into_iter()
-            .any(|object| {
-                object
-                    .as_deref()
-                    .is_some_and(|object| !valid_git_object_id(object))
-            })
-    {
-        return false;
-    }
-    match &root.state {
-        CommitTransactionState::Prepared | CommitTransactionState::Restored => true,
-        CommitTransactionState::WorktreeApplied => {
-            root.target_tree.is_some() && root.expected_commit.is_some()
-        }
-        CommitTransactionState::ReferenceUpdated { commit }
-        | CommitTransactionState::Verified { commit } => {
-            root.target_tree.is_some()
-                && root.expected_commit.as_deref() == Some(commit)
-                && valid_git_object_id(commit)
-        }
-    }
-}
-
-fn valid_git_object_id(value: &str) -> bool {
-    matches!(value.len(), 40 | 64)
-        && value
-            .bytes()
-            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
-}
-
 fn capabilities_match_step(
     run: &WorkflowRun,
     capabilities: &AttemptCapabilities,
@@ -4303,85 +3046,7 @@ fn capabilities_match_step(
         .and_then(|authority| AttemptCapabilities::derive_project_free(step, &authority).ok())
         .is_some_and(|expected| expected == *capabilities);
     }
-    match &step.action {
-        StepAction::Agent(action) => {
-            let primary = capabilities
-                .directories
-                .iter()
-                .filter(|directory| directory.role == DirectoryRole::PrimarySource);
-            let primary: Vec<_> = primary.collect();
-            let secondary: Vec<_> = capabilities
-                .directories
-                .iter()
-                .filter(|directory| directory.role == DirectoryRole::SecondaryContext)
-                .collect();
-            let private_workspace = capabilities.source_location
-                == PrimarySourceLocation::PrivateWorkspace
-                && action.candidate_authority
-                    == crate::workflows::definition::CandidateAuthority::ReadOnly
-                && primary.len() == 1
-                && if action.authority.directories.is_empty() {
-                    primary[0].guest_path == crate::execution::GUEST_WORKSPACE
-                        && primary[0].access == AccessMode::ReadWrite
-                        && secondary.is_empty()
-                } else {
-                    primary[0].access == AccessMode::ReadOnly
-                        && valid_guest_path(&primary[0].guest_path)
-                        && action
-                            .authority
-                            .directories
-                            .iter()
-                            .any(|item| item.alias == primary[0].alias)
-                        && capabilities.directories.len() == action.authority.directories.len()
-                };
-            let candidate_workspace = capabilities.source_location
-                == PrimarySourceLocation::AttemptWorkspace
-                && primary.len() == 1
-                && primary[0].access == action.candidate_authority.access();
-            capabilities.git_admin == AccessMode::ReadOnly
-                && (private_workspace || candidate_workspace)
-                && capabilities
-                    .tools
-                    .iter()
-                    .all(|tool| action.authority.tools.contains(tool))
-                && (private_workspace || secondary.len() == action.authority.directories.len())
-                && secondary.iter().all(|directory| {
-                    valid_guest_path(&directory.guest_path)
-                        && directory.access == AccessMode::ReadOnly
-                        && action
-                            .authority
-                            .directories
-                            .iter()
-                            .any(|item| item.alias == directory.alias)
-                })
-        }
-        StepAction::SystemCommand(action) => {
-            let apply = action.command == crate::workflows::commands::SystemCommandId::ApplyChanges;
-            let commit =
-                action.command == crate::workflows::commands::SystemCommandId::CommitCandidate;
-            capabilities.tools.is_empty()
-                && capabilities.network == NetworkCapability::None
-                && capabilities.directories.iter().all(|directory| {
-                    valid_guest_path(&directory.guest_path)
-                        && if apply || commit {
-                            directory.access == AccessMode::ReadWrite
-                        } else {
-                            directory.access == AccessMode::ReadOnly
-                        }
-                })
-                && if commit {
-                    capabilities.git_admin == AccessMode::ReadWrite
-                        && capabilities.source_location == PrimarySourceLocation::UserProject
-                } else if apply {
-                    capabilities.git_admin == AccessMode::ReadOnly
-                        && capabilities.source_location == PrimarySourceLocation::UserProject
-                } else {
-                    capabilities.git_admin == AccessMode::ReadOnly
-                        && capabilities.source_location == PrimarySourceLocation::AttemptWorkspace
-                }
-        }
-        StepAction::HumanGate(_) => false,
-    }
+    false
 }
 
 fn valid_guest_path(path: &str) -> bool {
@@ -4431,8 +3096,7 @@ fn capabilities_from_file(
     let source_location =
         PrimarySourceLocation::parse(&file.source_location).ok_or(RunRecordError::Corrupt)?;
     match (git_admin, source_location) {
-        (AccessMode::ReadOnly, PrimarySourceLocation::AttemptWorkspace)
-        | (AccessMode::ReadOnly, PrimarySourceLocation::PrivateWorkspace)
+        (AccessMode::ReadOnly, PrimarySourceLocation::PrivateWorkspace)
         | (AccessMode::ReadOnly, PrimarySourceLocation::UserProject)
         | (AccessMode::ReadWrite, PrimarySourceLocation::UserProject) => {}
         _ => return Err(RunRecordError::Corrupt),
@@ -4506,7 +3170,6 @@ impl AttemptSandboxKind {
     fn as_str(self) -> &'static str {
         match self {
             Self::IsolatedAttempt => "isolated-attempt",
-            Self::FileApplication => "file-application",
             Self::HostExecution => "host-execution",
         }
     }
@@ -4514,29 +3177,35 @@ impl AttemptSandboxKind {
     fn parse(value: &str) -> Option<Self> {
         match value {
             "isolated-attempt" => Some(Self::IsolatedAttempt),
-            "file-application" => Some(Self::FileApplication),
             "host-execution" => Some(Self::HostExecution),
             _ => None,
         }
     }
 }
 
-fn context_matches_attempt(context: &AttemptContextPacket, attempt: &AttemptRecord) -> bool {
-    if attempt.action_kind != ActionKind::Agent {
-        return false;
-    }
-    let candidate = attempt.inputs.iter().find(|input| {
-        input.artefact.kind == crate::workflows::definition::ArtefactKind::CandidateRevision
-    });
-    match (candidate, context.project_instructions.candidate.as_ref()) {
-        (None, None) => true,
-        (Some(input), Some(recorded)) => {
-            input.artefact.id.as_hex() == recorded.id
-                && input.artefact.kind.as_str() == recorded.kind
-                && input.artefact.artefact_hash.as_str() == recorded.artefact_hash
-        }
-        _ => false,
-    }
+fn context_matches_attempt(
+    context: &AttemptContextPacket,
+    attempt: &AttemptRecord,
+    step: &StepDefinition,
+) -> bool {
+    let location = if attempt.sandbox.kind == AttemptSandboxKind::HostExecution {
+        crate::execution::ToolLocation::Host
+    } else {
+        crate::execution::ToolLocation::Sandbox
+    };
+    let tools = crate::tools::definitions_for_step(
+        &attempt.capabilities.tools,
+        step.required_outputs(),
+        location,
+    );
+    attempt.action_kind == ActionKind::Agent
+        && context.validate()
+        && context.tools.len() == tools.len()
+        && context.tools.iter().zip(tools).all(|(stored, expected)| {
+            stored.name == expected.name
+                && stored.description == expected.description
+                && stored.parameters == expected.parameters
+        })
 }
 
 fn validate_attempts(run: &WorkflowRun) -> Result<(), RunRecordError> {
@@ -4571,15 +3240,21 @@ fn validate_attempts(run: &WorkflowRun) -> Result<(), RunRecordError> {
                 return Err(RunRecordError::Corrupt);
             }
         }
+        if attempt.inputs
+            != run
+                .resolve_inputs_before(step, index, attempt.started_at_ms)
+                .map_err(|_| RunRecordError::Corrupt)?
+        {
+            return Err(RunRecordError::Corrupt);
+        }
         validate_attempt_references(run, attempt, step)?;
         if let Some(context) = &attempt.initial_context
-            && (!context.validate() || !context_matches_attempt(context, attempt))
+            && !context_matches_attempt(context, attempt, step)
         {
             return Err(RunRecordError::Corrupt);
         }
         validate_attempt_result(attempt, step)?;
         validate_attempt_isolation(attempt, step, run)?;
-        validate_report_binding(attempt, step, run)?;
     }
     if active > 1 {
         return Err(RunRecordError::Corrupt);
@@ -4603,8 +3278,6 @@ fn validate_revision_reservation(run: &WorkflowRun) -> Result<(), RunRecordError
     if gate.state != HumanGateState::RevisionRequested
         || gate.decision.as_ref() != Some(&reservation.decision)
         || gate.candidate != reservation.candidate
-        || gate.diff_base != reservation.diff_base
-        || (plan_gate && gate.diff_base != gate.candidate)
         || reservation.feedback.is_empty()
         || reservation.feedback.len() > super::gates::MAXIMUM_REVISION_NOTE_BYTES
         || reservation.target != policy.revision_target
@@ -4723,7 +3396,19 @@ fn validate_state_facts(run: &WorkflowRun) -> Result<(), RunRecordError> {
             attempt_index += 1;
         } else {
             let gate = gate.ok_or(RunRecordError::Corrupt)?;
-            if gate.step != *expected_step || gate.opened_at_ms < previous_at {
+            let definition = run
+                .pinned
+                .definition
+                .step(&gate.step)
+                .ok_or(RunRecordError::Corrupt)?;
+            if gate.step != *expected_step
+                || gate.opened_at_ms < previous_at
+                || !run
+                    .resolve_inputs_before(definition, attempt_index, gate.opened_at_ms)
+                    .map_err(|_| RunRecordError::Corrupt)?
+                    .iter()
+                    .any(|input| input.artefact == gate.candidate)
+            {
                 return Err(RunRecordError::Corrupt);
             }
             previous_at = gate.closed_at_ms.unwrap_or(gate.opened_at_ms);
@@ -4744,36 +3429,6 @@ fn validate_state_facts(run: &WorkflowRun) -> Result<(), RunRecordError> {
                 run.state,
                 RunState::Failed | RunState::Cancelled | RunState::Interrupted
             )
-        || matches!(
-            (&expected, &run.state),
-            (
-                RunState::Ready { .. },
-                RunState::Escalated {
-                    reason: EscalationReason::AttemptLimit,
-                    report,
-                    ..
-                }
-            ) if run.gates.last().is_some_and(|gate| {
-                gate.state == HumanGateState::RevisionRequested
-                    && gate.decision.as_ref() == Some(report)
-            })
-        )
-    {
-        return Ok(());
-    }
-    if let RunState::Ready { step } = &expected
-        && run.state == RunState::Completed
-        && unchanged_task_gate(run, step)
-    {
-        return Ok(());
-    }
-    if run.attempts.is_empty()
-        && run.gates.is_empty()
-        && matches!(run.source, RunSource::Pending)
-        && matches!(
-            run.state,
-            RunState::InitialisingSource | RunState::Interrupted
-        )
     {
         return Ok(());
     }
@@ -4844,45 +3499,32 @@ fn predicted_from_gate(
             let StepAction::HumanGate(action) = &step.action else {
                 return Err(RunRecordError::Corrupt);
             };
-            let target = action
-                .revision
-                .as_ref()
-                .ok_or(RunRecordError::Corrupt)?
-                .revision_target
-                .clone();
-            Ok(RunState::Ready { step: target })
+            let policy = action.revision.as_ref().ok_or(RunRecordError::Corrupt)?;
+            let revisions = run
+                .gates
+                .iter()
+                .filter(|earlier| {
+                    earlier.sequence <= gate.sequence
+                        && earlier.step == gate.step
+                        && earlier.state == HumanGateState::RevisionRequested
+                })
+                .count();
+            if revisions >= usize::from(policy.attempt_limit) {
+                Ok(RunState::Escalated {
+                    step: gate.step.clone(),
+                    report: gate.decision.clone().ok_or(RunRecordError::Corrupt)?,
+                    reason: EscalationReason::AttemptLimit,
+                })
+            } else {
+                Ok(RunState::Ready {
+                    step: policy.revision_target.clone(),
+                })
+            }
         }
         HumanGateState::Cancelled => Ok(RunState::Cancelled),
         HumanGateState::Interrupted => Ok(RunState::Interrupted),
         HumanGateState::AwaitingDecision => Err(RunRecordError::Corrupt),
     }
-}
-
-fn validate_source(run: &WorkflowRun) -> Result<(), RunRecordError> {
-    match &run.source {
-        RunSource::None if run.agent_id.is_none() => Ok(()),
-        RunSource::None => Err(RunRecordError::Corrupt),
-        RunSource::Pending => Ok(()),
-        RunSource::Captured { source } => {
-            validate_source_ref(run, &source.initial)?;
-            validate_source_ref(run, &source.accepted)?;
-            match &source.observed {
-                ObservedCandidate::Exact { artefact } => validate_source_ref(run, artefact),
-                ObservedCandidate::Unknown => Ok(()),
-            }
-        }
-    }
-}
-
-fn validate_source_ref(
-    run: &WorkflowRun,
-    reference: &ArtefactReference,
-) -> Result<(), RunRecordError> {
-    if reference.kind != crate::workflows::definition::ArtefactKind::CandidateRevision {
-        return Err(RunRecordError::Corrupt);
-    }
-    referenced_artefact(run, reference)?;
-    Ok(())
 }
 
 fn referenced_artefact<'a>(
@@ -4921,18 +3563,6 @@ fn validate_artefacts(run: &WorkflowRun) -> Result<(), RunRecordError> {
             }
         }
         match &record.provenance.producer {
-            crate::workflows::artefacts::ArtefactProducer::RunSourceCapture => {
-                let RunSource::Captured { source } = &run.source else {
-                    return Err(RunRecordError::Corrupt);
-                };
-                if record.kind != crate::workflows::definition::ArtefactKind::CandidateRevision
-                    || !record.provenance.inputs.is_empty()
-                    || !artefact_matches_reference(record, &source.initial)
-                {
-                    return Err(RunRecordError::Corrupt);
-                }
-            }
-
             crate::workflows::artefacts::ArtefactProducer::StepAttempt {
                 attempt_id,
                 step,
@@ -4945,13 +3575,16 @@ fn validate_artefacts(run: &WorkflowRun) -> Result<(), RunRecordError> {
                     .find(|attempt| attempt.id == *attempt_id)
                     .ok_or(RunRecordError::Corrupt)?;
                 if attempt.step != *step
-                    || matches!(
-                        &record.summary,
-                        crate::workflows::artefacts::ArtefactSummary::Candidate {
-                            disposition: summary_disposition,
-                            ..
-                        } if summary_disposition != disposition
-                    )
+                    || record.created_at_ms < attempt.started_at_ms
+                    || attempt
+                        .finished_at_ms
+                        .is_some_and(|finished| record.created_at_ms > finished)
+                    || record.provenance.inputs
+                        != attempt
+                            .inputs
+                            .iter()
+                            .map(|input| input.artefact.clone())
+                            .collect::<Vec<_>>()
                 {
                     return Err(RunRecordError::Corrupt);
                 }
@@ -4962,15 +3595,6 @@ fn validate_artefacts(run: &WorkflowRun) -> Result<(), RunRecordError> {
                             attempt_output.key == *output
                                 && artefact_matches_reference(record, &attempt_output.artefact)
                         }) {
-                            return Err(RunRecordError::Corrupt);
-                        }
-                    }
-                    crate::workflows::artefacts::ProductionDisposition::ObservedAfterFailure
-                    | crate::workflows::artefacts::ProductionDisposition::SourceDrift => {
-                        if output.is_some()
-                            || record.kind
-                                != crate::workflows::definition::ArtefactKind::CandidateRevision
-                        {
                             return Err(RunRecordError::Corrupt);
                         }
                     }
@@ -4997,10 +3621,8 @@ fn validate_artefacts(run: &WorkflowRun) -> Result<(), RunRecordError> {
                     .ok_or(RunRecordError::Corrupt)?;
                 if gate.step != *step
                     || gate.output != *output
-                    || (plan_gate
-                        && record.kind != crate::workflows::definition::ArtefactKind::PlanDecision)
-                    || (!plan_gate
-                        && record.kind != crate::workflows::definition::ArtefactKind::HumanDecision)
+                    || record.kind != crate::workflows::definition::ArtefactKind::PlanDecision
+                    || !plan_gate
                     || gate
                         .decision
                         .as_ref()
@@ -5021,17 +3643,11 @@ fn artefact_kind_matches_summary(record: &ArtefactRecord) -> bool {
             crate::workflows::definition::ArtefactKind::Plan,
             crate::workflows::artefacts::ArtefactSummary::Plan { .. },
         ) | (
-            crate::workflows::definition::ArtefactKind::CandidateRevision,
-            crate::workflows::artefacts::ArtefactSummary::Candidate { .. },
-        ) | (
             crate::workflows::definition::ArtefactKind::ReviewReport,
             crate::workflows::artefacts::ArtefactSummary::Review { .. },
         ) | (
             crate::workflows::definition::ArtefactKind::TestReport,
             crate::workflows::artefacts::ArtefactSummary::Test { .. },
-        ) | (
-            crate::workflows::definition::ArtefactKind::HumanDecision,
-            crate::workflows::artefacts::ArtefactSummary::HumanDecision { .. },
         ) | (
             crate::workflows::definition::ArtefactKind::PlanDecision,
             crate::workflows::artefacts::ArtefactSummary::PlanDecision { .. },

@@ -2,25 +2,14 @@ use std::sync::Arc;
 
 use super::WorkflowExecution;
 
-#[tokio::test]
-async fn file_application_excludes_another_application_but_not_model_work() {
+#[test]
+fn unresolved_cleanup_blocks_new_execution() {
     let execution = Arc::new(WorkflowExecution::new());
-    let first = execution.acquire().expect("first conversation");
-    let application = execution.lock_application().await.expect("application");
-    let second = execution.acquire().expect("second conversation");
-    let mut waiting = Box::pin(execution.lock_application());
-    assert!(futures_util::poll!(&mut waiting).is_pending());
-    drop(application);
-    let application = waiting.await.expect("next application");
-    let mut waiting = Box::pin(execution.lock_application());
-    assert!(futures_util::poll!(&mut waiting).is_pending());
+    let first = execution.acquire().unwrap();
     first.require_recovery();
-    drop(application);
-    assert!(waiting.await.is_err());
-    drop((first, second));
+    drop(first);
     assert!(execution.acquire().is_err());
     assert!(execution.acquire_exclusive().is_err());
-    assert!(execution.lock_application().await.is_err());
 }
 
 #[test]

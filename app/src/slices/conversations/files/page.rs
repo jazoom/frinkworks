@@ -1,9 +1,8 @@
 //! Bounded file suggestions for the at-sign composer control.
 //!
 //! A suggestion contains a scope label and a model-visible path. It never
-//! contains file contents. Search reads only approved host roots or an
-//! immutable candidate view; it never starts a sandbox and never follows a
-//! symbolic link or the private Frinkworks data directory.
+//! contains file contents. Search reads approved live roots without a sandbox.
+//! It excludes symbolic links and the private Frinkworks data directory.
 
 use std::path::Path;
 
@@ -42,44 +41,24 @@ pub(super) fn search(
     let mut scored: Vec<(u32, Suggestion)> = Vec::new();
     let mut budget = 0usize;
     for root in roots {
-        if !root.candidate() {
-            if let Some(path) = root.host_path.as_deref() {
-                let Some(grant) = grants.iter().find(|grant| grant.host_path == path) else {
-                    result.unavailable += 1;
-                    continue;
-                };
-                traverse(
-                    grant,
-                    root,
-                    query,
-                    data_root,
-                    &mut budget,
-                    &mut scored,
-                    &mut result,
-                );
-            }
-            if result.partial {
-                break;
-            }
+        let Some(grant) = grants
+            .iter()
+            .find(|grant| Some(grant.host_path.as_path()) == root.host_path.as_deref())
+        else {
+            result.unavailable += 1;
             continue;
-        }
-        for entry in &root.candidate_paths {
-            budget += 1;
-            if budget > MAXIMUM_FILE_TRAVERSAL_ENTRIES {
-                result.partial = true;
-                break;
-            }
-            let Some((relative, directory)) = candidate_entry(entry) else {
-                continue;
-            };
-            if grants.iter().any(|grant| {
-                grant.alias == root.scope && overlaps(&grant.host_path.join(relative), data_root)
-            }) {
-                continue;
-            }
-            if let Some(score) = match_score(query, &root.scope, relative) {
-                push_scored(&mut scored, score, root, relative, directory);
-            }
+        };
+        traverse(
+            grant,
+            root,
+            query,
+            data_root,
+            &mut budget,
+            &mut scored,
+            &mut result,
+        );
+        if result.partial {
+            break;
         }
     }
     scored.sort_by(|left, right| {
@@ -181,48 +160,12 @@ fn complete_root(
     if directory.split('/').any(|part| part == "." || part == "..") {
         return;
     }
-    if root.candidate() {
-        complete_candidate(root, directory, prefix, data_root, grants, budget, result);
-    } else if let Some(path) = root.host_path.as_deref() {
+    if let Some(path) = root.host_path.as_deref() {
         let Some(grant) = grants.iter().find(|grant| grant.host_path == path) else {
             result.unavailable += 1;
             return;
         };
         complete_host(grant, root, directory, prefix, data_root, budget, result);
-    }
-}
-
-fn complete_candidate(
-    root: &EffectiveRoot,
-    directory: &str,
-    prefix: &str,
-    data_root: &Path,
-    grants: &[crate::execution::DirectoryGrant],
-    budget: &mut usize,
-    result: &mut Search,
-) {
-    for entry in &root.candidate_paths {
-        *budget += 1;
-        if *budget > MAXIMUM_FILE_TRAVERSAL_ENTRIES {
-            result.partial = true;
-            return;
-        }
-        let Some((path, is_directory)) = candidate_entry(entry) else {
-            continue;
-        };
-        let (entry_directory, name) = match path.rfind('/') {
-            Some(index) => (&path[..=index], &path[index + 1..]),
-            None => ("", path),
-        };
-        if entry_directory != directory || !name_starts_with(name, prefix) {
-            continue;
-        }
-        if grants.iter().any(|grant| {
-            grant.alias == root.scope && overlaps(&grant.host_path.join(path), data_root)
-        }) {
-            continue;
-        }
-        push_completion(result, root, directory, name, is_directory);
     }
 }
 
@@ -429,23 +372,6 @@ fn traverse(
             }
         }
     }
-}
-
-fn candidate_entry(entry: &str) -> Option<(&str, bool)> {
-    let directory = entry.ends_with('/');
-    let entry = entry.trim_end_matches('/');
-    if entry.is_empty() || entry.len() > MAXIMUM_FILE_PATH_BYTES || entry.contains('\0') {
-        return None;
-    }
-    if entry.starts_with('/') || entry.chars().any(char::is_control) {
-        return None;
-    }
-    for component in entry.split('/') {
-        if component.is_empty() || component == "." || component == ".." || component == ".git" {
-            return None;
-        }
-    }
-    Some((entry, directory))
 }
 
 fn valid_component(name: &str) -> bool {

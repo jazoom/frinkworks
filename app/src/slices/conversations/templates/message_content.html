@@ -94,11 +94,15 @@
     {% else if block.kind == "progress" %}
       <section class="flex flex-col gap-2" data-tool-progress>
         <p class="text-quiet flex items-center gap-2 text-sm">
-          <span
-            class="loading loading-dots loading-xs motion-reduce:hidden"
-            aria-hidden="true"
-          ></span>
-          <span>Command running</span>
+          {% if block.active %}
+            <span
+              class="loading loading-dots loading-xs motion-reduce:hidden"
+              aria-hidden="true"
+            ></span>
+            <span>Command in progress</span>
+          {% else %}
+            <span>No command result is available.</span>
+          {% endif %}
         </p>
         {% for chunk in block.progress %}
           <div class="flex flex-col gap-1">

@@ -90,7 +90,6 @@ async fn prepared_handoff_needs_run_only_consent_and_rejects_stale_source_decisi
     let transferred = state.workflow_runs.get(&run.id).unwrap();
     let owner = transferred.conversation_id.unwrap();
     assert_ne!(owner, source.id);
-    assert_eq!(transferred.source, run.source);
     assert_eq!(transferred.gates, run.gates);
     assert_eq!(transferred.artefacts, run.artefacts);
     assert_eq!(transferred.phase_models, run.phase_models);
@@ -128,16 +127,12 @@ async fn prepared_handoff_needs_run_only_consent_and_rejects_stale_source_decisi
         &phase_settings.directories[0]
     ));
     let gate = &run.gates[0];
-    let candidate = run
-        .artefact(&gate.candidate.id)
-        .unwrap()
-        .candidate_hash()
-        .unwrap();
+    let plan = &gate.candidate.artefact_hash;
     let path = format!("/runs/{}/gates/{}/approve", run.id, gate.id);
     let stale = format!(
-        "gate-revision={}&candidate={}&surface=conversation",
+        "gate-revision={}&plan={}&surface=conversation",
         gate.revision.get(),
-        candidate.as_str()
+        plan.as_str()
     );
     let response = app(&state)
         .oneshot(command(&path, &token, &stale))
@@ -146,9 +141,9 @@ async fn prepared_handoff_needs_run_only_consent_and_rejects_stale_source_decisi
     assert_eq!(response.status(), StatusCode::CONFLICT);
     assert_eq!(state.workflow_runs.get(&run.id), Some(transferred.clone()));
     let current = format!(
-        "gate-revision={}&candidate={}&surface=conversation",
+        "gate-revision={}&plan={}&surface=conversation",
         transferred.decision_revision(gate).get(),
-        candidate.as_str()
+        plan.as_str()
     );
     let response = app(&state)
         .oneshot(command(&path, &token, &current))
@@ -168,7 +163,12 @@ async fn prepared_handoff_needs_run_only_consent_and_rejects_stale_source_decisi
     .await
     .unwrap();
     let applied = state.workflow_runs.get(&run.id).unwrap();
-    assert_eq!(applied.state, crate::workflows::run::RunState::Completed);
+    assert_eq!(
+        applied.state,
+        crate::workflows::run::RunState::Completed,
+        "{:?}",
+        state.conversations.get(&owner).unwrap().messages.last()
+    );
     let persisted = tempfile::tempdir().unwrap();
     let runs = crate::workflows::WorkflowRunStore::open(persisted.path().to_owned()).unwrap();
     runs.create(applied.clone()).unwrap();
@@ -180,13 +180,7 @@ async fn prepared_handoff_needs_run_only_consent_and_rejects_stale_source_decisi
     );
     assert_eq!(
         std::fs::read_to_string(directory.path().join("file.txt")).unwrap(),
-        "prepared\n"
-    );
-    assert!(
-        applied
-            .attempts
-            .iter()
-            .all(|attempt| attempt.commit_transaction.is_none())
+        "original\n"
     );
 }
 
@@ -434,7 +428,7 @@ async fn edited_prompt_opens_an_unsent_draft_without_consent_or_history() {
     let record = source(&state);
     let directory = tempfile::tempdir().unwrap();
     let mut grant = crate::execution::DirectoryGrant::from_selected(directory.path(), &[]).unwrap();
-    grant.access = crate::execution::DirectoryAccess::DirectWrite;
+    grant.access = crate::execution::DirectoryAccess::Write;
     let mut settings = record.model.as_ref().unwrap().settings.clone();
     settings.directories.push(grant.clone());
     let record = state

@@ -26,7 +26,7 @@ pub(in crate::slices::conversations) fn draft_run(
         return Ok(None);
     }
     let binding = binding.ok_or(
-        "The prepared-change draft expired. Open Handoff in the current owner conversation again.",
+        "The workflow handoff draft expired. Open Handoff in the current owner conversation again.",
     )?;
     let source = state
         .conversations
@@ -35,7 +35,7 @@ pub(in crate::slices::conversations) fn draft_run(
     let run = state
         .workflow_runs
         .get(&binding.run)
-        .ok_or("The prepared changes are unavailable.")?;
+        .ok_or("The workflow is unavailable.")?;
     if form.prepared_run != run.id.as_hex()
         || !state.sessions.contains_live(&session)
         || source.revision != binding.source_revision
@@ -43,12 +43,12 @@ pub(in crate::slices::conversations) fn draft_run(
         || run.conversation_id != Some(source.id)
         || run.handoff_fingerprint() != binding.fingerprint
     {
-        return Err("The source or prepared changes changed. Open Handoff again.");
+        return Err("The source or workflow changed. Open Handoff again.");
     }
     if state.sessions.conversation_reserved(source.id)
         && !state.gate_continuations.available(&run.id, &session)
     {
-        return Err("Another operation controls the prepared changes. Wait before handoff.");
+        return Err("Another operation controls the workflow. Wait before handoff.");
     }
     Ok(Some(run))
 }
@@ -57,7 +57,7 @@ pub(in crate::slices::conversations) fn settings_text(run: &WorkflowRun) -> Stri
     let phases = run.model_phases().filter_map(|phase| phase.settings.as_ref().map(|settings| {
         let directories = settings.directories.iter().map(|grant| format!("{}: {} ({})", grant.alias, grant.host_path.display(), grant.access.as_str())).collect::<Vec<_>>().join("\n");
         let environment = run.environments.steps.iter().find(|binding| binding.step == phase.step).map(|binding| format!("{} / {}", binding.environment_id.as_hex(), binding.snapshot_digest.as_str())).unwrap_or_else(|| "Host execution".to_owned());
-        format!("Step: {}\nModel: {} / {}\nThinking: {}\nTools: {}\nLocation: {}\nHost command policy: {}\nNetwork: {:?}\nEnvironment: {}\nDirectories:\n{}\nInstructions:\n{}", phase.step.as_str(), phase.selection.provider.as_str(), phase.selection.model, phase.selection.thinking.as_ref().map_or("Not available", |effort| effort.as_str()), settings.tools.iter().map(|tool| tool.as_str()).collect::<Vec<_>>().join(", "), settings.location.as_str(), settings.host_approval.as_str(), settings.network, environment, directories, phase.instructions)
+        format!("Step: {}\nModel: {} / {}\nThinking: {}\nTools: {}\nLocation: {}\nCommand approval: {}\nNetwork: {:?}\nEnvironment: {}\nDirectories:\n{}\nInstructions:\n{}", phase.step.as_str(), phase.selection.provider.as_str(), phase.selection.model, phase.selection.thinking.as_ref().map_or("Not available", |effort| effort.as_str()), settings.tools.iter().map(|tool| tool.as_str()).collect::<Vec<_>>().join(", "), settings.location.as_str(), settings.host_approval.as_str(), settings.network, environment, directories, phase.instructions)
     })).collect::<Vec<_>>().join("\n\n");
     let steps = run
         .pinned
@@ -93,7 +93,7 @@ pub(in crate::slices::conversations) fn validate_pinned(
                 .map_err(|_| "Connect each pinned provider before continuation.")?;
         }
         if let Some(settings) = &phase.settings {
-            crate::execution::ProjectFreeAuthority::from_settings(1, settings).map_err(|_| "A pinned directory changed identity. The prepared changes remain with their current owner.")?;
+            crate::execution::ProjectFreeAuthority::from_settings(1, settings).map_err(|_| "A pinned directory changed identity. The workflow remains with its current owner.")?;
         }
     }
     Ok(())
@@ -152,7 +152,7 @@ pub(in crate::slices::conversations) fn finish(
         || (previous.is_none() && state.sessions.conversation_reserved(source_id))
     {
         restore(previous);
-        return Err("Another operation controls the prepared changes.");
+        return Err("Another operation controls the workflow.");
     }
     let job = match state
         .sessions
@@ -178,7 +178,7 @@ pub(in crate::slices::conversations) fn finish(
                 .sessions
                 .finish_conversation_job(&session, destination.id, job.id());
             restore(previous);
-            return Err("The transfer did not commit. The source retains the prepared changes.");
+            return Err("The transfer did not commit. The source retains the workflow.");
         }
     };
     if let Some(previous) = previous {
@@ -192,7 +192,7 @@ pub(in crate::slices::conversations) fn finish(
         .get(&expected.id)
         .expect("committed ownership");
     let attached = if transferred.pending_handoff.is_some() {
-        Err("Prepared-change ownership needs recovery.")
+        Err("Workflow ownership needs recovery.")
     } else {
         super::recovery::attach(state, session, &transferred, &started, job.clone())
     };

@@ -78,10 +78,7 @@ impl OutputDrafts {
                 outcome: parse_outcome(outcome.ok_or(OutputDraftError::Kind)?)?,
                 markdown: markdown.ok_or(OutputDraftError::Kind)?,
             },
-            OutputKind::AssistantReply
-            | OutputKind::CandidateRevision
-            | OutputKind::HumanDecision
-            | OutputKind::PlanDecision => {
+            OutputKind::AssistantReply | OutputKind::PlanDecision => {
                 return Err(OutputDraftError::Kind);
             }
         };

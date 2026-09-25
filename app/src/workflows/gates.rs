@@ -1,4 +1,4 @@
-use super::artefacts::{ArtefactHash, ArtefactReference, CandidateHash};
+use super::artefacts::{ArtefactHash, ArtefactReference};
 use super::definition::{OutputKey, StepKey};
 use super::id::GateId;
 
@@ -46,26 +46,9 @@ pub(crate) struct HumanGateRecord {
     pub(crate) opened_at_ms: u64,
     pub(crate) closed_at_ms: Option<u64>,
     pub(crate) candidate: ArtefactReference,
-    pub(crate) diff_base: ArtefactReference,
     pub(crate) state: HumanGateState,
     pub(crate) decision: Option<ArtefactReference>,
     pub(crate) output: OutputKey,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub(crate) enum HumanDecisionKind {
-    Approved,
-    RevisionRequested,
-}
-
-impl HumanDecisionKind {
-    pub(crate) fn as_label(self) -> &'static str {
-        match self {
-            Self::Approved => "Approved",
-            Self::RevisionRequested => "Revision requested",
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
@@ -82,17 +65,6 @@ impl PlanDecisionKind {
             Self::RevisionRequested => "Plan changes requested",
         }
     }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
-#[serde(deny_unknown_fields, rename_all = "kebab-case")]
-pub(crate) struct HumanDecisionPayload {
-    pub(crate) format_version: u32,
-    pub(crate) candidate: String,
-    pub(crate) diff_base: String,
-    pub(crate) decision: HumanDecisionKind,
-    pub(crate) note: Option<String>,
-    pub(crate) decided_at_ms: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
@@ -117,13 +89,6 @@ pub(crate) fn normalise_revision_note(raw: &str) -> Option<String> {
         return None;
     }
     Some(note.to_owned())
-}
-
-pub(crate) fn hashes(payload: &HumanDecisionPayload) -> Option<(CandidateHash, CandidateHash)> {
-    Some((
-        CandidateHash::parse(&payload.candidate)?,
-        CandidateHash::parse(&payload.diff_base)?,
-    ))
 }
 
 pub(crate) fn plan_hash(payload: &PlanDecisionPayload) -> Option<ArtefactHash> {

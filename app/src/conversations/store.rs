@@ -3,9 +3,8 @@ use std::sync::{Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
 
-use crate::agents::{AgentRecord, ToolId};
-use crate::workflows::artefacts::{ArtefactHash, ArtefactReference};
-use crate::workflows::{ArtefactId, RunId};
+use crate::agents::ToolId;
+use crate::workflows::RunId;
 
 use crate::providers::ModelSelection;
 use crate::sessions::JobId;
@@ -27,8 +26,6 @@ const CATALOGUE_VERSION: u32 = 1;
 pub(crate) const MAXIMUM_TITLE_BYTES: usize = 120;
 pub(crate) const MAXIMUM_MESSAGE_BYTES: usize = 32 * 1024;
 pub(crate) const MAXIMUM_REPLY_BYTES: usize = 128 * 1024;
-const MAXIMUM_LINKED_REVIEWS: usize = 32;
-const MAXIMUM_REVIEW_BRIEF_BYTES: usize = MAXIMUM_MESSAGE_BYTES;
 /// One transport window of retained history. It bounds the browser and the
 /// response payload, never the retained records themselves.
 pub(crate) const TRANSCRIPT_WINDOW: usize = 64;
@@ -122,31 +119,6 @@ pub(crate) struct TreeWindow {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct CandidateReviewLink {
-    pub(crate) conversation_id: Option<ConversationId>,
-    pub(crate) run_id: RunId,
-    pub(crate) candidate: ArtefactReference,
-    pub(crate) diff_base: ArtefactReference,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct CandidateReviewContext {
-    pub(crate) source: CandidateReviewLink,
-    pub(crate) task_brief: String,
-}
-
-pub(crate) struct CandidateReviewCreation {
-    pub(crate) source_conversation: Option<(ConversationId, u32)>,
-    pub(crate) title: String,
-    pub(crate) model: ConversationModelConfiguration,
-    pub(crate) run_id: RunId,
-    pub(crate) candidate: ArtefactReference,
-    pub(crate) diff_base: ArtefactReference,
-    pub(crate) task_brief: String,
-    pub(crate) source_at_safe_gate: bool,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ConversationRecord {
     pub(crate) id: ConversationId,
     pub(crate) revision: u32,
@@ -158,9 +130,6 @@ pub(crate) struct ConversationRecord {
     // The digest covers execution access, not model selection or instructions.
     pub(crate) directory_approvals: Vec<DirectoryApproval>,
 
-    pub(crate) source_candidate_review: Option<CandidateReviewLink>,
-    pub(crate) candidate_reviews: Vec<CandidateReviewLink>,
-    pub(crate) candidate_review_context: Option<CandidateReviewContext>,
     /// A fork records its source boundary. It holds no mutable alias.
     pub(crate) forked_from: Option<super::forks::ForkProvenance>,
     /// The active path in root-first order. It is the only projection that
@@ -292,24 +261,6 @@ impl ConversationModelConfiguration {
             }),
         }
     }
-
-    pub(crate) fn from_agent_snapshot(
-        record: &AgentRecord,
-        selection: ModelSelection,
-        environment: crate::environments::EnvironmentId,
-    ) -> Self {
-        Self {
-            settings: crate::execution::ExecutionSettings::new(
-                selection,
-                record.instructions.clone(),
-                record.tools.clone(),
-                environment,
-            )
-            .and_then(|settings| settings.with_network(record.network.clone()))
-            .expect("stored agent settings are valid"),
-            preset: None,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -329,7 +280,6 @@ pub(crate) enum ConversationError {
     Active,
     Selection,
     Directories,
-    Review,
     Image(AttachmentError),
 }
 
@@ -353,7 +303,6 @@ impl ConversationError {
             Self::Active => "This conversation has an active request. Wait for it to finish.",
             Self::Selection => "Choose an available model before you send a message.",
             Self::Directories => "Choose valid non-overlapping directories for this conversation.",
-            Self::Review => "That plan review hand-off is no longer available.",
             Self::Image(error) => error.message(),
         }
     }
@@ -410,11 +359,6 @@ struct MetadataFile {
     model: Option<ConversationModelFile>,
     directory_approvals: Vec<DirectoryApprovalFile>,
 
-    #[serde(deserialize_with = "crate::storage::required_option")]
-    source_candidate_review: Option<CandidateReviewLinkFile>,
-    candidate_reviews: Vec<CandidateReviewLinkFile>,
-    #[serde(deserialize_with = "crate::storage::required_option")]
-    candidate_review_context: Option<CandidateReviewContextFile>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     forked_from: Option<ForkProvenanceFile>,
     #[serde(deserialize_with = "crate::storage::required_option")]
@@ -549,36 +493,10 @@ struct AppliedPresetFile {
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
-struct CandidateReviewLinkFile {
-    conversation: Option<String>,
-    run: String,
-    candidate: ArtefactRefFile,
-    diff_base: ArtefactRefFile,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "kebab-case")]
-struct CandidateReviewContextFile {
-    source: CandidateReviewLinkFile,
-    task_brief: String,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "kebab-case")]
 struct ForkProvenanceFile {
     source: String,
     source_revision: u32,
     boundary: String,
-    #[serde(default)]
-    candidate_review: bool,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "kebab-case")]
-struct ArtefactRefFile {
-    id: String,
-    kind: String,
-    artefact_hash: String,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -989,9 +907,6 @@ impl ConversationStore {
             model,
             directory_approvals,
 
-            source_candidate_review: None,
-            candidate_reviews: Vec::new(),
-            candidate_review_context: None,
             forked_from: None,
             summary_requests: Vec::new(),
             messages: Vec::new(),
@@ -1060,17 +975,10 @@ impl ConversationStore {
             model,
             directory_approvals,
 
-            source_candidate_review: snapshot
-                .review_context
-                .as_ref()
-                .map(|context| context.source.clone()),
-            candidate_reviews: Vec::new(),
-            candidate_review_context: snapshot.review_context.clone(),
             forked_from: Some(super::forks::ForkProvenance {
                 source: snapshot.source,
                 source_revision: snapshot.source_revision,
                 boundary: snapshot.boundary,
-                candidate_review: snapshot.candidate_review,
             }),
             summary_requests: Vec::new(),
             messages,
@@ -1090,104 +998,6 @@ impl ConversationStore {
         self.commit_result(id, database.clone_attachments(&record, &inherited))?;
         drop(database);
         Ok(record)
-    }
-
-    pub(crate) fn create_candidate_review(
-        &self,
-        creation: CandidateReviewCreation,
-    ) -> Result<ConversationRecord, ConversationError> {
-        let CandidateReviewCreation {
-            source_conversation,
-            title,
-            model,
-            run_id,
-            candidate,
-            diff_base,
-            task_brief,
-            source_at_safe_gate,
-        } = creation;
-        let title = normalise_title(&title)?;
-        let task_brief = normalise_message(&task_brief)?;
-        if task_brief.len() > MAXIMUM_REVIEW_BRIEF_BYTES
-            || candidate.kind != crate::workflows::definition::ArtefactKind::CandidateRevision
-            || diff_base.kind != crate::workflows::definition::ArtefactKind::CandidateRevision
-        {
-            return Err(ConversationError::Review);
-        }
-        let mut database = self.database();
-        let source = source_conversation
-            .map(|(id, revision)| {
-                self.require_durable(&id)?;
-                let source = database.load(&id)?.ok_or(ConversationError::Missing)?;
-                if source.revision != revision {
-                    return Err(ConversationError::Conflict);
-                }
-                if source.active_job.is_some() && !source_at_safe_gate {
-                    return Err(ConversationError::Active);
-                }
-                if source.candidate_reviews.len() >= MAXIMUM_LINKED_REVIEWS {
-                    return Err(ConversationError::Review);
-                }
-                Ok(source)
-            })
-            .transpose()?;
-        let id = unused_identifier(&database)?;
-        let now = now_ms();
-        let source_link = CandidateReviewLink {
-            conversation_id: source.as_ref().map(|source| source.id),
-            run_id,
-            candidate: candidate.clone(),
-            diff_base: diff_base.clone(),
-        };
-        let review_link = CandidateReviewLink {
-            conversation_id: Some(id),
-            run_id,
-            candidate,
-            diff_base,
-        };
-        let review = ConversationRecord {
-            id,
-            revision: 1,
-            title,
-            title_pending: false,
-            network: crate::agents::NetworkAccess::None,
-            model: Some(model),
-            directory_approvals: Vec::new(),
-
-            source_candidate_review: Some(source_link.clone()),
-            candidate_reviews: Vec::new(),
-            candidate_review_context: Some(CandidateReviewContext {
-                source: source_link,
-                task_brief,
-            }),
-            forked_from: None,
-            summary_requests: Vec::new(),
-            messages: Vec::new(),
-            active_job: None,
-            continuation: None,
-            compaction: None,
-            queue: super::queue::ConversationQueue::default(),
-            created_at_ms: now,
-            updated_at_ms: now,
-        };
-        let mut updated_source = None;
-        if let Some(source) = source.as_ref() {
-            let mut updated = source.clone();
-            updated.revision = source
-                .revision
-                .checked_add(1)
-                .ok_or(ConversationError::Revision)?;
-            updated.updated_at_ms = now.max(source.updated_at_ms);
-            updated.candidate_reviews.push(review_link);
-            updated_source = Some(updated);
-        }
-        match (source.as_ref(), updated_source.as_ref()) {
-            (Some(previous), Some(updated)) => {
-                self.persist_pair(&mut database, None, &review, Some(previous), updated)?;
-            }
-            _ => self.persist(&mut database, None, &review)?,
-        }
-        Ok(review)
     }
 
     pub(crate) fn rename(
@@ -1513,59 +1323,6 @@ impl ConversationStore {
         })
     }
 
-    pub(crate) fn record_command_baseline(
-        &self,
-        id: &ConversationId,
-        request: JobId,
-        before: String,
-    ) -> Result<(), ConversationError> {
-        self.update(id, 0, false, |current| {
-            if current.active_job != Some(request) {
-                return Err(ConversationError::Conflict);
-            }
-            let entry = current
-                .messages
-                .iter_mut()
-                .rev()
-                .find(|message| {
-                    message.request == Some(request) && message.status == MessageStatus::Pending
-                })
-                .and_then(|message| message.command.as_mut())
-                .ok_or(ConversationError::Conflict)?;
-            entry.before = Some(before);
-            if !entry.valid() {
-                return Err(ConversationError::Message);
-            }
-            Ok(())
-        })
-        .map(|_| ())
-    }
-
-    /// Preserve process evidence before cleanup or a review decision. The job
-    /// remains active until the file-attempt driver releases ownership.
-    pub(crate) fn record_command_output(
-        &self,
-        id: &ConversationId,
-        request: JobId,
-        output: crate::execution::CommandResult,
-    ) -> Result<(), ConversationError> {
-        if !super::history::valid_command(Some(&output)) {
-            return Err(ConversationError::Message);
-        }
-        self.update(id, 0, false, |current| {
-            if current.active_job != Some(request) {
-                return Err(ConversationError::Conflict);
-            }
-            let entry = active_assistant(current, request)?
-                .command
-                .as_mut()
-                .ok_or(ConversationError::Conflict)?;
-            entry.output = Some(output);
-            Ok(())
-        })
-        .map(|_| ())
-    }
-
     /// Settle one direct command entry. A failed write leaves the pending
     /// entry intact, so recovery never replays the command.
     #[allow(clippy::too_many_arguments)]
@@ -1576,8 +1333,6 @@ impl ConversationStore {
         output: Option<crate::execution::CommandResult>,
         status: MessageStatus,
         error: Option<String>,
-        before: Option<String>,
-        after: Option<String>,
     ) -> Result<(), ConversationError> {
         if !matches!(
             status,
@@ -1603,8 +1358,6 @@ impl ConversationStore {
                 return Err(ConversationError::Message);
             }
             entry.output = output;
-            entry.before = before;
-            entry.after = after;
             if !entry.valid() {
                 return Err(ConversationError::Message);
             }
@@ -2575,8 +2328,6 @@ fn command_message(
             included,
             directory,
             output: None,
-            before: None,
-            after: None,
         }),
         attachments: Vec::new(),
         activity: Vec::new(),
@@ -2727,16 +2478,6 @@ fn source_path(
     }
 }
 
-fn unused_identifier(database: &Database) -> Result<ConversationId, ConversationError> {
-    for _ in 0..16 {
-        let id = ConversationId::generate().map_err(|_| ConversationError::Random)?;
-        if !database.contains(&id)? {
-            return Ok(id);
-        }
-    }
-    Err(ConversationError::Random)
-}
-
 /// Bind every active-path entry to its predecessor. Appends extend the active
 /// path, so vector order is the authoritative parent chain.
 fn project_active_path(record: &mut ConversationRecord) {
@@ -2769,34 +2510,6 @@ fn record_from_parts(
     let mut model = file.model.map(model_from_file).transpose()?;
     if let Some(model) = &mut model {
         model.settings.network = network.clone();
-    }
-    let source_candidate_review = file
-        .source_candidate_review
-        .map(candidate_review_link_from_file)
-        .transpose()?;
-    let candidate_reviews = file
-        .candidate_reviews
-        .into_iter()
-        .map(candidate_review_link_from_file)
-        .collect::<Result<Vec<_>, _>>()?;
-    if candidate_reviews.len() > MAXIMUM_LINKED_REVIEWS
-        || candidate_reviews.iter().enumerate().any(|(index, link)| {
-            candidate_reviews[..index]
-                .iter()
-                .any(|previous| previous == link)
-        })
-    {
-        return Err(ConversationError::Corrupt);
-    }
-    let candidate_review_context = file
-        .candidate_review_context
-        .map(candidate_review_context_from_file)
-        .transpose()?;
-    if candidate_review_context
-        .as_ref()
-        .is_some_and(|context| source_candidate_review.as_ref() != Some(&context.source))
-    {
-        return Err(ConversationError::Corrupt);
     }
     let directory_approvals = directory_approvals_from_file(file.directory_approvals)?;
     let messages: Result<Vec<_>, _> = message_files.into_iter().map(message_from_file).collect();
@@ -2861,9 +2574,6 @@ fn record_from_parts(
         model,
         directory_approvals,
 
-        source_candidate_review,
-        candidate_reviews,
-        candidate_review_context,
         forked_from,
         messages,
         active_job,
@@ -3010,76 +2720,6 @@ fn model_to_file(model: &ConversationModelConfiguration) -> ConversationModelFil
     }
 }
 
-fn artefact_ref_from_file(file: ArtefactRefFile) -> Result<ArtefactReference, ConversationError> {
-    Ok(ArtefactReference {
-        id: ArtefactId::parse(&file.id).ok_or(ConversationError::Corrupt)?,
-        kind: crate::workflows::definition::ArtefactKind::parse(&file.kind)
-            .ok_or(ConversationError::Corrupt)?,
-        artefact_hash: ArtefactHash::parse(&file.artefact_hash)
-            .ok_or(ConversationError::Corrupt)?,
-    })
-}
-
-fn artefact_ref_to_file(reference: &ArtefactReference) -> ArtefactRefFile {
-    ArtefactRefFile {
-        id: reference.id.as_hex(),
-        kind: reference.kind.as_str().to_owned(),
-        artefact_hash: reference.artefact_hash.as_str(),
-    }
-}
-
-fn candidate_review_link_from_file(
-    file: CandidateReviewLinkFile,
-) -> Result<CandidateReviewLink, ConversationError> {
-    let candidate = artefact_ref_from_file(file.candidate)?;
-    let diff_base = artefact_ref_from_file(file.diff_base)?;
-    if candidate.kind != crate::workflows::definition::ArtefactKind::CandidateRevision
-        || diff_base.kind != crate::workflows::definition::ArtefactKind::CandidateRevision
-    {
-        return Err(ConversationError::Corrupt);
-    }
-    Ok(CandidateReviewLink {
-        conversation_id: match file.conversation {
-            Some(value) => Some(ConversationId::parse(&value).ok_or(ConversationError::Corrupt)?),
-            None => None,
-        },
-        run_id: RunId::parse(&file.run).ok_or(ConversationError::Corrupt)?,
-        candidate,
-        diff_base,
-    })
-}
-
-fn candidate_review_link_to_file(link: &CandidateReviewLink) -> CandidateReviewLinkFile {
-    CandidateReviewLinkFile {
-        conversation: link.conversation_id.map(|id| id.as_hex()),
-        run: link.run_id.as_hex(),
-        candidate: artefact_ref_to_file(&link.candidate),
-        diff_base: artefact_ref_to_file(&link.diff_base),
-    }
-}
-
-fn candidate_review_context_from_file(
-    file: CandidateReviewContextFile,
-) -> Result<CandidateReviewContext, ConversationError> {
-    let task_brief = normalise_message(&file.task_brief)?;
-    if task_brief.len() > MAXIMUM_REVIEW_BRIEF_BYTES {
-        return Err(ConversationError::Corrupt);
-    }
-    Ok(CandidateReviewContext {
-        source: candidate_review_link_from_file(file.source)?,
-        task_brief,
-    })
-}
-
-fn candidate_review_context_to_file(
-    context: &CandidateReviewContext,
-) -> CandidateReviewContextFile {
-    CandidateReviewContextFile {
-        source: candidate_review_link_to_file(&context.source),
-        task_brief: context.task_brief.clone(),
-    }
-}
-
 fn fork_provenance_from_file(
     file: ForkProvenanceFile,
 ) -> Result<super::forks::ForkProvenance, ConversationError> {
@@ -3092,7 +2732,6 @@ fn fork_provenance_from_file(
         source,
         source_revision: file.source_revision,
         boundary,
-        candidate_review: file.candidate_review,
     })
 }
 
@@ -3260,19 +2899,6 @@ fn metadata_to_file(record: &ConversationRecord) -> MetadataFile {
             })
             .collect(),
 
-        source_candidate_review: record
-            .source_candidate_review
-            .as_ref()
-            .map(candidate_review_link_to_file),
-        candidate_reviews: record
-            .candidate_reviews
-            .iter()
-            .map(candidate_review_link_to_file)
-            .collect(),
-        candidate_review_context: record
-            .candidate_review_context
-            .as_ref()
-            .map(candidate_review_context_to_file),
         forked_from: record
             .forked_from
             .as_ref()
@@ -3280,7 +2906,6 @@ fn metadata_to_file(record: &ConversationRecord) -> MetadataFile {
                 source: provenance.source.as_hex(),
                 source_revision: provenance.source_revision,
                 boundary: provenance.boundary.as_hex(),
-                candidate_review: provenance.candidate_review,
             }),
         active_job: record.active_job.map(|request| request.as_hex()),
         continuation: record.continuation.as_ref().map(continuation_to_file),

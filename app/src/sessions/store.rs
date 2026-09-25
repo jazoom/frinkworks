@@ -193,7 +193,7 @@ impl SessionStore {
                 .conversation_jobs()
                 .get(&conversation)
                 .is_some_and(|entry| {
-                    // Handoff can use a prepared candidate while its gate retains ownership.
+                    // Handoff can use a plan while its gate retains ownership.
                     entry.job.snapshot().status != super::JobStatus::AwaitingDecision
                 })
         {

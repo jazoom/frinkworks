@@ -1,6 +1,4 @@
 mod page;
-pub(crate) use page::DirectChangesView;
-pub(super) use page::TransactionOutcomesView;
 
 #[cfg(test)]
 mod tests;
@@ -18,8 +16,7 @@ use crate::{
 };
 
 use self::page::{
-    ArtefactView, RunDetailView, RunIndexView, attempt_activity_view, attempt_changes_view,
-    attempt_result_view,
+    ArtefactView, RunDetailView, RunIndexView, attempt_activity_view, attempt_result_view,
 };
 
 pub(super) fn router() -> Router<AppState> {
@@ -33,10 +30,6 @@ pub(super) fn router() -> Router<AppState> {
         .route(
             "/runs/{run_id}/attempts/{attempt_id}/activity",
             get(attempt_activity),
-        )
-        .route(
-            "/runs/{run_id}/attempts/{attempt_id}/changes",
-            get(attempt_changes),
         )
         .route(
             "/runs/{run_id}/attempts/{attempt_id}/result",
@@ -220,89 +213,6 @@ async fn attempt_activity(
         PageGraft::Document => responses::chat_page_response("Attempt activity", &state, &view),
         PageGraft::Navigation => Ok(hypergraft::outcome::page_patch(
             "Attempt activity",
-            "chat-main",
-            &view,
-        )?),
-    }
-}
-
-#[derive(Default, serde::Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct ChangesQuery {
-    start: usize,
-    file: Option<usize>,
-    side: String,
-}
-
-async fn attempt_changes(
-    State(state): State<AppState>,
-    _session: RequiredSession,
-    graft: PageGraft,
-    Path((run_id, attempt_id)): Path<(String, String)>,
-    Query(query): Query<ChangesQuery>,
-) -> AppResult<Response> {
-    use axum::response::IntoResponse;
-    let Some(run_id) = RunId::parse(&run_id) else {
-        return Ok(responses::request_navigation(graft, "/runs"));
-    };
-    let Some(run) = state.workflow_runs.get(&run_id) else {
-        return Ok(responses::request_navigation(graft, "/runs"));
-    };
-    let Some(attempt) = run
-        .attempts
-        .iter()
-        .find(|attempt| attempt.id.as_hex() == attempt_id)
-    else {
-        return Ok(responses::request_navigation(
-            graft,
-            &format!("/runs/{}", run.id.as_hex()),
-        ));
-    };
-    if let Some(file) = query.file {
-        let Some(diff) = attempt
-            .direct_changes
-            .as_ref()
-            .and_then(|changes| changes.diff(&state))
-        else {
-            return Ok(axum::http::StatusCode::NOT_FOUND.into_response());
-        };
-        let side = match query.side.as_str() {
-            "before" => "base",
-            "after" => "target",
-            _ => return Ok(axum::http::StatusCode::BAD_REQUEST.into_response()),
-        };
-        let Ok((_, bytes)) = diff.object(file, side, &state.workflow_artefacts) else {
-            return Ok(axum::http::StatusCode::NOT_FOUND.into_response());
-        };
-        return Ok((
-            [
-                ("content-type", "application/octet-stream"),
-                ("cache-control", "no-store"),
-                ("x-content-type-options", "nosniff"),
-                ("content-disposition", "attachment; filename=recorded-file"),
-            ],
-            bytes,
-        )
-            .into_response());
-    }
-    if attempt.direct_changes.is_some() {
-        let view = DirectChangesView::new(&run, attempt, &state, query.start);
-        return match graft {
-            PageGraft::Document => {
-                responses::chat_page_response("Already-written changes", &state, &view)
-            }
-            PageGraft::Navigation => Ok(hypergraft::outcome::page_patch(
-                "Already-written changes",
-                "chat-main",
-                &view,
-            )?),
-        };
-    }
-    let view = attempt_changes_view(&run, attempt, &state);
-    match graft {
-        PageGraft::Document => responses::chat_page_response("Attempt changes", &state, &view),
-        PageGraft::Navigation => Ok(hypergraft::outcome::page_patch(
-            "Attempt changes",
             "chat-main",
             &view,
         )?),

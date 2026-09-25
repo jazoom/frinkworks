@@ -69,7 +69,7 @@ pub(crate) fn command_directory(directories: &[super::DirectoryGrant]) -> PathBu
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")))
 }
 
-// Ask each time and Run without approval share these bounds. Policy only changes the approval gate.
+// Ask each time and Automatic (YOLO) share these bounds. Policy only changes the approval gate.
 #[cfg(test)]
 pub(crate) async fn run_shell(
     command: &str,

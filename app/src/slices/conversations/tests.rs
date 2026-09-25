@@ -6,7 +6,7 @@ use axum::{
 use tower::ServiceExt;
 
 use crate::{
-    agents::{NetworkAccess, ToolId},
+    agents::NetworkAccess,
     config::RuntimeConfig,
     providers::{ModelSelection, ProviderConnection, ProviderKind},
     sessions,
@@ -109,107 +109,6 @@ fn cookie(token: &str) -> String {
     format!("frinkworks_session={token}")
 }
 
-fn candidate_run(
-    state: &AppState,
-) -> (
-    crate::workflows::WorkflowRun,
-    crate::workflows::artefacts::ArtefactReference,
-) {
-    let run_id = crate::workflows::RunId::generate().expect("run");
-    let pinned = crate::workflows::pin_quick_task(
-        crate::agents::AccessMode::ReadOnly,
-        &[ToolId::List, ToolId::Read],
-        "Review the selected candidate.",
-        crate::tests::test_environment_id(),
-    )
-    .expect("workflow");
-    let mut run = crate::workflows::WorkflowRun::create(
-        run_id,
-        1,
-        Some(crate::agents::AgentId::generate().expect("agent")),
-        crate::workflows::RunKind::Configured,
-        pinned.clone(),
-        crate::tests::test_environment_set(&pinned.definition),
-    );
-    let content = b"Review candidate files.";
-    let file = state
-        .workflow_artefacts
-        .publish(content)
-        .expect("file object");
-    let candidate = crate::workflows::artefacts::candidate::CandidateRevisionArtefact {
-        format_version: crate::workflows::artefacts::CANDIDATE_SCHEMA,
-        candidate_hash: crate::workflows::artefacts::candidate::hash_entries(&[
-            crate::workflows::artefacts::candidate::CandidateEntry {
-                path: "AGENTS.md".to_owned(),
-                kind: crate::workflows::artefacts::candidate::CandidateEntryKind::Regular {
-                    executable: false,
-                    mode: 0o644,
-                    bytes: content.len() as u64,
-                    blob: file,
-                },
-            },
-        ]),
-        ordinary: false,
-        repository: Some(crate::workflows::artefacts::candidate::RepositoryAnchor {
-            object_format: crate::workflows::artefacts::candidate::GitObjectFormat::Sha1,
-            head: None,
-        }),
-        git_admin: Some(
-            crate::workflows::artefacts::candidate::GitAdministrativeFingerprint::parse(
-                &crate::workflows::artefacts::ObjectHash::of(b"git-admin").as_str(),
-            )
-            .expect("git fingerprint"),
-        ),
-        exclusions: Vec::new(),
-        entries: vec![crate::workflows::artefacts::candidate::CandidateEntry {
-            path: "AGENTS.md".to_owned(),
-            kind: crate::workflows::artefacts::candidate::CandidateEntryKind::Regular {
-                executable: false,
-                mode: 0o644,
-                bytes: content.len() as u64,
-                blob: file,
-            },
-        }],
-    };
-    let bytes = candidate.manifest_bytes().expect("manifest");
-    let object = state
-        .workflow_artefacts
-        .publish(&bytes)
-        .expect("manifest object");
-    let record = crate::workflows::artefacts::ArtefactRecord {
-        id: crate::workflows::ArtefactId::generate().expect("artefact"),
-        kind: crate::workflows::definition::ArtefactKind::CandidateRevision,
-        artefact_hash: crate::workflows::artefacts::artefact_hash_for(
-            crate::workflows::definition::ArtefactKind::CandidateRevision,
-            candidate.format_version,
-            &bytes,
-        ),
-        object_hash: object,
-        payload_bytes: bytes.len() as u64,
-        created_at_ms: 1,
-        provenance: crate::workflows::artefacts::ArtefactProvenance {
-            run_id,
-            producer: crate::workflows::artefacts::ArtefactProducer::RunSourceCapture,
-            inputs: Vec::new(),
-        },
-        summary: crate::workflows::artefacts::ArtefactSummary::Candidate {
-            candidate: candidate.candidate_hash,
-            entries: 1,
-            bytes: content.len() as u64,
-            disposition: crate::workflows::artefacts::ProductionDisposition::RequiredOutput,
-        },
-    };
-    let reference = crate::workflows::artefacts::ArtefactReference {
-        id: record.id,
-        kind: record.kind,
-        artefact_hash: record.artefact_hash,
-    };
-    run.record_initial_candidate(record)
-        .expect("initial candidate");
-    state.workflow_runs.create(run.clone()).expect("run");
-    (run, reference)
-}
-
 pub(super) fn document(path: &str, token: &str) -> Request<Body> {
     Request::builder()
         .uri(path)
@@ -278,132 +177,6 @@ async fn the_conversation_document_binds_the_thinking_visibility_patch_target() 
     assert!(thinking_section.contains("action=\"/thinking-visibility\""));
     assert!(thinking_section.contains("name=\"show_thinking\""));
     assert!(thinking_section.contains("checked"));
-}
-
-#[tokio::test]
-async fn candidate_review_uses_immutable_selection_without_source_approval() {
-    let mut state = test_state();
-    let backend = crate::providers::tests::ScriptedBackend::accept();
-    state.chat = std::sync::Arc::new(crate::providers::ChatBackend::Scripted(backend.clone()));
-    let token = connected(&state);
-    let (run, candidate) = candidate_run(&state);
-    let path = format!(
-        "/conversations/candidate-review?run={}&candidate={}&diff_base={}",
-        run.id, candidate.id, candidate.id
-    );
-    let preview = app(&state)
-        .oneshot(document(&path, &token))
-        .await
-        .expect("preview");
-    assert_eq!(preview.status(), StatusCode::OK);
-
-    let unknown = crate::workflows::ArtefactId::generate().expect("unknown artefact");
-    let rejected = app(&state)
-        .oneshot(command(
-            "/conversations/candidate-review",
-            &token,
-            &format!(
-                "run={}&candidate={}&diff_base={}&brief=Review&provider=xai&model=grok-4.6&thinking=medium",
-                run.id, unknown, candidate.id
-            ),
-        ))
-        .await
-        .expect("candidate substitution");
-    assert_eq!(rejected.status(), StatusCode::CONFLICT);
-    assert!(
-        text(rejected)
-            .await
-            .contains("selected candidate is unavailable")
-    );
-    assert!(state.conversations.list().is_empty());
-
-    let started = app(&state)
-        .oneshot(command(
-            "/conversations/candidate-review",
-            &token,
-            &format!(
-                "run={}&candidate={}&diff_base={}&brief={}&provider=xai&model=grok-4.6&thinking=medium",
-                run.id,
-                candidate.id,
-                candidate.id,
-                form_value("Review only this candidate."),
-            ),
-        ))
-        .await
-        .expect("start review");
-    let started_status = started.status();
-    let started_body = text(started).await;
-    assert_eq!(started_status, StatusCode::OK, "{started_body}");
-    let review = state
-        .conversations
-        .list()
-        .pop()
-        .expect("review conversation");
-    tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        while state
-            .conversations
-            .get(&review.id)
-            .expect("review")
-            .active_job
-            .is_some()
-        {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("review settlement");
-    let history = backend.last_history();
-    assert!(
-        history
-            .iter()
-            .any(|turn| turn.text.contains("Review candidate files."))
-    );
-    assert!(
-        history
-            .iter()
-            .any(|turn| turn.text.contains("Selected immutable candidate:"))
-    );
-    assert_eq!(state.workflow_runs.get(&run.id).expect("source"), run);
-    let mut follow_up = state.conversations.get(&review.id).expect("review");
-    if let Some(model) = follow_up.model.as_mut() {
-        model.settings.tools = vec![crate::agents::ToolId::Read];
-    }
-    let result = super::start_message(
-        &state,
-        session_id(&token),
-        follow_up.clone(),
-        follow_up.revision,
-        follow_up.model.expect("model"),
-        "Read the host worktree instead.".to_owned(),
-        None,
-        Vec::new(),
-        String::new(),
-    )
-    .await;
-    assert!(matches!(result, Err(super::StartMessageError::User(
-        hypergraft::PatchStatus::Conflict, message,
-    )) if message.contains("immutable evidence")));
-}
-
-#[test]
-fn candidate_review_rejects_changed_hashes_and_secret_instructions() {
-    let state = test_state();
-    let (run, candidate) = candidate_run(&state);
-    let mut changed = candidate.clone();
-    changed.artefact_hash = crate::workflows::artefacts::ArtefactHash::of(b"test", b"different");
-    assert!(
-        super::job::validate_candidate_review(&state, &run, &changed, &candidate, None,).is_err()
-    );
-    assert!(
-        super::job::validate_candidate_review(
-            &state,
-            &run,
-            &candidate,
-            &candidate,
-            Some("Review candidate files."),
-        )
-        .is_err()
-    );
 }
 
 #[tokio::test]
@@ -755,159 +528,21 @@ pub(super) fn normalised(value: &str) -> String {
 }
 
 pub(super) fn awaiting_gate(state: &AppState) {
-    use crate::workflows::definition::{InputKey, OutputKey, StepKey};
-    let project_dir = tempfile::tempdir().expect("work dir");
-    assert!(
-        std::process::Command::new("git")
-            .args(["init", "-q"])
-            .current_dir(project_dir.path())
-            .status()
-            .expect("git")
-            .success()
-    );
-    std::fs::write(project_dir.path().join("notes.txt"), b"candidate\n").expect("source");
-    let initial_capture = crate::workflows::artefacts::CandidateCapture::capture_host(
-        project_dir.path(),
-        &state.workflow_artefacts,
-    )
-    .expect("initial capture");
-    std::fs::write(project_dir.path().join("notes.txt"), b"changed\n").expect("change");
-    let produced_capture = crate::workflows::artefacts::CandidateCapture::capture_host(
-        project_dir.path(),
-        &state.workflow_artefacts,
-    )
-    .expect("changed capture");
     let conversation = state
         .conversations
         .create_saved(
-            crate::conversations::ConversationId::generate().expect("id"),
-            Some("Fix the timeout message".to_owned()),
-            None,
+            crate::conversations::ConversationId::generate().unwrap(),
+            Some("Fix the timeout message".into()),
+            Some(crate::conversations::ConversationModelConfiguration {
+                settings: crate::workflows::tests::settings(),
+                preset: None,
+            }),
             vec![],
         )
-        .expect("record");
-    let pinned = crate::workflows::pin_quick_task(
-        crate::agents::AccessMode::ReadWrite,
-        &[crate::agents::ToolId::List],
-        "Fix the timeout message.",
-        crate::tests::test_environment_id(),
-    )
-    .expect("quick task");
-    let mut run = crate::workflows::WorkflowRun::create(
-        crate::workflows::RunId::generate().expect("run"),
-        1,
-        None,
-        crate::workflows::RunKind::QuickTask,
-        pinned.clone(),
-        crate::tests::test_environment_set(&pinned.definition),
-    );
-    run.conversation_id = Some(conversation.id);
-    let gate_run_id = run.id;
-    let publish = |captured: &crate::workflows::artefacts::candidate::CandidateRevisionArtefact,
-                   producer: crate::workflows::artefacts::ArtefactProducer,
-                   inputs: Vec<crate::workflows::artefacts::ArtefactReference>| {
-        let bytes = captured.manifest_bytes().expect("manifest");
-        let object = state.workflow_artefacts.publish(&bytes).expect("publish");
-        crate::workflows::artefacts::ArtefactRecord {
-            id: crate::workflows::ArtefactId::generate().expect("artefact"),
-            kind: crate::workflows::definition::ArtefactKind::CandidateRevision,
-            artefact_hash: crate::workflows::artefacts::artefact_hash_for(
-                crate::workflows::definition::ArtefactKind::CandidateRevision,
-                captured.format_version,
-                &bytes,
-            ),
-            object_hash: object,
-            payload_bytes: bytes.len() as u64,
-            created_at_ms: 1,
-            provenance: crate::workflows::artefacts::ArtefactProvenance {
-                run_id: gate_run_id,
-                producer,
-                inputs,
-            },
-            summary: crate::workflows::artefacts::ArtefactSummary::Candidate {
-                candidate: captured.candidate_hash,
-                entries: captured.entries.len() as u64,
-                bytes: 0,
-                disposition: crate::workflows::artefacts::ProductionDisposition::RequiredOutput,
-            },
-        }
-    };
-    let initial = publish(
-        &initial_capture,
-        crate::workflows::artefacts::ArtefactProducer::RunSourceCapture,
-        Vec::new(),
-    );
-    let initial_ref = crate::workflows::artefacts::ArtefactReference {
-        id: initial.id,
-        kind: initial.kind,
-        artefact_hash: initial.artefact_hash,
-    };
-    run.record_initial_candidate(initial).expect("initial");
-    let work = StepKey::parse("work").expect("work");
-    let attempt = crate::workflows::AttemptId::generate().expect("attempt");
-    run.start_attempt(
-        attempt,
-        vec![crate::workflows::run::AttemptArtefactInput {
-            key: InputKey::parse("candidate").expect("input"),
-            artefact: initial_ref.clone(),
-        }],
-        crate::tests::test_agent_capabilities(),
-        crate::workflows::run::AttemptSandboxRecord {
-            kind: crate::workflows::run::AttemptSandboxKind::IsolatedAttempt,
-            snapshot_digest: run
-                .environments
-                .steps
-                .iter()
-                .find(|binding| binding.step == work)
-                .expect("work environment")
-                .snapshot_digest
-                .clone(),
-        },
-        2,
-    )
-    .expect("start");
-    let produced = publish(
-        &produced_capture,
-        crate::workflows::artefacts::ArtefactProducer::StepAttempt {
-            attempt_id: attempt,
-            step: work.clone(),
-            output: Some(OutputKey::parse("candidate").expect("output")),
-            disposition: crate::workflows::artefacts::ProductionDisposition::RequiredOutput,
-        },
-        vec![initial_ref.clone()],
-    );
-    let produced_ref = crate::workflows::artefacts::ArtefactReference {
-        id: produced.id,
-        kind: produced.kind,
-        artefact_hash: produced.artefact_hash,
-    };
-    run.record_attempt_outputs(
-        attempt,
-        vec![produced],
-        vec![crate::workflows::run::AttemptArtefactOutput {
-            key: OutputKey::parse("candidate").expect("output"),
-            artefact: produced_ref.clone(),
-        }],
-        Some(produced_ref.clone()),
-        crate::workflows::run::ObservedCandidate::Exact {
-            artefact: produced_ref.clone(),
-        },
-    )
-    .expect("outputs");
-    run.record_cleanup(
-        attempt,
-        crate::workflows::run::AttemptCleanupRecord::Complete,
-    )
-    .expect("cleanup");
-    run.complete_attempt(attempt, 3).expect("complete work");
-    run.open_gate(
-        crate::workflows::GateId::generate().expect("gate"),
-        produced_ref,
-        initial_ref,
-        4,
-    )
-    .expect("gate");
-    state.workflow_runs.create(run).expect("store run");
+        .unwrap();
+    let (run, directory) = crate::workflows::handoff::tests::prepared_run(state, &conversation);
+    state.keep_temp_dir(directory);
+    state.workflow_runs.create(run).unwrap();
 }
 
 #[tokio::test]
@@ -1693,59 +1328,6 @@ async fn stale_rename_returns_a_conflict_without_replacing_the_current_title() {
         state.conversations.get(&record.id).expect("current").title,
         "Current title"
     );
-}
-
-#[tokio::test]
-async fn candidate_review_rejects_unknown_catalogue_choices() {
-    let mut state = test_state();
-    state.chat = std::sync::Arc::new(crate::providers::ChatBackend::Scripted(
-        crate::providers::tests::ScriptedBackend::accept(),
-    ));
-    let token = connected(&state);
-    let (run, candidate) = candidate_run(&state);
-    let preview = app(&state)
-        .oneshot(document(
-            &format!(
-                "/conversations/candidate-review?run={}&candidate={}&diff_base={}",
-                run.id, candidate.id, candidate.id
-            ),
-            &token,
-        ))
-        .await
-        .expect("preview");
-    assert_eq!(preview.status(), StatusCode::OK);
-    let _ = text(preview).await;
-
-    for (model, effort, message) in [
-        ("no-such-model", "medium", "Choose an available model."),
-        (
-            "grok-4.6",
-            "invalid",
-            "Choose an available thinking effort.",
-        ),
-    ] {
-        let response = app(&state)
-            .oneshot(command(
-                "/conversations/candidate-review",
-                &token,
-                &format!(
-                    "run={}&candidate={}&diff_base={}&brief={}&provider=xai&model={}&thinking={}",
-                    run.id,
-                    candidate.id,
-                    candidate.id,
-                    form_value("Review only this candidate."),
-                    form_value(model),
-                    form_value(effort),
-                ),
-            ))
-            .await
-            .expect("invalid reviewer");
-        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
-        let rejected = text(response).await;
-        assert!(rejected.contains(message), "{rejected}");
-        assert!(rejected.contains(&run.id.as_hex()), "{rejected}");
-        assert!(state.conversations.list().is_empty());
-    }
 }
 
 #[tokio::test]

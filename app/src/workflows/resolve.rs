@@ -228,3 +228,11 @@ fn copy_ready(
 
 #[cfg(test)]
 pub(in crate::workflows) mod tests;
+
+pub(crate) fn alpine_git_id(
+    catalogue: &crate::environments::EnvironmentCatalogue,
+) -> Result<crate::environments::EnvironmentId, ResolveEnvironmentError> {
+    catalogue
+        .seed_id(crate::environments::seeds::ALPINE_GIT_V1)
+        .ok_or(ResolveEnvironmentError::Missing)
+}

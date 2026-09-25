@@ -1128,7 +1128,7 @@ fn restart_preserves_directory_approvals_until_settings_change() {
     assert!(reopened.directory_approved(&record.id, &settings, &grant));
 
     let mut changed_grant = grant.clone();
-    changed_grant.access = crate::execution::DirectoryAccess::DirectWrite;
+    changed_grant.access = crate::execution::DirectoryAccess::Write;
     let changed_settings = crate::execution::ExecutionSettings::new(
         ModelSelection::new(ProviderKind::Xai, "model".to_owned(), None).unwrap(),
         String::new(),
@@ -1250,21 +1250,7 @@ fn a_fork_record_survives_restart_with_its_provenance() {
             None,
         )
         .unwrap();
-    let mut source = store.get(&source.id).unwrap();
-    let candidate = crate::workflows::artefacts::ArtefactReference {
-        id: crate::workflows::ArtefactId::generate().unwrap(),
-        kind: crate::workflows::definition::ArtefactKind::CandidateRevision,
-        artefact_hash: crate::workflows::artefacts::ArtefactHash::of(b"candidate", b"content"),
-    };
-    source.candidate_review_context = Some(super::CandidateReviewContext {
-        source: super::CandidateReviewLink {
-            conversation_id: Some(source.id),
-            run_id: crate::workflows::RunId::generate().unwrap(),
-            candidate: candidate.clone(),
-            diff_base: candidate,
-        },
-        task_brief: "Review immutable evidence".to_owned(),
-    });
+    let source = store.get(&source.id).unwrap();
     let boundary = source.messages.last().unwrap().id;
     let snapshot = crate::conversations::forks::snapshot(&source, boundary).expect("snapshot");
     let outputs = crate::execution::OutputStore::ephemeral();
@@ -1293,10 +1279,9 @@ fn a_fork_record_survives_restart_with_its_provenance() {
         loaded.forked_from.as_ref().map(|item| item.boundary),
         Some(boundary)
     );
-    assert!(loaded.forked_from.as_ref().unwrap().candidate_review);
     assert_eq!(
-        loaded.candidate_review_context,
-        source.candidate_review_context
+        loaded.forked_from.as_ref().unwrap().source_revision,
+        source.revision
     );
 }
 

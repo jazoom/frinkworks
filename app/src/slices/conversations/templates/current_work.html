@@ -165,7 +165,7 @@
         <summary>Execution details</summary>
         {% include "conversations/templates/workflow_progress.html" %}
       </details>
-    {% else if run.run_terminal && !run.apply_partial && !run.apply_uncertain && !run.commit_unsettled %}
+    {% else if run.run_terminal %}
       <details class="workspace-execution-details">
         <summary>Execution details</summary>
         {% include "conversations/templates/workflow_progress.html" %}

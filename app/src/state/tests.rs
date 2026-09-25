@@ -51,8 +51,6 @@ pub(crate) fn test_state(config: RuntimeConfig) -> AppState {
         gate_continuations: Arc::new(WorkflowContinuationRegistry::new()),
         handoff_drafts: Arc::new(crate::workflows::handoff::HandoffDrafts::default()),
         workflow_workspaces: Arc::new(WorkflowWorkspaces::in_memory()),
-        apply_journals: Arc::new(ApplyJournals::in_memory()),
-        commit_journals: Arc::new(CommitJournals::in_memory()),
         environments,
         environment_snapshots,
         environment_preparations,

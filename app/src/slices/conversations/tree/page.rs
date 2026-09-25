@@ -222,7 +222,6 @@ pub(crate) async fn continue_here(
     };
     if state.sessions.conversation_reserved(record.id)
         || state.conversation_runtime.unsettled(record.id)
-        || super::super::has_uncertain_application(&state, record.id)
         || super::super::has_pending_review(&state, record.id)
     {
         return reject("Finish the active work or decision before another branch.");

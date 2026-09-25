@@ -224,7 +224,7 @@ test.each(["new", "saved"])(
         <button data-settings-tab="settings-presets"></button>
         <p data-preset-summary="instructions">Saved instructions</p>
         <p data-preset-summary="tools">Read</p>
-        <div data-preset-directories hidden><span data-path="/tmp/review-specs" data-access="Direct write" data-available="true"></span></div>
+        <div data-preset-directories hidden><span data-path="/tmp/review-specs" data-access="Write" data-available="true"></span></div>
         <p data-preset-summary="directories">Saved directories</p>
         <div data-preset-row="environment" data-preset-requested-identity="first-id"><p data-preset-current="environment">Same name</p><span data-preset-changed hidden>Changed</span></div>`,
         );
@@ -250,7 +250,7 @@ test.each(["new", "saved"])(
                 .textContent,
         ).toBe(
             state === "new"
-                ? "Start: /tmp/review-specs\nDirect write requested"
+                ? "Start: /tmp/review-specs\nWrite requested"
                 : "Saved directories",
         );
         expect(
@@ -329,23 +329,23 @@ test("directory radios stage saved access without a consent or execution command
         "beforeend",
         `
         <form id="conversation-settings-form"><input id="execution-directory-access" name="directory_access"></form>
-        <input type="radio" name="access-one" data-execution-directory="one" value="read-only" checked>
-        <input type="radio" name="access-one" data-execution-directory="one" value="direct-write">
-        <input type="radio" name="access-two" data-execution-directory="two" value="review-before-apply" checked>`,
+        <input type="radio" name="access-one" data-execution-directory="one" value="read" checked>
+        <input type="radio" name="access-one" data-execution-directory="one" value="write">
+        <input type="radio" name="access-two" data-execution-directory="two" value="read" checked>`,
     );
     const form = document.querySelector<HTMLFormElement>(
         "#conversation-settings-form",
     )!;
     const submit = vi.spyOn(form, "requestSubmit");
     const radio = document.querySelector<HTMLInputElement>(
-        '[data-execution-directory][value="direct-write"]',
+        '[data-execution-directory][value="write"]',
     )!;
     radio.checked = true;
     radio.dispatchEvent(new Event("change", { bubbles: true }));
     expect(new FormData(form).get("directory_access")).toBe(
         JSON.stringify([
-            ["one", "direct-write"],
-            ["two", "review-before-apply"],
+            ["one", "write"],
+            ["two", "read"],
         ]),
     );
     expect(submit).not.toHaveBeenCalled();
@@ -355,7 +355,7 @@ test("draft directory radios use the access command rather than the message comm
     document.body.insertAdjacentHTML(
         "beforeend",
         `
-        <input type="radio" data-draft-directory-access="directory-access-one" value="direct-write">
+        <input type="radio" data-draft-directory-access="directory-access-one" value="write">
         <button id="directory-access-one" form="conversation-composer" formaction="/conversations/new/directories/one/access" type="submit" name="action" hidden></button>`,
     );
     const form = document.querySelector<HTMLFormElement>(
@@ -370,7 +370,7 @@ test("draft directory radios use the access command rather than the message comm
     const button = document.querySelector<HTMLButtonElement>(
         "#directory-access-one",
     )!;
-    expect(button.value).toBe("direct-write");
+    expect(button.value).toBe("write");
     expect(submit).toHaveBeenCalledExactlyOnceWith(button);
 });
 

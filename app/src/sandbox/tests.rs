@@ -15,9 +15,6 @@ impl ScriptedGuest {
         spec: SandboxSpec,
         missing: Option<MissingRuntime>,
     ) -> Result<(), SandboxError> {
-        if spec.mounts.is_empty() {
-            return Err(SandboxError::NeedProject);
-        }
         if *lock_mutex(&self.status) == GuestStatus::Running && self.live.overlay() == Overlay::Idle
         {
             return Ok(());
@@ -43,7 +40,7 @@ impl ScriptedGuest {
             return Err(SandboxError::Busy);
         }
         if lock_mutex(&self.live.spec).is_none() {
-            return Err(SandboxError::NeedProject);
+            return Err(SandboxError::NotRunning);
         }
         if *lock_mutex(&self.status) != GuestStatus::Running {
             return Err(SandboxError::NotRunning);
@@ -169,6 +166,37 @@ use super::{
 };
 use crate::agents::NetworkAccess;
 
+#[test]
+fn private_scratch_accepts_no_binds_and_rejects_shadow_mounts() {
+    let root = tempfile::tempdir().unwrap();
+    let mut spec = SandboxSpec {
+        mounts: Vec::new(),
+        workdir: "/workspace".into(),
+        network: NetworkAccess::None,
+    };
+    super::confirm_mounts(&spec).unwrap();
+    for guest in [
+        "/",
+        "/workspace",
+        "/workspace/project",
+        "/access/../workspace",
+    ] {
+        spec.mounts = vec![MountSpec {
+            guest: guest.into(),
+            host: root.path().to_owned(),
+            read_only: false,
+        }];
+        assert!(super::confirm_mounts(&spec).is_err(), "{guest}");
+    }
+    spec.mounts = vec![MountSpec {
+        guest: "/access/project".into(),
+        host: root.path().to_owned(),
+        read_only: true,
+    }];
+    spec.mounts.push(spec.mounts[0].clone());
+    assert!(super::confirm_mounts(&spec).is_err());
+}
+
 fn spec(dir: &Path) -> SandboxSpec {
     SandboxSpec {
         mounts: vec![MountSpec {
@@ -195,19 +223,17 @@ fn sandbox_ownership_requires_the_owner_label() {
 }
 
 #[tokio::test]
-async fn start_from_snapshot_is_rejected_without_mounts() {
+async fn start_from_snapshot_supports_private_scratch_without_binds() {
     let sandbox = GuestSandbox::scripted();
     let spec = SandboxSpec {
         mounts: Vec::new(),
-        workdir: "/project".to_owned(),
+        workdir: "/workspace".to_owned(),
         network: NetworkAccess::None,
     };
-    assert!(matches!(
-        sandbox
-            .start_from_snapshot(Path::new("snapshot"), "sha256:deadbeef", spec)
-            .await,
-        Err(SandboxError::NeedProject)
-    ));
+    sandbox
+        .start_from_snapshot(Path::new("snapshot"), "sha256:deadbeef", spec)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]

@@ -38,7 +38,6 @@ pub(super) struct ForkView {
     pub(super) entries: usize,
     pub(super) revision: String,
     pub(super) message: String,
-    pub(super) candidate_review: bool,
     pub(super) can_fork: bool,
     pub(super) error: String,
 }
@@ -161,7 +160,6 @@ fn view_for(
         entries: snapshot.messages.len(),
         revision: record.revision.to_string(),
         message: raw_message.to_owned(),
-        candidate_review: snapshot.candidate_review,
         can_fork: true,
         error: String::new(),
     })
@@ -179,7 +177,6 @@ fn error_view(
         entries: 0,
         revision: record.revision.to_string(),
         message: raw_message.to_owned(),
-        candidate_review: false,
         can_fork: false,
         error: error.to_owned(),
     }

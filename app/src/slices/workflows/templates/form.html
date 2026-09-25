@@ -566,7 +566,7 @@
                           class="btn btn-outline btn-sm"
                           type="submit"
                           name="intent"
-                          value="update-mode"
+                          value="preview-execution"
                           id="workflow-location-preview-{{ step.index }}-{% if step.location_host %}host{% else %}sandbox{% endif %}"
                           data-workflow-location-preview
                           formnovalidate
@@ -574,19 +574,11 @@
                           Update execution controls
                         </button>
                       </fieldset>
-                      {% if step.location_host %}
-                        {% let settings_form = "" %}
-                        {% let field_prefix = step.field_prefix %}
-                        {% let host_approval_automatic = step.host_approval_automatic %}
-                        {% let job_active = false %}
-                        {% include "execution_settings/templates/host_approval.html" %}
-                      {% else %}
-                        <input
-                          type="hidden"
-                          name="step_{{ step.index }}_settings-host-approval"
-                          value="{% if step.host_approval_automatic %}automatic{% else %}ask-each-time{% endif %}"
-                        />
-                      {% endif %}
+                      {% let settings_form = "" %}
+                      {% let field_prefix = step.field_prefix %}
+                      {% let host_approval_automatic = step.host_approval_automatic %}
+                      {% let job_active = false %}
+                      {% include "execution_settings/templates/host_approval.html" %}
                       {% let settings_form = "" %}
                       {% let field_prefix = step.field_prefix %}
                       {% let instructions = step.settings_instructions %}
@@ -636,13 +628,7 @@
 {{ step.network_domains }}</textarea>
                       </label>
                       <label class="flex flex-col gap-1">
-                        <span class="text-sm"
-                          >{% if step.location_host %}
-                            Work locations
-                          {% else %}
-                            Read only directories
-                          {% endif %}</span
-                        >
+                        <span class="text-sm">Read directories</span>
                         <textarea
                           class="textarea textarea-bordered"
                           name="step_{{ step.index }}_read-only"
@@ -650,25 +636,13 @@
                         >
 {{ step.settings_read_only }}</textarea>
                       </label>
-                      <label
-                        class="flex flex-col gap-1"
-                        {% if step.location_host %}hidden{% endif %}
-                      >
-                        <span class="text-sm"
-                          >Review before apply directories</span
-                        >
-                        <textarea
-                          class="textarea textarea-bordered"
-                          name="step_{{ step.index }}_reviewed"
-                          maxlength="32768"
-                        >
-{{ step.settings_reviewed }}</textarea>
-                      </label>
-                      <label
-                        class="flex flex-col gap-1"
-                        {% if step.location_host %}hidden{% endif %}
-                      >
-                        <span class="text-sm">Direct write directories</span>
+
+                      <p class="text-quiet text-xs">
+                        Read access requires a sandbox. Host tools need Write
+                        access and explicit host consent.
+                      </p>
+                      <label class="flex flex-col gap-1">
+                        <span class="text-sm">Write directories</span>
                         <textarea
                           class="textarea textarea-bordered"
                           name="step_{{ step.index }}_direct"
@@ -901,31 +875,32 @@
                   </label>
                 </details>
                 <label class="flex flex-col gap-1">
-                  <span class="text-sm">Candidate access</span>
+                  <span class="text-sm">Directory access ceiling</span>
                   <select
                     class="select select-bordered"
-                    name="step_{{ step.index }}_candidate-access"
+                    name="step_{{ step.index }}_directory-access"
                   >
                     <option
-                      value="read-only"
-                      {% if step.candidate_access == "read-only" %}selected{% endif %}
+                      value="read"
+                      {% if step.directory_access == "read" %}selected{% endif %}
                     >
-                      No candidate edits
+                      Read
                     </option>
                     <option
-                      value="edit-candidate"
-                      {% if step.candidate_access == "edit-candidate" %}selected{% endif %}
+                      value="write"
+                      {% if step.directory_access == "write" %}selected{% endif %}
                     >
-                      Propose changes
+                      Write
                     </option>
                   </select>
                   <p class="text-quiet text-xs">
-                    Candidate changes need an application step. Direct write
-                    directories change immediately, outside candidate approval.
+                    Read phases cannot change files. Write phases use each
+                    directory's permissions and change original files
+                    immediately.
                   </p>
-                  {% if step.candidate_access_error != "" %}
+                  {% if step.directory_access_error != "" %}
                     <p class="text-error text-sm">
-                      {{ step.candidate_access_error }}
+                      {{ step.directory_access_error }}
                     </p>
                   {% endif %}
                 </label>
@@ -1031,12 +1006,6 @@
                                 Plan
                               </option>
                               <option
-                                value="candidate-revision"
-                                {% if output.kind == "candidate-revision" %}selected{% endif %}
-                              >
-                                Candidate revision
-                              </option>
-                              <option
                                 value="review-report"
                                 {% if output.kind == "review-report" %}selected{% endif %}
                               >
@@ -1117,7 +1086,7 @@
                       planning phase in a fresh attempt. It does not approve
                       code.
                     {% else %}
-                      Request changes sends the current candidate to an earlier
+                      Request changes returns the task to an earlier
                       implementation phase in a fresh attempt.
                     {% endif %}
                   </p>
@@ -1197,7 +1166,7 @@
                   {% if step.plan_checkpoint %}
                     Pauses the run for acceptance of the exact plan.
                   {% else %}
-                    Pauses the run for a decision on the exact candidate diff.
+                    Pauses the run for a decision on the exact plan.
                   {% endif %}
                 </p>
                 <div class="border-base-300 rounded-sm border p-3 text-sm">
@@ -1279,11 +1248,8 @@
                               class="select select-bordered select-sm"
                               name="step_{{ step.index }}_output_{{ output.index }}_kind"
                             >
-                              <option
-                                value="candidate-revision"
-                                {% if output.kind == "candidate-revision" %}selected{% endif %}
-                              >
-                                Candidate revision
+                              <option value="plan-decision">
+                                Plan decision
                               </option>
                             </select>
                             {% if output.kind_error != "" %}
@@ -1329,12 +1295,6 @@
                             name="step_{{ step.index }}_input_{{ input.index }}_kind"
                           >
                             <option
-                              value="candidate-revision"
-                              {% if input.kind == "candidate-revision" %}selected{% endif %}
-                            >
-                              Candidate revision
-                            </option>
-                            <option
                               value="plan"
                               {% if input.kind == "plan" %}selected{% endif %}
                             >
@@ -1351,12 +1311,6 @@
                               {% if input.kind == "test-report" %}selected{% endif %}
                             >
                               Test report
-                            </option>
-                            <option
-                              value="human-decision"
-                              {% if input.kind == "human-decision" %}selected{% endif %}
-                            >
-                              Human decision
                             </option>
                             <option
                               value="plan-decision"
@@ -1483,24 +1437,6 @@
                 value="add-phase:review-and-fix"
               >
                 Review and fix
-              </button>
-              <button
-                class="btn btn-outline btn-sm"
-                type="submit"
-                formnovalidate
-                name="intent"
-                value="add-phase:code-approval"
-              >
-                Code approval
-              </button>
-              <button
-                class="btn btn-outline btn-sm"
-                type="submit"
-                formnovalidate
-                name="intent"
-                value="add-phase:commit"
-              >
-                Commit
               </button>
             </div>
           {% endif %}

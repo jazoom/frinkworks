@@ -160,12 +160,12 @@
       model requests.
     </p>
   </fieldset>
-  <section
-    data-execution-host-policy
-    {% if !location_host %}hidden{% endif %}
-    class="space-y-4"
-  >
-    <div class="execution-warning rounded-[7px] border p-3 text-sm">
+  <section class="space-y-4">
+    <div
+      data-execution-host-policy
+      {% if !location_host %}hidden{% endif %}
+      class="execution-warning rounded-[7px] border p-3 text-sm"
+    >
       <p class="font-semibold">Unrestricted host access</p>
       <p class="mt-1">
         Tools run as the Frinkworks process user. Work locations do not confine
@@ -206,15 +206,16 @@
           {% if host_approval_automatic %}checked{% endif %}
         />
         <span
-          >Run without approval<small class="text-quiet mt-1 block"
+          >Automatic (YOLO)<small class="text-quiet mt-1 block"
             >Commands run without an individual decision.</small
           ></span
         >
       </label>
     </fieldset>
     <p class="text-quiet text-sm">
-      Host consent covers file tools and Run. This policy applies only to Run
-      and does not approve commands that await a decision.
+      This policy applies to shell commands in both locations. Directory
+      permissions still apply. Save these settings as future defaults to use
+      this policy in new conversations.
     </p>
   </section>
   {% if !self.is_new() %}
@@ -235,15 +236,15 @@
     >
       <dt class="text-quiet">Execution</dt>
       <dd>{% if location_host %}This computer{% else %}Sandbox{% endif %}</dd>
+      <dt class="text-quiet">Command approval</dt>
+      <dd>
+        {% if host_approval_automatic %}
+          Automatic (YOLO)
+        {% else %}
+          Ask each time
+        {% endif %}
+      </dd>
       {% if location_host %}
-        <dt class="text-quiet">Host commands</dt>
-        <dd>
-          {% if host_approval_automatic %}
-            Run without approval
-          {% else %}
-            Ask each time
-          {% endif %}
-        </dd>
         <dt class="text-quiet">Host consent</dt>
         <dd>
           {% if host_pending_approval %}Not approved{% else %}No consent pending{% endif %}

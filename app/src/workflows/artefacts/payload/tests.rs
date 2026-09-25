@@ -7,13 +7,7 @@ fn kind_and_payload_changes_create_different_artefact_hashes() {
     assert_ne!(left_hash, right_hash);
     let object = ObjectHash::of(&left);
     assert_ne!(object.as_str(), left_hash.as_str());
-    let review = encode_review(
-        CandidateHash::of(b"tree"),
-        ReviewVerdict::Approved,
-        "# Plan\n",
-        None,
-    )
-    .expect("review");
+    let review = encode_review(ReviewVerdict::Approved, "# Plan\n", None).expect("review");
     assert_ne!(review.2, left_hash);
     assert_ne!(review.1, ObjectHash::of(&left));
 }
@@ -43,7 +37,7 @@ fn payload_bounds_and_nul_text_are_rejected() {
         encode_plan("use sk-secret", Some("sk-secret")).err(),
         Some(PayloadError::Credential)
     );
-    assert!(CandidateHash::parse("sha256:zz").is_none());
+    assert!(ArtefactHash::parse("sha256:zz").is_none());
 }
 
 #[test]

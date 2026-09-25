@@ -98,7 +98,7 @@ pub(super) fn setup_rows(
         ("thinking", "Thinking effort"),
         ("tools", "Tools"),
         ("location", "Location"),
-        ("host_approval", "Host command policy"),
+        ("host_approval", "Command approval"),
         ("environment", "Sandbox environment"),
         ("network", "Sandbox network"),
         ("directories", "Requested directories"),

@@ -22,10 +22,7 @@ use serde::Deserialize;
 use crate::{
     conversations::{ConversationId, ConversationModelConfiguration, PromptTemplate, SkillOffer},
     error::AppResult,
-    execution::{
-        DirectoryGrant, ProjectFreeAuthority, ToolLocation, resources::CandidateRoot,
-        validate_directories,
-    },
+    execution::{DirectoryGrant, ProjectFreeAuthority, ToolLocation, validate_directories},
     responses,
     sessions::RequiredSession,
     state::AppState,
@@ -100,7 +97,7 @@ impl Catalogue {
                 ..Search::default()
             },
         };
-        // Surface a candidate-backed or unreadable source as a limitation
+        // Surface an unreadable source as a limitation
         // instead of a silent empty catalogue.
         search.unavailable = search.unavailable.saturating_add(self.unavailable);
         search
@@ -197,23 +194,7 @@ pub(super) fn catalogue_for_record(
         })
         .cloned()
         .collect::<Vec<_>>();
-    let candidates = match super::files::candidate_roots(state, id) {
-        Ok(candidates) => candidates,
-        Err(()) => {
-            let (offers, unavailable) = page::global_offers(state, settings.location);
-            catalogue.offers = offers;
-            catalogue.unavailable += unavailable + 1;
-            return catalogue.without_credentials(state);
-        }
-    };
-    fill(
-        &mut catalogue,
-        state,
-        settings.location,
-        revision,
-        &grants,
-        &candidates,
-    );
+    fill(&mut catalogue, state, settings.location, revision, &grants);
     catalogue.without_credentials(state)
 }
 
@@ -250,7 +231,7 @@ pub(super) fn catalogue_for_draft(
         })
         .cloned()
         .collect::<Vec<_>>();
-    fill(&mut catalogue, state, location, 0, &grants, &[]);
+    fill(&mut catalogue, state, location, 0, &grants);
     catalogue.without_credentials(state)
 }
 
@@ -266,18 +247,13 @@ fn fill(
     location: ToolLocation,
     revision: u32,
     grants: &[DirectoryGrant],
-    candidates: &[CandidateRoot],
 ) {
     let (offers, unavailable) =
         match ProjectFreeAuthority::from_preview_grants(revision, grants, location) {
             Ok(authority) => {
                 let (mut offers, mut unavailable) = page::global_offers(state, location);
-                let (project, project_templates, project_unavailable) = page::project_resources(
-                    &authority.policy,
-                    grants,
-                    candidates,
-                    state.local_data.root(),
-                );
+                let (project, project_templates, project_unavailable) =
+                    page::project_resources(&authority.policy, grants, state.local_data.root());
                 offers.extend(project);
                 catalogue.templates.extend(project_templates);
                 unavailable += project_unavailable;

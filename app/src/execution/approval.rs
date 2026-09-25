@@ -16,6 +16,50 @@ use crate::{
     sessions::{Job, JobId, SessionId},
 };
 
+pub(crate) async fn approve_command(
+    state: &crate::state::AppState,
+    request: &mut HostCommandRequest,
+    settings: &super::ExecutionSettings,
+    job: &Job,
+    secret: Option<&str>,
+) -> Result<(), &'static str> {
+    let record = |request: &HostCommandRequest, status, detail| {
+        state
+            .workflow_evidence
+            .host_command(request, status, detail, secret, None)
+            .map_err(|_| "Frinkworks cannot store the command approval.")
+    };
+    if settings.host_approval.automatic() {
+        request.token = command_token().map_err(ApprovalError::message)?;
+        return record(request, "automatic", "");
+    }
+    request.token = state
+        .host_approvals
+        .submit(request.clone())
+        .map_err(ApprovalError::message)?;
+    if let Err(error) = record(request, "awaiting_approval", "") {
+        state.host_approvals.invalidate_job(job.id());
+        return Err(error);
+    }
+    if job.set_awaiting_decision().is_none() && job.cancel_requested() {
+        state.host_approvals.invalidate_job(job.id());
+        return Err("Stopped.");
+    }
+    let decision = state.host_approvals.wait(&request.token, job).await;
+    let _ = job.resume();
+    match decision {
+        Ok(HostCommandDecision::Approved) => record(request, "approved", ""),
+        Ok(HostCommandDecision::Rejected) => {
+            record(request, "rejected", "The user rejected this command.")?;
+            Err("The user rejected this command.")
+        }
+        Err(error) => {
+            record(request, "invalidated", error.message())?;
+            Err(error.message())
+        }
+    }
+}
+
 const MAXIMUM_PENDING: usize = 1_024;
 const MAXIMUM_EXPLANATION_BYTES: usize = 4_096;
 

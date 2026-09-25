@@ -245,8 +245,8 @@ pub(super) struct StepRow {
     pub(super) action_error: &'static str,
     pub(super) role: String,
     pub(super) role_error: &'static str,
-    pub(super) candidate_access: String,
-    pub(super) candidate_access_error: &'static str,
+    pub(super) directory_access: String,
+    pub(super) directory_access_error: &'static str,
     pub(super) settings_source: String,
     pub(super) settings_error: &'static str,
     pub(super) field_prefix: String,
@@ -257,7 +257,7 @@ pub(super) struct StepRow {
     pub(super) network: String,
     pub(super) network_domains: String,
     pub(super) settings_read_only: String,
-    pub(super) settings_reviewed: String,
+
     pub(super) settings_direct: String,
     pub(super) location_host: bool,
     pub(super) host_approval_automatic: bool,
@@ -598,8 +598,6 @@ fn step_row(
             PhasePurpose::Implementation,
             PhasePurpose::ReadOnlyReview,
             PhasePurpose::ReviewAndFix,
-            PhasePurpose::CodeApproval,
-            PhasePurpose::Commit,
             PhasePurpose::Custom,
         ]
         .into_iter()
@@ -622,8 +620,8 @@ fn step_row(
         action_error: errors.action,
         role: step.role.clone(),
         role_error: errors.role,
-        candidate_access: step.candidate_access.clone(),
-        candidate_access_error: errors.candidate_access,
+        directory_access: step.directory_access.clone(),
+        directory_access_error: errors.directory_access,
         settings_source: if step.settings_source.is_empty() {
             "defaults".to_owned()
         } else {
@@ -642,7 +640,7 @@ fn step_row(
         },
         network_domains: step.network_domains.clone(),
         settings_read_only: step.settings_read_only.clone(),
-        settings_reviewed: step.settings_reviewed.clone(),
+
         settings_direct: step.settings_direct.clone(),
         location_host: step.location == crate::execution::ToolLocation::Host.as_str(),
         host_approval_automatic: crate::execution::HostApprovalPolicy::parse(
@@ -662,7 +660,7 @@ fn step_row(
             ("directories", "Directories"),
             ("environment", "Environment"),
             ("location", "Where tools run"),
-            ("host_approval", "Host command approval"),
+            ("host_approval", "Command approval"),
         ]
         .into_iter()
         .map(|(name, label)| InheritedField {
@@ -825,18 +823,18 @@ fn draft_process_overview(steps: &[StepDraft]) -> Vec<ProcessPhase> {
             } else {
                 step.name.clone()
             };
-            use crate::workflows::definition::{CandidateAuthority, SystemCommandId};
+            use crate::workflows::definition::{StepAccess, SystemCommandId};
             use summary::ProcessAction;
             let action = match step.action.as_str() {
-                "agent" => match step.candidate_access.as_str() {
-                    "edit-candidate" => ProcessAction::Model(CandidateAuthority::Edit),
-                    "read-only" => ProcessAction::Model(CandidateAuthority::ReadOnly),
+                "agent" => match step.directory_access.as_str() {
+                    "write" => ProcessAction::Model(StepAccess::Write),
+                    "read" => ProcessAction::Model(StepAccess::Read),
                     _ => ProcessAction::Invalid,
                 },
                 "human-gate" if step.outputs.iter().any(|output| {
                     output.kind == "plan-decision"
                 }) => ProcessAction::PlanApproval,
-                "human-gate" => ProcessAction::Approval,
+                "human-gate" => ProcessAction::PlanApproval,
                 "system-command" => SystemCommandId::parse(&step.command)
                     .map(ProcessAction::Command)
                     .unwrap_or(ProcessAction::Invalid),
@@ -844,13 +842,13 @@ fn draft_process_overview(steps: &[StepDraft]) -> Vec<ProcessPhase> {
             };
             let mut phase = ProcessPhase::new(index + 1, name, action);
             let independent_review = step.action == "agent"
-                && step.candidate_access == "read-only"
+                && step.directory_access == "read"
                 && step.outputs.iter().any(|output| output.kind == "review-report")
                 && steps[..index].iter().any(|earlier| {
-                    earlier.action == "agent" && earlier.candidate_access == "edit-candidate"
+                    earlier.action == "agent" && earlier.directory_access == "write"
                 });
             let review_and_fix = step.action == "agent"
-                && step.candidate_access == "edit-candidate"
+                && step.directory_access == "write"
                 && step.outputs.iter().any(|output| output.kind == "review-report");
             phase.annotate_review(independent_review, review_and_fix);
             let route = if step.action == "human-gate" {
@@ -894,34 +892,17 @@ fn draft_process_overview(steps: &[StepDraft]) -> Vec<ProcessPhase> {
 
 fn source_options(earlier: &[StepDraft], kind: &str, current: &str) -> Vec<SourceOption> {
     let mut options = Vec::new();
-    if kind == "plan" {
-        options.push(SourceOption {
-            value: "launch-input:saved-plan".to_owned(),
-            label: "Saved plan selected at launch".to_owned(),
-            selected: current == "launch-input:saved-plan",
-        });
-        if super::forms::source_is_valid(
+    if kind == "plan"
+        && super::forms::source_is_valid(
             "run-current-plan",
             crate::workflows::definition::ArtefactKind::Plan,
             earlier,
-        ) {
-            options.push(SourceOption {
-                value: "run-current-plan".to_owned(),
-                label: "Current plan from this workflow".to_owned(),
-                selected: current == "run-current-plan",
-            });
-        }
-    }
-    if kind == "candidate-revision" {
+        )
+    {
         options.push(SourceOption {
-            value: "run-initial-candidate".to_owned(),
-            label: "Task source candidate".to_owned(),
-            selected: current == "run-initial-candidate",
-        });
-        options.push(SourceOption {
-            value: "run-current-candidate".to_owned(),
-            label: "Current candidate".to_owned(),
-            selected: current == "run-current-candidate",
+            value: "run-current-plan".to_owned(),
+            label: "Current plan from this workflow".to_owned(),
+            selected: current == "run-current-plan",
         });
     }
     for step in earlier {

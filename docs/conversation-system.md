@@ -16,12 +16,13 @@ The authority boundaries remain distinct:
 - Directory authority.
 - Runtime consent.
 - Command approval.
-- Code assessment.
-- File-application approval.
+- Plan review.
 
 Preferences supply no consent. Additional workflow authority requires run-only approval.
 
-Review before apply isolates proposals. Direct write changes the named directory immediately. File application never implicitly creates a Git commit.
+Directory modes are **Read** and **Write**. Read is the default and permits shell commands through read-only Microsandbox mounts.
+
+Write mounts original directories read-write. Changes take effect immediately. Plan acceptance never approves or applies file changes.
 
 ## Storage
 
@@ -78,14 +79,14 @@ Compaction keeps complete recent exchanges within an application-selected budget
 The automatic retention budget accounts for fixed request content:
 
 - Effective instructions and tool declarations.
-- Pending input and candidate-bound inputs.
+- Pending input and declared workflow inputs.
 - Replacement-summary capacity and the ordinary output reserve.
 
 The summary generator separately budgets its own request. Pending input and unresolved tool exchanges stay intact. If no complete exchange fits the budget, the application reports the constraint and keeps the previous context.
 
 The application measures the replacement request before it commits a checkpoint. Manual compaction measures the saved instructions and transcript without runtime tools. Automatic compaction also measures runtime instructions, tools and pending input.
 
-A committed checkpoint stores coverage against durable source positions. Repeated summaries include the previous summary and newly covered content once. Configured requests keep candidate-bound inputs outside summary coverage.
+A committed checkpoint stores coverage against durable source positions. Repeated summaries include the previous summary and newly covered content once. Configured requests keep declared workflow inputs outside summary coverage.
 
 ### Long active turns
 
@@ -97,45 +98,41 @@ Compaction rejects coverage that contains opaque continuation blocks for the sel
 
 ## Live execution
 
-Ordinary messages share one model lifecycle. Tool-free messages use the chat job. Host tools without named directories and read-only sandbox tools use the ordinary conversation runtime. They do not create a workflow run.
+Ordinary messages share one model lifecycle. Tool-free messages use the chat job. Ordinary tool execution uses the conversation runtime without a workflow run.
 
-Ordinary file-change work also uses that runtime. Reviewed directories, direct-write directories and directory-backed host tools still own a `WorkflowRun` for baselines, candidates, already-written snapshots, gates and apply journals. That record is not a configured model sequence.
+Both directory modes use live mounts. The application creates no directory copy, baseline manifest or file candidate before or after a command.
 
-The ordinary adapter and configured executor share the file-attempt driver. That driver owns baseline capture, candidate materialisation, final snapshots and cleanup outside the model loop.
+Authorised access includes ignored files. Tool output bounds and bounded file previews do not restrict the files that a shell command can access.
 
-Ordinary model requests omit workflow roles and required-output tools. Candidate revisions retain verified decision feedback and exclude the original conversation context. The application never treats a conversation reply as approval. Uncertain apply outcomes and incomplete cleanup block further work.
+A sandbox receives private writable scratch space at `/workspace`, including when no directory mounts exist. Duplicate or overlapping guest mounts fail before execution.
 
-Host tools require explicit host consent and the selected command policy.
+Host tools require explicit host consent. Host execution cannot enforce Read and rejects Read grants. Work locations do not confine host commands.
 
-Configured workflows keep their explicit step sequences. Directory grants pin directory identities for handoff and recovery.
+**Ask each time** is the default command policy for sandbox and host execution. **Automatic (YOLO)** removes individual decisions without a directory permission change.
 
-### File-change review evidence
+The shared approval gate covers direct commands, model Run calls and repository-status workflow commands. Approval tokens bind the exact request and permit one decision.
 
-Controlled provider tests execute host commands against temporary directories. They retain the original baseline and final snapshot after a write. Later host edits do not change those snapshots. Cancellation after a write preserves that write and its final snapshot.
+Settings and presets retain the command policy. Future defaults copy requested settings only. A new conversation receives no copied directory approval or host consent.
 
-Authority tests reject stale directory identities and foreign conversation ownership. The Rust suite covers candidate approval, revision and configured workflow transitions. These tests do not establish hosted-provider success or a live sandbox review-before-apply flow.
+Configured workflows retain explicit step sequences and pinned launch settings. System-only workflows also retain settings, even without model phases.
 
-The browser review opened the new conversation and its directory setup panel without console or page errors. It did not execute a file-change request.
+Phase authority intersects the declared tools and directories with authorised grants. A Read grant never becomes writable through a phase override or YOLO.
 
-Commit steps detect changed repositories from the approved candidate and pinned review-before-apply grants. They do not search parent directories or select a global destination.
+Plan gates bind the exact plan resolved from declared historical inputs. Revision decisions retain feedback and enforce the configured attempt limit across restart.
 
-Each repository has a separate commit result and journal. Recovery retains successful commits and restores only incomplete file application before a reference update.
+Microsandbox environment-image snapshots remain separate from directory access. Each sandbox attempt pins a prepared environment image.
 
-Commits require a clean Git index and worktree. They include task changes, not unchanged ignored files from the captured directory.
+### Command evidence
 
-A changed non-Git directory prevents the commit step before the first write. File application remains available without commits.
+Evidence records the command request and its arguments. Timestamped lifecycle events distinguish approval, dispatch and terminal results.
 
-Linked Git worktrees remain unsupported. Managed Git commits refuse colocated jj repositories.
+Transcripts and evidence retain success or failure with bounded, redacted output. Retained output references support later pages without filesystem capture.
 
-Other version-control commands follow ordinary tool permissions, not the managed Git transaction.
+No evidence record grants replay authority. A restart never replays an interrupted command.
 
-An ordinary execution cannot dispatch a registered commit step. A configured workflow can include an explicit commit operation.
+Cancellation leaves earlier Write and host effects intact. Incomplete cleanup retains reservations until recovery establishes that the runtime is absent.
 
-Direct-write results use immutable before-and-after manifests. The conversation companion and execution pages provide bounded previews and downloads.
-
-The interface labels these results Already-written changes. An absent final snapshot remains unknown. The application never reconstructs it from current host files.
-
-Host commands can affect locations outside the named-directory snapshots. Other processes can also change files within those snapshots.
+Frinkworks provides no file-application transaction, rollback or automatic commit. Explicit version-control commands follow ordinary command approval and directory permissions.
 
 ## Handoff
 
@@ -147,14 +144,14 @@ The user can edit the prompt before preparation opens an unsent draft. Generatio
 
 At a safe decision, the handoff page offers two choices:
 
-- Continue the exact prepared changes.
-- Carry context only and leave prepared changes in the source.
+- Transfer workflow ownership.
+- Carry context only and leave workflow ownership with the source.
 
-Neither choice applies or discards prepared changes. Neither choice reverses direct writes or earlier workflow effects.
+Neither choice changes files or reverses earlier effects.
 
-Send transfers ownership for exact-change handoff. It preserves these run facts:
+Send transfers workflow ownership. It preserves these run facts:
 
-- The original baseline and candidate references.
+- The exact plan and decision references.
 - Artefact provenance.
 - The pinned workflow and settings.
 - Outstanding gates.
@@ -162,7 +159,7 @@ Send transfers ownership for exact-change handoff. It preserves these run facts:
 
 The destination requires explicit run-only approval. Source consent never moves to the destination. Destination preferences remain independent of the pinned execution.
 
-Safe transfer requires completed cleanup and a captured source at a pending human decision. Uncertain or partially applied operations remain with their current owner.
+Safe transfer requires completed cleanup and a pending workflow decision. Active operations remain with their current owner.
 
 ## Fork
 
@@ -174,11 +171,11 @@ The destination records its source conversation, source revision and boundary. C
 
 The draft creates no conversation and starts no model call. The destination conversation exists only after the user sends the draft through the ordinary first-message path. An exclusive token claim prevents duplicate Send requests from creating multiple destinations.
 
-The fork copies requested settings only. It drops directory approvals and runtime consent. The user must give fresh consent for the destination. A fork of a candidate review retains immutable evidence references and receives no filesystem authority. Nested forks retain the same restrictions.
+The fork copies requested settings only. It drops directory approvals and runtime consent. The user must give fresh consent for the destination. A fork retains immutable evidence references and receives no filesystem authority. Nested forks retain the same restrictions.
 
 Retained command output references move to the destination scope. The application reads the source record through its own scope and stores a new record under the destination conversation. An unavailable copy keeps the bounded preview without a full-output link.
 
-Prepared changes remain with the original run. A fork never transfers ownership. A later handoff remains the only explicit ownership transfer.
+Workflow ownership remains with the original conversation. A fork never transfers ownership. A later handoff remains the only explicit ownership transfer.
 
 ## Image attachments
 
@@ -218,7 +215,7 @@ A composer message can start with `/skill:name` or `/skill:scope/name`. The reso
 
 Global skill names can collide with project skill names. An unqualified duplicate name is ambiguous. Suggestions show the scopes and insert a qualified command for duplicate names.
 
-The resolver reads global skills from the global skill folder. It reads project skills from `.agents/skills` below an authorised work location. A candidate-backed location exposes no skill body. The preview reports the limitation instead of reading current host files.
+The resolver reads global skills from the global skill folder. It reads project skills from `.agents/skills` below an authorised work location.
 
 A leading backslash escapes the prefix. For example, `\/skill:name` sends the literal text `/skill:name`. Expansion output never runs command classification again.
 
@@ -232,7 +229,7 @@ A composer message can start with `/template-name` or `/scope/template-name`. Th
 
 If the alias is `global`, its templates use `project:global` to avoid a scope collision. `/project:global/template-name` selects that project template. Session submission and unsaved drafts use the same catalogue builder, so a preview and a send agree on the source.
 
-An unqualified duplicate name is ambiguous. The suggestions show the scopes and insert a qualified command for duplicate names. A user selects one with `/scope/template-name` rather than a silent precedence rule. A candidate-backed location exposes no template body. The preview reports the limitation instead of reading current host files. A template body is never read from a nested directory or an external application configuration.
+An unqualified duplicate name is ambiguous. The suggestions show the scopes and insert a qualified command for duplicate names. A user selects one with `/scope/template-name` rather than a silent precedence rule. A template body is never read from a nested directory or an external application configuration.
 
 Frontmatter is optional. It carries `description` and `argument-hint`. The template body is the Markdown after the closing delimiter. A file that starts a frontmatter block must close it. The template name is the file stem without the `.md` extension.
 
@@ -258,15 +255,19 @@ A composer message that starts with `!` runs a shell command directly. A message
 
 The first non-whitespace character decides the syntax. Classification runs on the original typed text before resource expansion. A backslash before `!` writes literal text, for example `\!note`. Expansion output never runs command classification again.
 
-A direct command needs the selected location, the Run capability and valid consent. A host command needs host selection. A sandbox command needs a ready environment and directory approval. It needs no provider connection. The provider page offers **Continue without a provider** for a new session. When the approval policy is Ask each time, a host command waits for the same command approval as a model tool command. Typed syntax alone is not approval. The application rejects an empty command and an attached image. A rejected submission leaves the draft intact.
+A direct command needs the selected location, the Run capability and valid consent. A host command needs host selection. A sandbox command needs a ready environment and directory approval. It needs no provider connection. The provider page offers **Continue without a provider** for a new session. With Ask each time, every direct command waits for the same approval as a model Run call. Typed syntax alone is not approval. The application rejects an empty command and an attached image. A rejected submission leaves the draft intact.
 
 The application persists the pending command entry before it starts a process. The entry records the context inclusion, the command text, the actual directory, the output reference and the termination. A restart marks an unsettled command as interrupted. Captured process output survives a restart before a review decision. The application never replays the command.
 
 An included `!` entry becomes delimited command evidence in the model projection. An excluded `!!` entry is absent from ordinary context, compaction, titles, workflow context and generated handoff prompts. The `read_output` tool refuses an excluded record even with the exact reference. Local output views remain available.
 
-A command with a named host directory captures a baseline manifest before the process and a final manifest after it. The two manifests stay in the artefact repository. A failed final capture reports the limitation and keeps the captured output. The conversation blocks further execution when the final file snapshot is absent.
+A command records process output and termination, not file state. Host execution changes files directly under the process user's authority.
 
-A sandbox command uses the selected ready environment and the existing file-attempt driver. Preparation, candidate materialisation, final snapshots, review and cleanup are shared with ordinary sandbox work. The command runs inside the guest, so preparation failure starts nothing on the host. A **Review before apply** directory keeps the guest writes in an isolated copy and opens the same exact-candidate decision as an ordinary sandbox change. A **Direct write** directory exposes the authorised host directory to guest writes immediately. An uncertain outcome or an incomplete cleanup blocks further work. Cancellation never reverses a direct write. Context exclusion remains separate from local approval and recovery evidence.
+A sandbox command uses the selected ready environment and live directory mounts. Read mounts reject writes. Write mounts expose changes to the host immediately.
+
+Preparation failure starts no host command. Incomplete cleanup blocks further work. Cancellation never reverses a write.
+
+Context exclusion remains separate from local approval and command evidence.
 
 Context exclusion does not restrict filesystem access through independently authorised tools.
 
@@ -274,11 +275,11 @@ The application rejects command syntax in the steering and follow-up queues. It 
 
 ## Ownership and recovery
 
-The existing run record remains the sole ownership authority. Transfer never copies a run or recaptures its baseline.
+The existing run record remains the sole ownership authority. Transfer never copies a run or a directory.
 
 The conversation lock protects source and destination revisions through the ownership commit. A run fingerprint rejects stale or concurrent transfers.
 
-A bounded ownership history preserves review provenance. Decision revisions include the ownership generation, so source-page forms cannot approve transferred changes.
+A bounded ownership history preserves review provenance. Decision revisions include the ownership generation, so source-page forms cannot decide a transferred plan gate.
 
 A pending handoff journal resides in the run record. The application flushes that journal first, then commits the source and destination projections in one transaction, then clears the journal. A failed projection keeps the journal and blocks execution. Startup completes both projections idempotently.
 
@@ -286,13 +287,11 @@ A failed pre-commit write leaves ownership with the source.
 
 Safe gates survive restart and session expiry. Restoration requires fresh runtime consent in the owner conversation.
 
-Restoration starts no model call and makes no gate decision. The original assessment, revision or application choice remains pending.
+Restoration starts no model call and makes no gate decision. The original plan decision remains pending.
 
 Restoration retains the pinned directory identities. Run-only authority grants no access to future conversation messages or workflows.
 
 An unresolved gate prevents another message, another workflow or deletion of its owner conversation.
-
-Application transactions retain their separate journals and preimages. Completed application records reload without Git write authority or dependence on later candidate references.
 
 ## Removed alpha formats
 
@@ -301,57 +300,33 @@ The application contains no historical retention requirement. Persisted format v
 The removed facilities include:
 
 - Managed conversation documents and archives.
-- Plan controls and task imports.
+- Managed conversation-plan controls and task imports.
 - Task-list parsing and task-loop persistence.
 - Task-loop routes and progression.
 - Saved-document workflow inputs.
 - Automatic browser updates to model preferences.
+- Directory snapshots and file candidates.
+- File-change review, application and rollback.
+- Automatic commit workflows and before/after manifests.
 
-Current file-operation recovery remains separate from historical compatibility. The application adds no compatibility migration.
+Obsolete permissions and workflow formats fail closed. The application never interprets review-before-apply as Write and adds no compatibility migration.
 
 ## Validation
 
-The full suites pass:
+Security tests cover these invariants:
 
-- 1,194 Rust library tests.
-- One additional Rust binary test.
-- 81 browser-unit tests.
+- Exact command approval, rejection, cancellation and token replay refusal.
+- Host consent and rejection of Read grants for host execution.
+- Directory identity and phase capability integrity.
+- Plan provenance, revision bounds and restart validation.
+- Handoff ownership, stale decisions and recovery reservations.
+- Bounded output and credential redaction.
+- Rejection of obsolete permissions and persisted workflow formats.
 
-`mise run clean` passes without warnings. Production and development asset builds pass.
+The ignored Microsandbox integration test uses a scripted provider and an isolated prepared environment. It makes no hosted-model request.
 
-The real browser checks use `http://localhost:4000` with synthetic persisted records and a placeholder provider credential.
+That test exercises model Run calls with Read and Write mounts, plus a system-only repository-status workflow. It also exercises ignored files and large files.
 
-The checks cover these paths:
+Browser validation uses isolated local data and no connected provider. It covers direct commands and execution settings, not successful hosted-model execution.
 
-- A fork after a completed tool exchange and its unsent draft.
-- Both handoff choices and an unsent draft.
-- Rejection of missing run-only approval.
-- Transfer without file writes.
-- Restart and fresh consent in the destination.
-- Rejection of a source-page approval after transfer.
-- Explicit application to a real temporary file without a commit.
-- Restart after completed application.
-- Direct-write previews and before-and-after downloads.
-- Desktop and mobile presentation in Springfield and Sector 7-G.
-
-A supplied prompt entered the real preparation endpoint for transfer tests. The browser did not simulate a successful provider response.
-
-The fork browser check used a synthetic persisted conversation with one completed tool exchange. It followed the fork control to the confirmation page and opened the unsent draft. The draft created no second conversation and started no model call. The source revision and messages stayed unchanged. Console and page diagnostics were empty. The fork beside pending prepared changes is covered by the Rust router test, not the browser check.
-
-The review browser check used a separate local fixture. It opened the fork draft and exercised a rejected Send without a stored provider. No destination conversation appeared. Console and page diagnostics were empty. This check made no hosted-provider request.
-
-The branch route test selected an earlier response and kept both alternatives in the tree. Its controlled provider request contained only the selected path. A store test reopened two branches across restart with the abandoned branch excluded from model context. A real browser check used a synthetic conversation with two retained branches. It selected an earlier response through Continue here, appended a new child with a failed placeholder-provider request and reloaded the tree after a server restart. The abandoned branch stayed in the tree. Console and page diagnostics were empty. These checks use synthetic records, not hosted model requests.
-
-The branch review browser exercise switched between synthetic branches across a server restart. It retained an unsent draft during branch selection. Both alternative tips stayed available after selection of their shared ancestor. Console and page diagnostics were empty. This exercise made no provider request.
-
-A controlled long-turn test committed a host command before compaction. The next request carried the summary and retained phase once. The command wrote one file marker, which stayed unchanged across interruption and reload. A view test rejects duplicate text from a live snapshot that precedes a phase commit.
-
-A controlled browser fixture exercised live phase transitions and settlement. Response anchors stayed stable, phase text appeared once, and the unsent draft stayed intact. The settled copy contained both phases without tool or reasoning content. Console and page diagnostics were empty.
-
-Successful hosted-model generation and hosted agent execution remain unverified. The placeholder credential exercised the generation error path only.
-
-The browser reports no page or console errors. The tested mobile surfaces have no horizontal overflow at 390 pixels.
-
-Browser accessibility audits report no violations on the tested surfaces. The candidate diff audit leaves short line-number contrast checks incomplete.
-
-The design detector uses its fallback because HTML parser dependencies are unavailable. That fallback does not assess computed contrast.
+`docs/development.md` describes the validation commands and runtime prerequisites. The final task report records the executed suite results.

@@ -23,7 +23,6 @@ pub(super) struct InitialContextView {
     pub(super) source_available: String,
     pub(super) excluded_context: String,
     pub(super) instruction_state: String,
-    pub(super) instruction_candidate: String,
     pub(super) instruction_path: String,
     pub(super) instruction_hash: String,
     pub(super) instruction_text: String,
@@ -54,137 +53,8 @@ pub(super) struct AttemptView {
     pub(super) route: String,
     pub(super) context_href: String,
     pub(super) activity_href: String,
-    pub(super) changes_href: String,
     pub(super) result_href: String,
     pub(super) evidence_state: &'static str,
-    pub(super) apply_roots: Vec<ApplyRootView>,
-}
-
-pub(super) struct ApplyRootView {
-    pub(super) directory: String,
-    pub(super) path: String,
-    pub(super) outcome: &'static str,
-    pub(super) description: &'static str,
-}
-
-#[derive(Template)]
-#[template(path = "workflow_runs/templates/transaction_outcomes.html")]
-pub(crate) struct TransactionOutcomesView {
-    attempt: String,
-    href: String,
-    cleanup: &'static str,
-    application: Vec<ApplyRootView>,
-    commits: Vec<RepositoryCommitView>,
-}
-
-impl TransactionOutcomesView {
-    pub(crate) fn from_attempt(
-        run: &WorkflowRun,
-        attempt: &crate::workflows::run::AttemptRecord,
-        link_to_attempt: bool,
-    ) -> Self {
-        Self {
-            attempt: format!("Attempt {} · {}", attempt.ordinal, attempt.step.as_str()),
-            href: if link_to_attempt {
-                format!("/runs/{}/attempts/{}/changes", run.id, attempt.id)
-            } else {
-                String::new()
-            },
-            cleanup: match attempt.cleanup {
-                crate::workflows::run::AttemptCleanupRecord::Complete => "Complete",
-                crate::workflows::run::AttemptCleanupRecord::Pending => "Not complete",
-                crate::workflows::run::AttemptCleanupRecord::Orphaned { .. } => "Resources remain",
-            },
-            application: application_roots(attempt),
-            commits: repository_commits(attempt),
-        }
-    }
-}
-
-fn application_roots(attempt: &crate::workflows::run::AttemptRecord) -> Vec<ApplyRootView> {
-    use crate::workflows::apply::ApplyRootOutcome;
-    attempt
-        .apply_transaction
-        .as_ref()
-        .map(|transaction| {
-            transaction
-                .roots
-                .iter()
-                .map(|root| {
-                    let (outcome, description) = match root.outcome {
-                        ApplyRootOutcome::Pending => {
-                            ("Pending", "No final file outcome is recorded.")
-                        }
-                        ApplyRootOutcome::Unchanged => (
-                            "Unchanged",
-                            "The recorded files match the original baseline.",
-                        ),
-                        ApplyRootOutcome::Applied => (
-                            "Applied",
-                            "The recorded files match the approved candidate.",
-                        ),
-                        ApplyRootOutcome::Conflicted => (
-                            "Conflicted",
-                            "The directory differs from the expected file state.",
-                        ),
-                        ApplyRootOutcome::Uncertain => (
-                            "Uncertain",
-                            "The record does not establish which file changes remain.",
-                        ),
-                    };
-                    ApplyRootView {
-                        directory: root.alias.clone(),
-                        path: root.host_path.display().to_string(),
-                        outcome,
-                        description,
-                    }
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn repository_commits(attempt: &crate::workflows::run::AttemptRecord) -> Vec<RepositoryCommitView> {
-    use crate::workflows::CommitTransactionState;
-    attempt
-        .commit_transaction
-        .as_ref()
-        .map(|transaction| {
-            transaction
-                .roots
-                .iter()
-                .map(|root| {
-                    let (status, description) = match root.state {
-                        CommitTransactionState::Prepared => {
-                            ("Not committed", "No completed commit is recorded.")
-                        }
-                        CommitTransactionState::WorktreeApplied => (
-                            "Files applied · commit incomplete",
-                            "File application is recorded, but the commit is not complete.",
-                        ),
-                        CommitTransactionState::ReferenceUpdated { .. } => (
-                            "Commit requires recovery",
-                            "The Git reference changed, but final commit validation is incomplete.",
-                        ),
-                        CommitTransactionState::Verified { .. } => (
-                            "Committed",
-                            "The record contains a completed local Git commit.",
-                        ),
-                        CommitTransactionState::Restored => (
-                            "Not committed · no task changes remain",
-                            "Recovery restored the original repository state.",
-                        ),
-                    };
-                    RepositoryCommitView {
-                        path: root.grant.host_path.display().to_string(),
-                        status,
-                        description,
-                        commit: root.verified_commit().unwrap_or_default().to_owned(),
-                    }
-                })
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 pub(super) struct ResourceSourceView {
@@ -251,115 +121,23 @@ pub(super) struct AttemptResultView {
     pub(super) tools: Vec<AttemptToolView>,
 }
 
-#[derive(Template)]
-#[template(path = "workflow_runs/templates/direct_changes.html")]
-pub(crate) struct DirectChangesView {
-    pub(crate) run_href: String,
-    pub(crate) conversation_href: String,
-    pub(crate) href: String,
-    pub(crate) unknown: bool,
-    pub(crate) total: usize,
-    pub(crate) files: Vec<DirectFileView>,
-    pub(crate) previous: Option<usize>,
-    pub(crate) next: Option<usize>,
-}
-
-pub(crate) struct DirectFileView {
-    pub(crate) path: String,
-    pub(crate) status: &'static str,
-    pub(crate) text: String,
-    pub(crate) before_href: String,
-    pub(crate) after_href: String,
-}
-
-impl DirectChangesView {
-    pub(crate) fn new(
-        run: &WorkflowRun,
-        attempt: &crate::workflows::run::AttemptRecord,
-        state: &crate::state::AppState,
-        start: usize,
-    ) -> Self {
-        let href = format!(
-            "/runs/{}/attempts/{}/changes",
-            run.id.as_hex(),
-            attempt.id.as_hex()
-        );
-        let diff = attempt
-            .direct_changes
-            .as_ref()
-            .and_then(|changes| changes.diff(state));
-        let page = diff
-            .as_ref()
-            .and_then(|diff| diff.manifest_page(start, 16).ok());
-        let mut budget = 128 * 1024;
-        let (total, files) = page.map(|(total, rows)| {
-            let files = rows.into_iter().enumerate().map(|(index, row)| {
-                let index = start + index;
-                let change = diff.as_ref().and_then(|diff| diff.change(index, &state.workflow_artefacts).ok());
-                let text = change.and_then(|change| change.text).map(|fragments| fragments.into_iter().map(|part| part.text).collect::<String>())
-                    .filter(|text| crate::markdown::escape_plain(text).len() <= budget)
-                    .inspect(|text| { budget -= crate::markdown::escape_plain(text).len(); })
-                    .unwrap_or_else(|| "The text preview is unavailable or exceeds the page limit. Download the recorded file for its exact content.".to_owned());
-                DirectFileView {
-                    path: format!("{}/{}", row.directory, row.path), status: row.status, text,
-                    before_href: if row.old.as_ref().is_some_and(|entry| entry.object.is_some()) { format!("{href}?file={index}&side=before") } else { String::new() },
-                    after_href: if row.new.as_ref().is_some_and(|entry| entry.object.is_some()) { format!("{href}?file={index}&side=after") } else { String::new() },
-                }
-            }).collect();
-            (total, files)
-        }).unwrap_or_default();
-        Self {
-            run_href: format!("/runs/{}", run.id.as_hex()),
-            conversation_href: run
-                .conversation_id
-                .map(|id| format!("/conversations/{}", id.as_hex()))
-                .unwrap_or_default(),
-            href,
-            unknown: diff.is_none(),
-            total,
-            files,
-            previous: (start > 0).then(|| start.saturating_sub(16)),
-            next: (start.saturating_add(16) < total).then(|| start + 16),
-        }
-    }
-}
-
-pub(super) struct AttemptChangeView {
-    pub(super) href: String,
-    pub(super) kind: String,
-    pub(super) hash: String,
-    pub(super) preview: String,
-    pub(super) truncated: bool,
-}
-
-#[derive(Template)]
-#[template(path = "workflow_runs/templates/attempt_changes.html")]
-pub(super) struct AttemptChangesView {
-    pub(super) run_href: String,
-    pub(super) attempt: String,
-    pub(super) changes: Vec<AttemptChangeView>,
-    pub(super) outcomes: TransactionOutcomesView,
-}
-
 pub(super) struct StepArtefactView {
     pub(super) href: String,
     pub(super) key: String,
     pub(super) kind: &'static str,
-    pub(super) candidate_hash: String,
     pub(super) status: &'static str,
     pub(super) note: &'static str,
-    pub(super) review_href: String,
 }
 
 pub(super) struct StepView {
     pub(super) name: String,
     pub(super) action: &'static str,
-    pub(super) candidate_access: &'static str,
+    pub(super) directory_access: &'static str,
     pub(super) environment: String,
     pub(super) status: &'static str,
     pub(super) result: String,
     pub(super) artefacts: Vec<StepArtefactView>,
-    pub(super) commits: Vec<RepositoryCommitView>,
+
     pub(super) gate_href: String,
     pub(super) review_phase: String,
     pub(super) attempt_limit: String,
@@ -368,13 +146,6 @@ pub(super) struct StepView {
     pub(super) role: String,
     pub(super) model: String,
     pub(super) host_approval: String,
-}
-
-pub(super) struct RepositoryCommitView {
-    pub(super) path: String,
-    pub(super) status: &'static str,
-    pub(super) description: &'static str,
-    pub(super) commit: String,
 }
 
 pub(super) struct PendingHostCommandView {
@@ -536,10 +307,7 @@ fn index_row_from_run(summary: &RunSummary) -> IndexRow {
 }
 
 fn active_step(state: &str, current_step: &str) -> String {
-    if matches!(
-        state,
-        "Initialising source" | "Ready" | "Active" | "Awaiting decision"
-    ) {
+    if matches!(state, "Ready" | "Active" | "Awaiting decision") {
         current_step.to_owned()
     } else {
         String::new()
@@ -631,11 +399,7 @@ impl RunDetailView {
                 .join(", ");
         }
         let current_step = run.current_step_name().unwrap_or("").to_owned();
-        let context_boundaries = if run.kind == crate::workflows::RunKind::QuickTask {
-            "Ordinary work retains conversation context. Revision attempts use the original brief, exact candidate and explicit feedback."
-        } else {
-            "Each model step uses the exact brief, declared inputs and authorised directory instructions. Other step transcripts stay excluded."
-        }.to_owned();
+        let context_boundaries = "Each model step uses the brief, declared inputs and authorised directory instructions. Other step transcripts stay excluded.".to_owned();
         Self {
             run_id: run.id.as_hex(),
             conversation_href: run.conversation_id.map(|id| format!("/conversations/{}", id.as_hex())).unwrap_or_default(),
@@ -646,11 +410,7 @@ impl RunDetailView {
             catalogue_note,
             version: run.pinned.version.as_hex(),
             state: run.state.as_label(),
-            state_note: if run.completed_without_changes() {
-                "The task completed without changes. No commit was created."
-            } else {
-                state_note(&run.state)
-            },
+            state_note: state_note(&run.state),
             review_href: match &run.state {
                 crate::workflows::run::RunState::AwaitingHuman { gate, .. } => {
                     format!("/runs/{}/gates/{}", run.id.as_hex(), gate.as_hex())
@@ -675,9 +435,9 @@ impl RunDetailView {
                     StepView {
                         name: step.name.clone(),
                         action: step.action.kind_label(),
-                        candidate_access: match &step.action {
+                        directory_access: match &step.action {
                             crate::workflows::definition::StepAction::Agent(action) => {
-                                action.candidate_authority.label()
+                                action.directory_access.label()
                             }
                             crate::workflows::definition::StepAction::SystemCommand(_)
                             | crate::workflows::definition::StepAction::HumanGate(_) => "",
@@ -692,35 +452,7 @@ impl RunDetailView {
                             .into_iter()
                             .flat_map(|attempt| &attempt.outputs)
                             .map(|output| {
-                                let record = run.artefact(&output.artefact.id);
-                                let candidate_hash = record
-                                    .and_then(crate::workflows::artefacts::ArtefactRecord::candidate_hash)
-                                    .map(|hash| hash.short())
-                                    .unwrap_or_default();
-                                let status = match output.artefact.kind {
-                                    crate::workflows::definition::ArtefactKind::ReviewReport => {
-                                        match (
-                                            record.and_then(crate::workflows::artefacts::ArtefactRecord::candidate_hash),
-                                            next_candidate_hash(run, step),
-                                        ) {
-                                            (Some(report), Some(next)) if report == next => "Current",
-                                            (Some(_), Some(_)) => "Superseded",
-                                            _ => "",
-                                        }
-                                    }
-                                    crate::workflows::definition::ArtefactKind::CandidateRevision => {
-                                        match (
-                                            record.and_then(crate::workflows::artefacts::ArtefactRecord::candidate_hash),
-                                            following_candidate_hash(run, step),
-                                        ) {
-                                            (Some(candidate), Some(following)) if candidate != following => {
-                                                "Superseded"
-                                            }
-                                            _ => "",
-                                        }
-                                    }
-                                    _ => "",
-                                };
+                                let status = "";
                                 StepArtefactView {
                                     href: format!(
                                         "/runs/{}/artefacts/{}",
@@ -729,7 +461,6 @@ impl RunDetailView {
                                     ),
                                     key: output.key.as_str().to_owned(),
                                     kind: output.artefact.kind.as_str(),
-                                    candidate_hash,
                                     status,
                                     note: if output.artefact.kind
                                         == crate::workflows::definition::ArtefactKind::ReviewReport
@@ -742,11 +473,9 @@ impl RunDetailView {
                                     } else {
                                         ""
                                     },
-                                    review_href: candidate_review_href(run, record),
                                 }
                             })
                             .collect(),
-                        commits: attempt.map(repository_commits).unwrap_or_default(),
                         gate_href: gate.map(|gate| format!("/runs/{}/gates/{}", run.id.as_hex(), gate.id.as_hex())).unwrap_or_default(),
                         review_phase: run.pinned.definition.review_phase(&step.key).map(|phase| phase.to_string()).unwrap_or_default(),
                         attempt_limit: step
@@ -763,9 +492,6 @@ impl RunDetailView {
                         model: phase_model_label(run, step),
                         host_approval: run
                             .phase_settings(&step.key)
-                            .filter(|settings| {
-                                settings.location == crate::execution::ToolLocation::Host
-                            })
                             .map(|settings| {
                                 crate::slices::execution_settings::page::host_approval_label(
                                     settings.host_approval,
@@ -799,19 +525,12 @@ impl RunDetailView {
                     git_admin: attempt.capabilities.git_admin.as_str(),
                     network: attempt.capabilities.network_label(),
                     reports: attempt.outputs.iter().filter(|output| output.artefact.kind == crate::workflows::definition::ArtefactKind::ReviewReport).map(|output| {
-                        let record = run.artefact(&output.artefact.id);
-                        let current = match (&run.source, record.and_then(crate::workflows::artefacts::ArtefactRecord::candidate_hash)) {
-                            (crate::workflows::run::RunSource::Captured { source }, Some(hash)) => run.artefact(&source.accepted.id).and_then(crate::workflows::artefacts::ArtefactRecord::candidate_hash) == Some(hash),
-                            _ => false,
-                        };
                         StepArtefactView {
                             href: format!("/runs/{}/artefacts/{}", run.id.as_hex(), output.artefact.id.as_hex()),
                             key: output.key.as_str().to_owned(),
                             kind: output.artefact.kind.as_str(),
-                            candidate_hash: record.and_then(crate::workflows::artefacts::ArtefactRecord::candidate_hash).map(|hash| hash.short()).unwrap_or_default(),
-                            status: if current { "Current" } else { "Superseded" },
-                            note: "",
-                            review_href: candidate_review_href(run, record),
+                            status: "",
+                            note: "Reports describe the files at the time of the review.",
                         }
                     }).collect(),
                     route: review_route(Some(attempt)),
@@ -825,11 +544,6 @@ impl RunDetailView {
                         run.id.as_hex(),
                         attempt.id.as_hex()
                     ),
-                    changes_href: format!(
-                        "/runs/{}/attempts/{}/changes",
-                        run.id.as_hex(),
-                        attempt.id.as_hex()
-                    ),
                     result_href: format!(
                         "/runs/{}/attempts/{}/result",
                         run.id.as_hex(),
@@ -840,7 +554,6 @@ impl RunDetailView {
                     } else {
                         "Unavailable"
                     },
-                    apply_roots: application_roots(attempt),
                 })
                 .collect(),
             artefacts: artefact_rows(run),
@@ -851,10 +564,7 @@ impl RunDetailView {
                 Vec::new()
             },
             host_approval: run
-                .phase_models
-                .iter()
-                .filter_map(|phase| phase.settings.as_ref())
-                .find(|settings| settings.location == crate::execution::ToolLocation::Host)
+                .directory_settings()
                 .map(|settings| {
                     crate::slices::execution_settings::page::host_approval_label(
                         settings.host_approval,
@@ -962,23 +672,12 @@ pub(super) fn initial_context_view(
     let (instruction_state, instruction_text) = match &packet.project_instructions.state {
         crate::workflows::input_context::ProjectInstructionState::Absent => (
             "Absent".to_owned(),
-            "No root AGENTS.md file was present in this candidate.".to_owned(),
+            "No root AGENTS.md file was present in the authorised directories.".to_owned(),
         ),
         crate::workflows::input_context::ProjectInstructionState::Present { text, .. } => {
             ("Present".to_owned(), text.clone())
         }
     };
-    let instruction_candidate = packet
-        .project_instructions
-        .candidate
-        .as_ref()
-        .map(|candidate| {
-            format!(
-                "{} · {} · {}",
-                candidate.id, candidate.kind, candidate.artefact_hash
-            )
-        })
-        .unwrap_or_else(|| "Not available".to_owned());
     Some(InitialContextView {
         run_href: run_href.to_owned(),
         section,
@@ -989,7 +688,6 @@ pub(super) fn initial_context_view(
         source_available: packet.source_available.clone(),
         excluded_context: packet.excluded_context.clone(),
         instruction_state,
-        instruction_candidate,
         instruction_path: packet.project_instructions.guest_path.clone(),
         instruction_hash: packet
             .project_instructions
@@ -1124,44 +822,6 @@ pub(super) fn attempt_result_view(
     }
 }
 
-pub(super) fn attempt_changes_view(
-    run: &WorkflowRun,
-    attempt: &crate::workflows::run::AttemptRecord,
-    state: &crate::state::AppState,
-) -> AttemptChangesView {
-    let changes = attempt
-        .outputs
-        .iter()
-        .filter(|output| {
-            output.artefact.kind == crate::workflows::definition::ArtefactKind::CandidateRevision
-        })
-        .filter_map(|output| {
-            let record = run.artefact(&output.artefact.id)?;
-            let (preview, truncated) = candidate_preview(run, record, state);
-            Some(AttemptChangeView {
-                href: format!(
-                    "/runs/{}/artefacts/{}",
-                    run.id.as_hex(),
-                    output.artefact.id.as_hex()
-                ),
-                kind: output.artefact.kind.as_str().to_owned(),
-                hash: record
-                    .candidate_hash()
-                    .map(|hash| hash.short())
-                    .unwrap_or_default(),
-                preview,
-                truncated,
-            })
-        })
-        .collect();
-    AttemptChangesView {
-        run_href: format!("/runs/{}", run.id.as_hex()),
-        attempt: format!("Attempt {} · {}", attempt.ordinal, attempt.step.as_str()),
-        changes,
-        outcomes: TransactionOutcomesView::from_attempt(run, attempt, false),
-    }
-}
-
 fn phase_model_label(
     run: &WorkflowRun,
     step: &crate::workflows::definition::StepDefinition,
@@ -1213,8 +873,7 @@ fn step_status(
         | crate::workflows::run::RunState::Failed
         | crate::workflows::run::RunState::Cancelled
         | crate::workflows::run::RunState::Interrupted => "Not started",
-        crate::workflows::run::RunState::InitialisingSource
-        | crate::workflows::run::RunState::Ready { .. }
+        crate::workflows::run::RunState::Ready { .. }
         | crate::workflows::run::RunState::Active { .. }
         | crate::workflows::run::RunState::Paused { .. }
         | crate::workflows::run::RunState::AwaitingHuman { .. } => "Waiting",
@@ -1223,20 +882,17 @@ fn step_status(
 
 fn state_note(state: &crate::workflows::run::RunState) -> &'static str {
     match state {
-        crate::workflows::run::RunState::InitialisingSource => {
-            "Frinkworks captures the authorised reviewed directories before the first step starts."
-        }
         crate::workflows::run::RunState::Ready { .. } => {
-            "The next step is queued. Apply changes updates host files. An explicit Git commit creates a commit."
+            "The next step is queued. Write access changes the original files immediately."
         }
         crate::workflows::run::RunState::Active { .. } => {
-            "The current step uses an isolated attempt. File application and explicit Git commits update host files."
+            "The current step uses the directory permissions. Write access changes the original files immediately."
         }
         crate::workflows::run::RunState::Paused { .. } => {
             "The execution budget paused this model phase. Continue resumes the same step. Approval phases stay later in the sequence."
         }
         crate::workflows::run::RunState::AwaitingHuman { .. } => {
-            "The decision covers the exact candidate set. Approval permits the configured file application or explicit Git commit."
+            "The decision covers the exact plan. Acceptance permits the next configured phase, not file application or a Git commit."
         }
         crate::workflows::run::RunState::RevisionRequested { .. } => {
             "The revision request ended this run. Start a new task to continue the work."
@@ -1289,71 +945,6 @@ fn review_route(attempt: Option<&crate::workflows::run::AttemptRecord>) -> Strin
         .map(crate::workflows::run::ReviewRoute::as_label)
         .unwrap_or("")
         .to_owned()
-}
-
-fn following_candidate_hash(
-    run: &WorkflowRun,
-    step: &crate::workflows::definition::StepDefinition,
-) -> Option<crate::workflows::artefacts::CandidateHash> {
-    let mut next = run.pinned.definition.next_step(&step.key);
-    while let Some(key) = next {
-        if let Some(candidate) = run
-            .attempts
-            .iter()
-            .rev()
-            .find(|attempt| attempt.step == *key)
-            .and_then(|attempt| {
-                attempt.outputs.iter().find_map(|output| {
-                    (output.artefact.kind
-                        == crate::workflows::definition::ArtefactKind::CandidateRevision)
-                        .then(|| run.artefact(&output.artefact.id)?.candidate_hash())
-                        .flatten()
-                })
-            })
-        {
-            return Some(candidate);
-        }
-        next = run.pinned.definition.next_step(key);
-    }
-    None
-}
-
-fn next_candidate_hash(
-    run: &WorkflowRun,
-    step: &crate::workflows::definition::StepDefinition,
-) -> Option<crate::workflows::artefacts::CandidateHash> {
-    let next = run.pinned.definition.next_step(&step.key)?;
-    let next = run.pinned.definition.step(next)?;
-    let candidate = next.inputs.iter().find(|input| {
-        input.kind == crate::workflows::definition::ArtefactKind::CandidateRevision
-    })?;
-    let reference = match &candidate.source {
-        crate::workflows::definition::ArtefactSource::RunInitialCandidate => match &run.source {
-            crate::workflows::run::RunSource::Captured { source } => &source.initial,
-            crate::workflows::run::RunSource::None | crate::workflows::run::RunSource::Pending => {
-                return None;
-            }
-        },
-        crate::workflows::definition::ArtefactSource::RunCurrentCandidate => match &run.source {
-            crate::workflows::run::RunSource::Captured { source } => &source.accepted,
-            crate::workflows::run::RunSource::None | crate::workflows::run::RunSource::Pending => {
-                return None;
-            }
-        },
-        crate::workflows::definition::ArtefactSource::RunCurrentPlan => return None,
-
-        crate::workflows::definition::ArtefactSource::StepOutput { step, output } => {
-            &run.attempts
-                .iter()
-                .rev()
-                .find(|attempt| attempt.step == *step)?
-                .outputs
-                .iter()
-                .find(|item| item.key == *output)?
-                .artefact
-        }
-    };
-    run.artefact(&reference.id)?.candidate_hash()
 }
 
 fn step_environment_label(
@@ -1431,7 +1022,6 @@ fn catalogue_presentation(run: &WorkflowRun, catalogue: &WorkflowCatalogue) -> (
 }
 
 fn artefact_rows(run: &WorkflowRun) -> Vec<ArtefactRow> {
-    let observed = run.observed_candidate_hash();
     run.artefacts
         .iter()
         .map(|record| ArtefactRow {
@@ -1440,7 +1030,7 @@ fn artefact_rows(run: &WorkflowRun) -> Vec<ArtefactRow> {
             hash: record.artefact_hash.short(),
             producer: record.provenance.producer.as_label(),
             created: format_time(record.created_at_ms),
-            status: record.assurance_label(observed),
+            status: "",
         })
         .collect()
 }
@@ -1456,8 +1046,6 @@ pub(super) struct ArtefactView {
     pub(super) body: String,
     pub(super) content_unavailable: bool,
     pub(super) constraint: String,
-    pub(super) preview: String,
-    pub(super) truncated: bool,
 }
 
 impl ArtefactView {
@@ -1471,7 +1059,6 @@ impl ArtefactView {
             Err(_) => (String::new(), true),
         };
         let constraint = record.constraint_label();
-        let (preview, truncated) = candidate_preview(run, record, state);
         Self {
             run_href: format!("/runs/{}", run.id.as_hex()),
             kind: record.kind.as_str(),
@@ -1481,8 +1068,6 @@ impl ArtefactView {
             body,
             content_unavailable,
             constraint,
-            preview,
-            truncated,
         }
     }
 }
@@ -1498,10 +1083,6 @@ fn artefact_body(kind: crate::workflows::definition::ArtefactKind, bytes: Vec<u8
         Ok(crate::workflows::artefacts::TypedPayload::Test(report)) => {
             crate::markdown::render(&report.markdown)
         }
-        Ok(crate::workflows::artefacts::TypedPayload::HumanDecision(decision)) => {
-            let note = decision.note.unwrap_or_default();
-            crate::markdown::escape_plain(&format!("{}\n{}", decision.decision.as_label(), note))
-        }
         Ok(crate::workflows::artefacts::TypedPayload::PlanDecision(decision)) => {
             let note = decision.note.unwrap_or_default();
             crate::markdown::escape_plain(&format!(
@@ -1513,92 +1094,9 @@ fn artefact_body(kind: crate::workflows::definition::ArtefactKind, bytes: Vec<u8
         }
         Err(_) => match String::from_utf8(bytes) {
             Ok(text) => crate::markdown::escape_plain(&text),
-            Err(_) => "Binary candidate manifest".to_owned(),
+            Err(_) => "Binary output".to_owned(),
         },
     }
-}
-
-fn candidate_preview(
-    run: &WorkflowRun,
-    record: &crate::workflows::artefacts::ArtefactRecord,
-    state: &crate::state::AppState,
-) -> (String, bool) {
-    if record.kind != crate::workflows::definition::ArtefactKind::CandidateRevision {
-        return (String::new(), false);
-    }
-    let Ok(after_bytes) = state.workflow_artefacts.get(&record.object_hash) else {
-        return (String::new(), false);
-    };
-    let Some(after) =
-        crate::workflows::artefacts::CandidatePayload::from_manifest_bytes(&after_bytes)
-    else {
-        return (String::new(), false);
-    };
-    let before = record.provenance.inputs.iter().find_map(|input| {
-        if input.kind != crate::workflows::definition::ArtefactKind::CandidateRevision {
-            return None;
-        }
-        let parent = run.artefact(&input.id)?;
-        let bytes = state.workflow_artefacts.get(&parent.object_hash).ok()?;
-        crate::workflows::artefacts::CandidatePayload::from_manifest_bytes(&bytes)
-    });
-    let mut text = String::new();
-    let mut truncated = false;
-    match (before.as_ref(), &after) {
-        (
-            Some(crate::workflows::artefacts::CandidatePayload::Revision(before)),
-            crate::workflows::artefacts::CandidatePayload::Revision(after),
-        ) => {
-            (text, truncated) = crate::workflows::artefacts::candidate::preview_plain(
-                &state.workflow_artefacts,
-                &before.entries,
-                &after.entries,
-            );
-        }
-        (
-            Some(crate::workflows::artefacts::CandidatePayload::Set(before)),
-            crate::workflows::artefacts::CandidatePayload::Set(after),
-        ) => {
-            for (left, right) in before.roots.iter().zip(&after.roots) {
-                let (root_text, root_truncated) =
-                    crate::workflows::artefacts::candidate::preview_plain(
-                        &state.workflow_artefacts,
-                        &left.candidate.entries,
-                        &right.candidate.entries,
-                    );
-                if !root_text.is_empty() {
-                    text.push_str(&format!("Directory {}\n{}", right.alias, root_text));
-                }
-                truncated |= root_truncated;
-            }
-        }
-        _ => return (String::new(), false),
-    }
-    (crate::markdown::escape_plain(&text), truncated)
-}
-
-fn candidate_review_href(
-    run: &WorkflowRun,
-    record: Option<&crate::workflows::artefacts::ArtefactRecord>,
-) -> String {
-    let Some(record) = record.filter(|record| {
-        record.kind == crate::workflows::definition::ArtefactKind::CandidateRevision
-    }) else {
-        return String::new();
-    };
-    let Some(base) =
-        record.provenance.inputs.iter().find(|input| {
-            input.kind == crate::workflows::definition::ArtefactKind::CandidateRevision
-        })
-    else {
-        return String::new();
-    };
-    format!(
-        "/conversations/candidate-review?run={}&candidate={}&diff_base={}",
-        run.id.as_hex(),
-        record.id.as_hex(),
-        base.id.as_hex()
-    )
 }
 
 fn format_time(ms: u64) -> String {

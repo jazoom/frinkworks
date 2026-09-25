@@ -28,11 +28,9 @@
       </div>
     {% endif %}
   </dl>
-  {% if (!location_host || !self.is_new()) && !directory.transient %}
+  {% if !directory.transient %}
     <fieldset
       class="directory-access-options border-base-300 mt-5 space-y-1 border-t pt-3 text-base"
-      {% if !self.is_new() %}data-execution-sandbox-settings{% endif %}
-      {% if location_host %}hidden{% endif %}
     >
       <legend class="sr-only">
         {% if !self.is_new() %}Requested{% endif %}Access for
@@ -43,63 +41,41 @@
           type="radio"
           class="radio radio-primary mt-0.5 shrink-0"
           name="directory-access-{{ directory.id }}"
-          value="read-only"
+          value="read"
           {% if self.is_new() %}data-draft-directory-access="directory-access-{{ directory.id }}"{% else %}data-execution-directory="{{ directory.id }}"{% endif %}
-          {% if !directory.review_before_apply && !directory.direct_write %}checked{% endif %}
+          {% if !directory.direct_write %}checked{% endif %}
         />
         <span
-          >Read only<small class="text-quiet mt-0.5 block text-sm"
-            >Inspect files without changes.</small
+          >Read<small class="text-quiet mt-0.5 block text-sm"
+            >Read files and run shell commands without changes to this
+            directory. Read access requires a sandbox.</small
           ></span
         >
       </label>
+
       <label class="flex cursor-pointer items-start gap-3 py-2">
         <input
           type="radio"
           class="radio radio-primary mt-0.5 shrink-0"
           name="directory-access-{{ directory.id }}"
-          value="review-before-apply"
-          {% if self.is_new() %}data-draft-directory-access="directory-access-{{ directory.id }}"{% else %}data-execution-directory="{{ directory.id }}"{% endif %}
-          {% if directory.review_before_apply %}checked{% endif %}
-        />
-        <span
-          >Review before apply<small class="text-quiet mt-0.5 block text-sm"
-            >Work in an isolated copy. Apply changes after review.</small
-          ></span
-        >
-      </label>
-      <label class="flex cursor-pointer items-start gap-3 py-2">
-        <input
-          type="radio"
-          class="radio radio-primary mt-0.5 shrink-0"
-          name="directory-access-{{ directory.id }}"
-          value="direct-write"
+          value="write"
           {% if self.is_new() %}data-draft-directory-access="directory-access-{{ directory.id }}"{% else %}data-execution-directory="{{ directory.id }}"{% endif %}
           {% if directory.direct_write %}checked{% endif %}
         />
         <span
-          >Direct write<small class="text-quiet mt-0.5 block text-sm"
+          >Write<small class="text-quiet mt-0.5 block text-sm"
             >Changes affect your files immediately.</small
           ></span
         >
       </label>
     </fieldset>
   {% endif %}
-  {% if !location_host && directory.direct_write %}
+  {% if directory.direct_write %}
     <p class="directory-card-warning">
-      Writes reach this directory immediately. Discard cannot undo them.
+      Writes reach this directory immediately. Frinkworks provides no rollback.
     </p>
   {% endif %}
-  {% if !location_host && directory.review_before_apply && !directory.exclusions.is_empty() %}
-    <div class="mt-3 text-sm">
-      <p class="font-medium">Excluded engine paths</p>
-      <ul class="text-quiet mt-1 space-y-1">
-        {% for exclusion in directory.exclusions %}
-          <li class="font-mono text-xs break-all">{{ exclusion }}</li>
-        {% endfor %}
-      </ul>
-    </div>
-  {% endif %}
+
   <div class="border-base-300 mt-4 border-t pt-4 text-sm">
     <p class="font-semibold">
       {% if directory.pending_approval && !location_host %}
@@ -124,13 +100,11 @@
         Approval is required before tools can use this access.
       {% else if directory.sensitive || directory.direct_write %}
         Access approved.
-      {% else if directory.review_before_apply %}
-        Changes stay isolated until application approval.
       {% else %}
         Files remain read-only.
       {% endif %}
     </p>
-    {% if !self.is_new() && !location_host && !directory.transient %}
+    {% if !self.is_new() && !directory.transient %}
       <p class="text-quiet mt-2">
         Review changes previews the requested access mode.
       </p>
@@ -143,7 +117,7 @@
           formaction="/conversations/new/directories/{{ directory.id }}/access"
           formmethod="post"
           name="action"
-          value="read-only"
+          value="read"
           type="submit"
           hidden
         >

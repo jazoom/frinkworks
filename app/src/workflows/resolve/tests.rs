@@ -40,9 +40,9 @@ use crate::environments::{
 };
 use crate::tests::sample_snapshot;
 use crate::workflows::definition::{
-    ASSISTANT_REPLY, AgentAuthority, AgentStep, CandidateAuthority, OutputKey, OutputKind,
-    RequiredOutput, RoleDefinition, RoleKey, StepAction, StepDefinition, StepEnvironment, StepKey,
-    WorkflowDefinition, candidate_revision_output, initial_candidate_input,
+    ASSISTANT_REPLY, AgentAuthority, AgentStep, OutputKey, OutputKind, RequiredOutput,
+    RoleDefinition, RoleKey, StepAccess, StepAction, StepDefinition, StepEnvironment, StepKey,
+    WorkflowDefinition,
 };
 
 fn draft(name: &str) -> EnvironmentDraft {
@@ -69,20 +69,17 @@ fn definition(default: crate::environments::EnvironmentId) -> WorkflowDefinition
         vec![StepDefinition {
             key: StepKey::parse("work").expect("step"),
             name: "Work on task".to_owned(),
-            inputs: vec![initial_candidate_input()],
+            inputs: Vec::new(),
             action: StepAction::Agent(AgentStep {
                 environment: StepEnvironment::WorkflowDefault,
                 role: RoleKey::parse("agent").expect("role"),
-                candidate_authority: CandidateAuthority::Edit,
+                directory_access: StepAccess::Write,
                 authority,
                 settings: crate::workflows::definition::ModelStepSettings::SameAsRunDefaults,
-                required_outputs: vec![
-                    RequiredOutput {
-                        key: OutputKey::parse(ASSISTANT_REPLY).expect("output"),
-                        kind: OutputKind::AssistantReply,
-                    },
-                    candidate_revision_output(),
-                ],
+                required_outputs: vec![RequiredOutput {
+                    key: OutputKey::parse(ASSISTANT_REPLY).expect("output"),
+                    kind: OutputKind::AssistantReply,
+                }],
             }),
             review: None,
         }],

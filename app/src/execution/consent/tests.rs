@@ -94,7 +94,7 @@ fn direct_write_consent_is_destination_bound_and_single_use() {
     let data = home.path().join("frinkworks");
     std::fs::create_dir(&data).unwrap();
     let mut grant = crate::execution::DirectoryGrant::from_selected(home.path(), &[]).unwrap();
-    grant.access = crate::execution::DirectoryAccess::DirectWrite;
+    grant.access = crate::execution::DirectoryAccess::Write;
     assert!(crate::execution::authority::sensitive_directory(
         &grant.host_path,
         &data
@@ -116,7 +116,7 @@ fn direct_write_consent_is_destination_bound_and_single_use() {
     assert!(store.authorised_draft(&approval, owner, "original", &grants, &grant));
     assert!(!store.authorised_draft(&approval, owner, "copy", &grants, &grant));
     let mut reviewed = grant.clone();
-    reviewed.access = crate::execution::DirectoryAccess::ReviewBeforeApply;
+    reviewed.access = crate::execution::DirectoryAccess::Read;
     assert!(!store.authorised_draft(&approval, owner, "original", &[reviewed.clone()], &reviewed));
     store.retain_sessions(|_| false);
     assert!(!store.authorised_draft(&approval, owner, "original", &grants, &grant));
@@ -224,7 +224,7 @@ fn consent_rejects_another_session_strategy_or_root_identity() {
             .is_err()
     );
     let mut changed = grant.clone();
-    changed.access = crate::execution::DirectoryAccess::ReviewBeforeApply;
+    changed.access = crate::execution::DirectoryAccess::Write;
     assert!(
         store
             .approve_draft(&request, owner, "draft", &[changed.clone()], &changed)

@@ -20,6 +20,14 @@ use super::*;
 use std::os::unix::fs::PermissionsExt;
 
 #[test]
+fn failed_publication_exposes_no_object() {
+    let store = WorkflowArtefactRepository::in_memory();
+    store.fail_publish_after(0);
+    assert!(store.publish(b"new plan").is_err());
+    assert!(store.get(&ObjectHash::of(b"new plan")).is_err());
+}
+
+#[test]
 fn publication_is_atomic_and_deduplicates_identical_bytes() {
     let dir = tempfile::tempdir().expect("dir");
     let store = WorkflowArtefactRepository::open(dir.path().to_path_buf()).expect("open");

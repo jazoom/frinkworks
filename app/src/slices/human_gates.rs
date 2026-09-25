@@ -6,9 +6,7 @@ pub(crate) mod tests;
 
 use axum::{
     Form, Router,
-    body::Body,
-    extract::{Path, Query, State},
-    http::{HeaderMap, HeaderValue, StatusCode, header},
+    extract::{Path, State},
     response::Response,
     routing::{get, post},
 };
@@ -19,15 +17,8 @@ use crate::{
     responses,
     sessions::{JobStatus, RequiredSession, SessionId},
     state::AppState,
-    workflows::{GateId, RunId, RunKind, settle_cancelled_job},
+    workflows::{GateId, RunId, settle_cancelled_job},
 };
-
-#[derive(serde::Deserialize)]
-struct RawQuery {
-    page: Option<String>,
-    change: Option<String>,
-    line: Option<String>,
-}
 
 pub(super) fn router() -> Router<AppState> {
     Router::new()
@@ -42,10 +33,6 @@ pub(super) fn router() -> Router<AppState> {
             "/runs/{run_id}/gates/{gate_id}/discard-and-switch",
             post(discard_and_switch),
         )
-        .route(
-            "/runs/{run_id}/gates/{gate_id}/objects/{side}/{change}",
-            get(object),
-        )
         .layer(axum::extract::DefaultBodyLimit::max(70 * 1024))
 }
 
@@ -58,7 +45,6 @@ async fn detail(
     session: RequiredSession,
     graft: PageGraft,
     Path((run_id, gate_id)): Path<(String, String)>,
-    Query(raw): Query<RawQuery>,
 ) -> AppResult<Response> {
     let Some((run_id, gate_id)) = ids(&run_id, &gate_id) else {
         return Ok(responses::request_navigation(graft, "/runs"));
@@ -72,62 +58,15 @@ async fn detail(
             &format!("/runs/{}", run.id.as_hex()),
         ));
     };
-    let Some(query) = forms::DiffQuery::parse(
-        raw.page.as_deref(),
-        raw.change.as_deref(),
-        raw.line.as_deref(),
-    ) else {
+    let Some(plan) = load_gate_plan(&run, gate, &state.workflow_artefacts) else {
         return static_error(
             PatchStatus::UnprocessableEntity,
             graft,
             &state,
-            "That diff page is not valid.",
+            "The plan is unavailable.",
         );
     };
-    let (diff, plan_text) =
-        if gate.candidate.kind == crate::workflows::definition::ArtefactKind::Plan {
-            let Some(plan) = load_gate_plan(&run, gate, &state.workflow_artefacts) else {
-                return static_error(
-                    PatchStatus::UnprocessableEntity,
-                    graft,
-                    &state,
-                    "The immutable plan is unavailable.",
-                );
-            };
-            (None, Some(plan))
-        } else {
-            let Ok(diff) = crate::workflows::artefacts::CandidateDiff::load(
-                &run,
-                &gate.diff_base,
-                &gate.candidate,
-                &state.workflow_artefacts,
-            ) else {
-                return static_error(
-                    PatchStatus::UnprocessableEntity,
-                    graft,
-                    &state,
-                    "The immutable candidate diff is unavailable.",
-                );
-            };
-            (Some(diff), None)
-        };
-    let Some(mut view) = page::GatePage::new(
-        &run,
-        gate,
-        diff,
-        plan_text,
-        &state.workflow_artefacts,
-        query,
-        "",
-        application_destination(&state, &run),
-    ) else {
-        return static_error(
-            PatchStatus::UnprocessableEntity,
-            graft,
-            &state,
-            "That diff page is not valid.",
-        );
-    };
+    let mut view = page::GatePage::new(&run, gate, plan);
     if run.recoverable_gate() && !state.gate_continuations.available(&run.id, &session.0) {
         view.needs_recovery = true;
         view.awaiting = false;
@@ -257,7 +196,7 @@ async fn discard_and_switch(
         return command_error_target(
             graft,
             PatchStatus::Conflict,
-            "That candidate is unavailable.",
+            "That plan is unavailable.",
             "conversation-settings",
         );
     };
@@ -265,7 +204,7 @@ async fn discard_and_switch(
         return command_error_target(
             graft,
             PatchStatus::Conflict,
-            "That candidate does not belong to this conversation.",
+            "That plan does not belong to this conversation.",
             "conversation-settings",
         );
     };
@@ -276,18 +215,15 @@ async fn discard_and_switch(
         return command_error_target(
             graft,
             PatchStatus::Conflict,
-            "That candidate is unavailable.",
+            "That plan is unavailable.",
             "conversation-settings",
         );
     };
-    let target = run
-        .artefact(&gate.candidate.id)
-        .and_then(crate::workflows::artefacts::ArtefactRecord::candidate_hash)
-        .map(|hash| hash.as_str());
+    let target = Some(gate.candidate.artefact_hash.as_str());
     if conversation.revision != form.conversation_revision
         || run.decision_revision(gate) != form.revision
         || gate.state != crate::workflows::gates::HumanGateState::AwaitingDecision
-        || target.as_deref() != Some(form.candidate.as_str())
+        || target.as_deref() != Some(form.plan.as_str())
         || !form.conversation_surface
         || !state.gate_continuations.available(&run_id, &session)
     {
@@ -364,7 +300,7 @@ async fn discard_and_switch(
         return command_error_target(
             graft,
             PatchStatus::Conflict,
-            "That candidate is unavailable.",
+            "That plan is unavailable.",
             "conversation-settings",
         );
     };
@@ -477,47 +413,6 @@ async fn discard_and_switch(
     )))
 }
 
-pub(in crate::slices) fn approval_command(
-    run: &crate::workflows::WorkflowRun,
-    gate: &crate::workflows::gates::HumanGateRecord,
-) -> Option<crate::workflows::commands::SystemCommandId> {
-    let key = run.pinned.definition.next_step(&gate.step)?;
-    match &run.pinned.definition.step(key)?.action {
-        crate::workflows::definition::StepAction::SystemCommand(action) => Some(action.command),
-        _ => None,
-    }
-}
-
-pub(in crate::slices) fn application_destination(
-    state: &AppState,
-    run: &crate::workflows::WorkflowRun,
-) -> String {
-    let conversation = run
-        .conversation_id
-        .and_then(|id| state.conversations.get(&id));
-    run.directory_settings()
-        .or_else(|| {
-            conversation
-                .as_ref()?
-                .model
-                .as_ref()
-                .map(|model| model.settings.clone())
-        })
-        .map(|settings| {
-            settings
-                .directories
-                .iter()
-                .filter(|grant| {
-                    grant.access == crate::execution::DirectoryAccess::ReviewBeforeApply
-                })
-                .map(|grant| format!("{} ({})", grant.alias, grant.host_path.display()))
-                .collect::<Vec<_>>()
-                .join(", ")
-        })
-        .filter(|destination| !destination.is_empty())
-        .unwrap_or_default()
-}
-
 #[derive(Clone, Copy)]
 enum DecisionAction {
     Approve,
@@ -581,19 +476,8 @@ async fn decide(
             error_target,
         );
     };
-    let plan_gate = gate.candidate.kind == crate::workflows::definition::ArtefactKind::Plan;
-    let target = if plan_gate {
-        Some(gate.candidate.artefact_hash.as_str())
-    } else {
-        run.artefact(&gate.candidate.id)
-            .and_then(crate::workflows::artefacts::ArtefactRecord::candidate_hash)
-            .map(|hash| hash.as_str())
-    };
-    let submitted_target = if plan_gate {
-        form.plan.as_str()
-    } else {
-        form.candidate.as_str()
-    };
+    let target = Some(gate.candidate.artefact_hash.as_str());
+    let submitted_target = form.plan.as_str();
     if gate.state != crate::workflows::gates::HumanGateState::AwaitingDecision
         || run.decision_revision(gate) != form.revision
         || target.as_deref() != Some(submitted_target)
@@ -608,40 +492,9 @@ async fn decide(
         );
     }
     form.revision = gate.revision;
-    let diff = if plan_gate {
-        if !matches!(action, DecisionAction::Cancel)
-            && load_gate_plan(&run, gate, &state.workflow_artefacts).is_none()
-        {
-            return command_error_for_run(
-                graft,
-                PatchStatus::Conflict,
-                "The immutable plan is unavailable.",
-                &run,
-                form.conversation_surface,
-            );
-        }
-        None
-    } else {
-        let Ok(diff) = crate::workflows::artefacts::CandidateDiff::load(
-            &run,
-            &gate.diff_base,
-            &gate.candidate,
-            &state.workflow_artefacts,
-        ) else {
-            return command_error_for_run(
-                graft,
-                PatchStatus::Conflict,
-                "The immutable candidate diff is unavailable.",
-                &run,
-                form.conversation_surface,
-            );
-        };
-        Some(diff)
-    };
-
     if matches!(action, DecisionAction::Revision) {
         let valid_route = run.human_revision_policy(&gate.step).is_some();
-        if run.kind == RunKind::QuickTask && run.conversation_id.is_none() || !valid_route {
+        if !valid_route {
             return command_error_for_run(
                 graft,
                 PatchStatus::Conflict,
@@ -764,19 +617,7 @@ async fn decide(
                 form.conversation_surface,
             );
         }
-        if run.kind == RunKind::QuickTask {
-            settle_cancelled_job(&state, &continuation);
-        } else {
-            if let Some(key) = continuation.conversation_key() {
-                let _ =
-                    state
-                        .sessions
-                        .fail_turn(&session, &key, &continuation.job.id(), String::new());
-                continuation.job.finish(JobStatus::Cancelled, None);
-            } else {
-                settle_cancelled_job(&state, &continuation);
-            }
-        }
+        settle_cancelled_job(&state, &continuation);
         return decision_response(
             &response_state,
             session,
@@ -786,7 +627,7 @@ async fn decide(
         );
     }
 
-    if plan_gate {
+    {
         let kind = if matches!(action, DecisionAction::Approve) {
             crate::workflows::gates::PlanDecisionKind::Accepted
         } else {
@@ -919,155 +760,14 @@ async fn decide(
                 });
             }
         }
-        return decision_response(
+        decision_response(
             &response_state,
             session,
             graft,
             &run,
             form.conversation_surface,
-        );
-    }
-
-    let kind = if matches!(action, DecisionAction::Approve) {
-        crate::workflows::gates::HumanDecisionKind::Approved
-    } else {
-        crate::workflows::gates::HumanDecisionKind::RevisionRequested
-    };
-    let reserved_attempt = if matches!(action, DecisionAction::Revision) {
-        match crate::workflows::AttemptId::generate() {
-            Ok(attempt) => Some(attempt),
-            Err(_) => {
-                if let Some((agent, execution)) = leases {
-                    drop(agent);
-                    drop(execution);
-                }
-                state.gate_continuations.put_back(continuation);
-                return command_error_for_run(
-                    graft,
-                    PatchStatus::Conflict,
-                    "Frinkworks could not prepare the revision. Try again.",
-                    &run,
-                    form.conversation_surface,
-                );
-            }
-        }
-    } else {
-        None
-    };
-    let connection = continuation
-        .active_connection
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .unwrap_or_else(|| continuation.connection.clone());
-    let secret = match connection.auth {
-        crate::providers::AuthMethod::ApiKey => Some(connection.api_key.expose()),
-        crate::providers::AuthMethod::Plan => None,
-    };
-    let decided_at = crate::workflows::now_ms();
-    let diff = diff.expect("candidate gate diff");
-    let encoded = crate::workflows::artefacts::encode_human_decision(
-        diff.target,
-        diff.base,
-        kind,
-        form.note.as_deref(),
-        decided_at,
-        secret,
-    );
-    let Ok((bytes, object_hash, artefact_hash)) = encoded else {
-        state.gate_continuations.put_back(continuation);
-        return command_error_for_run(
-            graft,
-            PatchStatus::UnprocessableEntity,
-            "That revision note is not valid.",
-            &run,
-            form.conversation_surface,
-        );
-    };
-    if state.workflow_artefacts.publish(&bytes) != Ok(object_hash) {
-        state.gate_continuations.put_back(continuation);
-        return command_error_for_run(
-            graft,
-            PatchStatus::Conflict,
-            "Frinkworks could not store the decision. Try again.",
-            &run,
-            form.conversation_surface,
-        );
-    }
-    let Some(record) = decision_record(
-        &run,
-        gate,
-        kind,
-        decided_at,
-        object_hash,
-        artefact_hash,
-        bytes.len() as u64,
-    ) else {
-        state.gate_continuations.put_back(continuation);
-        return command_error_for_run(
-            graft,
-            PatchStatus::Conflict,
-            "That gate is unavailable.",
-            &run,
-            form.conversation_surface,
-        );
-    };
-    let changed = state.workflow_runs.mutate(&run_id, |run| {
-        run.decide_gate(
-            gate_id,
-            form.revision,
-            record,
-            kind,
-            if matches!(
-                kind,
-                crate::workflows::gates::HumanDecisionKind::RevisionRequested
-            ) {
-                form.note.clone()
-            } else {
-                None
-            },
-            reserved_attempt,
-            decided_at,
         )
-    });
-    let Ok(changed) = changed else {
-        state.gate_continuations.put_back(continuation);
-        return command_error_for_run(
-            graft,
-            PatchStatus::Conflict,
-            "That gate page is stale. Reload it.",
-            &run,
-            form.conversation_surface,
-        );
-    };
-
-    if let Some((agent, execution)) = leases {
-        if changed.is_terminal() {
-            crate::workflows::settle_terminal_job(&state, &continuation, &changed);
-        } else {
-            continuation.job.resume();
-            let follow_session = continuation.session_id;
-            let follow_conversation = continuation.conversation_id;
-            tokio::spawn(async move {
-                crate::workflows::execute_run(state.clone(), continuation, agent, execution).await;
-                if let Some(conversation) = follow_conversation {
-                    crate::slices::conversations::continue_follow_ups(
-                        state,
-                        follow_session,
-                        conversation,
-                    )
-                    .await;
-                }
-            });
-        }
     }
-    decision_response(
-        &response_state,
-        session,
-        graft,
-        &run,
-        form.conversation_surface,
-    )
 }
 
 fn decision_response(
@@ -1086,79 +786,6 @@ fn decision_response(
         );
     }
     Ok(responses::command_navigation(&decision_destination(run)))
-}
-
-fn decision_record(
-    run: &crate::workflows::WorkflowRun,
-    gate: &crate::workflows::gates::HumanGateRecord,
-    decision: crate::workflows::gates::HumanDecisionKind,
-    at: u64,
-    object_hash: crate::workflows::artefacts::ObjectHash,
-    artefact_hash: crate::workflows::artefacts::ArtefactHash,
-    bytes: u64,
-) -> Option<crate::workflows::artefacts::ArtefactRecord> {
-    let step = run.pinned.definition.step(&gate.step)?;
-    let mut inputs = Vec::new();
-    for input in &step.inputs {
-        let reference = match &input.source {
-            crate::workflows::definition::ArtefactSource::RunInitialCandidate => {
-                match &run.source {
-                    crate::workflows::RunSource::Captured { source } => source.initial.clone(),
-                    _ => return None,
-                }
-            }
-            crate::workflows::definition::ArtefactSource::RunCurrentCandidate => {
-                match &run.source {
-                    crate::workflows::RunSource::Captured { source } => source.accepted.clone(),
-                    _ => return None,
-                }
-            }
-            crate::workflows::definition::ArtefactSource::RunCurrentPlan => run.current_plan()?,
-
-            crate::workflows::definition::ArtefactSource::StepOutput { step, output } => run
-                .attempts
-                .iter()
-                .rev()
-                .find(|attempt| attempt.step == *step)
-                .and_then(|attempt| attempt.outputs.iter().find(|item| item.key == *output))
-                .map(|item| item.artefact.clone())
-                .or_else(|| {
-                    run.gates
-                        .iter()
-                        .rev()
-                        .find(|item| item.step == *step && item.output == *output)
-                        .and_then(|item| item.decision.clone())
-                })?,
-        };
-        if !inputs.contains(&reference) {
-            inputs.push(reference);
-        }
-    }
-    if !inputs.contains(&gate.diff_base) {
-        inputs.push(gate.diff_base.clone());
-    }
-    Some(crate::workflows::artefacts::ArtefactRecord {
-        id: crate::workflows::ArtefactId::generate().ok()?,
-        kind: crate::workflows::definition::ArtefactKind::HumanDecision,
-        artefact_hash,
-        object_hash,
-        payload_bytes: bytes,
-        created_at_ms: at,
-        provenance: crate::workflows::artefacts::ArtefactProvenance {
-            run_id: run.id,
-            producer: crate::workflows::artefacts::ArtefactProducer::HumanGate {
-                gate_id: gate.id,
-                step: gate.step.clone(),
-                output: gate.output.clone(),
-            },
-            inputs,
-        },
-        summary: crate::workflows::artefacts::ArtefactSummary::HumanDecision {
-            candidate: run.artefact(&gate.candidate.id)?.candidate_hash()?,
-            diff_base: run.artefact(&gate.diff_base.id)?.candidate_hash()?,
-            decision,
-        },
-    })
 }
 
 fn load_gate_plan(
@@ -1203,7 +830,6 @@ fn plan_decision_record(
         crate::workflows::definition::StepAction::HumanGate(action)
             if action.is_plan_checkpoint()
     ) || gate.candidate.kind != crate::workflows::definition::ArtefactKind::Plan
-        || gate.diff_base != gate.candidate
     {
         return None;
     }
@@ -1264,13 +890,7 @@ fn command_error_target(
 }
 
 fn decision_destination(run: &crate::workflows::WorkflowRun) -> String {
-    match (run.kind, run.conversation_id) {
-        (RunKind::QuickTask, Some(conversation)) => {
-            format!("/conversations/{}", conversation.as_hex())
-        }
-        (RunKind::QuickTask, None) => "/runs".to_owned(),
-        (RunKind::Configured, _) => format!("/runs/{}", run.id.as_hex()),
-    }
+    format!("/runs/{}", run.id.as_hex())
 }
 
 enum ContinuationAuthority {
@@ -1318,14 +938,6 @@ fn continuation_authority(
         if !state.sessions.contains_live(&continuation.session_id) {
             return ContinuationAuthority::Stale;
         }
-        if settings
-            .directories
-            .iter()
-            .any(|grant| grant.access != crate::execution::DirectoryAccess::ReadOnly)
-            && !source_is_unchanged(state, run, &settings)
-        {
-            return ContinuationAuthority::Stale;
-        }
         for grant in settings.directories.iter().filter(|grant| {
             crate::execution::authority::sensitive_directory(
                 &grant.host_path,
@@ -1359,30 +971,6 @@ fn continuation_authority(
         return ContinuationAuthority::Ready;
     }
     ContinuationAuthority::Stale
-}
-
-// A writable continuation must match the exact source it captured. The initial
-// candidate hash covers every pinned root, so a later host edit invalidates it.
-fn source_is_unchanged(
-    state: &AppState,
-    run: &crate::workflows::WorkflowRun,
-    settings: &crate::execution::ExecutionSettings,
-) -> bool {
-    let crate::workflows::RunSource::Captured { source } = &run.source else {
-        return false;
-    };
-    let Some(initial) = run
-        .artefact(&source.initial.id)
-        .and_then(crate::workflows::artefacts::ArtefactRecord::candidate_hash)
-    else {
-        return false;
-    };
-    crate::workflows::artefacts::CandidateCapture::capture_set(
-        &settings.directories,
-        state.local_data.root(),
-        &state.workflow_artefacts,
-    )
-    .is_ok_and(|current| current.candidate_hash == initial)
 }
 
 fn interrupt_and_redirect(
@@ -1424,77 +1012,3 @@ fn interrupt_and_redirect(
     }
     Ok(responses::command_navigation(destination))
 }
-
-async fn object(
-    State(state): State<AppState>,
-    _session: RequiredSession,
-    Path((run_raw, gate_raw, side, change)): Path<(String, String, String, String)>,
-    headers: HeaderMap,
-) -> Response {
-    if headers.contains_key(header::RANGE)
-        || headers.contains_key(header::IF_MATCH)
-        || headers.contains_key(header::IF_NONE_MATCH)
-        || headers.contains_key(header::IF_MODIFIED_SINCE)
-        || headers.contains_key(header::IF_UNMODIFIED_SINCE)
-    {
-        return StatusCode::BAD_REQUEST.into_response();
-    }
-    let Some((run_id, gate_id)) = ids(&run_raw, &gate_raw) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let Some(index) = change
-        .parse::<usize>()
-        .ok()
-        .filter(|_| !change.starts_with('+') && !change.starts_with('-'))
-    else {
-        return StatusCode::UNPROCESSABLE_ENTITY.into_response();
-    };
-    let Some(run) = state.workflow_runs.get(&run_id) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let Some(gate) = run.gates.iter().find(|item| item.id == gate_id) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let Ok(diff) = crate::workflows::artefacts::CandidateDiff::load(
-        &run,
-        &gate.diff_base,
-        &gate.candidate,
-        &state.workflow_artefacts,
-    ) else {
-        return StatusCode::CONFLICT.into_response();
-    };
-    let Ok((filename, bytes)) = diff.object(index, &side, &state.workflow_artefacts) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let filename: String = filename
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_') {
-                character
-            } else {
-                '_'
-            }
-        })
-        .take(120)
-        .collect();
-    let mut response = Response::new(Body::from(bytes));
-    response.headers_mut().insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("application/octet-stream"),
-    );
-    response
-        .headers_mut()
-        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    response.headers_mut().insert(
-        "x-content-type-options",
-        HeaderValue::from_static("nosniff"),
-    );
-    if let Ok(value) = HeaderValue::from_str(&format!("attachment; filename=\"{filename}\"")) {
-        response
-            .headers_mut()
-            .insert(header::CONTENT_DISPOSITION, value);
-    }
-    response
-}
-
-use axum::response::IntoResponse;

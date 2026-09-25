@@ -151,23 +151,7 @@ pub(super) async fn lookup_saved(
         Ok(q) => q,
         Err(message) => return invalid(graft, wants_json(&headers), &destination, message),
     };
-    let candidates = match candidate_roots(&state, record.id) {
-        Ok(candidates) => candidates,
-        Err(()) => {
-            return respond(
-                graft,
-                wants_json(&headers),
-                &destination,
-                &Search {
-                    unavailable: 1,
-                    ..Search::default()
-                },
-                false,
-                false,
-            );
-        }
-    };
-    let roots = effective_roots(&authority.policy, &candidates, state.local_data.root());
+    let roots = effective_roots(&authority.policy, state.local_data.root());
     let no_roots = roots.is_empty();
     let search = match resolve_search(&query.mode, &roots, q, state.local_data.root(), &grants) {
         Ok(search) => search,
@@ -233,7 +217,7 @@ pub(super) async fn lookup_new(
         Ok(q) => q,
         Err(message) => return invalid(graft, wants_json(&headers), destination, message),
     };
-    let roots = effective_roots(&authority.policy, &[], state.local_data.root());
+    let roots = effective_roots(&authority.policy, state.local_data.root());
     let no_roots = roots.is_empty();
     let search = match resolve_search(&query.mode, &roots, q, state.local_data.root(), &grants) {
         Ok(search) => search,
@@ -260,69 +244,6 @@ fn resolve_search(
         "complete" => page::complete(roots, query, data_root, grants),
         "" | "search" => Ok(page::search(roots, query, data_root, grants)),
         _ => Err("The file lookup mode is not valid."),
-    }
-}
-
-/// A missing candidate must not cause a fallback to newer host files.
-pub(super) fn candidate_roots(
-    state: &AppState,
-    conversation: ConversationId,
-) -> Result<Vec<crate::execution::resources::CandidateRoot>, ()> {
-    use crate::workflows::gates::HumanGateState;
-    let awaiting = |run: &crate::workflows::WorkflowRun| {
-        run.gates
-            .iter()
-            .any(|gate| gate.state == HumanGateState::AwaitingDecision)
-    };
-    let Some(run) = state
-        .workflow_runs
-        .for_conversation(&conversation)
-        .into_iter()
-        .find(awaiting)
-    else {
-        return Ok(Vec::new());
-    };
-    let Some(gate) = run
-        .gates
-        .iter()
-        .rev()
-        .find(|gate| gate.state == HumanGateState::AwaitingDecision)
-    else {
-        return Err(());
-    };
-    let Some(record) = run.artefact(&gate.candidate.id) else {
-        return Err(());
-    };
-    let Ok(bytes) = state.workflow_artefacts.get(&record.object_hash) else {
-        return Err(());
-    };
-    let Some(payload) = crate::workflows::artefacts::CandidatePayload::from_manifest_bytes(&bytes)
-    else {
-        return Err(());
-    };
-    match payload {
-        crate::workflows::artefacts::CandidatePayload::Set(set) => Ok(set
-            .roots
-            .into_iter()
-            .map(|root| crate::execution::resources::CandidateRoot {
-                alias: root.alias,
-                entries: root
-                    .candidate
-                    .entries
-                    .into_iter()
-                    .filter_map(|entry| match entry.kind {
-                        crate::workflows::artefacts::candidate::CandidateEntryKind::Directory {
-                            ..
-                        } => Some(format!("{}/", entry.path)),
-                        crate::workflows::artefacts::candidate::CandidateEntryKind::Regular {
-                            ..
-                        } => Some(entry.path),
-                        _ => None,
-                    })
-                    .collect(),
-            })
-            .collect()),
-        crate::workflows::artefacts::CandidatePayload::Revision(_) => Err(()),
     }
 }
 

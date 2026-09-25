@@ -23,7 +23,6 @@ use super::id::{CheckpointId, MessageId, RequestId};
 use super::input::InputProvenance;
 
 pub(crate) const MAXIMUM_COMMAND_DIRECTORY_BYTES: usize = 4096;
-pub(crate) const MAXIMUM_COMMAND_MANIFEST_BYTES: usize = 128;
 pub(crate) const MAXIMUM_ACTIVITY_ITEMS: usize = 256;
 pub(crate) const MAXIMUM_ACTIVITY_BYTES: usize = 256 * 1024;
 pub(crate) const MAXIMUM_CALL_IDENTIFIER_BYTES: usize = 512;
@@ -63,12 +62,6 @@ pub(crate) struct CommandEntry {
     pub(crate) directory: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) output: Option<crate::execution::CommandResult>,
-    /// Direct-write baseline manifest. A directory-backed host command only.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) before: Option<String>,
-    /// Direct-write final manifest. A directory-backed host command only.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) after: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -564,15 +557,6 @@ pub(crate) fn valid_command(command: Option<&crate::execution::CommandResult>) -
     command.is_none_or(crate::execution::CommandResult::is_bounded)
 }
 
-/// A direct command manifest is an opaque artefact hash, not a path. The
-/// repository formats object hashes as `sha256:<hex>`.
-fn valid_manifest(hash: &str) -> bool {
-    let digest = hash.strip_prefix("sha256:").unwrap_or(hash);
-    hash.len() <= MAXIMUM_COMMAND_MANIFEST_BYTES
-        && digest.len() == 64
-        && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
-}
-
 impl CommandEntry {
     pub(crate) fn valid(&self) -> bool {
         !self.directory.is_empty()
@@ -580,9 +564,6 @@ impl CommandEntry {
             && !self.directory.contains('\0')
             && !self.directory.chars().any(char::is_control)
             && valid_command(self.output.as_ref())
-            && self.before.as_deref().is_none_or(valid_manifest)
-            && self.after.as_deref().is_none_or(valid_manifest)
-            && (self.after.is_none() || self.before.is_some())
     }
 }
 

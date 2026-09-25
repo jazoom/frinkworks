@@ -8,7 +8,6 @@ pub(crate) struct ProjectFreeAuthority {
     pub(crate) tools: Vec<ToolId>,
     pub(crate) network: NetworkAccess,
     pub(crate) policy: DirectoryPolicy,
-    pub(crate) reviewed_aliases: Vec<String>,
 }
 
 impl ProjectFreeAuthority {
@@ -29,12 +28,9 @@ impl ProjectFreeAuthority {
         settings: &super::ExecutionSettings,
     ) -> Result<Self, super::DirectoryGrantError> {
         super::settings::validate_directories(&settings.directories)?;
-        let reviewed_aliases = settings
-            .directories
-            .iter()
-            .filter(|grant| grant.access == super::DirectoryAccess::ReviewBeforeApply)
-            .map(|grant| grant.alias.clone())
-            .collect::<Vec<_>>();
+        if !settings.host_access_allowed() {
+            return Err(super::DirectoryGrantError::Invalid);
+        }
         let grants = settings
             .directories
             .iter()
@@ -42,7 +38,7 @@ impl ProjectFreeAuthority {
                 alias: grant.alias.clone(),
                 guest_path: grant.guest_path(),
                 host_path: grant.host_path.clone(),
-                access: if grant.access == super::DirectoryAccess::DirectWrite {
+                access: if grant.access == super::DirectoryAccess::Write {
                     AccessMode::ReadWrite
                 } else {
                     AccessMode::ReadOnly
@@ -61,7 +57,6 @@ impl ProjectFreeAuthority {
                     .map(|grant| grant.alias.clone())
                     .unwrap_or_default(),
             ),
-            reviewed_aliases,
         })
     }
 
@@ -94,17 +89,11 @@ impl ProjectFreeAuthority {
         if location == super::ToolLocation::Host {
             policy = policy.on_host(&super::command_directory(grants));
         }
-        let reviewed_aliases = grants
-            .iter()
-            .filter(|grant| grant.access == super::DirectoryAccess::ReviewBeforeApply)
-            .map(|grant| grant.alias.clone())
-            .collect();
         Ok(Self {
             revision,
             tools: Vec::new(),
             network: NetworkAccess::None,
             policy,
-            reviewed_aliases,
         })
     }
 }

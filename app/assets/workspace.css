@@ -162,20 +162,6 @@ body {
     stroke-linecap: round;
     stroke-linejoin: round;
 }
-.workspace-diff-add {
-    background: color-mix(
-        in srgb,
-        var(--color-success) 14%,
-        var(--color-base-100)
-    );
-}
-.workspace-diff-remove {
-    background: color-mix(
-        in srgb,
-        var(--color-error) 14%,
-        var(--color-base-100)
-    );
-}
 /* Theme changes must not mix an old foreground with a new background. */
 .app-frame {
     --workspace-page-head: 82px;
@@ -1230,10 +1216,6 @@ body:has(.workspace-catalogue) .app-frame {
     ) {
     visibility: hidden;
 }
-#conversation-detail[data-review-expanded] .workspace-diff {
-    max-height: none;
-    font-size: 13px;
-}
 .workspace-work-content:has(.workspace-candidate) {
     display: flex;
     flex-direction: column;
@@ -1258,51 +1240,6 @@ body:has(.workspace-catalogue) .app-frame {
     min-height: 44px;
     font-size: 14px;
     border-radius: 7px;
-}
-.workspace-candidate .workspace-diff {
-    max-height: none;
-    margin: 0;
-}
-.workspace-gate .workspace-diff {
-    max-height: 65vh;
-    font-size: 13px;
-}
-.workspace-gate .workspace-file-list > li > details > summary {
-    min-height: 44px;
-    align-content: center;
-}
-.workspace-candidate [data-review-diff]:focus-visible {
-    outline: 2px solid var(--color-primary);
-    outline-offset: 3px;
-}
-.workspace-file-list a:focus-visible {
-    outline: 2px solid var(--color-primary);
-    outline-offset: -3px;
-}
-@container (min-width: 680px) {
-    .workspace-review-browser {
-        grid-template-columns: minmax(200px, 1fr) minmax(0, 2fr);
-        align-items: start;
-    }
-    .workspace-review-browser .workspace-file-list {
-        max-height: 65vh;
-    }
-}
-.workspace-file-list {
-    list-style: none;
-    padding: 0;
-    border: 1px solid var(--color-base-300);
-    border-radius: 3px;
-}
-.workspace-file-list li + li {
-    border-top: 1px solid var(--color-base-300);
-}
-.workspace-file-list a {
-    text-decoration: none;
-}
-.workspace-file-list a[aria-current],
-.workspace-file-list a:hover {
-    background: var(--color-base-200);
 }
 .workspace-execution-details {
     flex-shrink: 0;
@@ -1339,51 +1276,6 @@ body:has(.workspace-catalogue) .app-frame {
 }
 #conversation-model-search::-webkit-search-cancel-button {
     appearance: none;
-}
-.workspace-diff {
-    max-height: 380px;
-    overflow: auto;
-    border: 1px solid var(--color-base-300);
-    padding: 10px;
-    font-size: 12px;
-}
-/* Unified diff rows keep explicit +/- markers with line numbers. Colour
-   supplements those markers and never replaces them. */
-.workspace-diff code {
-    display: block;
-}
-.diff-line {
-    display: flex;
-    gap: 12px;
-    min-width: 0;
-}
-.line-number {
-    flex: 0 0 4ch;
-    text-align: right;
-    opacity: 0.6;
-    user-select: none;
-}
-.diff-text {
-    flex: 1;
-    min-width: 0;
-    overflow-wrap: anywhere;
-    white-space: pre-wrap;
-}
-.workspace-diff-count {
-    display: inline-flex;
-    gap: 6px;
-    font-family: var(--font-mono);
-}
-.workspace-diff-add-text {
-    color: color-mix(
-        in oklch,
-        var(--color-success) 80%,
-        var(--color-base-content)
-    );
-}
-.workspace-diff-remove-text {
-    color: var(--color-error);
-    font-style: normal;
 }
 #conversation-actions::backdrop {
     background: rgb(0 0 0 / 45%);

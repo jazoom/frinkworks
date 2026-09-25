@@ -43,22 +43,9 @@ pub(super) struct DirectoryView {
     pub(super) sensitive: bool,
     pub(super) pending_approval: bool,
     pub(super) transient: bool,
-    pub(super) review_before_apply: bool,
+
     pub(super) direct_write: bool,
     pub(super) access_label: &'static str,
-    pub(super) exclusions: Vec<String>,
-}
-
-#[derive(Clone)]
-pub(super) struct CandidateChangeView {
-    pub(super) path: String,
-    pub(super) directory: String,
-    pub(super) status: &'static str,
-    pub(super) preview: String,
-    pub(super) preview_note: &'static str,
-    pub(super) additions: usize,
-    pub(super) removals: usize,
-    pub(super) has_counts: bool,
 }
 
 #[derive(Clone)]
@@ -67,17 +54,10 @@ pub(super) struct PendingCodeGateView {
     pub(super) gate_id: String,
     pub(super) revision: String,
     pub(super) candidate: String,
-    pub(super) diff_base: String,
     pub(super) diff_href: String,
-    pub(super) review_href: String,
-    pub(super) commit_on_approval: bool,
-    pub(super) apply_on_approval: bool,
-    pub(super) application_destination: String,
+
     pub(super) can_request_revision: bool,
-    pub(super) exclusions: Vec<String>,
-    pub(super) changes: Vec<CandidateChangeView>,
-    pub(super) total_changes: usize,
-    pub(super) changes_truncated: bool,
+    pub(super) plan_html: String,
 }
 
 #[derive(Template)]
@@ -256,68 +236,6 @@ pub(super) fn history_directory_key(grant: &crate::execution::DirectoryGrant) ->
     )
 }
 
-#[derive(Template)]
-#[template(
-    path = "conversations/templates/candidate_review.html",
-    block = "candidate_review_page"
-)]
-pub(super) struct CandidateReviewView {
-    pub(super) run_id: String,
-    pub(super) source_title: String,
-    pub(super) candidate_id: String,
-    pub(super) diff_base_id: String,
-    pub(super) candidate_hash: String,
-    pub(super) diff_base_hash: String,
-    pub(super) preview: String,
-    pub(super) instructions_summary: String,
-    pub(super) brief: String,
-    pub(super) reviewer_summary: String,
-    pub(super) model_picker: ModelPicker,
-    pub(super) reviewer_agents: Vec<PresetOption>,
-    pub(super) error: &'static str,
-}
-
-#[derive(Template)]
-#[template(
-    path = "conversations/templates/candidate_review.html",
-    block = "candidate_review_detail"
-)]
-pub(super) struct CandidateReviewContents<'a> {
-    pub(super) run_id: &'a str,
-    pub(super) source_title: &'a str,
-    pub(super) candidate_id: &'a str,
-    pub(super) diff_base_id: &'a str,
-    pub(super) candidate_hash: &'a str,
-    pub(super) diff_base_hash: &'a str,
-    pub(super) preview: &'a str,
-    pub(super) instructions_summary: &'a str,
-    pub(super) brief: &'a str,
-    pub(super) reviewer_summary: &'a str,
-    pub(super) model_picker: &'a ModelPicker,
-    pub(super) reviewer_agents: &'a [PresetOption],
-    pub(super) error: &'static str,
-}
-
-impl CandidateReviewView {
-    pub(super) fn contents(&self) -> CandidateReviewContents<'_> {
-        CandidateReviewContents {
-            run_id: &self.run_id,
-            source_title: &self.source_title,
-            candidate_id: &self.candidate_id,
-            diff_base_id: &self.diff_base_id,
-            candidate_hash: &self.candidate_hash,
-            diff_base_hash: &self.diff_base_hash,
-            preview: &self.preview,
-            instructions_summary: &self.instructions_summary,
-            brief: &self.brief,
-            reviewer_summary: &self.reviewer_summary,
-            model_picker: &self.model_picker,
-            reviewer_agents: &self.reviewer_agents,
-            error: self.error,
-        }
-    }
-}
-
 pub(super) struct MessageView {
     pub(super) id: String,
     pub(super) user: bool,
@@ -379,14 +297,6 @@ pub(super) struct CopyResponseView {
     pub(super) escaped_bytes: usize,
 }
 
-pub(super) struct CandidateReviewLinkView {
-    pub(super) title: String,
-    pub(super) href: String,
-    pub(super) run_href: String,
-    pub(super) candidate_hash: String,
-    pub(super) diff_base_hash: String,
-}
-
 pub(super) struct WorkflowProgressView {
     pub(super) run_href: String,
     pub(super) name: String,
@@ -395,17 +305,6 @@ pub(super) struct WorkflowProgressView {
     pub(super) result: &'static str,
     pub(super) task_progress: String,
 
-    pub(super) conversation_id: String,
-    pub(super) apply_run_id: String,
-    pub(super) apply_attempt_id: String,
-    pub(super) apply_state: &'static str,
-    pub(super) transactions: Vec<crate::slices::workflow_runs::TransactionOutcomesView>,
-    pub(super) apply_changed: bool,
-    pub(super) commit_unsettled: bool,
-    pub(super) apply_partial: bool,
-    pub(super) apply_uncertain: bool,
-    pub(super) apply_complete: bool,
-    pub(super) settlement_eligible: bool,
     pub(super) run_terminal: bool,
 }
 
@@ -422,7 +321,6 @@ pub(super) struct PresetOption {
     pub(super) id: String,
     pub(super) name: String,
     pub(super) description: String,
-    pub(super) selected: bool,
 }
 
 pub(super) struct ProviderOption {
@@ -478,11 +376,11 @@ pub(super) struct ExecutionChangeRow {
 }
 
 pub(super) struct EnvironmentSwitchGateView {
+    pub(super) review_href: String,
     pub(super) run_id: String,
     pub(super) gate_id: String,
     pub(super) revision: String,
     pub(super) candidate: String,
-    pub(super) review_href: String,
 }
 
 use crate::slices::execution_settings::page::{
@@ -547,7 +445,7 @@ pub(super) struct ConversationDetailView {
     pub(super) consent_request: String,
     pub(super) pending_directory: String,
     pub(super) consent_existing: bool,
-    pub(super) consent_reviewed: bool,
+
     pub(super) consent_direct: bool,
     pub(super) consent_sensitive: bool,
     pub(super) draft_nonce: String,
@@ -607,7 +505,6 @@ pub(super) struct ConversationDetailView {
 pub(super) struct ForkNotice {
     pub(super) source_title: String,
     pub(super) entries: usize,
-    pub(super) candidate_review: bool,
 }
 
 pub(super) struct ContextView {
@@ -640,10 +537,7 @@ pub(super) struct SavedConversationState {
     pub(super) cursor: u64,
     pub(super) pending_gate: Option<PendingCodeGateView>,
 
-    pub(super) source_candidate_review: Option<CandidateReviewLinkView>,
-    pub(super) linked_candidate_reviews: Vec<CandidateReviewLinkView>,
     pub(super) workflow_progress: Option<WorkflowProgressView>,
-    pub(super) direct_results: Vec<crate::slices::workflow_runs::DirectChangesView>,
 }
 impl ConversationDetailView {
     pub(super) fn from_new(
@@ -658,7 +552,6 @@ impl ConversationDetailView {
             .map(|snapshot| ForkNotice {
                 source_title: snapshot.source_title,
                 entries: snapshot.messages.len(),
-                candidate_review: snapshot.candidate_review,
             });
         let handoff_settings = super::handoff::transfer::draft_run(state, session, &form)
             .ok()
@@ -703,10 +596,6 @@ impl ConversationDetailView {
                 &grant.host_path,
                 state.local_data.root(),
             );
-            view.exclusions = crate::workflows::workspace::reviewed_capture_exclusions(
-                &grant.host_path,
-                state.local_data.root(),
-            );
             view.pending_approval = grant.requires_access_consent(state.local_data.root())
                 && !state.access_consent.authorised_draft(
                     &form.consent_reference,
@@ -729,10 +618,7 @@ impl ConversationDetailView {
         });
         let consent_direct = form
             .pending_directory()
-            .is_some_and(|grant| grant.access == crate::execution::DirectoryAccess::DirectWrite);
-        let consent_reviewed = form.pending_directory().is_some_and(|grant| {
-            grant.access == crate::execution::DirectoryAccess::ReviewBeforeApply
-        });
+            .is_some_and(|grant| grant.access == crate::execution::DirectoryAccess::Write);
         if !consent_existing && let Some(grant) = form.pending_directory() {
             let mut view = directory_view(&grant);
             view.sensitive = true;
@@ -762,7 +648,6 @@ impl ConversationDetailView {
                     id: preset.id.as_hex(),
                     name: preset.name,
                     description: preset_summary(&preset.settings),
-                    selected: preset.id.as_hex() == form.preset,
                 })
                 .collect(),
             preset_source: String::new(),
@@ -805,7 +690,6 @@ impl ConversationDetailView {
             consent_existing,
             consent_direct,
             consent_sensitive,
-            consent_reviewed,
             draft_nonce: form.draft_nonce.clone(),
             prepared_run: form.prepared_run,
             fork_source: form.fork_source,
@@ -895,15 +779,9 @@ impl ConversationDetailView {
             .iter()
             .any(|directory| directory.direct_write)
         {
-            "Direct write changes files immediately. Discard cannot undo those changes."
-        } else if self
-            .directories
-            .iter()
-            .any(|directory| directory.review_before_apply)
-        {
-            "Review before apply keeps changes isolated until you choose to apply them."
+            "Write changes the original files immediately. Cancellation cannot undo those changes."
         } else {
-            "Your directories are read-only. The agent can inspect files without changes."
+            "Read access permits file inspection and sandbox commands. The mounts prevent file changes."
         }
     }
 
@@ -963,20 +841,7 @@ impl ConversationDetailView {
     }
 
     fn needs_attention(&self) -> bool {
-        self.needs_review()
-            || self.pending_question.is_some()
-            || self.continuation.is_some()
-            || (!self.job_active && self.file_recovery_blocked())
-    }
-
-    fn file_recovery_blocked(&self) -> bool {
-        self.saved().is_some_and(|saved| {
-            saved
-                .workflow_progress
-                .as_ref()
-                .is_some_and(|run| run.apply_uncertain || run.commit_unsettled)
-                || saved.direct_results.iter().any(|result| result.unknown)
-        })
+        self.needs_review() || self.pending_question.is_some() || self.continuation.is_some()
     }
 
     fn attention_label(&self) -> &'static str {
@@ -984,8 +849,6 @@ impl ConversationDetailView {
             "Needs your answer"
         } else if self.continuation.is_some() {
             "Execution paused"
-        } else if self.file_recovery_blocked() {
-            "File outcomes need attention"
         } else {
             "Needs your review"
         }
@@ -1125,9 +988,7 @@ impl ConversationDetailView {
     fn transcript_empty(&self) -> bool {
         self.messages.is_empty()
             && self.saved().is_none_or(|saved| {
-                saved.workflow_progress.is_none()
-                    && saved.pending_gate.is_none()
-                    && saved.source_candidate_review.is_none()
+                saved.workflow_progress.is_none() && saved.pending_gate.is_none()
             })
     }
 
@@ -1149,8 +1010,6 @@ impl ConversationDetailView {
             title,
             error,
             None,
-            None,
-            Vec::new(),
             super::attachments::AttachmentsView::empty(String::new()),
             transcript,
             None,
@@ -1167,8 +1026,6 @@ impl ConversationDetailView {
         error: &'static str,
         pending_gate: Option<PendingCodeGateView>,
 
-        source_candidate_review: Option<CandidateReviewLinkView>,
-        linked_candidate_reviews: Vec<CandidateReviewLinkView>,
         attachments: super::attachments::AttachmentsView,
         transcript: Option<&crate::conversations::TranscriptWindow>,
         inspection_leaf: Option<MessageId>,
@@ -1224,9 +1081,6 @@ impl ConversationDetailView {
                 id: record.id.as_hex(),
                 name: record.name.clone(),
                 description: preset_summary(&record.settings),
-                selected: configuration
-                    .and_then(|configuration| configuration.preset.as_ref())
-                    .is_some_and(|preset| preset.id == record.id),
             })
             .collect();
         let (job_id, cursor, job_active, observe_active) = match job {
@@ -1424,7 +1278,7 @@ impl ConversationDetailView {
             consent_request: String::new(),
             pending_directory: String::new(),
             consent_existing: false,
-            consent_reviewed: false,
+
             consent_direct: false,
             consent_sensitive: false,
             draft_nonce: String::new(),
@@ -1524,10 +1378,7 @@ impl ConversationDetailView {
                 cursor,
                 pending_gate,
 
-                source_candidate_review,
-                linked_candidate_reviews,
                 workflow_progress: None,
-                direct_results: Vec::new(),
             })),
         }
     }
@@ -1590,10 +1441,6 @@ impl ConversationDetailView {
                 .zip(&configuration.settings.directories)
             {
                 view.sensitive = crate::execution::authority::sensitive_directory(
-                    &grant.host_path,
-                    state.local_data.root(),
-                );
-                view.exclusions = crate::workflows::workspace::reviewed_capture_exclusions(
                     &grant.host_path,
                     state.local_data.root(),
                 );
@@ -1684,16 +1531,10 @@ impl ConversationDetailView {
                     state.local_data.root(),
                 );
                 view.pending_approval = true;
-                view.review_before_apply =
-                    grant.access == crate::execution::DirectoryAccess::ReviewBeforeApply;
-                view.direct_write = grant.access == crate::execution::DirectoryAccess::DirectWrite;
+                view.direct_write = grant.access == crate::execution::DirectoryAccess::Write;
                 view.access_label =
                     crate::slices::execution_settings::page::directory_access_label(grant.access);
                 view.form_value = grant.form_value();
-                view.exclusions = crate::workflows::workspace::reviewed_capture_exclusions(
-                    &grant.host_path,
-                    state.local_data.root(),
-                );
             }
         } else {
             let mut view = directory_view(&grant);
@@ -1710,9 +1551,7 @@ impl ConversationDetailView {
         self.consent_request = request;
         self.pending_directory = grant.form_value();
         self.consent_existing = existing;
-        self.consent_reviewed =
-            grant.access == crate::execution::DirectoryAccess::ReviewBeforeApply;
-        self.consent_direct = grant.access == crate::execution::DirectoryAccess::DirectWrite;
+        self.consent_direct = grant.access == crate::execution::DirectoryAccess::Write;
         self.consent_sensitive = crate::execution::authority::sensitive_directory(
             &grant.host_path,
             state.local_data.root(),
@@ -1794,11 +1633,11 @@ impl ConversationDetailView {
             |item| item.name,
         );
         let switch_gate = gate.map(|gate| EnvironmentSwitchGateView {
+            review_href: gate.diff_href.clone(),
             run_id: gate.run_id.clone(),
             gate_id: gate.gate_id.clone(),
             revision: gate.revision.clone(),
             candidate: gate.candidate.clone(),
-            review_href: gate.diff_href.clone(),
         });
         self.execution_switch = Some(ExecutionSwitchView {
             requested_location: location.as_str().to_owned(),
@@ -1818,7 +1657,7 @@ impl ConversationDetailView {
                 || current
                     .directories
                     .iter()
-                    .any(|grant| grant.access == crate::execution::DirectoryAccess::DirectWrite),
+                    .any(|grant| grant.access == crate::execution::DirectoryAccess::Write),
             needs_new_consent: execution_switch_needs_consent(state, replacement, location),
             active_job: self.job_active,
             job_id: self
@@ -1838,28 +1677,6 @@ impl ConversationDetailView {
     ) -> Self {
         self.prepared_recovery =
             super::handoff::recovery::RecoveryView::for_conversation(state, session, record);
-        self
-    }
-
-    pub(super) fn with_direct_results(
-        mut self,
-        state: &crate::state::AppState,
-        conversation: crate::conversations::ConversationId,
-    ) -> Self {
-        if let ConversationPageState::Saved(saved) = &mut self.state
-            && let Some(run) = state.workflow_runs.for_conversation(&conversation).first()
-        {
-            saved.direct_results = run
-                .attempts
-                .iter()
-                .rev()
-                .filter(|attempt| attempt.direct_changes.is_some())
-                .take(4)
-                .map(|attempt| {
-                    crate::slices::workflow_runs::DirectChangesView::new(run, attempt, state, 0)
-                })
-                .collect();
-        }
         self
     }
 
@@ -1922,7 +1739,7 @@ fn execution_change_rows(
     for (before, after) in current.directories.iter().zip(&replacement.directories) {
         let access = crate::slices::execution_settings::page::directory_access_label;
         row(
-            format!("{} · sandbox access", before.alias),
+            format!("{} · directory access", before.alias),
             access(before.access).into(),
             access(after.access).into(),
         );
@@ -1940,14 +1757,12 @@ fn execution_change_rows(
         network(current),
         network(replacement),
     );
-    if current.host_tools() || replacement.host_tools() {
-        let approval = crate::slices::execution_settings::page::host_approval_label;
-        row(
-            "Host commands".into(),
-            approval(current.host_approval).into(),
-            approval(replacement.host_approval).into(),
-        );
-    }
+    let approval = crate::slices::execution_settings::page::host_approval_label;
+    row(
+        "Command approval".into(),
+        approval(current.host_approval).into(),
+        approval(replacement.host_approval).into(),
+    );
     rows
 }
 
@@ -1973,9 +1788,8 @@ fn execution_access_lines(
                 .filter(|old| old.access != grant.access)
                 .map_or_else(|| label(grant.access).to_owned(), |old| format!("{} to {}", label(old.access), label(grant.access)));
             let effects = match grant.access {
-                crate::execution::DirectoryAccess::DirectWrite => " Immediate host writes need no candidate approval. These writes can alter or corrupt live configuration and execution evidence.",
-                crate::execution::DirectoryAccess::ReviewBeforeApply => " Tools use an isolated copy. File application needs approval.",
-                crate::execution::DirectoryAccess::ReadOnly => "",
+                crate::execution::DirectoryAccess::Write => " Write access changes files immediately. These writes can alter or corrupt live configuration and execution evidence.",
+                crate::execution::DirectoryAccess::Read => "",
             };
             let sensitive = crate::execution::authority::sensitive_directory(
                 &grant.host_path,
@@ -2075,10 +1889,9 @@ fn directory_view(grant: &crate::execution::DirectoryGrant) -> DirectoryView {
         sensitive: false,
         pending_approval: false,
         transient: false,
-        review_before_apply: grant.access == crate::execution::DirectoryAccess::ReviewBeforeApply,
-        direct_write: grant.access == crate::execution::DirectoryAccess::DirectWrite,
+
+        direct_write: grant.access == crate::execution::DirectoryAccess::Write,
         access_label: crate::slices::execution_settings::page::directory_access_label(grant.access),
-        exclusions: Vec::new(),
     }
 }
 
@@ -2127,31 +1940,7 @@ fn network_summary_from_form(network: &str) -> String {
     }
 }
 
-fn apply_attempt_presentation(run: &WorkflowRun) -> (String, String, &'static str) {
-    match run.latest_apply_attempt() {
-        Some(attempt) => {
-            let state = attempt
-                .apply_transaction
-                .as_ref()
-                .map(|transaction| match transaction.state {
-                    crate::workflows::apply::ApplyTransactionState::Prepared => "prepared",
-                    crate::workflows::apply::ApplyTransactionState::Applying { .. } => "applying",
-                    crate::workflows::apply::ApplyTransactionState::Applied { .. } => "applied",
-                    crate::workflows::apply::ApplyTransactionState::Verified => "verified",
-                    crate::workflows::apply::ApplyTransactionState::Recovered => "recovered",
-                    crate::workflows::apply::ApplyTransactionState::RecoveryUncertain => {
-                        "recovery-uncertain"
-                    }
-                })
-                .unwrap_or("");
-            (run.id.as_hex(), attempt.id.as_hex(), state)
-        }
-        None => (String::new(), String::new(), ""),
-    }
-}
-
 pub(super) fn workflow_progress(run: &WorkflowRun) -> WorkflowProgressView {
-    let (apply_run_id, apply_attempt_id, apply_state) = apply_attempt_presentation(run);
     WorkflowProgressView {
         run_href: format!("/runs/{}", run.id.as_hex()),
         name: run.pinned.definition.name().to_owned(),
@@ -2163,47 +1952,6 @@ pub(super) fn workflow_progress(run: &WorkflowRun) -> WorkflowProgressView {
         result: workflow_result_label(&run.state),
         task_progress: String::new(),
 
-        conversation_id: run
-            .conversation_id
-            .map(|id| id.as_hex())
-            .unwrap_or_default(),
-        transactions: run
-            .attempts
-            .iter()
-            .filter(|attempt| {
-                attempt.apply_transaction.is_some() || attempt.commit_transaction.is_some()
-            })
-            .map(|attempt| {
-                crate::slices::workflow_runs::TransactionOutcomesView::from_attempt(
-                    run, attempt, true,
-                )
-            })
-            .collect(),
-        apply_changed: run
-            .latest_apply_attempt()
-            .and_then(|attempt| attempt.apply_transaction.as_ref())
-            .is_some_and(|transaction| {
-                transaction
-                    .roots
-                    .iter()
-                    .any(|root| root.outcome == crate::workflows::apply::ApplyRootOutcome::Applied)
-            }),
-        commit_unsettled: run.attempts.iter().any(|attempt| {
-            attempt
-                .commit_transaction
-                .as_ref()
-                .is_some_and(|transaction| {
-                    transaction.needs_recovery()
-                        || attempt.cleanup != crate::workflows::run::AttemptCleanupRecord::Complete
-                })
-        }),
-        apply_run_id,
-        apply_attempt_id,
-        apply_state,
-        apply_partial: run.apply_is_known_partial(),
-        apply_uncertain: run.apply_is_uncertain(),
-        apply_complete: run.apply_is_complete(),
-        settlement_eligible: run.partial_settlement_eligible() && run.conversation_id.is_some(),
         run_terminal: run.is_terminal(),
     }
 }
@@ -2248,7 +1996,7 @@ fn workflow_result_label(state: &crate::workflows::run::RunState) -> &'static st
             "The run stopped. Open the run record for its terminal result and retained evidence."
         }
         crate::workflows::run::RunState::Cancelled => {
-            "The run was cancelled. Direct writes and host command effects remain. Earlier evidence stays in the run record."
+            "The run was cancelled. File changes and host command effects remain. Earlier evidence stays in the run record."
         }
         _ => "Worker activity stays in the run record and does not enter this conversation.",
     }
@@ -2257,101 +2005,33 @@ fn workflow_result_label(state: &crate::workflows::run::RunState) -> &'static st
 pub(super) fn pending_code_gate(
     run: &WorkflowRun,
     store: &crate::workflows::WorkflowArtefactRepository,
-    application_destination: String,
 ) -> Option<PendingCodeGateView> {
     let gate = run
         .gates
         .iter()
         .rev()
         .find(|gate| gate.state == crate::workflows::gates::HumanGateState::AwaitingDecision)?;
-    let diff = crate::workflows::artefacts::CandidateDiff::load(
-        run,
-        &gate.diff_base,
-        &gate.candidate,
-        store,
-    )
-    .ok()?;
-    let (total_changes, changes) = diff.manifest_page(0, 16).ok()?;
-    let changes_truncated = total_changes > changes.len();
-    let mut preview_budget = 128 * 1024;
+    let record = run.artefact(&gate.candidate.id)?;
+    if record.kind != crate::workflows::definition::ArtefactKind::Plan
+        || record.artefact_hash != gate.candidate.artefact_hash
+    {
+        return None;
+    }
+    let bytes = store.get(&record.object_hash).ok()?;
+    let crate::workflows::artefacts::TypedPayload::Plan(plan) =
+        crate::workflows::artefacts::parse_typed_payload(record.kind, &bytes).ok()?
+    else {
+        return None;
+    };
+    let href = format!("/runs/{}/gates/{}", run.id, gate.id);
     Some(PendingCodeGateView {
         run_id: run.id.as_hex(),
         gate_id: gate.id.as_hex(),
         revision: run.decision_revision(gate).get().to_string(),
-        candidate: diff.target.as_str().to_owned(),
-        diff_base: diff.base.as_str().to_owned(),
-        diff_href: format!("/runs/{}/gates/{}", run.id.as_hex(), gate.id.as_hex()),
-        review_href: format!(
-            "/conversations/candidate-review?run={}&candidate={}&diff_base={}",
-            run.id.as_hex(),
-            gate.candidate.id.as_hex(),
-            gate.diff_base.id.as_hex()
-        ),
-        commit_on_approval: crate::slices::human_gates::approval_command(run, gate)
-            == Some(crate::workflows::commands::SystemCommandId::CommitCandidate),
-        apply_on_approval: crate::slices::human_gates::approval_command(run, gate)
-            == Some(crate::workflows::commands::SystemCommandId::ApplyChanges),
+        candidate: gate.candidate.artefact_hash.as_str(),
+        diff_href: href,
         can_request_revision: run.human_revision_policy(&gate.step).is_some(),
-        application_destination,
-        exclusions: diff.exclusions().to_vec(),
-        total_changes,
-        changes_truncated,
-        changes: changes
-            .into_iter()
-            .enumerate()
-            .map(|(index, change)| {
-                // Counts derive from the complete stored diff, not the bounded
-                // preview below. Binary or oversized changes omit counts.
-                let full = diff.change(index, store).ok();
-                let (additions, removals, has_counts) = full
-                    .as_ref()
-                    .and_then(|change| change.text.as_ref())
-                    .map(|fragments| {
-                        let text: String = fragments
-                            .iter()
-                            .map(|fragment| fragment.text.as_str())
-                            .collect();
-                        let mut additions = 0;
-                        let mut removals = 0;
-                        for line in text.lines() {
-                            if line.starts_with('+') && !line.starts_with("+++") {
-                                additions += 1;
-                            } else if line.starts_with('-') && !line.starts_with("---") {
-                                removals += 1;
-                            }
-                        }
-                        (additions, removals, true)
-                    })
-                    .unwrap_or((0, 0, false));
-                let (preview, preview_note) = match full {
-                    Some(full) if full.binary => (String::new(), "Binary change. The full review contains immutable file downloads."),
-                    Some(full) if full.text_too_large => (String::new(), "This text change exceeds the display limit. The full review contains immutable file downloads."),
-                    Some(full) => {
-                        let text: String = full.text.unwrap_or_default().into_iter().map(|fragment| fragment.text).collect();
-                        let bytes = crate::markdown::escape_plain(&text).len();
-                        if text.is_empty() {
-                            (String::new(), "No text changes. The full review contains file metadata.")
-                        } else if bytes > preview_budget {
-                            (String::new(), "This diff exceeds the companion preview limit. Open the full review for this file.")
-                        } else {
-                            preview_budget -= bytes;
-                            (text, "")
-                        }
-                    }
-                    None => (String::new(), "The diff preview is unavailable. Open the full review for this file."),
-                };
-                CandidateChangeView {
-                    path: change.path,
-                    directory: change.directory,
-                    status: change.status,
-                    preview,
-                    preview_note,
-                    additions,
-                    removals,
-                    has_counts,
-                }
-            })
-            .collect(),
+        plan_html: crate::markdown::render(&plan.markdown),
     })
 }
 

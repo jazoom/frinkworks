@@ -699,8 +699,8 @@ async fn first_send_persists_message_and_model_then_replaces_location() {
 #[tokio::test]
 async fn sensitive_draft_consent_is_consumed_by_one_valid_first_message() {
     for access in [
-        crate::execution::DirectoryAccess::ReadOnly,
-        crate::execution::DirectoryAccess::DirectWrite,
+        crate::execution::DirectoryAccess::Read,
+        crate::execution::DirectoryAccess::Write,
     ] {
         sensitive_first_message_case(access).await;
     }
@@ -957,6 +957,25 @@ async fn network_tool_reply_uses_private_workspace_without_catalogue_identity() 
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let conversation = state.conversations.list().pop().expect("conversation");
+    let request = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let record = state.conversations.get(&conversation.id).unwrap();
+            if let Some(request) = record
+                .active_job
+                .and_then(|job| state.host_approvals.pending_for(record.id, job))
+            {
+                break request;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(request.command, "wget -qO- https://example.com");
+    state
+        .host_approvals
+        .decide(&request, crate::execution::HostCommandDecision::Approved)
+        .unwrap();
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
         while state
             .conversations
@@ -1251,7 +1270,7 @@ async fn copied_host_policy_requires_new_consent() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = text(response).await;
     assert!(body.contains("Not approved"));
-    assert!(body.contains("Run without approval"));
+    assert!(body.contains("Automatic (YOLO)"));
     assert!(
         body.split_whitespace()
             .collect::<Vec<_>>()

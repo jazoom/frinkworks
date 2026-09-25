@@ -1,8 +1,8 @@
 <fieldset class="space-y-2">
-  <legend class="text-sm font-medium">Host command approval</legend>
+  <legend class="text-sm font-medium">Command approval</legend>
   <p class="text-quiet max-w-[65ch] text-xs">
-    Run without approval needs your explicit approval for this computer. This
-    setting does not approve commands that already await a decision.
+    Automatic approval skips command prompts. Directory permissions still apply.
+    This setting does not approve commands that already await a decision.
   </p>
   <label
     class="border-base-300 flex min-h-12 items-center gap-2 border p-3 text-sm"
@@ -28,6 +28,6 @@
       value="automatic"
       {% if host_approval_automatic %}checked{% endif %}
     />
-    <span>Run without approval</span>
+    <span>Automatic (YOLO)</span>
   </label>
 </fieldset>

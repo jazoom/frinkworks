@@ -364,7 +364,7 @@ pub(super) fn settings_snapshot(
         } else {
             form.host_approval.trim()
         })
-        .ok_or("Choose host command approval.")?;
+        .ok_or("Choose a command approval policy.")?;
     let settings = crate::execution::ExecutionSettings::new(
         selection,
         form.instructions.clone(),
@@ -580,16 +580,6 @@ pub(super) async fn save(
             form,
         );
     }
-    if let Some(snapshot) = &fork
-        && snapshot.candidate_review
-        && (!model.settings.tools.is_empty() || !model.settings.directories.is_empty())
-    {
-        return reject_settings(
-            PatchStatus::Conflict,
-            "Candidate reviews use immutable evidence only. Use a separate conversation for file access.",
-            form,
-        );
-    }
     let handoff_run = match super::handoff::transfer::preflight(&state, session.0, &form) {
         Ok(run) => run,
         Err(error) => return reject(PatchStatus::Conflict, error, form),
@@ -597,12 +587,7 @@ pub(super) async fn save(
     if handoff_run.is_none()
         && let Err(error) = super::preflight_execution(&state, session.0, None, &model).await
     {
-        let super::StartMessageError::User(status, message) = error else {
-            return Err(AppError::new(
-                "preflight first conversation message",
-                std::io::Error::other("unexpected internal preflight error"),
-            ));
-        };
+        let super::StartMessageError::User(status, message) = error;
         return reject_settings(status, message, form);
     }
     let id = ConversationId::generate()
@@ -730,7 +715,6 @@ pub(super) async fn save(
     };
     let record = match start {
         Ok(record) => record,
-        Err(super::StartMessageError::Internal(error)) => return Err(error),
         Err(super::StartMessageError::User(status, error)) => {
             state
                 .conversations

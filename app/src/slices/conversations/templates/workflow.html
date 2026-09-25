@@ -142,47 +142,6 @@
                 >
 {{ brief }}</textarea>
               </label>
-              {% if !commit_policies.is_empty() %}
-                <section aria-labelledby="workflow-commit-policy-heading">
-                  <h3 id="workflow-commit-policy-heading">Commit policy</h3>
-                  <p class="text-quiet">
-                    Choose how this run handles its exact candidate. Read-only
-                    processes do not offer a commit policy.
-                  </p>
-                  {% for policy in commit_policies %}
-                    {% if policy.selected %}
-                      <input
-                        type="hidden"
-                        name="preview_commit_policy"
-                        value="{{ policy.value }}"
-                      />
-                    {% endif %}
-                  {% endfor %}
-                  <fieldset class="flex flex-col gap-3">
-                    <legend class="sr-only">Available commit policies</legend>
-                    {% for policy in commit_policies %}
-                      <label class="border-base-300 flex gap-3 border p-3">
-                        <input
-                          class="radio radio-sm mt-1"
-                          type="radio"
-                          name="commit_policy"
-                          value="{{ policy.value }}"
-                          {% if policy.selected %}checked{% endif %}
-                          required
-                        />
-                        <span class="min-w-0">
-                          <span class="block font-semibold"
-                            >{{ policy.label }}</span
-                          >
-                          <span class="text-quiet mt-1 block text-sm"
-                            >{{ policy.detail }}</span
-                          >
-                        </span>
-                      </label>
-                    {% endfor %}
-                  </fieldset>
-                </section>
-              {% endif %}
               {% if !phase_models.is_empty() %}
                 <details {% if error != "" %}open{% endif %}>
                   <summary class="cursor-pointer font-semibold">
@@ -272,21 +231,14 @@
                     <dd>{{ environment_summary }}</dd>
                     <dt>Process</dt>
                     <dd>{{ input_summary }}</dd>
-                    {% for policy in commit_policies %}
-                      {% if policy.selected %}
-                        <dt>Commit policy</dt>
-                        <dd>{{ policy.label }}</dd>
-                      {% endif %}
-                    {% endfor %}
                   </dl>
                   <div class="notice warning">
                     <strong>Approval stops</strong>
                     <p>{{ workflow.approvals }}</p>
                     <p>
-                      Candidate decisions cover reviewed changes only. Direct
-                      writes and host commands can change files before a
-                      candidate decision. Failure or cancellation does not undo
-                      those effects.
+                      Write access changes original files immediately. Plan
+                      acceptance does not approve or capture files. Failure or
+                      cancellation does not undo those effects.
                     </p>
                   </div>
                   {% if !access_preview.is_empty() %}

@@ -768,7 +768,7 @@ async fn path_escape_stops_without_dispatching_the_rest() {
 }
 
 #[tokio::test]
-async fn not_dispatched_command_returns_as_an_ordinary_result() {
+async fn sandbox_run_without_approval_context_fails_closed() {
     use crate::config::RuntimeConfig;
     use crate::providers::{
         ChatBackend, ChatTurn, CompletionReason, ModelEvent, ProviderConnection, ProviderKind,
@@ -809,16 +809,14 @@ async fn not_dispatched_command_returns_as_an_ordinary_result() {
         job.clone(),
     )
     .await;
-    assert_eq!(ended.outcome, super::AgentOutcome::Completed);
+    assert_eq!(ended.outcome, super::AgentOutcome::AuthorityFailure);
     assert_eq!(ended.reply.tools.len(), 1);
-    assert_eq!(
+    assert!(
         ended.reply.tools[0]
-            .command
-            .as_ref()
-            .map(|command| command.termination),
-        Some(crate::execution::CommandTermination::NotDispatched)
+            .output
+            .contains("Command approval is unavailable.")
     );
-    assert_eq!(ended.reply.text, "No guest ran.");
+    assert!(ended.reply.text.is_empty());
 }
 
 #[tokio::test]

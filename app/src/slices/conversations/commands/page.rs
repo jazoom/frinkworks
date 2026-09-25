@@ -11,7 +11,7 @@ use serde::Serialize;
 
 use crate::conversations::input::{self, InputExpansion, InputProvenance, SkillOffer};
 use crate::conversations::prompts::{self, PromptTemplate};
-use crate::execution::resources::{CandidateRoot, effective_roots, preview_project_skills};
+use crate::execution::resources::{effective_roots, preview_project_skills};
 use crate::execution::{GUEST_GLOBAL_SKILLS, ResourceKind, ResourceSource};
 use crate::state::AppState;
 
@@ -105,16 +105,13 @@ pub(super) fn global_templates(state: &AppState) -> (Vec<PromptTemplate>, usize)
     (catalogue.templates, catalogue.unavailable)
 }
 
-/// Project skills and templates come from the effective read-only roots. A
-/// candidate-backed root has no readable body, so it stays unavailable rather
-/// than substituting the current host files.
+/// Project resources use authorised live roots.
 pub(super) fn project_resources(
     policy: &crate::agents::DirectoryPolicy,
     grants: &[crate::execution::DirectoryGrant],
-    candidates: &[CandidateRoot],
     data_root: &Path,
 ) -> (Vec<SkillOffer>, Vec<PromptTemplate>, usize) {
-    let roots = effective_roots(policy, candidates, data_root);
+    let roots = effective_roots(policy, data_root);
     let (skills, skills_unavailable) = preview_project_skills(&roots, grants, data_root);
     let (templates, templates_unavailable) = prompts::discover_project(&roots, grants, data_root);
     let offers = skills

@@ -30,41 +30,6 @@ export function initWorkspace(
             pre.setAttribute("role", "region");
             pre.setAttribute("aria-label", "Code block");
         });
-        root.querySelectorAll<HTMLElement>(
-            ".workspace-diff code:not([data-coloured])",
-        ).forEach((code) => {
-            code.dataset.coloured = "true";
-            const lines = (code.textContent ?? "").split("\n");
-            if (lines.length > 1000) return;
-            // Diff contents are untrusted file text, never HTML. Each row
-            // keeps its explicit +/- marker plus a line number wash.
-            code.replaceChildren(
-                ...lines.map((text, index) => {
-                    const line = document.createElement("span");
-                    const added =
-                        text.startsWith("+") && !text.startsWith("+++");
-                    const removed =
-                        text.startsWith("-") && !text.startsWith("---");
-                    line.className =
-                        "diff-line" +
-                        (added
-                            ? " workspace-diff-add"
-                            : removed
-                              ? " workspace-diff-remove"
-                              : "");
-                    const number = document.createElement("span");
-                    number.className = "line-number";
-                    number.setAttribute("aria-hidden", "true");
-                    number.textContent = String(index + 1);
-                    const content = document.createElement("span");
-                    content.className = "diff-text";
-                    content.textContent =
-                        text + (index < lines.length - 1 ? "\n" : "");
-                    line.append(number, content);
-                    return line;
-                }),
-            );
-        });
         const detail = root.querySelector<HTMLElement>("#conversation-detail");
         const nextHeader =
             detail?.querySelector<HTMLElement>(":scope > header") ?? null;
@@ -407,34 +372,6 @@ export function initWorkspace(
             else if (target?.closest("[data-continue-conversation]"))
                 continueConversation();
             else if (
-                target?.closest("[data-review-file]") &&
-                !event.ctrlKey &&
-                !event.metaKey &&
-                !event.shiftKey &&
-                !event.altKey &&
-                event.button === 0
-            ) {
-                event.preventDefault();
-                const selected =
-                    target.closest<HTMLElement>("[data-review-file]")?.dataset
-                        .reviewFile;
-                root.querySelectorAll<HTMLElement>(
-                    "[data-review-diff]",
-                ).forEach((diff) => {
-                    diff.hidden = diff.dataset.reviewDiff !== selected;
-                    if (!diff.hidden) {
-                        diff.scrollIntoView({ block: "nearest" });
-                        diff.focus({ preventScroll: true });
-                    }
-                });
-                root.querySelectorAll<HTMLElement>(
-                    "[data-review-file]",
-                ).forEach((link) => {
-                    if (link.dataset.reviewFile === selected)
-                        link.setAttribute("aria-current", "true");
-                    else link.removeAttribute("aria-current");
-                });
-            } else if (
                 target?.closest("[data-expand-review]") &&
                 !event.ctrlKey &&
                 !event.metaKey &&

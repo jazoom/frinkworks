@@ -49,10 +49,10 @@ impl ToolId {
                 "Write a file inside a writable granted directory. Creates parent directories. Use this for new files or complete replacements."
             }
             (Self::Run, ToolLocation::Host) => {
-                "Run a shell command on this computer after the user approves the exact command. Starts in the selected work location. Approval does not inspect script internals."
+                "Run a shell command on this computer under the selected approval policy. Starts in the selected work location. Approval does not inspect script internals."
             }
             (Self::Run, ToolLocation::Sandbox) => {
-                "Run a shell command. Starts in the primary directory."
+                "Run a shell command in Microsandbox under the selected approval policy. Starts in the primary directory. Read mounts remain read-only."
             }
         }
     }
@@ -154,7 +154,7 @@ impl ToolId {
                     },
                     "explanation": {
                         "type": "string",
-                        "description": "Why this command is needed. Shown to the user before host approval."
+                        "description": "Why this command is necessary. The command approval shows this explanation."
                     }
                 },
                 "required": if location == ToolLocation::Host { vec!["command", "explanation"] } else { vec!["command"] },
@@ -853,14 +853,60 @@ async fn dispatch(
                 }
                 return host_run(context, call_id, command, args.explanation.trim()).await;
             }
+            let host = context
+                .host
+                .as_ref()
+                .ok_or(ToolFailure::Authority("Command approval is unavailable."))?;
+            validate_host_dispatch(host, context.job).map_err(ToolFailure::Authority)?;
+            let mut request = crate::execution::HostCommandRequest {
+                token: String::new(),
+                session: host.session,
+                job: context.job.id(),
+                conversation: host.conversation,
+                execution_revision: host.execution_revision,
+                command: command.to_owned(),
+                directory: std::path::PathBuf::from(context.policy.primary_guest()),
+                explanation: args.explanation.trim().to_owned(),
+                run: host.run.clone(),
+                step: host.step.clone(),
+                attempt: host.attempt.clone(),
+            };
+            crate::execution::approval::approve_command(
+                host.state,
+                &mut request,
+                host.settings,
+                context.job,
+                host.secret,
+            )
+            .await
+            .map_err(ToolFailure::Authority)?;
+            validate_host_dispatch(host, context.job).map_err(ToolFailure::Authority)?;
             let label = format!("run `{command}`");
-            match capture(
+            record_host_evidence(host, &request, "dispatching", "", None)
+                .map_err(ToolFailure::Persistence)?;
+            let result = capture(
                 context,
                 call_id,
                 GuestExec::shell(command).in_dir(context.policy.primary_guest()),
             )
-            .await
-            {
+            .await;
+            let output = match &result {
+                Ok(output) => output,
+                Err(failure) => &failure.result,
+            };
+            record_host_evidence(
+                host,
+                &request,
+                if output.is_success() {
+                    "completed"
+                } else {
+                    "failed"
+                },
+                &output.report(),
+                Some(output),
+            )
+            .map_err(ToolFailure::Persistence)?;
+            match result {
                 Ok(result) => {
                     let output = result.report();
                     Ok(ToolRun {
@@ -920,50 +966,19 @@ async fn host_run(
         step: host.step.clone(),
         attempt: host.attempt.clone(),
     };
-    if host.settings.automatic_host_commands() {
-        request.token = crate::execution::command_token()
-            .map_err(|error| ToolFailure::Ordinary(error.message()))?;
-        return dispatch_host_command(host, context.job, call_id, label, &request).await;
-    }
-    let approvals = &host.state.host_approvals;
-    let token = approvals
-        .submit(request.clone())
-        .map_err(|error| ToolFailure::Authority(error.message()))?;
-    request.token = token.clone();
-    if let Err(error) = record_host_evidence(host, &request, "awaiting_approval", "", None) {
-        approvals.invalidate_job(context.job.id());
-        return Err(ToolFailure::Persistence(error));
-    }
-    if context.job.set_awaiting_decision().is_none() && context.job.cancel_requested() {
-        approvals.invalidate_job(context.job.id());
-        return Err(ToolFailure::Cancellation);
-    }
-    let decision = approvals.wait(&token, context.job).await;
-    let _ = context.job.resume();
-    match decision {
-        Ok(crate::execution::HostCommandDecision::Approved) => {
-            dispatch_host_command(host, context.job, call_id, label, &request).await
-        }
-        Ok(crate::execution::HostCommandDecision::Rejected) => {
-            record_host_evidence(
-                host,
-                &request,
-                "rejected",
-                "The user rejected this command.",
-                None,
-            )
-            .map_err(ToolFailure::Persistence)?;
-            Err(ToolFailure::Rejected { label })
-        }
-        Err(error) => {
-            record_host_evidence(host, &request, "invalidated", error.message(), None)
-                .map_err(ToolFailure::Persistence)?;
-            if context.job.cancel_requested() {
-                Err(ToolFailure::Cancellation)
-            } else {
-                Err(ToolFailure::Authority(error.message()))
-            }
-        }
+    match crate::execution::approval::approve_command(
+        host.state,
+        &mut request,
+        host.settings,
+        context.job,
+        host.secret,
+    )
+    .await
+    {
+        Ok(()) => dispatch_host_command(host, context.job, call_id, label, &request).await,
+        Err(_) if context.job.cancel_requested() => Err(ToolFailure::Cancellation),
+        Err("The user rejected this command.") => Err(ToolFailure::Rejected { label }),
+        Err(error) => Err(ToolFailure::Authority(error)),
     }
 }
 
@@ -1107,11 +1122,13 @@ fn validate_host_dispatch(host: &HostToolContext<'_>, job: &Job) -> Result<(), &
             .model
             .as_ref()
             .is_none_or(|model| model.settings != *host.settings)
-        || !host.state.access_consent.authorised_host_conversation(
-            host.session,
-            host.conversation,
-            host.settings,
-        )
+        || (host.settings.location == ToolLocation::Host
+            && (!host.settings.host_access_allowed()
+                || !host.state.access_consent.authorised_host_conversation(
+                    host.session,
+                    host.conversation,
+                    host.settings,
+                )))
     {
         return Err("Host access expired or changed. Approve the current settings again.");
     }
@@ -1119,6 +1136,23 @@ fn validate_host_dispatch(host: &HostToolContext<'_>, job: &Job) -> Result<(), &
         grant
             .revalidate()
             .map_err(|_| "A work location changed or is not available.")?;
+        if host.settings.location == ToolLocation::Sandbox
+            && host.run.is_none()
+            && grant.requires_access_consent(host.state.local_data.root())
+            && !host.state.access_consent.authorised_conversation(
+                host.session,
+                host.conversation,
+                host.settings,
+                grant,
+            )
+            && !host.state.conversations.directory_approved(
+                &host.conversation,
+                host.settings,
+                grant,
+            )
+        {
+            return Err("Directory access needs explicit approval.");
+        }
     }
     Ok(())
 }
@@ -1154,8 +1188,9 @@ fn validate_workflow_host_dispatch(
                 Some(attempt.id.as_hex()) != host.attempt
                     || attempt.step != step
                     || attempt.state != crate::workflows::run::AttemptState::Active
-                    || attempt.sandbox.kind
-                        != crate::workflows::run::AttemptSandboxKind::HostExecution
+                    || (host.settings.location == ToolLocation::Host
+                        && attempt.sandbox.kind
+                            != crate::workflows::run::AttemptSandboxKind::HostExecution)
             })
     {
         return Err("That host command is not bound to the active run, step and attempt.");
@@ -1165,7 +1200,7 @@ fn validate_workflow_host_dispatch(
         .cloned()
         .or_else(|| run.directory_settings())
         .ok_or("The pinned host settings are unavailable.")?;
-    if settings != *host.settings || !settings.host_tools() {
+    if settings != *host.settings || !settings.host_access_allowed() {
         return Err("Host access expired or changed. Approve the current settings again.");
     }
     let launch_ok = host.state.access_consent.authorised_launch(
@@ -1174,17 +1209,7 @@ fn validate_workflow_host_dispatch(
         host.conversation,
         host.settings,
     );
-    let ordinary_consent = run.kind == crate::workflows::RunKind::QuickTask
-        && record
-            .model
-            .as_ref()
-            .is_some_and(|model| model.settings == settings)
-        && host.state.access_consent.authorised_host_conversation(
-            host.session,
-            host.conversation,
-            &settings,
-        );
-    if !launch_ok && !ordinary_consent {
+    if !launch_ok {
         return Err("Host access needs explicit approval for this run.");
     }
     Ok(())

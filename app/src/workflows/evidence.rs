@@ -382,8 +382,25 @@ impl WorkflowEvidenceStore {
                 .bounded(crate::tools::MAXIMUM_TOOL_BYTES)
                 .0
         });
+        let mut events = if path.exists() {
+            let bytes = fs::read(&path).map_err(|_| EvidenceError::Persist)?;
+            let previous: serde_json::Value =
+                serde_json::from_slice(&bytes).map_err(|_| EvidenceError::Corrupt)?;
+            previous
+                .get("events")
+                .and_then(serde_json::Value::as_array)
+                .cloned()
+                .ok_or(EvidenceError::Corrupt)?
+        } else {
+            Vec::new()
+        };
+        if events.len() >= 16 {
+            return Err(EvidenceError::Full);
+        }
+        events.push(serde_json::json!({ "at_ms": crate::workflows::now_ms(), "status": status }));
         let record = serde_json::json!({
             "version": 1,
+            "events": events,
             "conversation": request.conversation.to_string(),
             "job": request.job.to_string(),
             "execution_revision": request.execution_revision,

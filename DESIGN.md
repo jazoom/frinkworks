@@ -145,7 +145,7 @@ Configured drafts show a directory summary above the composer. Short mobile scre
 
 Below 701 pixels, the companion fills the conversation area. The hidden transcript, composer and conversation toolbar become inert.
 
-Expanded review occupies the conversation width without a new conversation or URL. A separate native link opens the canonical candidate review page.
+Plan review remains in the conversation companion. A separate native link opens the canonical plan decision page.
 
 ## Elevation & Depth
 
@@ -275,49 +275,21 @@ Compact desktop composers use horizontal scroll for controls when their containe
 
 A mobile resize moves focus from excluded conversation controls into the open companion. Escape closes the companion and restores the conversation trigger.
 
-Candidate review leads with changed files and the selected diff. Wide review containers place them side by side. Narrow containers stack them.
+Plan review shows the exact plan and its decision controls. Acceptance starts only the declared continuation. It grants no file authority.
 
-The companion retains its 400-pixel width and local expansion. File selection reveals and focuses the preview without a command or an authority change.
+Revision feedback remains bound to the plan. Plan decisions from the companion return conversation patches and retain unsent text.
 
-The full review selects the first file on each manifest page by default. File metadata and immutable downloads sit in disclosures below their paths.
-
-Binary, oversized and unavailable previews have distinct explanations. Diffs and Markdown code blocks receive keyboard focus.
+The companion retains its 400-pixel width. Markdown code blocks receive keyboard focus. Long plan content has a bounded scroll area.
 
 The idle companion reads Ready when you are with View activity and evidence and Continue the conversation.
 
-Local review expansion stays within the conversation URL. One native link opens the canonical gate page.
+Command approval reads Run this command for both execution locations. It shows the exact command, work location and effective policy.
 
-Per-file addition and removal counts derive from the complete stored diff. Binary or oversized changes omit counts rather than infer them from truncated previews. The companion lists the total changed-file count and notes when only the first paths render. Recorded test outcomes are not part of the candidate evidence, so neither review surface shows a test result line. These omissions are deliberate: counts and test lines appear only when recorded data supports them.
+Evidence links show requests and bounded output. They start no command and make no current-file claim.
 
-The candidate footer has a bounded scroll area for long destinations and feedback forms. Current work retains the eligible job-bound Stop control without a confirmation step.
+Current work retains the eligible job-bound Stop control. Cancellation leaves earlier file changes intact. Incomplete cleanup retains execution blockers.
 
-The approval footer names the destination and the actual application consequence. Its label follows the pinned next command, not the candidate format.
-
-File application, local Git commits and configured continuation remain distinct. Selection changes only the preview. Approval covers the complete candidate and original baseline.
-
-Candidate decisions from the companion return conversation patches instead of full reloads. Unsent text survives approval, feedback and discard responses.
-
-Host approval reads Run this command. It shows the exact command, work location and effective approval policy beside the decision. Session-bound approval and rejection evidence remains in the run record.
-
-Request changes retains candidate-bound feedback. Discard posts directly without a confirmation dialog. Discard keeps evidence and history, so it is not destructive in the data sense. Discard does not reverse direct writes or host command effects.
-
-Current work shows recorded file outcomes before secondary context. Unresolved outcomes remain visible even when the run reports a terminal state.
-
-Directory records pair the alias and host path with an outcome explanation. Managed cleanup has a separate status. Recorded outcomes make no current-file claim.
-
-A stopped application does not imply that any directory reports Applied. The summary uses the recorded outcomes without an invented conflict cause.
-
-Repository records retain separate transaction states. Only completed commits show their identifiers. Success in one repository makes no success claim for another.
-
-View attempt evidence opens the exact run attempt. The canonical page includes its directory and repository results. The link starts no write or retry.
-
-Current work and Activity share the same read-only result presentation. Recovery controls retain the workspace scale and full-width targets within the companion.
-
-Keep applied files and end task retains the existing settlement command. The form binds the displayed run, attempt and transaction state.
-
-Settlement keeps files and evidence without another application attempt. It records Cancelled, not Completed. Uncertain outcomes and incomplete cleanup retain the execution blockers.
-
-Unsettled file or repository work omits Continue the conversation. Activity makes no promise that plain conversation bypasses recovery. The interface supplies no retry or rollback.
+The interface contains no file candidate, application decision, before/after preview, rollback or automatic commit control.
 
 The attention strip stays within the toolbar and opens Current work without a command. Mobile rejection closes the companion to expose its authoritative error.
 
@@ -370,7 +342,7 @@ Add a directory below the composer opens the native directory picker directly. T
 
 Directories shows the applied execution context and directory access controls. It contains no repository selector. Setup toggles the companion open and closed.
 
-Explicit workflow commit steps detect each changed repository. Approval names the commit consequence. The run details show each repository's result separately.
+Directory controls expose exactly Read and Write. Read is the default. Write changes original files immediately.
 
 New forms select the available tools by default. An explicit empty tool choice stays empty after validation and on copied records.
 
@@ -394,7 +366,9 @@ Ordinary setup controls apply when they change. There is no Save, Done, Keep dra
 
 Save as future defaults is a separate explicit action in the companion footer. Its explanation distinguishes stored conversation settings from access approval.
 
-Execution uses labelled radio choices for the location and command policy. Sandbox network choices expose the domain field only for Restricted domains.
+Execution uses labelled radio choices for the location and command policy. Ask each time and Automatic (YOLO) remain visible for both locations.
+
+Preset forms expose the same command choices. Automatic (YOLO) never increases directory permissions. Sandbox network choices expose the domain field only for Restricted domains.
 
 The environment selector shows recorded preparation and snapshot status. It makes no readiness claim without the corresponding records.
 
@@ -404,7 +378,7 @@ Review execution change replaces the Setup sections within the companion. A Curr
 
 Each directory retains its own access row. Sandbox settings remain explicitly labelled in host mode. Keep current settings resets requested execution values without a command.
 
-Active work retains Stop task and switch. Prepared changes retain their exact-candidate decision and Discard changes and switch. Neither action reverses existing host effects.
+Active work retains Stop task and switch. A pending plan decision retains its plan identity during an environment change. Neither action reverses existing effects.
 
 Host consent displays the process identity and privileges beside the actual start directory. It explains unrestricted access and immediate file changes.
 
@@ -428,11 +402,11 @@ A focused page presents an optional instruction field before generation. The gen
 
 Prepare new conversation opens an unsent draft. It does not start the next agent.
 
-At a safe decision, the page offers exact prepared changes or context only. Neither choice applies, discards or reverses files.
+At a safe decision, the page offers workflow ownership transfer or context only. Neither choice changes files.
 
-An exact-change draft displays pinned settings and explicit run-only approval. Send transfers ownership without another model call or gate decision.
+A transfer draft displays pinned settings and explicit run-only approval. Send transfers ownership without another model call or gate decision.
 
-An expired runtime displays Restore prepared changes in the owner companion. The candidate remains visible, but decision controls stay disabled until fresh consent restores execution.
+An expired runtime retains the plan in the owner companion. Decision controls stay disabled until fresh consent restores execution.
 
 The handoff page uses the existing type scale and controls. It introduces no new palette or panel system.
 
@@ -502,9 +476,9 @@ Current browser checks cover desktop and mobile navigation with synthetic conver
 
 The mobile handoff page passes the browser accessibility audit. This result does not establish accessibility for every execution state or theme.
 
-Browser checks cover ownership transfer, restart and explicit application to a real temporary file without a commit.
+Rust tests cover ownership transfer, restart and plan decision integrity. Real Microsandbox tests cover live Read and Write mounts.
 
-A supplied prompt enters the real preparation endpoint. Synthetic records support direct-write previews and downloads.
+The Read/Write browser pass uses isolated local data without a connected provider.
 
 Browser evidence does not establish successful hosted-model generation or hosted agent execution.
 
@@ -515,7 +489,7 @@ Browser evidence does not establish successful hosted-model generation or hosted
 - Keep feature presentation within its slice.
 - Keep native links for ordinary navigation.
 - Do not add noscript fallbacks.
-- Keep exact candidate and revision fields on consequential commands.
+- Keep exact plan and revision fields on consequential commands.
 - Keep effective access separate from unsaved settings.
 - Keep plans and checklists as ordinary content.
 - Do not use title case for headings or controls.

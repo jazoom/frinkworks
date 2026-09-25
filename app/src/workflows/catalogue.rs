@@ -666,7 +666,7 @@ pub(crate) fn definition_fits_agent(
         StepAction::Agent(action) => {
             let primary_fits = directories.iter().any(|(alias, access)| {
                 alias == primary_directory
-                    && (!action.candidate_authority.access().is_writable() || access.is_writable())
+                    && (!action.directory_access.access().is_writable() || access.is_writable())
             });
             primary_fits
                 && !action
@@ -681,13 +681,7 @@ pub(crate) fn definition_fits_agent(
                         .map(|(alias, access)| (alias.as_str(), *access)),
                 )
         }
-        StepAction::SystemCommand(action) => {
-            action.command.contract().source_effect
-                == super::commands::CommandSourceEffect::ReadOnly
-                || directories
-                    .iter()
-                    .any(|(alias, access)| alias == primary_directory && access.is_writable())
-        }
+        StepAction::SystemCommand(_) => true,
         StepAction::HumanGate(_) => true,
     })
 }

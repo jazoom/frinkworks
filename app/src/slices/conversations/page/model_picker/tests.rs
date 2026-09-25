@@ -21,12 +21,6 @@ fn catalogue_patches_keep_retired_capabilities_without_new_choices() {
             selected,
             "high",
         );
-        assert!(
-            !picker
-                .models
-                .iter()
-                .any(|model| model.id == "deepseek-v4-flash")
-        );
         let catalogue: serde_json::Value = serde_json::from_str(&picker.catalogue).unwrap();
         let retired = catalogue["deepseek"]
             .as_array()

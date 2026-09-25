@@ -3,127 +3,48 @@ use super::definition::{ArtefactKind, OutputKind};
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SystemCommandId {
     RepositoryStatus,
-    ApplyChanges,
-    CommitCandidate,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum CommandSourceEffect {
-    ReadOnly,
-    Apply,
-    Commit,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct SystemCommandContract {
-    pub(crate) id: SystemCommandId,
-    pub(crate) source_effect: CommandSourceEffect,
-    pub(crate) required_inputs: &'static [ArtefactKind],
-    pub(crate) required_outputs: &'static [OutputKind],
-}
-
-impl SystemCommandContract {
-    pub(crate) fn accepts(&self, inputs: &[ArtefactKind], outputs: &[OutputKind]) -> bool {
-        if !kinds_match(outputs, self.required_outputs) {
-            return false;
-        }
-        if self.id == SystemCommandId::ApplyChanges {
-            let required = inputs
-                .iter()
-                .copied()
-                .filter(|kind| *kind != ArtefactKind::ReviewReport)
-                .collect::<Vec<_>>();
-            return kinds_match(&required, self.required_inputs);
-        }
-        if self.id == SystemCommandId::CommitCandidate {
-            let candidates = inputs
-                .iter()
-                .filter(|kind| **kind == ArtefactKind::CandidateRevision)
-                .count();
-            let reviews = inputs
-                .iter()
-                .filter(|kind| **kind == ArtefactKind::ReviewReport)
-                .count();
-            let decisions = inputs
-                .iter()
-                .filter(|kind| **kind == ArtefactKind::HumanDecision)
-                .count();
-            return candidates == 1
-                && decisions <= 1
-                && (reviews >= 1 || decisions == 1)
-                && candidates + reviews + decisions == inputs.len();
-        }
-        kinds_match(inputs, self.required_inputs)
-    }
 }
 
 impl SystemCommandId {
     pub(crate) fn parse(value: &str) -> Option<Self> {
         match value {
             "repository-status" => Some(Self::RepositoryStatus),
-            "apply-changes" => Some(Self::ApplyChanges),
-            "commit-candidate" => Some(Self::CommitCandidate),
             _ => None,
         }
     }
 
     pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::RepositoryStatus => "repository-status",
-            Self::ApplyChanges => "apply-changes",
-            Self::CommitCandidate => "commit-candidate",
-        }
+        "repository-status"
     }
 
     pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::RepositoryStatus => "Repository status",
-            Self::ApplyChanges => "Apply changes",
-            Self::CommitCandidate => "Commit candidate",
-        }
+        "Repository status"
     }
 
     pub(crate) fn consequence(self) -> &'static str {
-        match self {
-            Self::RepositoryStatus => "",
-            Self::ApplyChanges => {
-                "Applies the approved files to the authorised directory without a Git commit."
-            }
-            Self::CommitCandidate => {
-                "Applies an approved candidate to the local project and creates a Git commit."
-            }
-        }
+        "Reads the live repository status."
     }
 
     pub(crate) fn contract(self) -> SystemCommandContract {
-        match self {
-            Self::RepositoryStatus => SystemCommandContract {
-                id: self,
-                source_effect: CommandSourceEffect::ReadOnly,
-                required_inputs: &[ArtefactKind::CandidateRevision],
-                required_outputs: &[],
-            },
-            Self::ApplyChanges => SystemCommandContract {
-                id: self,
-                source_effect: CommandSourceEffect::Apply,
-                required_inputs: &[ArtefactKind::CandidateRevision, ArtefactKind::HumanDecision],
-                required_outputs: &[OutputKind::CandidateRevision],
-            },
-            Self::CommitCandidate => SystemCommandContract {
-                id: self,
-                source_effect: CommandSourceEffect::Commit,
-                required_inputs: &[ArtefactKind::CandidateRevision, ArtefactKind::ReviewReport],
-                required_outputs: &[OutputKind::CandidateRevision],
-            },
+        SystemCommandContract {
+            required_inputs: &[],
+            required_outputs: &[],
         }
     }
 
-    pub(crate) fn all() -> [Self; 3] {
-        [
-            Self::RepositoryStatus,
-            Self::ApplyChanges,
-            Self::CommitCandidate,
-        ]
+    pub(crate) fn all() -> [Self; 1] {
+        [Self::RepositoryStatus]
+    }
+}
+
+pub(crate) struct SystemCommandContract {
+    pub(crate) required_inputs: &'static [ArtefactKind],
+    pub(crate) required_outputs: &'static [OutputKind],
+}
+
+impl SystemCommandContract {
+    pub(crate) fn accepts(&self, inputs: &[ArtefactKind], outputs: &[OutputKind]) -> bool {
+        kinds_match(inputs, self.required_inputs) && kinds_match(outputs, self.required_outputs)
     }
 }
 
@@ -131,13 +52,12 @@ pub(crate) fn kinds_match<T: Copy + Eq>(declared: &[T], required: &[T]) -> bool 
     if declared.len() != required.len() {
         return false;
     }
-    let mut remaining: Vec<T> = required.to_vec();
+    let mut remaining = required.to_vec();
     for item in declared {
-        if let Some(index) = remaining.iter().position(|required| required == item) {
-            remaining.remove(index);
-        } else {
+        let Some(index) = remaining.iter().position(|required| required == item) else {
             return false;
-        }
+        };
+        remaining.remove(index);
     }
     remaining.is_empty()
 }

@@ -1216,7 +1216,7 @@ function syncPresetSummary() {
         location: value("location") === "host" ? "This computer" : "Sandbox",
         host_approval:
             value("host_approval") === "automatic"
-                ? "Run without approval"
+                ? "Automatic (YOLO)"
                 : "Ask each time",
         environment:
             environment instanceof HTMLSelectElement

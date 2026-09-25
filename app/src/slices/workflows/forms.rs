@@ -1,12 +1,11 @@
 use crate::agents::{AccessMode, ToolId};
 use crate::execution::{DirectoryAccess, DirectoryGrant, SettingsOverrides};
 use crate::workflows::definition::{
-    AgentAuthority, AgentStep, ArtefactKind, ArtefactSource, CandidateAuthority,
-    GuestDirectoryAccess, HumanGateStep, HumanRevisionPolicy, InputKey, MAXIMUM_DIRECTORIES,
-    MAXIMUM_INPUTS, MAXIMUM_OUTPUTS, MAXIMUM_ROLES, MAXIMUM_STEPS, ModelStepSettings, OutputKey,
-    OutputKind, RequiredInput, RequiredOutput, ReviewPolicy, RoleDefinition, RoleKey, StepAction,
-    StepDefinition, StepEnvironment, StepKey, SystemCommandId, SystemCommandStep,
-    WorkflowDefinition, candidate_revision_output, initial_candidate_input,
+    AgentAuthority, AgentStep, ArtefactKind, ArtefactSource, GuestDirectoryAccess, HumanGateStep,
+    HumanRevisionPolicy, InputKey, MAXIMUM_DIRECTORIES, MAXIMUM_INPUTS, MAXIMUM_OUTPUTS,
+    MAXIMUM_ROLES, MAXIMUM_STEPS, ModelStepSettings, OutputKey, OutputKind, RequiredInput,
+    RequiredOutput, ReviewPolicy, RoleDefinition, RoleKey, StepAccess, StepAction, StepDefinition,
+    StepEnvironment, StepKey, SystemCommandId, SystemCommandStep, WorkflowDefinition,
 };
 use crate::workflows::{CatalogueError, WorkflowRecord};
 
@@ -37,8 +36,6 @@ pub(super) enum PhasePurpose {
     Implementation,
     ReadOnlyReview,
     ReviewAndFix,
-    CodeApproval,
-    Commit,
     Custom,
 }
 
@@ -51,8 +48,6 @@ impl PhasePurpose {
             "implementation" | "implement" => Some(Self::Implementation),
             "read-only-review" | "review" => Some(Self::ReadOnlyReview),
             "review-and-fix" | "fixing-review" => Some(Self::ReviewAndFix),
-            "code-approval" | "approval" => Some(Self::CodeApproval),
-            "commit" => Some(Self::Commit),
             "custom" => Some(Self::Custom),
             _ => None,
         }
@@ -66,8 +61,6 @@ impl PhasePurpose {
             Self::Implementation => "implementation",
             Self::ReadOnlyReview => "read-only-review",
             Self::ReviewAndFix => "review-and-fix",
-            Self::CodeApproval => "code-approval",
-            Self::Commit => "commit",
             Self::Custom => "custom",
         }
     }
@@ -80,19 +73,17 @@ impl PhasePurpose {
             Self::Implementation => "Implementation",
             Self::ReadOnlyReview => "Read-only review",
             Self::ReviewAndFix => "Review and fix",
-            Self::CodeApproval => "Code approval",
-            Self::Commit => "Commit",
             Self::Custom => "Custom phase",
         }
     }
 
     fn default_tools(self) -> Vec<ToolId> {
         match self {
-            Self::Planning | Self::PlanReview | Self::ReadOnlyReview | Self::CodeApproval => {
+            Self::Planning | Self::PlanReview | Self::ReadOnlyReview => {
                 vec![ToolId::List, ToolId::Read, ToolId::Run]
             }
             Self::Implementation | Self::ReviewAndFix => ToolId::ALL.to_vec(),
-            Self::PlanCheckpoint | Self::Commit | Self::Custom => Vec::new(),
+            Self::PlanCheckpoint | Self::Custom => Vec::new(),
         }
     }
 
@@ -104,8 +95,6 @@ impl PhasePurpose {
             Self::Implementation => "Implement the change",
             Self::ReadOnlyReview => "Review the current code",
             Self::ReviewAndFix => "Review and fix the change",
-            Self::CodeApproval => "Approve the code",
-            Self::Commit => "Commit the candidate",
             Self::Custom => "Custom phase",
         }
     }
@@ -115,13 +104,11 @@ impl PhasePurpose {
             Self::Planning => "Inspects the project and explains a safe implementation sequence.",
             Self::PlanReview => "Reviews the plan and produces a corrected plan.",
             Self::PlanCheckpoint => "Presents the exact plan for human acceptance.",
-            Self::Implementation => "Applies the requested change to an isolated candidate.",
+            Self::Implementation => "Changes the original files with Write access.",
             Self::ReadOnlyReview => {
-                "Checks the candidate for correctness, security and regressions."
+                "Assesses the current files for correctness, security and regressions."
             }
-            Self::ReviewAndFix => "Reviews the candidate and fixes safe issues.",
-            Self::CodeApproval => "Presents the exact candidate for a human decision.",
-            Self::Commit => "Applies an approved candidate to the project.",
+            Self::ReviewAndFix => "Reviews the current files and fixes safe issues immediately.",
             Self::Custom => "Runs the configured phase.",
         }
     }
@@ -129,28 +116,22 @@ impl PhasePurpose {
     fn default_instructions(self) -> &'static str {
         match self {
             Self::Planning => {
-                "Inspect the project and produce a plan. Do not change the candidate."
+                "Inspect the project and produce a plan. Do not change project files."
             }
             Self::PlanReview => {
-                "Review the exact plan. Correct it when needed and explain the result. Do not change the candidate."
+                "Review the exact plan. Correct it when needed and explain the result. Do not change project files."
             }
             Self::PlanCheckpoint => {
                 "Review the exact plan and accept it or request plan changes. This decision does not approve code."
             }
             Self::Implementation => {
-                "Implement the task in the candidate. Submit the complete candidate."
+                "Implement the task in the authorised directories. Write access changes the original files immediately."
             }
             Self::ReadOnlyReview => {
-                "Review this exact candidate. Do not change it. Submit a structured review."
+                "Review the current files. Do not change them. Submit a structured review."
             }
             Self::ReviewAndFix => {
-                "Fix every safe issue that you find. Submit a structured verdict for your output candidate."
-            }
-            Self::CodeApproval => {
-                "Review the exact candidate diff and decide whether the project can proceed."
-            }
-            Self::Commit => {
-                "Apply the approved candidate. Do not change files outside the candidate."
+                "Fix every safe issue that you find in the authorised directories. Submit a structured verdict for the current files."
             }
             Self::Custom => "Complete the assigned phase.",
         }
@@ -159,6 +140,7 @@ impl PhasePurpose {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum FormIntent {
+    PreviewExecution,
     Save,
 
     AddRole,
@@ -234,7 +216,7 @@ pub(super) struct StepDraft {
     pub(super) action: String,
     pub(super) environment: String,
     pub(super) role: String,
-    pub(super) candidate_access: String,
+    pub(super) directory_access: String,
     pub(super) command: String,
     pub(super) tools: Vec<ToolId>,
     pub(super) settings_source: String,
@@ -245,7 +227,7 @@ pub(super) struct StepDraft {
     pub(super) network: String,
     pub(super) network_domains: String,
     pub(super) settings_read_only: String,
-    pub(super) settings_reviewed: String,
+
     pub(super) settings_direct: String,
     pub(super) location: String,
     pub(super) host_approval: String,
@@ -305,7 +287,7 @@ pub(super) struct StepErrors {
     pub(super) action: &'static str,
     pub(super) environment: &'static str,
     pub(super) role: &'static str,
-    pub(super) candidate_access: &'static str,
+    pub(super) directory_access: &'static str,
     pub(super) command: &'static str,
     pub(super) settings: &'static str,
     pub(super) review_policy: &'static str,
@@ -405,7 +387,7 @@ impl StepErrors {
             || !step.action.is_empty()
             || !step.environment.is_empty()
             || !step.role.is_empty()
-            || !step.candidate_access.is_empty()
+            || !step.directory_access.is_empty()
             || !step.command.is_empty()
             || !step.settings.is_empty()
             || !step.review_policy.is_empty()
@@ -474,59 +456,6 @@ impl WorkflowFormState {
         }
     }
 
-    pub(super) fn maintain_candidate_outputs_from(&mut self, previous: &Self) {
-        let mut changed = false;
-        for step in &mut self.steps {
-            let Some(previous_step) = previous
-                .steps
-                .iter()
-                .find(|previous_step| previous_step.key == step.key)
-            else {
-                continue;
-            };
-            if step.action != "agent"
-                || previous_step.candidate_access == CandidateAuthority::Edit.as_str()
-                || step.candidate_access != CandidateAuthority::Edit.as_str()
-                || step.outputs.iter().any(|output| {
-                    OutputKind::parse(&output.kind) == Some(OutputKind::CandidateRevision)
-                })
-            {
-                continue;
-            }
-            let key = next_key(
-                "candidate",
-                &step
-                    .outputs
-                    .iter()
-                    .map(|output| output.key.as_str())
-                    .collect::<Vec<_>>(),
-            );
-            step.outputs.push(OutputDraft {
-                key,
-                kind: OutputKind::CandidateRevision.as_str().to_owned(),
-            });
-            changed = true;
-        }
-        if !changed {
-            return;
-        }
-        let mut latest = "run-initial-candidate".to_owned();
-        for step in &mut self.steps {
-            for input in &mut step.inputs {
-                if ArtefactKind::parse(&input.kind) == Some(ArtefactKind::CandidateRevision)
-                    && input.source != "run-current-candidate"
-                {
-                    input.source = latest.clone();
-                }
-            }
-            if let Some(output) = step.outputs.iter().find(|output| {
-                OutputKind::parse(&output.kind) == Some(OutputKind::CandidateRevision)
-            }) {
-                latest = format!("step-output:{}:{}", step.key, output.key);
-            }
-        }
-    }
-
     pub(super) fn parse(pairs: Vec<(String, String)>) -> Result<(Self, FormIntent), FormError> {
         let mut seen = Vec::new();
         let mut name = String::new();
@@ -577,7 +506,7 @@ impl WorkflowFormState {
 
     pub(super) fn apply(&mut self, intent: FormIntent) -> Result<(), FormError> {
         match intent {
-            FormIntent::Save => Ok(()),
+            FormIntent::Save | FormIntent::PreviewExecution => Ok(()),
 
             FormIntent::AddRole => {
                 if self.roles.len() >= MAXIMUM_ROLES {
@@ -671,10 +600,11 @@ impl WorkflowFormState {
                 if self.steps[step].inputs.len() >= MAXIMUM_INPUTS {
                     return Err(FormError::Excessive);
                 }
-                let source = latest_candidate_source(&self.steps[..step]);
+                let source =
+                    latest_output_source(&self.steps[..step], OutputKind::Plan).unwrap_or_default();
                 self.steps[step].inputs.push(InputDraft {
                     key: String::new(),
-                    kind: ArtefactKind::CandidateRevision.as_str().to_owned(),
+                    kind: ArtefactKind::Plan.as_str().to_owned(),
                     source,
                 });
                 Ok(())
@@ -954,7 +884,6 @@ enum StepPart {
     Network,
     NetworkDomains,
     SettingsReadOnly,
-    SettingsReviewed,
     SettingsDirect,
     Location,
     HostApproval,
@@ -1025,7 +954,7 @@ fn parse_row_field(name: &str) -> Result<Field, FormError> {
                 Some("action") => StepPart::Action,
                 Some("environment") => StepPart::Environment,
                 Some("role") => StepPart::Role,
-                Some("candidate-access") => StepPart::CandidateAccess,
+                Some("directory-access") => StepPart::CandidateAccess,
                 Some("command") => StepPart::Command,
                 Some("review-policy") => StepPart::ReviewPolicy,
                 Some("human-revision-policy") => StepPart::HumanRevisionPolicy,
@@ -1053,7 +982,6 @@ fn parse_row_field(name: &str) -> Result<Field, FormError> {
                 Some("network") => StepPart::Network,
                 Some("network-domains") => StepPart::NetworkDomains,
                 Some("read-only") => StepPart::SettingsReadOnly,
-                Some("reviewed") => StepPart::SettingsReviewed,
                 Some("direct") => StepPart::SettingsDirect,
                 Some("location") => StepPart::Location,
                 Some("settings-host-approval") => StepPart::HostApproval,
@@ -1168,6 +1096,7 @@ fn parse_human_revision_policy(raw: &str) -> Result<bool, FormError> {
 fn parse_intent(raw: &str) -> Result<FormIntent, FormError> {
     match raw {
         "save" => Ok(FormIntent::Save),
+        "preview-execution" => Ok(FormIntent::PreviewExecution),
 
         "add-role" => Ok(FormIntent::AddRole),
         "add-step" => Ok(FormIntent::AddStep),
@@ -1317,7 +1246,7 @@ fn collect_steps(fields: Vec<(usize, StepPart, String)>) -> Result<Vec<StepDraft
             StepPart::Action => step.action = value,
             StepPart::Environment => step.environment = value,
             StepPart::Role => step.role = value,
-            StepPart::CandidateAccess => step.candidate_access = value,
+            StepPart::CandidateAccess => step.directory_access = value,
             StepPart::Command => step.command = value,
             StepPart::ReviewPolicy => {
                 review_policy[index] = Some(parse_review_policy(&value)?);
@@ -1361,7 +1290,6 @@ fn collect_steps(fields: Vec<(usize, StepPart, String)>) -> Result<Vec<StepDraft
             StepPart::Network => step.network = value,
             StepPart::NetworkDomains => step.network_domains = value,
             StepPart::SettingsReadOnly => step.settings_read_only = value,
-            StepPart::SettingsReviewed => step.settings_reviewed = value,
             StepPart::SettingsDirect => step.settings_direct = value,
             StepPart::Location => step.location = value,
             StepPart::HostApproval => step.host_approval = value,
@@ -1402,7 +1330,7 @@ fn collect_steps(fields: Vec<(usize, StepPart, String)>) -> Result<Vec<StepDraft
             } => {
                 ensure_row(&mut step.inputs, input, || InputDraft {
                     key: String::new(),
-                    kind: ArtefactKind::CandidateRevision.as_str().to_owned(),
+                    kind: ArtefactKind::Plan.as_str().to_owned(),
                     source: String::new(),
                 })?;
                 input_seen[index].push(input);
@@ -1507,122 +1435,13 @@ fn is_checked(value: &str) -> bool {
 }
 
 fn ensure_action_defaults(steps: &mut [StepDraft]) {
-    for index in 0..steps.len() {
-        if !steps[index].purpose.is_empty() && steps[index].purpose != "custom" {
-            continue;
+    for step in steps {
+        if step.action == "agent" && step.outputs.is_empty() {
+            step.outputs.push(OutputDraft {
+                key: crate::workflows::definition::ASSISTANT_REPLY.to_owned(),
+                kind: OutputKind::AssistantReply.as_str().to_owned(),
+            });
         }
-        if steps[index].action == "human-gate" {
-            steps[index].environment.clear();
-            steps[index].role.clear();
-            steps[index].candidate_access.clear();
-            steps[index].command.clear();
-            steps[index].tools.clear();
-            steps[index].directories.clear();
-            let candidate_source = latest_candidate_source(&steps[..index]);
-            if !steps[index]
-                .inputs
-                .iter()
-                .any(|input| input.kind == ArtefactKind::CandidateRevision.as_str())
-            {
-                steps[index].inputs.insert(
-                    0,
-                    InputDraft {
-                        key: "candidate".to_owned(),
-                        kind: ArtefactKind::CandidateRevision.as_str().to_owned(),
-                        source: candidate_source,
-                    },
-                );
-            }
-            steps[index].outputs = vec![OutputDraft {
-                key: "decision".to_owned(),
-                kind: OutputKind::HumanDecision.as_str().to_owned(),
-            }];
-            continue;
-        }
-        if steps[index].action != "system-command" {
-            continue;
-        }
-        let Some(command) = SystemCommandId::parse(&steps[index].command) else {
-            continue;
-        };
-        steps[index].role.clear();
-        steps[index].candidate_access.clear();
-        steps[index].tools.clear();
-        steps[index].directories.clear();
-        let contract = command.contract();
-        let candidate_source = latest_candidate_source(&steps[..index]);
-        let existing_inputs = std::mem::take(&mut steps[index].inputs);
-        let mut required_inputs = contract.required_inputs.to_vec();
-        if command == SystemCommandId::CommitCandidate {
-            let review_count = existing_inputs
-                .iter()
-                .filter(|input| {
-                    ArtefactKind::parse(&input.kind) == Some(ArtefactKind::ReviewReport)
-                })
-                .count();
-            let has_decision = existing_inputs
-                .iter()
-                .any(|input| ArtefactKind::parse(&input.kind) == Some(ArtefactKind::HumanDecision));
-            if has_decision && review_count == 0 {
-                required_inputs.retain(|kind| *kind != ArtefactKind::ReviewReport);
-            } else {
-                required_inputs.extend(std::iter::repeat_n(
-                    ArtefactKind::ReviewReport,
-                    review_count.saturating_sub(1),
-                ));
-            }
-            if has_decision {
-                required_inputs.push(ArtefactKind::HumanDecision);
-            }
-        }
-        steps[index].inputs = required_inputs
-            .iter()
-            .enumerate()
-            .map(|(position, kind)| {
-                existing_inputs
-                    .iter()
-                    .filter(|input| ArtefactKind::parse(&input.kind) == Some(*kind))
-                    .nth(
-                        required_inputs[..position]
-                            .iter()
-                            .filter(|prior| **prior == *kind)
-                            .count(),
-                    )
-                    .cloned()
-                    .unwrap_or_else(|| InputDraft {
-                        key: match kind {
-                            ArtefactKind::CandidateRevision => "candidate",
-                            ArtefactKind::ReviewReport => "review",
-                            ArtefactKind::Plan => "plan",
-                            ArtefactKind::TestReport => "test",
-                            ArtefactKind::HumanDecision => "decision",
-                            ArtefactKind::PlanDecision => "plan-decision",
-                        }
-                        .to_owned(),
-                        kind: kind.as_str().to_owned(),
-                        source: if position == 0 && *kind == ArtefactKind::CandidateRevision {
-                            candidate_source.clone()
-                        } else {
-                            String::new()
-                        },
-                    })
-            })
-            .collect();
-        let existing_outputs = std::mem::take(&mut steps[index].outputs);
-        steps[index].outputs = contract
-            .required_outputs
-            .iter()
-            .map(|kind| {
-                existing_outputs
-                    .iter()
-                    .find(|output| OutputKind::parse(&output.kind) == Some(*kind))
-                    .cloned()
-                    .unwrap_or_else(|| OutputDraft {
-                        key: "committed-candidate".to_owned(),
-                        kind: kind.as_str().to_owned(),
-                    })
-            })
-            .collect();
     }
 }
 
@@ -1671,7 +1490,7 @@ fn normalise_phase_contracts(steps: &mut [StepDraft]) {
 fn inferred_purpose(step: &StepDefinition) -> PhasePurpose {
     match &step.action {
         StepAction::Agent(action) => {
-            if action.candidate_authority == CandidateAuthority::Edit {
+            if action.directory_access == StepAccess::Write {
                 if action
                     .required_outputs
                     .iter()
@@ -1699,44 +1518,17 @@ fn inferred_purpose(step: &StepDefinition) -> PhasePurpose {
                 PhasePurpose::ReadOnlyReview
             }
         }
-        StepAction::SystemCommand(action) => {
-            if action.command == SystemCommandId::CommitCandidate {
-                PhasePurpose::Commit
-            } else {
-                PhasePurpose::Custom
-            }
-        }
-        StepAction::HumanGate(action) => {
-            if action.is_plan_checkpoint() {
-                PhasePurpose::PlanCheckpoint
-            } else {
-                PhasePurpose::CodeApproval
-            }
-        }
+        StepAction::SystemCommand(_) => PhasePurpose::Custom,
+        StepAction::HumanGate(_) => PhasePurpose::PlanCheckpoint,
     }
 }
 
 fn phase_purpose(step: &StepDraft) -> PhasePurpose {
     PhasePurpose::parse(&step.purpose).unwrap_or_else(|| {
         if step.action == "human-gate" {
-            if step
-                .outputs
-                .iter()
-                .any(|output| output.kind == OutputKind::PlanDecision.as_str())
-            {
-                PhasePurpose::PlanCheckpoint
-            } else {
-                PhasePurpose::CodeApproval
-            }
-        } else if step.action == "system-command"
-            && step.command == SystemCommandId::CommitCandidate.as_str()
-        {
-            PhasePurpose::Commit
+            PhasePurpose::PlanCheckpoint
         } else if step.action == "agent" {
-            let has_candidate = step
-                .outputs
-                .iter()
-                .any(|output| output.kind == OutputKind::CandidateRevision.as_str());
+            let writes = step.directory_access == StepAccess::Write.as_str();
             let has_plan = step
                 .outputs
                 .iter()
@@ -1745,7 +1537,7 @@ fn phase_purpose(step: &StepDraft) -> PhasePurpose {
                 .outputs
                 .iter()
                 .any(|output| output.kind == OutputKind::ReviewReport.as_str());
-            match (has_candidate, has_plan, has_review) {
+            match (writes, has_plan, has_review) {
                 (false, true, _) => PhasePurpose::Planning,
                 (true, _, true) => PhasePurpose::ReviewAndFix,
                 (true, _, _) => PhasePurpose::Implementation,
@@ -1759,122 +1551,60 @@ fn phase_purpose(step: &StepDraft) -> PhasePurpose {
 
 fn apply_phase_contract(steps: &mut [StepDraft], index: usize, purpose: PhasePurpose) {
     let earlier = steps[..index].to_vec();
-    let mut current = steps[index].clone();
-    let mut prior = current.clone();
-    prior.purpose.clear();
-    if phase_purpose(&prior) != purpose {
-        current.tools = purpose.default_tools();
-        current.outputs.clear();
-        current.review_policy = None;
-        current.human_revision = None;
-    }
+    let current = &mut steps[index];
     current.purpose = purpose.as_str().to_owned();
     match purpose {
-        PhasePurpose::Planning | PhasePurpose::PlanReview | PhasePurpose::ReadOnlyReview => {
+        PhasePurpose::Planning
+        | PhasePurpose::PlanReview
+        | PhasePurpose::ReadOnlyReview
+        | PhasePurpose::Implementation
+        | PhasePurpose::ReviewAndFix => {
             current.action = "agent".to_owned();
-            current.candidate_access = CandidateAuthority::ReadOnly.as_str().to_owned();
-            current.role = if current.role.is_empty() {
-                next_key("role", &[])
+            current.directory_access = if matches!(
+                purpose,
+                PhasePurpose::Implementation | PhasePurpose::ReviewAndFix
+            ) {
+                StepAccess::Write
             } else {
-                current.role
+                StepAccess::Read
+            }
+            .as_str()
+            .to_owned();
+            if current.role.is_empty() {
+                current.role = next_key("role", &[]);
+            }
+            let kinds = match purpose {
+                PhasePurpose::Planning | PhasePurpose::PlanReview => {
+                    vec![OutputKind::AssistantReply, OutputKind::Plan]
+                }
+                PhasePurpose::ReadOnlyReview | PhasePurpose::ReviewAndFix => {
+                    vec![OutputKind::AssistantReply, OutputKind::ReviewReport]
+                }
+                _ => vec![OutputKind::AssistantReply],
             };
+            current
+                .outputs
+                .retain(|output| output.kind != OutputKind::PlanDecision.as_str());
+            current.outputs = preserve_outputs(&current.outputs, &kinds, &[]);
         }
-        PhasePurpose::Implementation | PhasePurpose::ReviewAndFix => {
-            current.action = "agent".to_owned();
-            current.candidate_access = CandidateAuthority::Edit.as_str().to_owned();
-            current.role = if current.role.is_empty() {
-                next_key("role", &[])
-            } else {
-                current.role
-            };
-        }
-        PhasePurpose::CodeApproval | PhasePurpose::PlanCheckpoint => {
+        PhasePurpose::PlanCheckpoint => {
             current.action = "human-gate".to_owned();
             current.environment.clear();
             current.role.clear();
-            current.candidate_access.clear();
-            current.command.clear();
             current.tools.clear();
             current.directories.clear();
+            current
+                .outputs
+                .retain(|output| output.kind == OutputKind::PlanDecision.as_str());
+            current.outputs = preserve_outputs(
+                &current.outputs,
+                &[OutputKind::PlanDecision],
+                &["plan-decision"],
+            );
         }
-        PhasePurpose::Commit => {
-            current.action = "system-command".to_owned();
-            current.command = SystemCommandId::CommitCandidate.as_str().to_owned();
-            current.role.clear();
-            current.candidate_access.clear();
-            current.tools.clear();
-            current.directories.clear();
-        }
-        PhasePurpose::Custom => {}
+        _ => {}
     }
-    if matches!(
-        purpose,
-        PhasePurpose::CodeApproval | PhasePurpose::PlanCheckpoint
-    ) {
-        let kind = if purpose == PhasePurpose::PlanCheckpoint {
-            OutputKind::PlanDecision
-        } else {
-            OutputKind::HumanDecision
-        };
-        current.outputs = preserve_outputs(
-            &current.outputs,
-            &[kind],
-            &[if purpose == PhasePurpose::PlanCheckpoint {
-                "plan-decision"
-            } else {
-                "decision"
-            }],
-        );
-    } else if matches!(purpose, PhasePurpose::Commit) {
-        current.outputs = preserve_outputs(
-            &current.outputs,
-            &[OutputKind::CandidateRevision],
-            &["committed-candidate"],
-        );
-    } else {
-        let kinds = match purpose {
-            PhasePurpose::Planning | PhasePurpose::PlanReview => {
-                vec![OutputKind::AssistantReply, OutputKind::Plan]
-            }
-            PhasePurpose::Implementation => {
-                vec![OutputKind::AssistantReply, OutputKind::CandidateRevision]
-            }
-            PhasePurpose::ReadOnlyReview => {
-                vec![OutputKind::AssistantReply, OutputKind::ReviewReport]
-            }
-            PhasePurpose::ReviewAndFix => vec![
-                OutputKind::AssistantReply,
-                OutputKind::CandidateRevision,
-                OutputKind::ReviewReport,
-            ],
-            _ => Vec::new(),
-        };
-        current.outputs = preserve_outputs(&current.outputs, &kinds, &[]);
-    }
-    let mut specs = contract_inputs(purpose, &earlier);
-    if purpose == PhasePurpose::PlanCheckpoint {
-        current
-            .inputs
-            .retain(|input| input.kind == ArtefactKind::Plan.as_str());
-    }
-    if purpose == PhasePurpose::Commit {
-        for input in &current.inputs {
-            let Some(kind) = ArtefactKind::parse(&input.kind) else {
-                continue;
-            };
-            if matches!(
-                kind,
-                ArtefactKind::ReviewReport | ArtefactKind::HumanDecision
-            ) && !specs
-                .iter()
-                .any(|item| item.0 == kind && item.1 == input.source)
-            {
-                specs.push((kind, input.source.clone()));
-            }
-        }
-    }
-    current.inputs = preserve_inputs(&current.inputs, &specs);
-    steps[index] = current;
+    current.inputs = preserve_inputs(&current.inputs, &contract_inputs(purpose, &earlier));
 }
 
 fn preserve_outputs(
@@ -1911,83 +1641,30 @@ fn default_output_key(kind: OutputKind) -> &'static str {
     match kind {
         OutputKind::AssistantReply => "assistant-reply",
         OutputKind::Plan => "plan",
-        OutputKind::CandidateRevision => "candidate",
         OutputKind::ReviewReport => "review",
         OutputKind::TestReport => "test",
-        OutputKind::HumanDecision => "decision",
         OutputKind::PlanDecision => "plan-decision",
     }
 }
 
 fn contract_inputs(purpose: PhasePurpose, earlier: &[StepDraft]) -> Vec<(ArtefactKind, String)> {
     let mut inputs = Vec::new();
-    let candidate = if earlier.iter().any(|step| {
-        step.outputs
-            .iter()
-            .any(|output| output.kind == OutputKind::CandidateRevision.as_str())
-    }) {
-        "run-current-candidate".to_owned()
-    } else {
-        "run-initial-candidate".to_owned()
-    };
-    match purpose {
-        PhasePurpose::Planning
-        | PhasePurpose::PlanReview
-        | PhasePurpose::Implementation
-        | PhasePurpose::ReadOnlyReview
-        | PhasePurpose::ReviewAndFix
-        | PhasePurpose::CodeApproval => {
-            inputs.push((ArtefactKind::CandidateRevision, candidate));
-        }
-        PhasePurpose::PlanCheckpoint => {
-            let source = latest_output_source(earlier, OutputKind::Plan);
-            if let Some(source) = source {
-                inputs.push((ArtefactKind::Plan, source));
-            }
-        }
-        PhasePurpose::Commit => {
-            inputs.push((ArtefactKind::CandidateRevision, candidate));
-        }
-        PhasePurpose::Custom => return inputs,
-    }
-    if matches!(purpose, PhasePurpose::PlanReview) {
-        let has_plan = latest_output_source(earlier, OutputKind::Plan).is_some();
-        if has_plan {
-            inputs.push((ArtefactKind::Plan, "run-current-plan".to_owned()));
-        }
-    }
-    if matches!(purpose, PhasePurpose::Implementation)
-        && let Some(source) = latest_output_source(earlier, OutputKind::Plan)
+    if matches!(
+        purpose,
+        PhasePurpose::PlanReview
+            | PhasePurpose::PlanCheckpoint
+            | PhasePurpose::Implementation
+            | PhasePurpose::ReviewAndFix
+    ) && latest_output_source(earlier, OutputKind::Plan).is_some()
     {
-        inputs.push((ArtefactKind::Plan, source));
-        if let Some(decision) = latest_output_source(earlier, OutputKind::PlanDecision) {
-            inputs.push((ArtefactKind::PlanDecision, decision));
-        }
+        inputs.push((ArtefactKind::Plan, "run-current-plan".to_owned()));
     }
     if matches!(
         purpose,
-        PhasePurpose::ReviewAndFix | PhasePurpose::CodeApproval
-    ) && let Some(source) = latest_output_source(earlier, OutputKind::ReviewReport)
+        PhasePurpose::Implementation | PhasePurpose::ReviewAndFix
+    ) && let Some(source) = latest_output_source(earlier, OutputKind::PlanDecision)
     {
-        inputs.push((ArtefactKind::ReviewReport, source));
-    }
-    if purpose == PhasePurpose::Commit {
-        // Assurance before the last candidate producer cannot approve its replacement.
-        let start = earlier
-            .iter()
-            .rposition(|step| {
-                step.outputs
-                    .iter()
-                    .any(|output| output.kind == OutputKind::CandidateRevision.as_str())
-            })
-            .unwrap_or(0);
-        let earlier = &earlier[start..];
-        for source in all_output_sources(earlier, OutputKind::ReviewReport) {
-            inputs.push((ArtefactKind::ReviewReport, source));
-        }
-        if let Some(source) = latest_output_source(earlier, OutputKind::HumanDecision) {
-            inputs.push((ArtefactKind::HumanDecision, source));
-        }
+        inputs.push((ArtefactKind::PlanDecision, source));
     }
     inputs
 }
@@ -1999,18 +1676,6 @@ fn latest_output_source(steps: &[StepDraft], kind: OutputKind) -> Option<String>
                 .then(|| format!("step-output:{}:{}", step.key, output.key))
         })
     })
-}
-
-fn all_output_sources(steps: &[StepDraft], kind: OutputKind) -> Vec<String> {
-    steps
-        .iter()
-        .flat_map(|step| {
-            step.outputs
-                .iter()
-                .filter(|output| OutputKind::parse(&output.kind) == Some(kind))
-                .map(|output| format!("step-output:{}:{}", step.key, output.key))
-        })
-        .collect()
 }
 
 fn preserve_inputs(existing: &[InputDraft], specs: &[(ArtefactKind, String)]) -> Vec<InputDraft> {
@@ -2046,10 +1711,8 @@ fn preserve_inputs(existing: &[InputDraft], specs: &[(ArtefactKind, String)]) ->
 fn default_input_key(kind: ArtefactKind, occurrence: usize) -> String {
     let base = match kind {
         ArtefactKind::Plan => "plan",
-        ArtefactKind::CandidateRevision => "candidate",
         ArtefactKind::ReviewReport => "review",
         ArtefactKind::TestReport => "test",
-        ArtefactKind::HumanDecision => "decision",
         ArtefactKind::PlanDecision => "plan-decision",
     };
     if occurrence == 0 {
@@ -2060,9 +1723,6 @@ fn default_input_key(kind: ArtefactKind, occurrence: usize) -> String {
 }
 
 pub(super) fn source_is_valid(raw: &str, kind: ArtefactKind, earlier: &[StepDraft]) -> bool {
-    if raw == "run-current-candidate" {
-        return kind == ArtefactKind::CandidateRevision;
-    }
     if raw == "run-current-plan" {
         return kind == ArtefactKind::Plan
             && earlier.iter().any(|step| {
@@ -2071,24 +1731,12 @@ pub(super) fn source_is_valid(raw: &str, kind: ArtefactKind, earlier: &[StepDraf
                     .any(|output| output.kind == OutputKind::Plan.as_str())
             });
     }
-    if raw == "run-initial-candidate" {
-        return kind == ArtefactKind::CandidateRevision
-            && !earlier.iter().any(|step| {
-                step.outputs
-                    .iter()
-                    .any(|output| output.kind == OutputKind::CandidateRevision.as_str())
-            });
-    }
     let Some(rest) = raw.strip_prefix("step-output:") else {
         return false;
     };
     let Some((step, output)) = rest.split_once(':') else {
         return false;
     };
-    if kind == ArtefactKind::CandidateRevision {
-        return latest_output_source(earlier, OutputKind::CandidateRevision).as_deref()
-            == Some(raw);
-    }
     earlier.iter().any(|candidate| {
         candidate.key == step
             && candidate.outputs.iter().any(|item| {
@@ -2100,55 +1748,28 @@ pub(super) fn source_is_valid(raw: &str, kind: ArtefactKind, earlier: &[StepDraf
 }
 
 pub(super) fn input_removal_breaks_contract(step: &StepDraft, input: usize) -> bool {
-    let Some(item) = step.inputs.get(input) else {
-        return false;
-    };
-    let Some(kind) = ArtefactKind::parse(&item.kind) else {
-        return false;
-    };
-    if kind == ArtefactKind::CandidateRevision {
-        return phase_purpose(step) != PhasePurpose::Custom;
-    }
-    if phase_purpose(step) != PhasePurpose::Commit {
-        return false;
-    }
-    let mut remaining = step
-        .inputs
-        .iter()
-        .enumerate()
-        .filter(|(index, _)| *index != input)
-        .filter_map(|(_, item)| ArtefactKind::parse(&item.kind));
-    let has_review = remaining
-        .clone()
-        .any(|kind| kind == ArtefactKind::ReviewReport);
-    let has_decision = remaining.any(|kind| kind == ArtefactKind::HumanDecision);
-    !has_review && !has_decision
+    step.action == "human-gate"
+        && step
+            .inputs
+            .get(input)
+            .is_some_and(|input| input.kind == ArtefactKind::Plan.as_str())
 }
 
 pub(super) fn output_is_required(step: &StepDraft, output: usize) -> bool {
-    let Some(item) = step.outputs.get(output) else {
-        return false;
-    };
-    let purpose = phase_purpose(step);
-    let required = match purpose {
-        PhasePurpose::Planning | PhasePurpose::PlanReview => {
-            vec![OutputKind::AssistantReply, OutputKind::Plan]
-        }
-        PhasePurpose::Implementation => {
-            vec![OutputKind::AssistantReply, OutputKind::CandidateRevision]
-        }
-        PhasePurpose::ReadOnlyReview => vec![OutputKind::AssistantReply, OutputKind::ReviewReport],
-        PhasePurpose::ReviewAndFix => vec![
-            OutputKind::AssistantReply,
-            OutputKind::CandidateRevision,
-            OutputKind::ReviewReport,
-        ],
-        PhasePurpose::CodeApproval => vec![OutputKind::HumanDecision],
-        PhasePurpose::PlanCheckpoint => vec![OutputKind::PlanDecision],
-        PhasePurpose::Commit => vec![OutputKind::CandidateRevision],
-        PhasePurpose::Custom => Vec::new(),
-    };
-    OutputKind::parse(&item.kind).is_some_and(|kind| required.contains(&kind))
+    step.outputs.get(output).is_some_and(|output| {
+        let kinds = match phase_purpose(step) {
+            PhasePurpose::Planning | PhasePurpose::PlanReview => {
+                vec![OutputKind::AssistantReply, OutputKind::Plan]
+            }
+            PhasePurpose::Implementation => vec![OutputKind::AssistantReply],
+            PhasePurpose::ReadOnlyReview | PhasePurpose::ReviewAndFix => {
+                vec![OutputKind::AssistantReply, OutputKind::ReviewReport]
+            }
+            PhasePurpose::PlanCheckpoint => vec![OutputKind::PlanDecision],
+            _ => vec![],
+        };
+        OutputKind::parse(&output.kind).is_some_and(|kind| kinds.contains(&kind))
+    })
 }
 
 fn output_is_referenced(steps: &[StepDraft], step: usize, output: usize) -> bool {
@@ -2208,7 +1829,7 @@ fn empty_step() -> StepDraft {
         action: "agent".to_owned(),
         environment: String::new(),
         role: String::new(),
-        candidate_access: CandidateAuthority::Edit.as_str().to_owned(),
+        directory_access: StepAccess::Write.as_str().to_owned(),
         command: SystemCommandId::RepositoryStatus.as_str().to_owned(),
         tools: Vec::new(),
         settings_direct: String::new(),
@@ -2222,7 +1843,7 @@ fn empty_step() -> StepDraft {
         network: String::new(),
         network_domains: String::new(),
         settings_read_only: String::new(),
-        settings_reviewed: String::new(),
+
         settings_preset: String::new(),
         settings_grants: Vec::new(),
         settings_inherit: Vec::new(),
@@ -2246,7 +1867,7 @@ fn blank_agent_step(key: &str, role: &str) -> StepDraft {
         action: "agent".to_owned(),
         environment: String::new(),
         role: role.to_owned(),
-        candidate_access: CandidateAuthority::Edit.as_str().to_owned(),
+        directory_access: StepAccess::Write.as_str().to_owned(),
         command: SystemCommandId::RepositoryStatus.as_str().to_owned(),
         tools: ToolId::ALL.to_vec(),
         settings_direct: String::new(),
@@ -2260,47 +1881,29 @@ fn blank_agent_step(key: &str, role: &str) -> StepDraft {
         network: String::new(),
         network_domains: String::new(),
         settings_read_only: String::new(),
-        settings_reviewed: String::new(),
+
         settings_preset: String::new(),
         settings_grants: Vec::new(),
         settings_inherit: Vec::new(),
         directories: Vec::new(),
-        inputs: vec![input_from_required(&initial_candidate_input())],
+        inputs: Vec::new(),
         review_policy: None,
         human_revision: None,
-        outputs: vec![
-            OutputDraft {
-                key: "assistant-reply".to_owned(),
-                kind: OutputKind::AssistantReply.as_str().to_owned(),
-            },
-            output_from_required(&candidate_revision_output()),
-        ],
+        outputs: vec![OutputDraft {
+            key: "assistant-reply".to_owned(),
+            kind: OutputKind::AssistantReply.as_str().to_owned(),
+        }],
     })
 }
 
 fn phase_draft(key: &str, purpose: PhasePurpose, role: &str) -> StepDraft {
     let mut draft = blank_agent_step(key, if role.is_empty() { "role-1" } else { role });
-    draft.inputs[0].source = "run-current-candidate".to_owned();
     draft.name = purpose.default_name().to_owned();
     draft.purpose = purpose.as_str().to_owned();
     draft.tools = purpose.default_tools();
     draft.expertise = purpose.default_expertise().to_owned();
     draft.instructions = purpose.default_instructions().to_owned();
     draft
-}
-
-fn latest_candidate_source(earlier: &[StepDraft]) -> String {
-    for step in earlier.iter().rev() {
-        if let Some(output) = step
-            .outputs
-            .iter()
-            .rev()
-            .find(|output| output.kind == OutputKind::CandidateRevision.as_str())
-        {
-            return format!("step-output:{}:{}", step.key, output.key);
-        }
-    }
-    "run-initial-candidate".to_owned()
 }
 
 fn input_from_required(input: &RequiredInput) -> InputDraft {
@@ -2320,8 +1923,6 @@ fn output_from_required(output: &RequiredOutput) -> OutputDraft {
 
 fn source_token(source: &ArtefactSource) -> String {
     match source {
-        ArtefactSource::RunInitialCandidate => "run-initial-candidate".to_owned(),
-        ArtefactSource::RunCurrentCandidate => "run-current-candidate".to_owned(),
         ArtefactSource::RunCurrentPlan => "run-current-plan".to_owned(),
 
         ArtefactSource::StepOutput { step, output } => {
@@ -2333,12 +1934,6 @@ fn source_token(source: &ArtefactSource) -> String {
 fn parse_source(
     raw: &str,
 ) -> Result<ArtefactSource, crate::workflows::definition::DefinitionError> {
-    if raw == "run-initial-candidate" {
-        return Ok(ArtefactSource::RunInitialCandidate);
-    }
-    if raw == "run-current-candidate" {
-        return Ok(ArtefactSource::RunCurrentCandidate);
-    }
     if raw == "run-current-plan" {
         return Ok(ArtefactSource::RunCurrentPlan);
     }
@@ -2389,7 +1984,7 @@ fn step_from_definition(step: &StepDefinition) -> StepDraft {
                     }
                 },
                 role: action.role.as_str().to_owned(),
-                candidate_access: action.candidate_authority.as_str().to_owned(),
+                directory_access: action.directory_access.as_str().to_owned(),
                 command: SystemCommandId::RepositoryStatus.as_str().to_owned(),
                 tools: match &action.settings {
                     ModelStepSettings::Override(settings) => {
@@ -2408,12 +2003,9 @@ fn step_from_definition(step: &StepDefinition) -> StepDraft {
                 settings_instructions: settings_instructions_value(&action.settings),
                 network: settings_network(&action.settings),
                 network_domains: settings_network_domains(&action.settings),
-                settings_read_only: settings_paths(&action.settings, DirectoryAccess::ReadOnly),
-                settings_reviewed: settings_paths(
-                    &action.settings,
-                    DirectoryAccess::ReviewBeforeApply,
-                ),
-                settings_direct: settings_paths(&action.settings, DirectoryAccess::DirectWrite),
+                settings_read_only: settings_paths(&action.settings, DirectoryAccess::Read),
+
+                settings_direct: settings_paths(&action.settings, DirectoryAccess::Write),
                 location: settings_location(&action.settings),
                 host_approval: settings_host_approval(&action.settings),
                 settings_preset: String::new(),
@@ -2439,7 +2031,7 @@ fn step_from_definition(step: &StepDefinition) -> StepDraft {
             action: "system-command".to_owned(),
             environment: step_environment_token(action.environment),
             role: String::new(),
-            candidate_access: String::new(),
+            directory_access: String::new(),
             command: action.command.as_str().to_owned(),
             settings_direct: String::new(),
             location: String::new(),
@@ -2453,7 +2045,7 @@ fn step_from_definition(step: &StepDefinition) -> StepDraft {
             network: "none".to_owned(),
             network_domains: String::new(),
             settings_read_only: String::new(),
-            settings_reviewed: String::new(),
+
             settings_preset: String::new(),
             settings_grants: Vec::new(),
             settings_inherit: Vec::new(),
@@ -2481,7 +2073,7 @@ fn step_from_definition(step: &StepDefinition) -> StepDraft {
                 host_approval: String::new(),
                 environment: String::new(),
                 role: String::new(),
-                candidate_access: String::new(),
+                directory_access: String::new(),
                 command: String::new(),
                 tools: Vec::new(),
                 settings_source: "defaults".to_owned(),
@@ -2492,7 +2084,7 @@ fn step_from_definition(step: &StepDefinition) -> StepDraft {
                 network: "none".to_owned(),
                 network_domains: String::new(),
                 settings_read_only: String::new(),
-                settings_reviewed: String::new(),
+
                 settings_preset: String::new(),
                 settings_grants: Vec::new(),
                 settings_inherit: Vec::new(),
@@ -2715,21 +2307,14 @@ pub(super) fn fill_step_from_preset(step: &mut StepDraft, preset: &crate::preset
     step.settings_read_only = settings
         .directories
         .iter()
-        .filter(|grant| grant.access == DirectoryAccess::ReadOnly)
-        .map(|grant| grant.host_path.display().to_string())
-        .collect::<Vec<_>>()
-        .join("\n");
-    step.settings_reviewed = settings
-        .directories
-        .iter()
-        .filter(|grant| grant.access == DirectoryAccess::ReviewBeforeApply)
+        .filter(|grant| grant.access == DirectoryAccess::Read)
         .map(|grant| grant.host_path.display().to_string())
         .collect::<Vec<_>>()
         .join("\n");
     step.settings_direct = settings
         .directories
         .iter()
-        .filter(|grant| grant.access == DirectoryAccess::DirectWrite)
+        .filter(|grant| grant.access == DirectoryAccess::Write)
         .map(|grant| grant.host_path.display().to_string())
         .collect::<Vec<_>>()
         .join("\n");
@@ -2810,9 +2395,8 @@ fn parse_override_settings(step: &StepDraft, errors: &mut StepErrors) -> Option<
     let mut reserved = step.settings_grants.clone();
     let mut directories = Vec::new();
     for (text, access) in [
-        (&step.settings_read_only, DirectoryAccess::ReadOnly),
-        (&step.settings_reviewed, DirectoryAccess::ReviewBeforeApply),
-        (&step.settings_direct, DirectoryAccess::DirectWrite),
+        (&step.settings_read_only, DirectoryAccess::Read),
+        (&step.settings_direct, DirectoryAccess::Write),
     ]
     .into_iter()
     .filter(|_| !inherits("directories"))
@@ -2858,9 +2442,11 @@ fn parse_override_settings(step: &StepDraft, errors: &mut StepErrors) -> Option<
         )
     };
     if location == Some(crate::execution::ToolLocation::Host)
-        && (!step.settings_reviewed.trim().is_empty() || !step.settings_direct.trim().is_empty())
+        && directories
+            .iter()
+            .any(|grant| grant.access == DirectoryAccess::Read)
     {
-        errors.settings = "Host steps use work locations, not sandbox write strategies.";
+        errors.settings = "Read access requires a sandbox. Host tools need Write access.";
         return None;
     }
     let host_approval = if inherits("host_approval") {
@@ -2873,7 +2459,7 @@ fn parse_override_settings(step: &StepDraft, errors: &mut StepErrors) -> Option<
                 step.host_approval.trim()
             })
             .ok_or_else(|| {
-                errors.settings = "Choose Ask each time or Run without approval.";
+                errors.settings = "Choose Ask each time or Automatic (YOLO).";
             })
             .ok()?,
         )
@@ -2917,10 +2503,10 @@ fn build_agent_action(step: &StepDraft, errors: &mut StepErrors) -> Option<StepA
             return None;
         }
     };
-    let candidate_authority = match CandidateAuthority::parse(&step.candidate_access) {
+    let directory_access = match StepAccess::parse(&step.directory_access) {
         Some(authority) => authority,
         None => {
-            errors.candidate_access = "Choose candidate access.";
+            errors.directory_access = "Choose Read or Write access.";
             return None;
         }
     };
@@ -2957,25 +2543,10 @@ fn build_agent_action(step: &StepDraft, errors: &mut StepErrors) -> Option<StepA
         };
         outputs.push(RequiredOutput { key, kind });
     }
-    let candidate_outputs = outputs
-        .iter()
-        .filter(|output| output.kind == OutputKind::CandidateRevision)
-        .count();
-    match candidate_authority {
-        CandidateAuthority::ReadOnly if candidate_outputs != 0 => {
-            errors.candidate_access = "A read-only step cannot produce a candidate revision.";
-            return None;
-        }
-        CandidateAuthority::Edit if candidate_outputs != 1 => {
-            errors.candidate_access = "An edit step needs one candidate revision output.";
-            return None;
-        }
-        _ => {}
-    }
     Some(StepAction::Agent(AgentStep {
         environment: parse_step_environment(&step.environment, errors)?,
         role,
-        candidate_authority,
+        directory_access,
         authority,
         required_outputs: outputs,
         settings: step_settings(step, errors)?,
@@ -2996,10 +2567,7 @@ fn build_gate_action(step: &StepDraft, errors: &mut StepErrors) -> Option<StepAc
         }
     };
     let kind = OutputKind::parse(&output.kind);
-    if !matches!(
-        kind,
-        Some(OutputKind::HumanDecision | OutputKind::PlanDecision)
-    ) {
+    if !matches!(kind, Some(OutputKind::PlanDecision)) {
         errors.outputs[0].kind = crate::workflows::definition::DefinitionError::HumanGate.message();
         return None;
     }
@@ -3140,39 +2708,6 @@ fn relate_definition_error(
             }
         }
 
-        DefinitionError::CandidateInput | DefinitionError::AssuranceInput => {
-            for (index, step) in state.steps.iter().enumerate() {
-                let candidates = step
-                    .inputs
-                    .iter()
-                    .filter(|input| input.kind == "candidate-revision")
-                    .count();
-                for (input_index, input) in step.inputs.iter().enumerate() {
-                    if input.kind == "candidate-revision"
-                        && (candidates != 1
-                            || !source_is_valid(
-                                &input.source,
-                                ArtefactKind::CandidateRevision,
-                                &state.steps[..index],
-                            ))
-                    {
-                        errors.steps[index].inputs[input_index].source = error.message();
-                    }
-                }
-            }
-        }
-        DefinitionError::CandidateOutput => {
-            for step in &mut errors.steps {
-                if step.candidate_access.is_empty() {
-                    step.candidate_access = error.message();
-                }
-                for output in &mut step.outputs {
-                    if output.kind.is_empty() || output.kind == "candidate-revision" {
-                        output.kind = error.message();
-                    }
-                }
-            }
-        }
         DefinitionError::PlanDecisionInput => {
             for (index, step) in state.steps.iter().enumerate() {
                 for (input_index, input) in step.inputs.iter().enumerate() {
@@ -3236,30 +2771,8 @@ fn relate_definition_error(
 }
 
 fn mark_command_input_errors(errors: &mut StepErrors, step: &StepDraft, required: &[ArtefactKind]) {
-    let missing_candidate = !required.contains(&ArtefactKind::CandidateRevision)
-        || !step
-            .inputs
-            .iter()
-            .any(|input| input.kind == ArtefactKind::CandidateRevision.as_str());
-    if missing_candidate && let Some(error) = errors.inputs.first_mut() {
-        error.kind = "Add one candidate input.";
-    }
-    if required.contains(&ArtefactKind::ReviewReport)
-        && !step
-            .inputs
-            .iter()
-            .any(|input| input.kind == ArtefactKind::ReviewReport.as_str())
-    {
-        if let Some(error) = errors.inputs.get_mut(1) {
-            error.kind = "Add one review report input.";
-        } else if let Some(error) = errors.inputs.first_mut() {
-            error.kind = "Add one review report input.";
-        }
-    }
     for (index, input) in step.inputs.iter().enumerate() {
-        if ArtefactKind::parse(&input.kind)
-            .is_some_and(|kind| !required.contains(&kind) && kind != ArtefactKind::HumanDecision)
-        {
+        if ArtefactKind::parse(&input.kind).is_some_and(|kind| !required.contains(&kind)) {
             errors.inputs[index].kind =
                 crate::workflows::definition::DefinitionError::InputKind.message();
         }
@@ -3327,36 +2840,27 @@ fn review_targets_are_earlier(steps: &[StepDraft]) -> bool {
                 .iter()
                 .any(|candidate| candidate.key == policy.revision_target)
         });
-        let no_commit_in_route = step
-            .review_policy
-            .as_ref()
-            .map(|policy| policy.revision_target.as_str())
-            .into_iter()
-            .chain(
-                step.human_revision
-                    .as_ref()
-                    .map(|policy| policy.revision_target.as_str()),
-            )
-            .all(|target| {
-                steps[..index]
-                    .iter()
-                    .position(|candidate| candidate.key == target)
-                    .is_some_and(|start| {
-                        !steps[start..index].iter().any(|candidate| {
-                            candidate.action == "system-command"
-                                && candidate.command == SystemCommandId::CommitCandidate.as_str()
-                        })
-                    })
-            });
-        review_target_ok && human_target_ok && no_commit_in_route
+        review_target_ok && human_target_ok
     }) && phase_connections_are_valid(steps)
 }
 
 fn phase_connections_are_valid(steps: &[StepDraft]) -> bool {
     steps.iter().enumerate().all(|(index, step)| {
         step.inputs.iter().all(|input| {
-            ArtefactKind::parse(&input.kind)
-                .is_some_and(|kind| source_is_valid(&input.source, kind, &steps[..index]))
+            ArtefactKind::parse(&input.kind).is_some_and(|kind| {
+                source_is_valid(&input.source, kind, &steps[..index])
+                    || (kind == ArtefactKind::ReviewReport
+                        && steps.iter().any(|source| {
+                            source.review_policy.as_ref().is_some_and(|policy| {
+                                policy.revision_target == step.key
+                                    && input.source
+                                        == format!(
+                                            "step-output:{}:{}",
+                                            source.key, policy.report_output
+                                        )
+                            }) && source_is_valid(&input.source, kind, std::slice::from_ref(source))
+                        }))
+            })
         })
     })
 }

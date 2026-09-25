@@ -1,18 +1,16 @@
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use crate::agents::{AccessMode, DirectoryPolicy, EffectiveAuthority, LeaseGuard, PolicyGrant};
+use crate::agents::{AccessMode, DirectoryPolicy, EffectiveAuthority, LeaseGuard};
 use crate::conversations::ConversationId;
 
 use crate::execution::{AgentOutcome, AgentRunSpec};
 use crate::providers::{ChatTurn, ProviderConnection};
-use crate::sandbox::{CommandEvent, GUEST_PROJECT, GuestExec, GuestSandbox};
+use crate::sandbox::{GUEST_PROJECT, GuestExec, GuestSandbox};
 use crate::sessions::{Job, JobStatus, SessionId};
 use crate::state::AppState;
 
-use super::definition::{
-    AgentAuthority, AgentStep, CandidateAuthority, StepAction, StepDefinition, SystemCommandId,
-};
+use super::definition::{AgentStep, StepAction, StepDefinition, SystemCommandId};
 use super::execution::ExecutionGuard;
 use super::id::{AttemptId, RunId};
 use super::run::{FailureCategory, now_ms};
@@ -26,9 +24,6 @@ const COMMAND_DEADLINE: Duration = if cfg!(test) {
 } else {
     Duration::from_secs(10)
 };
-mod commits;
-
-const COMMAND_OUTPUT_LIMIT: usize = 64 * 1024;
 
 pub(crate) struct WorkflowContinuationRegistry {
     inner: std::sync::Mutex<std::collections::BTreeMap<RunId, WorkflowJob>>,
@@ -42,32 +37,6 @@ impl WorkflowContinuationRegistry {
             inner: std::sync::Mutex::new(std::collections::BTreeMap::new()),
             recovery_protection: std::sync::Mutex::new(Vec::new()),
         }
-    }
-
-    fn protect_apply_recovery(
-        &self,
-        job: &Job,
-        agent: Option<LeaseGuard>,
-        execution: ExecutionGuard,
-    ) {
-        let _ = job.finish(
-            JobStatus::Failed,
-            Some("Restart Frinkworks to reconcile the uncertain file application. This operation retains its reservations."),
-        );
-        self.retain_recovery(agent, execution);
-    }
-
-    fn protect_commit_recovery(
-        &self,
-        job: &Job,
-        agent: Option<LeaseGuard>,
-        execution: ExecutionGuard,
-    ) {
-        let _ = job.finish(
-            JobStatus::Failed,
-            Some("Restart Frinkworks to reconcile the uncertain Git commit. This operation retains its reservations."),
-        );
-        self.retain_recovery(agent, execution);
     }
 
     fn protect_cleanup_failure(
@@ -132,14 +101,6 @@ impl WorkflowContinuationRegistry {
             .insert(job.run_id, job);
     }
 
-    pub(crate) fn commit_recovery_locked(&self) -> bool {
-        !self
-            .recovery_protection
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .is_empty()
-    }
-
     fn take_provider(&self, provider: crate::providers::ProviderKind) -> Vec<WorkflowJob> {
         self.take_matching(|job| {
             (!job.phase_providers.is_empty() && job.phase_providers.contains(&provider))
@@ -172,7 +133,7 @@ pub(crate) struct WorkflowJob {
     pub(crate) conversation_id: Option<ConversationId>,
     pub(crate) authority: Option<EffectiveAuthority>,
     pub(crate) project_free_authority: Option<crate::execution::ProjectFreeAuthority>,
-    pub(crate) grant_alias: String,
+
     pub(crate) connection: ProviderConnection,
     pub(crate) phase_providers: Vec<crate::providers::ProviderKind>,
     pub(crate) active_connection: Arc<std::sync::Mutex<Option<ProviderConnection>>>,
@@ -180,28 +141,6 @@ pub(crate) struct WorkflowJob {
     pub(crate) turns: Vec<ChatTurn>,
     pub(crate) job: Arc<Job>,
     pub(crate) eligible_reply: Arc<std::sync::Mutex<String>>,
-    /// A direct shell command replaces the model work step for this run. The
-    /// driver captures the candidate through its normal file-attempt path.
-    pub(crate) command: Option<DirectCommandWork>,
-}
-
-/// One direct command bound to a workflow run. The command is not a model tool
-/// call and it is not a registered deterministic workflow operation.
-#[derive(Clone)]
-pub(crate) struct DirectCommandWork {
-    pub(crate) message: crate::conversations::MessageId,
-    pub(crate) command: String,
-    pub(crate) included: bool,
-    pub(crate) settlement: Arc<std::sync::Mutex<Option<DirectCommandSettlement>>>,
-}
-
-/// Process output also resides in the conversation entry before cleanup.
-/// Final settlement waits for the file decision without changing the process outcome.
-#[derive(Clone)]
-pub(crate) struct DirectCommandSettlement {
-    pub(crate) output: Option<crate::execution::CommandResult>,
-    pub(crate) status: crate::conversations::MessageStatus,
-    pub(crate) error: Option<String>,
 }
 
 impl WorkflowJob {
@@ -344,14 +283,6 @@ fn interrupt_continuations(state: &AppState, jobs: Vec<WorkflowJob>) -> Result<(
     Ok(())
 }
 
-pub(crate) async fn drive_ordinary_file_run(
-    state: AppState,
-    job: WorkflowJob,
-    execution: ExecutionGuard,
-) {
-    drive_attempts(state, job, None, execution).await;
-}
-
 pub(crate) async fn execute_run(
     state: AppState,
     job: WorkflowJob,
@@ -361,12 +292,11 @@ pub(crate) async fn execute_run(
     drive_attempts(state, job, agent_lease, execution_lease).await;
 }
 
-// Both callers retain the same file journals, gate transitions and cleanup leases.
 async fn drive_attempts(
     state: AppState,
     mut job: WorkflowJob,
-    _agent_lease: Option<LeaseGuard>,
-    _execution_lease: ExecutionGuard,
+    agent_lease: Option<LeaseGuard>,
+    execution_lease: ExecutionGuard,
 ) {
     loop {
         let Some(run) = state.workflow_runs.get(&job.run_id) else {
@@ -374,48 +304,23 @@ async fn drive_attempts(
             return;
         };
         if run.is_terminal() {
-            fail_operational(&state, &job);
+            settle_terminal_job(&state, &job, &run);
             return;
         }
         if job.job.cancel_requested() {
             if persist_cancel(&state, &job.run_id).is_err() {
                 fail_operational(&state, &job);
-            } else if finish_driven_job(&state, &mut job, JobStatus::Cancelled, None) {
-                return;
             } else {
-                continue;
+                settle_cancelled_job(&state, &job);
             }
             return;
         }
-        if matches!(run.source, crate::workflows::run::RunSource::Pending) {
-            if let Err(error) = capture_initial_source(&state, &job).await {
-                if persist_initial_fail(&state, &job.run_id).is_err() {
-                    fail_operational(&state, &job);
-                } else if finish_driven_job(&state, &mut job, JobStatus::Failed, Some(&error)) {
-                    return;
-                } else {
-                    continue;
-                }
-                return;
-            }
-            continue;
-        }
-        if (job.authority.is_some() || job.project_free_authority.is_some())
-            && let Err(error) = confirm_run_authority(&state, &job)
-        {
-            if state
-                .workflow_runs
-                .mutate(&job.run_id, |run| run.fail_before_attempt(now_ms()))
-                .is_err()
-            {
-                fail_operational(&state, &job);
-            } else {
-                settle_job(&state, &job, JobStatus::Failed, Some(&error));
-            }
+        if let Err(error) = confirm_run_authority(&state, &job) {
+            settle_job(&state, &job, JobStatus::Failed, Some(&error));
             return;
         }
         let resumed = match &run.state {
-            crate::workflows::run::RunState::Active { step, attempt }
+            super::run::RunState::Active { step, attempt }
                 if run
                     .attempts
                     .iter()
@@ -425,66 +330,24 @@ async fn drive_attempts(
             }
             _ => None,
         };
-        let Some(step_key) = resumed
+        let Some(step) = resumed
             .as_ref()
-            .map(|(step, _)| step.clone())
-            .or_else(|| run.ready_step().cloned())
+            .map(|(step, _)| step)
+            .or_else(|| run.ready_step())
+            .and_then(|key| run.pinned.definition.step(key))
+            .cloned()
         else {
             fail_operational(&state, &job);
             return;
         };
-        let Some(step) = run.pinned.definition.step(&step_key).cloned() else {
-            fail_operational(&state, &job);
-            return;
-        };
-        let _application = if matches!(
-            &step.action,
-            StepAction::SystemCommand(action)
-                if matches!(action.command, SystemCommandId::ApplyChanges | SystemCommandId::CommitCandidate)
-        ) {
-            let application = tokio::select! {
-                result = state.workflow_execution.lock_application() => result,
-                _ = job.job.cancelled() => continue,
-            };
-            match application {
-                Ok(application) => Some(application),
-                Err(error) => {
-                    if state
-                        .workflow_runs
-                        .mutate(&job.run_id, |run| run.fail_before_attempt(now_ms()))
-                        .is_err()
-                    {
-                        fail_operational(&state, &job);
-                    } else {
-                        settle_job(&state, &job, JobStatus::Failed, Some(error));
-                    }
-                    return;
-                }
-            }
-        } else {
-            None
-        };
-        // A direct command needs no provider. Provider validation applies only
-        // to the ordinary model action.
-        let connection = if job.command.is_some() {
-            None
-        } else {
-            match phase_connection(&state, &job, &run, &step) {
-                Ok(connection) => connection,
-                Err(error) => {
-                    settle_job(&state, &job, JobStatus::Failed, Some(&error));
-                    return;
-                }
-            }
-        };
-        set_active_connection(&job, connection);
-        let phase_authority = match phase_authority(&state, &job, &run, &step.key) {
-            Ok(authority) => authority,
+        let connection = match phase_connection(&state, &job, &run, &step) {
+            Ok(connection) => connection,
             Err(error) => {
                 settle_job(&state, &job, JobStatus::Failed, Some(&error));
                 return;
             }
         };
+        set_active_connection(&job, connection);
         let inputs = match resolve_inputs(&run, &step) {
             Ok(inputs) => inputs,
             Err(error) => {
@@ -492,115 +355,41 @@ async fn drive_attempts(
                 return;
             }
         };
-        if let Err(error) = crate::workflows::input_context::verify_inputs(
-            &run,
-            &step,
-            &inputs,
-            &state.workflow_artefacts,
-        ) {
+        if let Err(error) =
+            super::input_context::verify_inputs(&run, &step, &inputs, &state.workflow_artefacts)
+        {
             settle_job(&state, &job, JobStatus::Failed, Some(error.message()));
             return;
         }
-        if matches!(step.action, StepAction::HumanGate(_)) {
-            match state
-                .workflow_runs
-                .mutate(&job.run_id, |run| run.complete_unchanged_task())
-            {
-                Ok(_) => {
-                    if finish_driven_job(&state, &mut job, JobStatus::Completed, None) {
-                        return;
-                    }
-                    continue;
-                }
-                Err(StoreError::Conflict) => {}
-                Err(_) => {
-                    fail_operational(&state, &job);
-                    return;
-                }
-            }
-        }
-        if matches!(step.action, StepAction::HumanGate(_)) {
-            let plan_checkpoint = matches!(
-                &step.action,
-                StepAction::HumanGate(action) if action.is_plan_checkpoint()
-            );
-            let subject = inputs
+        if matches!(&step.action, StepAction::HumanGate(_)) {
+            let Some(plan) = inputs
                 .iter()
-                .find(|input| {
-                    input.artefact.kind
-                        == if plan_checkpoint {
-                            crate::workflows::definition::ArtefactKind::Plan
-                        } else {
-                            crate::workflows::definition::ArtefactKind::CandidateRevision
-                        }
+                .find(|input| input.artefact.kind == super::definition::ArtefactKind::Plan)
+                .map(|input| input.artefact.clone())
+            else {
+                settle_job(
+                    &state,
+                    &job,
+                    JobStatus::Failed,
+                    Some("A plan checkpoint needs a plan input."),
+                );
+                return;
+            };
+            let Ok(gate_id) = super::GateId::generate() else {
+                fail_operational(&state, &job);
+                return;
+            };
+            if state
+                .workflow_runs
+                .mutate(&job.run_id, |run| {
+                    run.open_plan_gate(gate_id, plan, now_ms()).map(|_| ())
                 })
-                .map(|input| input.artefact.clone());
-            let Some(subject) = subject else {
-                settle_job(
-                    &state,
-                    &job,
-                    JobStatus::Failed,
-                    Some(if plan_checkpoint {
-                        "A plan checkpoint needs a plan input."
-                    } else {
-                        "A human gate needs a candidate input."
-                    }),
-                );
-                return;
-            };
-            let initial = match &run.source {
-                crate::workflows::RunSource::Captured { source } => source.initial.clone(),
-                crate::workflows::RunSource::None | crate::workflows::RunSource::Pending => {
-                    settle_job(
-                        &state,
-                        &job,
-                        JobStatus::Failed,
-                        Some(OPERATIONAL_STORE_ERROR),
-                    );
-                    return;
-                }
-            };
-            let Ok(gate_id) = crate::workflows::GateId::generate() else {
-                settle_job(
-                    &state,
-                    &job,
-                    JobStatus::Failed,
-                    Some(OPERATIONAL_STORE_ERROR),
-                );
-                return;
-            };
-            let opened = state.workflow_runs.mutate(&job.run_id, |run| {
-                if plan_checkpoint {
-                    run.open_plan_gate(gate_id, subject.clone(), now_ms())
-                        .map(|_| ())
-                } else {
-                    run.open_gate(gate_id, subject.clone(), initial.clone(), now_ms())
-                        .map(|_| ())
-                }
-            });
-            if opened.is_err() {
-                settle_job(
-                    &state,
-                    &job,
-                    JobStatus::Failed,
-                    Some(OPERATIONAL_STORE_ERROR),
-                );
+                .is_err()
+            {
+                fail_operational(&state, &job);
                 return;
             }
             let _ = job.job.set_awaiting_decision();
-            if let Some(conversation_id) = job.conversation_id
-                && !state.sessions.owns_conversation_job(
-                    &job.session_id,
-                    conversation_id,
-                    job.job.id(),
-                )
-            {
-                let _ = state
-                    .workflow_runs
-                    .mutate(&run.id, |run| run.interrupt(now_ms()));
-                let _ = finish_driven_job(&state, &mut job, JobStatus::Cancelled, None);
-                return;
-            }
             if !state.gate_continuations.insert(job) {
                 let _ = state
                     .workflow_runs
@@ -608,138 +397,54 @@ async fn drive_attempts(
             }
             return;
         }
-        let apply_step = matches!(
-            &step.action,
-            crate::workflows::definition::StepAction::SystemCommand(action)
-                if action.command == crate::workflows::commands::SystemCommandId::ApplyChanges
-        );
-        let commit_step = matches!(
-            &step.action,
-            crate::workflows::definition::StepAction::SystemCommand(action)
-                if action.command == crate::workflows::commands::SystemCommandId::CommitCandidate
-        );
-        if commit_step && run.kind != crate::workflows::RunKind::Configured {
-            if persist_fail(&state, &job.run_id, None, FailureCategory::Definition).is_err() {
+        let attempt_id = match resumed
+            .as_ref()
+            .map(|(_, attempt)| Ok(*attempt))
+            .or_else(|| {
+                run.revision_reservation
+                    .as_ref()
+                    .map(|reservation| Ok(reservation.attempt))
+            })
+            .unwrap_or_else(AttemptId::generate)
+        {
+            Ok(id) => id,
+            Err(_) => {
                 fail_operational(&state, &job);
                 return;
             }
-            settle_job(
-                &state,
-                &job,
-                JobStatus::Failed,
-                Some(
-                    "Ordinary agent work cannot create a commit through an application step. The prepared candidate remains unchanged.",
-                ),
-            );
-            return;
-        }
-        let apply_precondition = if apply_step {
-            crate::workflows::apply::require_approval(
-                &run,
-                &step,
-                &inputs,
-                &state.workflow_artefacts,
-            )
-            .and_then(|_| {
-                reject_stale_assurance(&state, &run, &inputs)
-                    .map_err(|_| crate::workflows::apply::ApplyExecutionError::Assurance)
-            })
-            .err()
-        } else {
-            None
         };
-        let commit_precondition = if commit_step {
-            crate::workflows::commit::require_commit_approval(
-                &run,
-                &step,
-                &inputs,
-                &state.workflow_artefacts,
-            )
-            .and_then(|_| {
-                reject_stale_assurance(&state, &run, &inputs)
-                    .map_err(|_| crate::workflows::commit::CommitError::Assurance)
-            })
-            .err()
-        } else {
-            if let Err(error) = reject_stale_assurance(&state, &run, &inputs) {
-                settle_job(&state, &job, JobStatus::Failed, Some(error));
-                return;
+        let default_settings = run.directory_settings();
+        let capabilities = match run.phase_settings(&step.key).or(default_settings.as_ref()) {
+            Some(settings) => {
+                crate::execution::ProjectFreeAuthority::from_settings(job.agent_revision, settings)
+                    .map_err(|_| super::capabilities::CapabilityError::Authority)
+                    .and_then(|authority| {
+                        super::capabilities::AttemptCapabilities::derive_project_free(
+                            &step, &authority,
+                        )
+                    })
             }
-            None
-        };
-        let attempt_id = if let Some((_, attempt)) = resumed {
-            attempt
-        } else {
-            match run
-                .revision_reservation
-                .as_ref()
-                .map(|reservation| Ok(reservation.attempt))
-                .unwrap_or_else(AttemptId::generate)
-            {
-                Ok(id) => id,
-                Err(_) => {
-                    fail_operational(&state, &job);
-                    return;
+            None => match phase_authority(&state, &job, &run, &step.key) {
+                Ok(Some(authority)) => {
+                    super::capabilities::AttemptCapabilities::derive_for_authority(
+                        &step, &authority,
+                    )
                 }
-            }
-        };
-        let capabilities = if let Some(authority) = job.project_free_authority.as_ref() {
-            if run.agent_id.is_some() || run.conversation_id != job.conversation_id {
-                settle_job(
-                    &state,
-                    &job,
-                    JobStatus::Failed,
-                    Some("The private workspace authority does not match this run."),
-                );
-                return;
-            }
-            let step_authority = match run.phase_settings(&step.key) {
-                Some(settings) => crate::execution::ProjectFreeAuthority::from_settings(
-                    authority.revision,
-                    settings,
-                )
-                .map_err(|_| crate::workflows::capabilities::CapabilityError::Authority),
-                None => Ok(authority.clone()),
-            };
-            step_authority.and_then(|step_authority| {
-                crate::workflows::capabilities::AttemptCapabilities::derive_project_free(
-                    &step,
-                    &step_authority,
-                )
-            })
-        } else if let Some(authority) = phase_authority.as_ref() {
-            if run.conversation_id != job.conversation_id {
-                settle_job(
-                    &state,
-                    &job,
-                    JobStatus::Failed,
-                    Some("The conversation authority does not match this run."),
-                );
-                return;
-            }
-            crate::workflows::capabilities::AttemptCapabilities::derive_for_authority(
-                &step, authority,
-            )
-        } else {
-            let Some(agent) = job.agent_id.and_then(|id| state.agents.get(&id)) else {
-                fail_operational(&state, &job);
-                return;
-            };
-            crate::workflows::capabilities::AttemptCapabilities::derive(
-                &step,
-                &agent,
-                &job.grant_alias,
-            )
+                _ => Err(super::capabilities::CapabilityError::Authority),
+            },
         };
         let capabilities = match capabilities {
             Ok(capabilities) => capabilities,
             Err(error) => {
+                if persist_fail(&state, &job.run_id, None, FailureCategory::Authority).is_err() {
+                    fail_operational(&state, &job);
+                    return;
+                }
                 settle_job(&state, &job, JobStatus::Failed, Some(error.message()));
                 return;
             }
         };
-        let host_step = step_is_host(&run, &step);
-        let sandbox_record = if host_step {
+        let sandbox_record = if step_is_host(&run, &step) {
             host_sandbox_record()
         } else {
             let Some(snapshot_digest) = run
@@ -752,12 +457,8 @@ async fn drive_attempts(
                 fail_operational(&state, &job);
                 return;
             };
-            crate::workflows::run::AttemptSandboxRecord {
-                kind: if apply_step {
-                    crate::workflows::run::AttemptSandboxKind::FileApplication
-                } else {
-                    crate::workflows::run::AttemptSandboxKind::IsolatedAttempt
-                },
+            super::run::AttemptSandboxRecord {
+                kind: super::run::AttemptSandboxKind::IsolatedAttempt,
                 snapshot_digest,
             }
         };
@@ -775,306 +476,52 @@ async fn drive_attempts(
             fail_operational(&state, &job);
             return;
         }
-        if let Some(error) = apply_precondition {
-            let stored = persist_cleanup(
-                &state,
-                &job.run_id,
-                attempt_id,
-                crate::workflows::run::AttemptCleanupRecord::Complete,
-            )
-            .and_then(|_| {
-                persist_fail(
-                    &state,
-                    &job.run_id,
-                    Some(attempt_id),
-                    FailureCategory::Assurance,
-                )
-            });
-            if stored.is_err() {
-                fail_operational(&state, &job);
-            } else {
-                settle_job(&state, &job, JobStatus::Failed, Some(error.message()));
-            }
-            return;
-        }
-        if let Some(error) = commit_precondition {
-            let stored = persist_cleanup(
-                &state,
-                &job.run_id,
-                attempt_id,
-                crate::workflows::run::AttemptCleanupRecord::Complete,
-            )
-            .and_then(|_| {
-                persist_fail(
-                    &state,
-                    &job.run_id,
-                    Some(attempt_id),
-                    FailureCategory::Assurance,
-                )
-            });
-            if stored.is_err() {
-                fail_operational(&state, &job);
-            } else {
-                settle_job(&state, &job, JobStatus::Failed, Some(error.message()));
-            }
-            return;
-        }
-        if let Err(error) = super::direct::before(&state, &job, &step, attempt_id) {
-            if persist_cleanup(
-                &state,
-                &job.run_id,
-                attempt_id,
-                super::run::AttemptCleanupRecord::Complete,
-            )
-            .and_then(|_| {
-                persist_fail(
-                    &state,
-                    &job.run_id,
-                    Some(attempt_id),
-                    FailureCategory::Operational,
-                )
-            })
-            .is_err()
-            {
-                fail_operational(&state, &job);
-            } else {
-                settle_job(&state, &job, JobStatus::Failed, Some(error));
-            }
-            return;
-        }
-        let isolated =
-            isolate_and_run(&state, &job, &step, attempt_id, &inputs, &capabilities).await;
-        let (mut outcome, mut cleanup, drafts, captured) = match isolated {
-            IsolatedRun::Finished {
-                outcome,
-                cleanup,
-                drafts,
-                captured,
-            } => (outcome, cleanup, drafts, captured),
-        };
+        let IsolatedRun::Finished {
+            mut outcome,
+            cleanup,
+            drafts,
+        } = isolate_and_run(&state, &job, &step, attempt_id, &capabilities).await;
         if matches!(outcome, StepOutcome::Paused { .. }) && job.job.cancel_requested() {
             outcome = StepOutcome::Cancelled;
         }
-        if let Err(error) = super::direct::after(&state, &job, &step, attempt_id) {
-            outcome = StepOutcome::Failed {
-                category: FailureCategory::Operational,
-                error: Some(format!(
-                    "{error} Direct writes remain. The final diff is unavailable."
-                )),
-            };
-        }
         record_missing_terminal_evidence(&state, &job, &step, attempt_id, &outcome);
-        if cleanup != crate::workflows::run::AttemptCleanupRecord::Complete {
-            let _ = persist_cleanup(&state, &job.run_id, attempt_id, cleanup);
+        if persist_cleanup(&state, &job.run_id, attempt_id, cleanup.clone()).is_err()
+            || cleanup != super::run::AttemptCleanupRecord::Complete
+        {
             state.gate_continuations.protect_cleanup_failure(
                 &job.job,
-                _agent_lease,
-                _execution_lease,
+                agent_lease,
+                execution_lease,
             );
             return;
         }
-        let recovery_pending = state.workflow_runs.get(&job.run_id).is_some_and(|run| {
-            run.attempts
-                .iter()
-                .find(|attempt| attempt.id == attempt_id)
-                .is_some_and(|attempt| {
-                    attempt.commit_transaction.is_some() || attempt.apply_transaction.is_some()
-                })
-                && !matches!(outcome, StepOutcome::Completed)
-        });
-        if recovery_pending {
-            if cleanup != crate::workflows::run::AttemptCleanupRecord::Complete
-                || recover_apply_transactions(&state).is_err()
-                || recover_commit_transactions(&state).is_err()
-            {
-                state.gate_continuations.protect_commit_recovery(
-                    &job.job,
-                    _agent_lease,
-                    _execution_lease,
-                );
-                return;
-            }
-            if let Some(run) = state.workflow_runs.get(&job.run_id)
-                && run.active_attempt() != Some(attempt_id)
-            {
-                if run.is_terminal() {
-                    if finish_terminal_run(&state, &mut job, &run) {
-                        return;
-                    }
-                    continue;
-                }
-                continue;
-            }
-        }
-        let atomic_agent_publication = matches!(step.action, StepAction::Agent(_))
-            && matches!(outcome, StepOutcome::Completed)
-            && cleanup == crate::workflows::run::AttemptCleanupRecord::Complete;
-        if atomic_agent_publication
-            && persist_cleanup(&state, &job.run_id, attempt_id, cleanup.clone()).is_err()
-        {
-            fail_operational(&state, &job);
-            return;
-        }
-        let mut published = false;
         if matches!(outcome, StepOutcome::Completed) {
-            match publish_success(
-                &state,
-                &job,
-                &step,
-                SuccessAttempt {
-                    id: attempt_id,
-                    complete: atomic_agent_publication,
-                },
-                &inputs,
-                &drafts,
-                captured.as_ref(),
-            ) {
-                Ok(()) => published = true,
-                Err(error) => {
-                    outcome = StepOutcome::Failed {
-                        category: FailureCategory::Definition,
-                        error: Some(error.to_owned()),
-                    };
-                }
-            }
-        }
-        if matches!(
-            &step.action,
-            StepAction::SystemCommand(action)
-                if action.command == SystemCommandId::ApplyChanges
-        ) {
-            let retain_journal = state.workflow_runs.get(&job.run_id).is_some_and(|run| {
-                run.attempts
-                    .iter()
-                    .find(|attempt| attempt.id == attempt_id)
-                    .and_then(|attempt| attempt.apply_transaction.as_ref())
-                    .is_some_and(|transaction| {
-                        !transaction.is_settled() && !matches!(outcome, StepOutcome::Completed)
-                    })
-            });
-            if retain_journal {
-                state.gate_continuations.protect_apply_recovery(
-                    &job.job,
-                    _agent_lease,
-                    _execution_lease,
-                );
-                return;
-            }
-        }
-        if matches!(
-            &step.action,
-            StepAction::SystemCommand(action)
-                if action.command == SystemCommandId::CommitCandidate
-        ) {
-            let retain_journal = state
-                .workflow_runs
-                .get(&job.run_id)
-                .and_then(|run| {
-                    run.attempts
-                        .iter()
-                        .find(|attempt| attempt.id == attempt_id)
-                        .and_then(|attempt| attempt.commit_transaction.as_ref())
-                        .map(|transaction| {
-                            transaction.needs_recovery()
-                                && !matches!(outcome, StepOutcome::Completed)
-                        })
-                })
-                .unwrap_or(false);
-            if retain_journal {
-                state.gate_continuations.protect_commit_recovery(
-                    &job.job,
-                    _agent_lease,
-                    _execution_lease,
-                );
-                return;
-            }
-            let journal_gone = state.commit_journals.remove(job.run_id, attempt_id).is_ok();
-            if !journal_gone {
-                cleanup = match cleanup {
-                    crate::workflows::run::AttemptCleanupRecord::Orphaned {
-                        sandbox,
-                        workspace,
-                        ..
-                    } => crate::workflows::run::AttemptCleanupRecord::Orphaned {
-                        sandbox,
-                        workspace,
-                        journal: true,
-                    },
-                    _ => crate::workflows::run::AttemptCleanupRecord::Orphaned {
-                        sandbox: false,
-                        workspace: false,
-                        journal: true,
-                    },
-                };
+            if let Err(error) = publish_success(&state, &job, &step, attempt_id, &inputs, &drafts) {
                 outcome = StepOutcome::Failed {
-                    category: FailureCategory::Cleanup,
-                    error: Some("Frinkworks could not clean up the commit journal.".to_owned()),
+                    category: FailureCategory::Definition,
+                    error: Some(error.to_owned()),
                 };
-            }
-        }
-        if !atomic_agent_publication
-            && persist_cleanup(&state, &job.run_id, attempt_id, cleanup).is_err()
-        {
-            fail_operational(&state, &job);
-            return;
-        }
-        if atomic_agent_publication && published {
-            if let Some(run) = state.workflow_runs.get(&job.run_id)
-                && run.is_terminal()
-            {
-                if finish_terminal_run(&state, &mut job, &run) {
-                    return;
-                }
+            } else {
                 continue;
             }
-            continue;
-        }
-        if let Err(error) = finalise_attempt(
-            &state,
-            &job,
-            &step,
-            attempt_id,
-            &inputs,
-            captured.as_ref(),
-            &outcome,
-            published,
-        )
-        .await
-        {
-            fail_operational(&state, &job);
-            let _ = error;
-            return;
-        }
-        if apply_step && state.apply_journals.remove(job.run_id, attempt_id).is_err() {
-            state.gate_continuations.protect_apply_recovery(
-                &job.job,
-                _agent_lease,
-                _execution_lease,
-            );
-            return;
         }
         match outcome {
-            StepOutcome::Completed => {
-                if let Some(run) = state.workflow_runs.get(&job.run_id)
-                    && run.is_terminal()
-                {
-                    if finish_terminal_run(&state, &mut job, &run) {
-                        return;
-                    }
-                    continue;
+            StepOutcome::Completed => unreachable!(),
+            StepOutcome::Failed { category, error } => {
+                if persist_fail(&state, &job.run_id, Some(attempt_id), category).is_err() {
+                    fail_operational(&state, &job);
+                } else {
+                    settle_job(&state, &job, JobStatus::Failed, error.as_deref());
                 }
-            }
-            StepOutcome::Failed { error, .. } => {
-                if finish_driven_job(&state, &mut job, JobStatus::Failed, error.as_deref()) {
-                    return;
-                }
-                continue;
+                return;
             }
             StepOutcome::Cancelled => {
-                if finish_driven_job(&state, &mut job, JobStatus::Cancelled, None) {
-                    return;
+                if persist_cancel(&state, &job.run_id).is_err() {
+                    fail_operational(&state, &job);
+                } else {
+                    settle_cancelled_job(&state, &job);
                 }
-                continue;
+                return;
             }
             StepOutcome::Paused { budget, reply } => {
                 pause_driven_job(&state, &mut job, attempt_id, &step, budget, *reply, &drafts);
@@ -1137,7 +584,6 @@ enum IsolatedRun {
         outcome: StepOutcome,
         cleanup: crate::workflows::run::AttemptCleanupRecord,
         drafts: std::sync::Arc<std::sync::Mutex<crate::workflows::artefacts::output::OutputDrafts>>,
-        captured: Option<crate::workflows::artefacts::CandidatePayload>,
     },
 }
 
@@ -1146,16 +592,17 @@ async fn isolate_and_run(
     job: &WorkflowJob,
     step: &StepDefinition,
     attempt_id: AttemptId,
-    inputs: &[super::run::AttemptArtefactInput],
-    capabilities: &crate::workflows::capabilities::AttemptCapabilities,
+    capabilities: &super::capabilities::AttemptCapabilities,
 ) -> IsolatedRun {
-    let drafts = std::sync::Arc::new(std::sync::Mutex::new({
-        let mut drafts = crate::workflows::artefacts::output::OutputDrafts::default();
-        if let Some(run) = state.workflow_runs.get(&job.run_id)
-            && let Some(attempt) = run.attempts.iter().find(|item| item.id == attempt_id)
-            && let StepAction::Agent(action) = &step.action
+    let drafts = Arc::new(std::sync::Mutex::new(
+        super::artefacts::output::OutputDrafts::default(),
+    ));
+    if let Some(run) = state.workflow_runs.get(&job.run_id) {
+        if let Some(attempt) = run.attempts.iter().find(|item| item.id == attempt_id)
             && drafts
-                .restore(&action.required_outputs, &attempt.paused_drafts)
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .restore(step.required_outputs(), &attempt.paused_drafts)
                 .is_err()
         {
             return IsolatedRun::Finished {
@@ -1163,73 +610,26 @@ async fn isolate_and_run(
                     category: FailureCategory::Operational,
                     error: Some("The paused output drafts are invalid.".to_owned()),
                 },
-                cleanup: crate::workflows::run::AttemptCleanupRecord::Complete,
-                drafts: std::sync::Arc::new(std::sync::Mutex::new(drafts)),
-                captured: None,
+                cleanup: super::run::AttemptCleanupRecord::Complete,
+                drafts,
             };
         }
-        drafts
-    }));
-    if let Some(run) = state.workflow_runs.get(&job.run_id)
-        && step_is_host(&run, step)
-    {
-        let StepAction::Agent(action) = &step.action else {
-            return IsolatedRun::Finished {
-                outcome: StepOutcome::Failed {
+        if step_is_host(&run, step) {
+            let outcome = match &step.action {
+                StepAction::Agent(action) => {
+                    run_agent_step(state, job, action, None, drafts.clone()).await
+                }
+                _ => StepOutcome::Failed {
                     category: FailureCategory::Definition,
                     error: Some("Host steps must be model steps.".to_owned()),
                 },
-                cleanup: crate::workflows::run::AttemptCleanupRecord::Complete,
-                drafts,
-                captured: None,
             };
-        };
-        let outcome = if ordinary_file_agent(state, job) {
-            run_ordinary_file_agent(state, job, None).await
-        } else {
-            run_agent_step(state, job, action, None, drafts.clone()).await
-        };
-        return IsolatedRun::Finished {
-            outcome,
-            cleanup: crate::workflows::run::AttemptCleanupRecord::Complete,
-            drafts,
-            captured: None,
-        };
-    }
-    if job.job.cancel_requested() {
-        return IsolatedRun::Finished {
-            outcome: StepOutcome::Cancelled,
-            cleanup: crate::workflows::run::AttemptCleanupRecord::Complete,
-            drafts,
-            captured: None,
-        };
-    }
-    let private_workspace = capabilities.source_location
-        == crate::workflows::capabilities::PrimarySourceLocation::PrivateWorkspace;
-    let candidate_input = load_candidate_input(state, job, inputs);
-    if candidate_input.is_none() && !private_workspace {
-        return IsolatedRun::Finished {
-            outcome: StepOutcome::Failed {
-                category: FailureCategory::Definition,
-                error: Some("A sandbox-backed step needs a candidate input.".to_owned()),
-            },
-            cleanup: crate::workflows::run::AttemptCleanupRecord::Complete,
-            drafts,
-            captured: None,
-        };
-    }
-    if matches!(&step.action, StepAction::SystemCommand(action) if action.command == SystemCommandId::CommitCandidate)
-    {
-        return commits::isolate(
-            state,
-            job,
-            step,
-            attempt_id,
-            inputs,
-            capabilities,
-            candidate_input.as_ref().expect("commit candidate"),
-        )
-        .await;
+            return IsolatedRun::Finished {
+                outcome,
+                cleanup: super::run::AttemptCleanupRecord::Complete,
+                drafts,
+            };
+        }
     }
     let workspace = match state
         .workflow_workspaces
@@ -1237,151 +637,31 @@ async fn isolate_and_run(
     {
         Ok(workspace) => workspace,
         Err(error) => {
-            let cleanup = if error.orphaned {
-                crate::workflows::run::AttemptCleanupRecord::Orphaned {
-                    sandbox: false,
-                    workspace: true,
-                    journal: false,
-                }
-            } else {
-                crate::workflows::run::AttemptCleanupRecord::Complete
-            };
             return IsolatedRun::Finished {
-                outcome: fail_for_orphan(
-                    StepOutcome::Failed {
-                        category: FailureCategory::Operational,
-                        error: Some(
-                            "Frinkworks could not create the attempt workspace.".to_owned(),
-                        ),
-                    },
-                    &cleanup,
-                ),
-                cleanup,
+                outcome: StepOutcome::Failed {
+                    category: FailureCategory::Operational,
+                    error: Some("Frinkworks cannot create the attempt workspace.".to_owned()),
+                },
+                cleanup: if error.orphaned {
+                    super::run::AttemptCleanupRecord::Orphaned {
+                        sandbox: false,
+                        workspace: true,
+                        journal: false,
+                    }
+                } else {
+                    super::run::AttemptCleanupRecord::Complete
+                },
                 drafts,
-                captured: None,
             };
         }
     };
-    if candidate_input.as_ref().is_some_and(|candidate_input| {
-        materialise_candidate(
-            &workspace,
-            &candidate_input.artefact,
-            candidate_input.artefact_hash,
-            &state.workflow_artefacts,
-        )
-        .is_err()
-    }) {
-        let (outcome, cleanup) = finish_workspace_only(
-            workspace,
-            StepOutcome::Failed {
-                category: FailureCategory::Operational,
-                error: Some("Frinkworks could not materialise the source tree.".to_owned()),
-            },
-        );
-        return IsolatedRun::Finished {
-            outcome,
-            cleanup,
-            drafts,
-            captured: None,
-        };
-    }
-    let user_project = if private_workspace || job.project_free_authority.is_some() {
-        workspace.project.clone()
-    } else {
-        match job
-            .host_policy
-            .grants()
-            .iter()
-            .find(|grant| grant.alias == job.host_policy.primary_alias())
-        {
-            Some(grant) => grant.host_path.clone(),
-            None => {
-                let (outcome, cleanup) = finish_workspace_only(
-                    workspace,
-                    StepOutcome::Failed {
-                        category: FailureCategory::Operational,
-                        error: Some(OPERATIONAL_STORE_ERROR.to_owned()),
-                    },
-                );
-                return IsolatedRun::Finished {
-                    outcome,
-                    cleanup,
-                    drafts,
-                    captured: None,
-                };
-            }
-        }
-    };
-    if matches!(
-        &step.action,
-        StepAction::SystemCommand(action) if action.command == SystemCommandId::ApplyChanges
-    ) {
-        let outcome = run_apply_transaction(state, job, step, attempt_id, inputs);
-        let captured = if matches!(outcome, StepOutcome::Completed) {
-            candidate_input
-                .as_ref()
-                .and_then(|candidate| match &candidate.artefact {
-                    crate::workflows::artefacts::CandidatePayload::Revision(candidate) => {
-                        crate::workflows::artefacts::CandidateCapture::capture_directory(
-                            &user_project,
-                            &candidate.exclusions,
-                            &state.workflow_artefacts,
-                        )
-                        .ok()
-                        .map(crate::workflows::artefacts::CandidatePayload::Revision)
-                    }
-                    crate::workflows::artefacts::CandidatePayload::Set(candidate) => Some(
-                        crate::workflows::artefacts::CandidatePayload::Set(candidate.clone()),
-                    ),
-                })
-        } else {
-            None
-        };
-        let (outcome, cleanup) = finish_workspace_only(workspace, outcome);
-        return IsolatedRun::Finished {
-            outcome,
-            cleanup,
-            drafts,
-            captured,
-        };
-    }
-    let git_dir = user_project.join(".git");
-    if !private_workspace
-        && candidate_input
-            .as_ref()
-            .expect("candidate-backed attempt")
-            .revision()
-            .and_then(|candidate| candidate.git_admin.as_ref())
-            .is_some_and(|expected| {
-                crate::workflows::artefacts::candidate::git_fingerprint(&git_dir).as_ref()
-                    != Ok(expected)
-            })
-    {
-        let (outcome, cleanup) = finish_workspace_only(
-            workspace,
-            StepOutcome::Failed {
-                category: FailureCategory::Operational,
-                error: Some("The Git directory changed before that step.".to_owned()),
-            },
-        );
-        return IsolatedRun::Finished {
-            outcome,
-            cleanup,
-            drafts,
-            captured: None,
-        };
-    }
     let sandbox = state.sandboxes.attempt_handle(job.run_id, attempt_id);
     if let Err(error) =
         start_attempt_sandbox(state, job, step, capabilities, &workspace, sandbox.clone()).await
     {
-        let outcome = if job.job.cancel_requested() {
-            StepOutcome::Cancelled
-        } else {
-            StepOutcome::Failed {
-                category: FailureCategory::Operational,
-                error: Some(error.to_owned()),
-            }
+        let outcome = StepOutcome::Failed {
+            category: FailureCategory::Operational,
+            error: Some(error.to_owned()),
         };
         let (outcome, cleanup) =
             cleanup_after_start_failure(state, attempt_id, sandbox, workspace, outcome).await;
@@ -1389,174 +669,30 @@ async fn isolate_and_run(
             outcome,
             cleanup,
             drafts,
-            captured: None,
         };
     }
-    let outcome = if job.command.is_some() {
-        run_ordinary_command(state, job, &sandbox).await
-    } else if ordinary_file_agent(state, job) {
-        run_ordinary_file_agent(state, job, Some(&sandbox)).await
-    } else {
-        dispatch_step(state, job, step, &sandbox, drafts.clone()).await
-    };
-    let stopped = sandbox.stop().await.is_ok();
-    let captured = if stopped && !private_workspace {
-        capture_isolated_candidate(
-            state,
-            job,
-            &workspace,
-            &candidate_input
-                .as_ref()
-                .expect("candidate-backed attempt")
-                .artefact,
-            &git_dir,
-        )
-    } else {
-        None
-    };
-    let sandbox_gone = if stopped {
-        sandbox.remove().await.is_ok()
-    } else {
-        false
-    };
+    let outcome = dispatch_step(state, job, step, &sandbox, drafts.clone()).await;
+    let sandbox_gone = sandbox.stop().await.is_ok() && sandbox.remove().await.is_ok();
     if sandbox_gone {
         state.sandboxes.drop_attempt(attempt_id);
     } else {
         state.sandboxes.expose_orphan(sandbox.name().to_owned());
     }
-    let workspace_gone = if sandbox_gone {
-        workspace.destroy().is_ok()
-    } else {
-        false
-    };
+    let workspace_gone = sandbox_gone && workspace.destroy().is_ok();
     let cleanup = if sandbox_gone && workspace_gone {
-        crate::workflows::run::AttemptCleanupRecord::Complete
+        super::run::AttemptCleanupRecord::Complete
     } else {
-        crate::workflows::run::AttemptCleanupRecord::Orphaned {
+        super::run::AttemptCleanupRecord::Orphaned {
             sandbox: !sandbox_gone,
             workspace: !workspace_gone,
             journal: false,
         }
     };
-    let mut outcome = match (outcome, stopped, private_workspace || captured.is_some()) {
-        (StepOutcome::Completed, true, true) => StepOutcome::Completed,
-        (paused @ StepOutcome::Paused { .. }, true, true) => paused,
-        (StepOutcome::Completed | StepOutcome::Paused { .. }, _, _) => StepOutcome::Failed {
-            category: FailureCategory::Operational,
-            error: Some("Frinkworks could not capture isolated outputs.".to_owned()),
-        },
-        (other, _, _) => other,
-    };
-    outcome = fail_for_orphan(outcome, &cleanup);
     IsolatedRun::Finished {
-        outcome,
+        outcome: fail_for_orphan(outcome, &cleanup),
         cleanup,
         drafts,
-        captured,
     }
-}
-
-fn materialise_candidate(
-    workspace: &crate::workflows::workspace::AttemptWorkspace,
-    payload: &crate::workflows::artefacts::CandidatePayload,
-    artefact_hash: crate::workflows::artefacts::ArtefactHash,
-    store: &crate::workflows::WorkflowArtefactRepository,
-) -> Result<(), ()> {
-    match payload {
-        crate::workflows::artefacts::CandidatePayload::Revision(candidate) => {
-            crate::workflows::artefacts::CandidateMaterialise::into_workspace(
-                &workspace.project,
-                candidate,
-                artefact_hash,
-                store,
-            )
-            .map_err(|_| ())
-        }
-        crate::workflows::artefacts::CandidatePayload::Set(set) => {
-            for root in &set.roots {
-                let destination = workspace.reviewed_root(&root.alias).map_err(|_| ())?;
-                let bytes = root.candidate.manifest_bytes().map_err(|_| ())?;
-                let hash = crate::workflows::artefacts::artefact_hash_for(
-                    crate::workflows::definition::ArtefactKind::CandidateRevision,
-                    root.candidate.format_version,
-                    &bytes,
-                );
-                crate::workflows::artefacts::CandidateMaterialise::into_workspace(
-                    &destination,
-                    &root.candidate,
-                    hash,
-                    store,
-                )
-                .map_err(|_| ())?;
-            }
-            Ok(())
-        }
-    }
-}
-
-fn capture_isolated_candidate(
-    state: &AppState,
-    job: &WorkflowJob,
-    workspace: &crate::workflows::workspace::AttemptWorkspace,
-    baseline: &crate::workflows::artefacts::CandidatePayload,
-    git_dir: &std::path::Path,
-) -> Option<crate::workflows::artefacts::CandidatePayload> {
-    match baseline {
-        crate::workflows::artefacts::CandidatePayload::Revision(candidate) => {
-            crate::workflows::artefacts::CandidateCapture::capture_isolated(
-                &workspace.project,
-                candidate,
-                git_dir,
-                &state.workflow_artefacts,
-            )
-            .ok()
-            .map(crate::workflows::artefacts::CandidatePayload::Revision)
-        }
-        crate::workflows::artefacts::CandidatePayload::Set(set) => {
-            let run = state.workflow_runs.get(&job.run_id)?;
-            let conversation = job
-                .conversation_id
-                .and_then(|id| state.conversations.get(&id));
-            let settings = run.directory_settings().or_else(|| {
-                conversation
-                    .as_ref()?
-                    .model
-                    .as_ref()
-                    .map(|model| model.settings.clone())
-            })?;
-            let reviewed = run.reviewed_directories();
-            let grants = if reviewed.is_empty() {
-                &settings.directories
-            } else {
-                &reviewed
-            };
-            crate::workflows::artefacts::CandidateCapture::capture_isolated_set(
-                workspace,
-                set,
-                grants,
-                &state.workflow_artefacts,
-            )
-            .ok()
-            .map(crate::workflows::artefacts::CandidatePayload::Set)
-        }
-    }
-}
-
-fn finish_workspace_only(
-    workspace: crate::workflows::workspace::AttemptWorkspace,
-    outcome: StepOutcome,
-) -> (StepOutcome, crate::workflows::run::AttemptCleanupRecord) {
-    let cleanup = if workspace.destroy().is_ok() {
-        crate::workflows::run::AttemptCleanupRecord::Complete
-    } else {
-        crate::workflows::run::AttemptCleanupRecord::Orphaned {
-            sandbox: false,
-            workspace: true,
-            journal: false,
-        }
-    };
-    let outcome = fail_for_orphan(outcome, &cleanup);
-    (outcome, cleanup)
 }
 
 async fn cleanup_after_start_failure(
@@ -1604,615 +740,6 @@ fn fail_for_orphan(
     }
 }
 
-struct LoadedCandidate {
-    artefact_hash: crate::workflows::artefacts::ArtefactHash,
-    artefact: crate::workflows::artefacts::CandidatePayload,
-}
-
-impl LoadedCandidate {
-    fn revision(
-        &self,
-    ) -> Option<&crate::workflows::artefacts::candidate::CandidateRevisionArtefact> {
-        self.artefact.revision()
-    }
-}
-
-fn load_candidate_input(
-    state: &AppState,
-    job: &WorkflowJob,
-    inputs: &[super::run::AttemptArtefactInput],
-) -> Option<LoadedCandidate> {
-    let input = inputs.iter().find(|input| {
-        input.artefact.kind == crate::workflows::definition::ArtefactKind::CandidateRevision
-    })?;
-    let run = state.workflow_runs.get(&job.run_id)?;
-    if let Some(hash) = run
-        .active_attempt()
-        .and_then(|id| run.attempts.iter().find(|attempt| attempt.id == id))
-        .and_then(|attempt| attempt.paused_candidate)
-    {
-        let bytes = state.workflow_artefacts.get(&hash).ok()?;
-        let artefact = crate::workflows::artefacts::CandidatePayload::from_manifest_bytes(&bytes)?;
-        return Some(LoadedCandidate {
-            artefact_hash: crate::workflows::artefacts::artefact_hash_for(
-                crate::workflows::definition::ArtefactKind::CandidateRevision,
-                crate::workflows::artefacts::CANDIDATE_SCHEMA,
-                &bytes,
-            ),
-            artefact,
-        });
-    }
-    let record = run.artefact(&input.artefact.id)?;
-    let bytes = state.workflow_artefacts.get(&record.object_hash).ok()?;
-    let artefact = crate::workflows::artefacts::CandidatePayload::from_manifest_bytes(&bytes)?;
-    Some(LoadedCandidate {
-        artefact_hash: record.artefact_hash,
-        artefact,
-    })
-}
-
-fn run_apply_transaction(
-    state: &AppState,
-    job: &WorkflowJob,
-    step: &StepDefinition,
-    attempt_id: AttemptId,
-    inputs: &[super::run::AttemptArtefactInput],
-) -> StepOutcome {
-    match execute_apply_transaction(state, job, step, attempt_id, inputs) {
-        Ok(()) => StepOutcome::Completed,
-        Err(error) => StepOutcome::Failed {
-            category: match error {
-                crate::workflows::apply::ApplyExecutionError::Assurance => {
-                    FailureCategory::Assurance
-                }
-                crate::workflows::apply::ApplyExecutionError::Authority => {
-                    FailureCategory::Authority
-                }
-                crate::workflows::apply::ApplyExecutionError::Operational => {
-                    FailureCategory::Operational
-                }
-                crate::workflows::apply::ApplyExecutionError::Conflict
-                | crate::workflows::apply::ApplyExecutionError::Integrity
-                | crate::workflows::apply::ApplyExecutionError::Write => FailureCategory::Apply,
-            },
-            error: Some(error.message().to_owned()),
-        },
-    }
-}
-
-fn execute_apply_transaction(
-    state: &AppState,
-    job: &WorkflowJob,
-    step: &StepDefinition,
-    attempt_id: AttemptId,
-    inputs: &[super::run::AttemptArtefactInput],
-) -> Result<(), crate::workflows::apply::ApplyExecutionError> {
-    use crate::workflows::apply::{
-        ApplyExecutionError, ApplyRoot, ApplyTransaction, ApplyTransactionState,
-    };
-
-    confirm_run_authority(state, job).map_err(|_| ApplyExecutionError::Authority)?;
-    let conversation_id = job.conversation_id.ok_or(ApplyExecutionError::Authority)?;
-    let conversation = state
-        .conversations
-        .get(&conversation_id)
-        .and_then(|record| record.model)
-        .ok_or(ApplyExecutionError::Authority)?;
-    let run = state
-        .workflow_runs
-        .get(&job.run_id)
-        .ok_or(ApplyExecutionError::Operational)?;
-    let approved =
-        crate::workflows::apply::require_approval(&run, step, inputs, &state.workflow_artefacts)?;
-    let (
-        crate::workflows::artefacts::CandidatePayload::Set(baseline),
-        crate::workflows::artefacts::CandidatePayload::Set(candidate),
-    ) = (&approved.baseline, &approved.candidate)
-    else {
-        return Err(ApplyExecutionError::Integrity);
-    };
-    let settings = run.directory_settings().unwrap_or(conversation.settings);
-    let mut roots = Vec::new();
-    for (before, after) in baseline.roots.iter().zip(&candidate.roots) {
-        let grant = settings
-            .directories
-            .iter()
-            .find(|grant| {
-                grant.id == before.grant_id
-                    && grant.alias == before.alias
-                    && grant.access == crate::execution::DirectoryAccess::ReviewBeforeApply
-            })
-            .ok_or(ApplyExecutionError::Authority)?;
-        grant
-            .revalidate()
-            .map_err(|_| ApplyExecutionError::Authority)?;
-        if grant.identity != before.identity || before.identity != after.identity {
-            return Err(ApplyExecutionError::Authority);
-        }
-        let outcome = if before.candidate == after.candidate {
-            crate::workflows::apply::ApplyRootOutcome::Unchanged
-        } else {
-            crate::workflows::apply::ApplyRootOutcome::Pending
-        };
-        roots.push(ApplyRoot {
-            grant_id: grant.id,
-            alias: grant.alias.clone(),
-            host_path: grant.host_path.clone(),
-            identity: grant.identity,
-            baseline_candidate: before.candidate.candidate_hash,
-            candidate_hash: after.candidate.candidate_hash,
-            exclusions: before.candidate.exclusions.clone(),
-            outcome,
-        });
-    }
-    if roots.len() != baseline.roots.len() || roots.is_empty() {
-        return Err(ApplyExecutionError::Integrity);
-    }
-    let baseline_manifest = approved
-        .baseline
-        .manifest_bytes()
-        .map_err(|_| ApplyExecutionError::Integrity)?;
-    let mut transaction = ApplyTransaction {
-        state: ApplyTransactionState::Prepared,
-        roots,
-        baseline: approved.baseline_reference,
-        candidate: approved.candidate_reference,
-        approval: approved.approval,
-    };
-    let journal = state
-        .apply_journals
-        .create(
-            job.run_id,
-            attempt_id,
-            &transaction,
-            &baseline_manifest,
-            transaction.baseline.artefact_hash,
-        )
-        .map_err(|_| ApplyExecutionError::Operational)?;
-    persist_apply_transaction(state, job.run_id, attempt_id, transaction.clone())?;
-    transaction.apply_roots(
-        baseline,
-        candidate,
-        &state.workflow_artefacts,
-        &journal,
-        |transaction| {
-            persist_apply_transaction(state, job.run_id, attempt_id, transaction.clone())?;
-            if matches!(transaction.state, ApplyTransactionState::Applying { .. }) {
-                confirm_run_authority(state, job).map_err(|_| ApplyExecutionError::Authority)?;
-                if job.job.cancel_requested() {
-                    return Err(ApplyExecutionError::Write);
-                }
-            }
-            Ok(())
-        },
-    )
-}
-
-fn persist_apply_transaction(
-    state: &AppState,
-    run_id: RunId,
-    attempt_id: AttemptId,
-    transaction: crate::workflows::apply::ApplyTransaction,
-) -> Result<(), crate::workflows::apply::ApplyExecutionError> {
-    state
-        .workflow_runs
-        .mutate(&run_id, |run| {
-            run.record_apply_transaction(attempt_id, transaction)
-        })
-        .map(|_| ())
-        .map_err(|_| crate::workflows::apply::ApplyExecutionError::Operational)
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn execute_commit_root(
-    state: &AppState,
-    job: &WorkflowJob,
-    attempt_id: AttemptId,
-    root: &crate::workflows::commit::CommitRoot,
-    target: &LoadedCandidate,
-    sandbox: &GuestSandbox,
-) -> Result<(), crate::workflows::commit::CommitError> {
-    use crate::workflows::commit::{CommitError, CommitTransactionState};
-    let user_project = &root.grant.host_path;
-    let at_repository = |mut exec: GuestExec| {
-        exec.cwd = root.grant.guest_path();
-        for (key, value) in &mut exec.env {
-            if key == "GIT_INDEX_FILE" {
-                *value = value.replacen(GUEST_PROJECT, &root.grant.guest_path(), 1);
-            }
-        }
-        exec
-    };
-
-    let run = state
-        .workflow_runs
-        .get(&job.run_id)
-        .ok_or(CommitError::Operational)?;
-    confirm_run_authority(state, job).map_err(|_| CommitError::Authority)?;
-    let crate::workflows::RunSource::Captured { source } = &run.source else {
-        return Err(CommitError::Operational);
-    };
-    let initial_record = run
-        .artefact(&source.initial.id)
-        .ok_or(CommitError::Operational)?;
-    let initial_bytes = state
-        .workflow_artefacts
-        .get(&initial_record.object_hash)
-        .map_err(|_| CommitError::Operational)?;
-    let initial_payload =
-        crate::workflows::artefacts::CandidatePayload::from_manifest_bytes(&initial_bytes)
-            .ok_or(CommitError::Operational)?;
-    let grant = crate::workflows::commit::target_grant(&run, root.grant.id)?;
-    if grant != root.grant {
-        return Err(CommitError::Authority);
-    }
-    let (initial, target_revision) =
-        crate::workflows::commit::destination_pair(&grant, &initial_payload, &target.artefact)?;
-    commits::require_clean_repository(user_project)?;
-    crate::workflows::commit::require_unchanged_project(
-        user_project,
-        initial,
-        target_revision,
-        &state.workflow_artefacts,
-    )?;
-    let target_repository = target_revision
-        .repository
-        .as_ref()
-        .ok_or(CommitError::Preflight)?;
-    if current_reference(user_project)? != root.expected_reference {
-        return Err(CommitError::Preflight);
-    }
-    let timestamp = root.timestamp.clone();
-    let mut transaction = root.clone();
-    let journal = state
-        .commit_journals
-        .create_for_directory(job.run_id, attempt_id, root.grant.id)
-        .map_err(|_| CommitError::Operational)?;
-    let live_index = user_project.join(".git/index");
-    let original_index = match std::fs::read(&live_index) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(_) => return Err(CommitError::Preflight),
-    };
-    journal
-        .write_index_backup("original.index", &original_index)
-        .map_err(|_| CommitError::Operational)?;
-    journal.flush().map_err(|_| CommitError::Operational)?;
-    persist_commit_root(state, job.run_id, attempt_id, transaction.clone())?;
-
-    let index_guest = crate::workflows::commit::temporary_index_guest(attempt_id);
-    let index_host = user_project
-        .join(".git")
-        .join(format!("frinkworks-commit-index-{}", attempt_id.as_hex()));
-    if index_host.exists() {
-        return Err(CommitError::Preflight);
-    }
-    run_git_capture(
-        sandbox,
-        &job.job,
-        at_repository(crate::workflows::commit::read_tree_command(
-            &index_guest,
-            transaction.old_object.as_deref(),
-            &timestamp,
-        )),
-        true,
-    )
-    .await?;
-    let mut index_info = crate::workflows::commit::index_removal_records(
-        initial,
-        target_revision,
-        target_repository.object_format,
-    );
-    // The commit contains task changes, not unchanged ignored files from the directory capture.
-    for entry in target_revision
-        .entries
-        .iter()
-        .filter(|entry| !initial.entries.contains(entry))
-    {
-        let object = match &entry.kind {
-            crate::workflows::artefacts::candidate::CandidateEntryKind::Regular {
-                blob, ..
-            }
-            | crate::workflows::artefacts::candidate::CandidateEntryKind::Symlink {
-                blob, ..
-            } => {
-                let bytes = state
-                    .workflow_artefacts
-                    .get(blob)
-                    .map_err(|_| CommitError::Operational)?;
-                let output = run_git_capture(
-                    sandbox,
-                    &job.job,
-                    at_repository(crate::workflows::commit::hash_object_command(
-                        bytes, &timestamp,
-                    )),
-                    true,
-                )
-                .await?;
-                crate::workflows::commit::parse_object_id(&output, target_repository.object_format)?
-                    .0
-            }
-            crate::workflows::artefacts::candidate::CandidateEntryKind::Directory { .. } => {
-                continue;
-            }
-            crate::workflows::artefacts::candidate::CandidateEntryKind::Gitlink { commit } => {
-                crate::workflows::commit::parse_object_id(
-                    &commit.0,
-                    target_repository.object_format,
-                )?
-                .0
-            }
-        };
-        index_info.extend(crate::workflows::commit::index_info_record(entry, &object)?);
-    }
-    run_git_capture(
-        sandbox,
-        &job.job,
-        at_repository(crate::workflows::commit::index_info_command(
-            index_info,
-            &index_guest,
-            &timestamp,
-        )),
-        true,
-    )
-    .await?;
-    let tree = run_git_capture(
-        sandbox,
-        &job.job,
-        at_repository(crate::workflows::commit::write_tree_command(
-            &index_guest,
-            &timestamp,
-        )),
-        true,
-    )
-    .await?;
-    let tree = crate::workflows::commit::parse_object_id(&tree, target_repository.object_format)?.0;
-    if let Some(old) = transaction.old_object.as_deref() {
-        let old_tree = git_host_text(user_project, &["rev-parse", &format!("{old}^{{tree}}")])?;
-        if old_tree == tree {
-            return Err(CommitError::Preflight);
-        }
-    }
-    transaction.target_tree = Some(tree.clone());
-    persist_commit_root(state, job.run_id, attempt_id, transaction.clone())?;
-    let commit = run_git_capture(
-        sandbox,
-        &job.job,
-        at_repository(crate::workflows::commit::commit_tree_command(
-            &tree,
-            transaction.old_object.as_deref(),
-            &timestamp,
-        )),
-        true,
-    )
-    .await?;
-    let commit =
-        crate::workflows::commit::parse_object_id(&commit, target_repository.object_format)?.0;
-    let target_index = std::fs::read(&index_host).map_err(|_| CommitError::Command)?;
-    journal
-        .write_index_backup("target.index", &target_index)
-        .map_err(|_| CommitError::Operational)?;
-    journal.flush().map_err(|_| CommitError::Operational)?;
-    std::fs::remove_file(&index_host).map_err(|_| CommitError::Operational)?;
-    transaction.expected_commit = Some(commit.clone());
-    persist_commit_root(state, job.run_id, attempt_id, transaction.clone())?;
-    if job.job.cancel_requested() {
-        return Err(CommitError::Operational);
-    }
-
-    confirm_run_authority(state, job).map_err(|_| CommitError::Authority)?;
-    let target_bytes = target_revision
-        .manifest_bytes()
-        .map_err(|_| CommitError::Operational)?;
-    let target_hash = crate::workflows::artefacts::artefact_hash_for(
-        crate::workflows::definition::ArtefactKind::CandidateRevision,
-        target_revision.format_version,
-        &target_bytes,
-    );
-    crate::workflows::artefacts::CandidateApply::apply(
-        user_project,
-        initial,
-        target_revision,
-        target_hash,
-        &state.workflow_artefacts,
-    )
-    .map_err(map_apply_error)?;
-    transaction.state = CommitTransactionState::WorktreeApplied;
-    persist_commit_root(state, job.run_id, attempt_id, transaction.clone())?;
-
-    let old_guard = transaction.old_object.as_deref().unwrap_or({
-        match target_repository.object_format {
-            crate::workflows::artefacts::candidate::GitObjectFormat::Sha1 => {
-                "0000000000000000000000000000000000000000"
-            }
-            crate::workflows::artefacts::candidate::GitObjectFormat::Sha256 => {
-                "0000000000000000000000000000000000000000000000000000000000000000"
-            }
-        }
-    });
-    if run_git_capture(
-        sandbox,
-        &job.job,
-        at_repository(crate::workflows::commit::update_ref_command(
-            &transaction.expected_reference,
-            &commit,
-            Some(old_guard),
-            &timestamp,
-        )),
-        false,
-    )
-    .await
-    .is_err()
-    {
-        restore_before_reference(state, user_project, initial, target_revision, &journal)?;
-        return Err(CommitError::Command);
-    }
-    transaction.state = CommitTransactionState::ReferenceUpdated {
-        commit: commit.clone(),
-    };
-    persist_commit_root(state, job.run_id, attempt_id, transaction.clone())?;
-    crate::storage::write_private(&live_index, &target_index)
-        .map_err(|_| CommitError::Operational)?;
-    let captured = crate::workflows::commit::capture_revision(
-        user_project,
-        target_revision,
-        &state.workflow_artefacts,
-    )?;
-    if captured.candidate_hash != target_revision.candidate_hash
-        || captured
-            .repository
-            .as_ref()
-            .and_then(|repo| repo.head.as_ref())
-            .map(|head| &head.0)
-            != Some(&commit)
-    {
-        return Err(CommitError::Preflight);
-    }
-    transaction.state = CommitTransactionState::Verified { commit };
-    persist_commit_root(state, job.run_id, attempt_id, transaction)?;
-    Ok(())
-}
-
-fn persist_commit_root(
-    state: &AppState,
-    run_id: RunId,
-    attempt_id: AttemptId,
-    root: crate::workflows::commit::CommitRoot,
-) -> Result<(), crate::workflows::commit::CommitError> {
-    state
-        .workflow_runs
-        .mutate(&run_id, |run| {
-            let mut transaction = run
-                .attempts
-                .iter()
-                .find(|attempt| attempt.id == attempt_id)
-                .and_then(|attempt| attempt.commit_transaction.clone())
-                .ok_or(crate::workflows::run::TransitionError::Invalid)?;
-            let stored = transaction
-                .roots
-                .iter_mut()
-                .find(|stored| stored.grant.id == root.grant.id)
-                .ok_or(crate::workflows::run::TransitionError::Invalid)?;
-            *stored = root;
-            run.record_commit_transaction(attempt_id, transaction)
-        })
-        .map(|_| ())
-        .map_err(|_| crate::workflows::commit::CommitError::Operational)
-}
-
-fn persist_transaction(
-    state: &AppState,
-    run_id: RunId,
-    attempt_id: AttemptId,
-    transaction: crate::workflows::commit::CommitTransaction,
-) -> Result<(), crate::workflows::commit::CommitError> {
-    state
-        .workflow_runs
-        .mutate(&run_id, |run| {
-            run.record_commit_transaction(attempt_id, transaction)
-        })
-        .map(|_| ())
-        .map_err(|_| crate::workflows::commit::CommitError::Operational)
-}
-
-fn map_apply_error(
-    error: crate::workflows::artefacts::apply::ApplyError,
-) -> crate::workflows::commit::CommitError {
-    match error {
-        crate::workflows::artefacts::apply::ApplyError::Drift
-        | crate::workflows::artefacts::apply::ApplyError::Conflict => {
-            crate::workflows::commit::CommitError::Preflight
-        }
-        crate::workflows::artefacts::apply::ApplyError::Integrity => {
-            crate::workflows::commit::CommitError::Operational
-        }
-        _ => crate::workflows::commit::CommitError::Apply,
-    }
-}
-
-fn restore_before_reference(
-    state: &AppState,
-    user_project: &std::path::Path,
-    initial: &crate::workflows::artefacts::candidate::CandidateRevisionArtefact,
-    target: &crate::workflows::artefacts::candidate::CandidateRevisionArtefact,
-    journal: &crate::workflows::commit::CommitJournal,
-) -> Result<(), crate::workflows::commit::CommitError> {
-    crate::workflows::artefacts::CandidateApply::rollback(
-        user_project,
-        initial,
-        target,
-        &state.workflow_artefacts,
-    )
-    .map_err(|_| crate::workflows::commit::CommitError::Operational)?;
-    let original = journal
-        .read_index_backup("original.index")
-        .map_err(|_| crate::workflows::commit::CommitError::Operational)?;
-    let index = user_project.join(".git/index");
-    if original.is_empty() {
-        match std::fs::remove_file(index) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(_) => return Err(crate::workflows::commit::CommitError::Operational),
-        }
-    } else {
-        crate::storage::write_private(&index, &original)
-            .map_err(|_| crate::workflows::commit::CommitError::Operational)?;
-    }
-    Ok(())
-}
-
-fn current_reference(
-    project: &std::path::Path,
-) -> Result<String, crate::workflows::commit::CommitError> {
-    let output = std::process::Command::new("git")
-        .current_dir(project)
-        .args(["symbolic-ref", "--quiet", "HEAD"])
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .output()
-        .map_err(|_| crate::workflows::commit::CommitError::Preflight)?;
-    if output.status.success() {
-        let reference = String::from_utf8(output.stdout)
-            .map_err(|_| crate::workflows::commit::CommitError::Preflight)?;
-        let reference = reference.trim();
-        if reference.starts_with("refs/heads/")
-            && !reference.contains("..")
-            && !reference.contains(['\\', ' ', '~', '^', ':', '?', '*', '['])
-        {
-            return Ok(reference.to_owned());
-        }
-        return Err(crate::workflows::commit::CommitError::Preflight);
-    }
-    Ok("HEAD".to_owned())
-}
-
-fn git_host_text(
-    project: &std::path::Path,
-    args: &[&str],
-) -> Result<String, crate::workflows::commit::CommitError> {
-    let output = std::process::Command::new("git")
-        .current_dir(project)
-        .args([
-            "--no-optional-locks",
-            "-c",
-            "core.hooksPath=/dev/null",
-            "-c",
-            "core.fsmonitor=",
-        ])
-        .args(args)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .output()
-        .map_err(|_| crate::workflows::commit::CommitError::Preflight)?;
-    if !output.status.success() {
-        return Err(crate::workflows::commit::CommitError::Preflight);
-    }
-    String::from_utf8(output.stdout)
-        .map(|text| text.trim().to_owned())
-        .map_err(|_| crate::workflows::commit::CommitError::Preflight)
-}
-
 fn persist_cleanup(
     state: &AppState,
     run_id: &RunId,
@@ -2223,468 +750,6 @@ fn persist_cleanup(
         .workflow_runs
         .mutate(run_id, |run| run.record_cleanup(attempt_id, cleanup))
         .map(|_| ())
-}
-
-fn ordinary_file_agent(state: &AppState, job: &WorkflowJob) -> bool {
-    state
-        .workflow_runs
-        .get(&job.run_id)
-        .is_some_and(|run| run.kind == crate::workflows::run::RunKind::QuickTask)
-}
-
-async fn run_ordinary_command(
-    state: &AppState,
-    job: &WorkflowJob,
-    sandbox: &std::sync::Arc<GuestSandbox>,
-) -> StepOutcome {
-    let Some(command) = job.command.as_ref() else {
-        return StepOutcome::Failed {
-            category: FailureCategory::Definition,
-            error: Some("A command step needs a direct command.".to_owned()),
-        };
-    };
-    if command
-        .settlement
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .is_some()
-    {
-        return StepOutcome::Failed {
-            category: FailureCategory::Operational,
-            error: Some("A direct command cannot run again in the same operation.".to_owned()),
-        };
-    }
-    if job.project_free_authority.is_some()
-        && let Err(error) = confirm_run_authority(state, job)
-    {
-        return StepOutcome::Failed {
-            category: FailureCategory::Authority,
-            error: Some(error),
-        };
-    }
-    let Some(run) = state.workflow_runs.get(&job.run_id) else {
-        return StepOutcome::Failed {
-            category: FailureCategory::Operational,
-            error: Some(OPERATIONAL_STORE_ERROR.to_owned()),
-        };
-    };
-    let Some(attempt_id) = run.active_attempt() else {
-        return StepOutcome::Failed {
-            category: FailureCategory::Operational,
-            error: Some(OPERATIONAL_STORE_ERROR.to_owned()),
-        };
-    };
-    let Some(attempt) = run.attempts.iter().find(|attempt| attempt.id == attempt_id) else {
-        return StepOutcome::Failed {
-            category: FailureCategory::Operational,
-            error: Some(OPERATIONAL_STORE_ERROR.to_owned()),
-        };
-    };
-    let workdir = attempt
-        .capabilities
-        .directories
-        .first()
-        .map(|directory| directory.guest_path.clone())
-        .unwrap_or_else(|| crate::execution::GUEST_WORKSPACE.to_owned());
-    let connection = job.active_connection();
-    let secret = match &connection.auth {
-        crate::providers::AuthMethod::ApiKey => Some(connection.api_key.expose().to_owned()),
-        crate::providers::AuthMethod::Plan => None,
-    };
-    let secret = secret.as_deref();
-    let visible_call = command.message.as_hex();
-    let key = crate::execution::OutputKey {
-        scope: crate::execution::OutputScope {
-            conversation: job.conversation_id,
-            run: Some(job.run_id),
-            attempt: Some(attempt_id),
-        },
-        job: job.job.id(),
-        tool_call: visible_call.clone(),
-        model_hidden: !command.included,
-    };
-    let result = crate::execution::command::capture_sandbox_command(
-        sandbox,
-        GuestExec::shell(&command.command).in_dir(workdir),
-        &job.job,
-        secret,
-        crate::tools::SANDBOX_COMMAND_TIMEOUT,
-        &visible_call,
-        Some((&state.outputs, &key)),
-    )
-    .await;
-    let (settlement, outcome) = match result {
-        Ok(result) => (
-            DirectCommandSettlement {
-                output: Some(result),
-                status: crate::conversations::MessageStatus::Complete,
-                error: None,
-            },
-            StepOutcome::Completed,
-        ),
-        Err(failure) => {
-            let status =
-                if failure.result.termination == crate::execution::CommandTermination::Cancelled {
-                    crate::conversations::MessageStatus::Interrupted
-                } else {
-                    crate::conversations::MessageStatus::Failed
-                };
-            let error = (status == crate::conversations::MessageStatus::Failed)
-                .then(|| failure.message.to_owned());
-            let outcome = match status {
-                crate::conversations::MessageStatus::Interrupted => StepOutcome::Cancelled,
-                _ => StepOutcome::Failed {
-                    category: FailureCategory::Tool,
-                    error: Some(failure.message.to_owned()),
-                },
-            };
-            (
-                DirectCommandSettlement {
-                    output: Some(failure.result),
-                    status,
-                    error,
-                },
-                outcome,
-            )
-        }
-    };
-    *command
-        .settlement
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(settlement.clone());
-    if let Some(output) = settlement.output.as_ref()
-        && job.conversation_id.is_none_or(|id| {
-            state
-                .conversations
-                .record_command_output(&id, job.job.id(), output.clone())
-                .is_err()
-        })
-    {
-        return StepOutcome::Failed {
-            category: FailureCategory::Operational,
-            error: Some(OPERATIONAL_STORE_ERROR.to_owned()),
-        };
-    }
-    outcome
-}
-
-fn append_preamble(preamble: &mut String, block: &str) {
-    let block = block.trim();
-    if block.is_empty() {
-        return;
-    }
-    if !preamble.is_empty() {
-        preamble.push_str("\n\n");
-    }
-    preamble.push_str(block);
-}
-
-async fn run_ordinary_file_agent(
-    state: &AppState,
-    job: &WorkflowJob,
-    sandbox: Option<&std::sync::Arc<GuestSandbox>>,
-) -> StepOutcome {
-    if let Err(error) = confirm_run_authority(state, job) {
-        return StepOutcome::Failed {
-            category: FailureCategory::Authority,
-            error: Some(error),
-        };
-    }
-    let Some(run) = state.workflow_runs.get(&job.run_id) else {
-        return StepOutcome::Failed {
-            category: FailureCategory::Operational,
-            error: Some(OPERATIONAL_STORE_ERROR.to_owned()),
-        };
-    };
-    let Some(step_key) = run
-        .active_attempt()
-        .and_then(|attempt| run.attempts.iter().find(|item| item.id == attempt))
-        .map(|attempt| attempt.step.clone())
-    else {
-        return StepOutcome::Failed {
-            category: FailureCategory::Operational,
-            error: Some(OPERATIONAL_STORE_ERROR.to_owned()),
-        };
-    };
-    let Some(step_definition) = run.pinned.definition.step(&step_key).cloned() else {
-        return StepOutcome::Failed {
-            category: FailureCategory::Operational,
-            error: Some(OPERATIONAL_STORE_ERROR.to_owned()),
-        };
-    };
-    let StepAction::Agent(action) = &step_definition.action else {
-        return StepOutcome::Failed {
-            category: FailureCategory::Definition,
-            error: Some("Ordinary file-change work must be a model step.".to_owned()),
-        };
-    };
-    let Some(settings) = run
-        .phase_settings(&step_key)
-        .cloned()
-        .or_else(|| run.directory_settings())
-    else {
-        return StepOutcome::Failed {
-            category: FailureCategory::Authority,
-            error: Some("The pinned execution settings are unavailable.".to_owned()),
-        };
-    };
-    let Some(authority) = job.project_free_authority.as_ref() else {
-        return StepOutcome::Failed {
-            category: FailureCategory::Authority,
-            error: Some(
-                "Ordinary file-change work needs conversation directory authority.".to_owned(),
-            ),
-        };
-    };
-    let pinned = match crate::execution::ProjectFreeAuthority::from_settings(
-        authority.revision,
-        &settings,
-    ) {
-        Ok(pinned) => pinned,
-        Err(_) => {
-            return StepOutcome::Failed {
-                category: FailureCategory::Authority,
-                error: Some("A phase directory changed identity before dispatch.".to_owned()),
-            };
-        }
-    };
-    if pinned != *authority {
-        return StepOutcome::Failed {
-            category: FailureCategory::Authority,
-            error: Some("The pinned directory authority changed before dispatch.".to_owned()),
-        };
-    }
-    let grants = pinned
-        .policy
-        .grants()
-        .iter()
-        .cloned()
-        .map(|mut grant| {
-            if action.candidate_authority == CandidateAuthority::Edit
-                && pinned.reviewed_aliases.contains(&grant.alias)
-            {
-                grant.access = AccessMode::ReadWrite;
-            }
-            grant
-        })
-        .collect();
-    let policy = DirectoryPolicy::from_grants_with_workspace(
-        grants,
-        pinned.policy.primary_alias().to_owned(),
-    )
-    .with_skill_root(crate::execution::global_skill_root(state.skills.host_dir()));
-    let location = settings.location;
-    let policy = if location == crate::execution::ToolLocation::Host {
-        policy.on_host(&crate::execution::command_directory(&settings.directories))
-    } else {
-        policy
-    };
-    let connection = job.active_connection();
-    let secret = match &connection.auth {
-        crate::providers::AuthMethod::ApiKey => Some(connection.api_key.expose()),
-        crate::providers::AuthMethod::Plan => None,
-    };
-    let mut preamble = settings.instructions.trim().to_owned();
-    append_preamble(
-        &mut preamble,
-        &crate::workflows::input_context::authorised_source_text(
-            &settings,
-            step_definition.writes_primary_source(),
-        ),
-    );
-    if location == crate::execution::ToolLocation::Host {
-        let approval = if settings.automatic_host_commands() {
-            "This conversation authorises Run without approval."
-        } else {
-            "Each shell command waits for user approval bound to this conversation, job and settings revision."
-        };
-        append_preamble(
-            &mut preamble,
-            &format!(
-                "Tools run on this computer as the Frinkworks process user. {approval} Approval does not inspect script internals. Command output is sent to the hosted model. Sandbox guest paths such as /access/<alias> and /workspace from earlier turns are not host paths and grant no authority."
-            ),
-        );
-    }
-    let project_instructions = match sandbox {
-        Some(sandbox) => {
-            match crate::workflows::input_context::read_directory_instructions(
-                sandbox, &pinned, secret,
-            )
-            .await
-            {
-                Ok(instructions) => instructions,
-                Err(error) => {
-                    return StepOutcome::Failed {
-                        category: FailureCategory::Authority,
-                        error: Some(error.message().to_owned()),
-                    };
-                }
-            }
-        }
-        None => crate::workflows::input_context::ProjectInstructions::Absent,
-    };
-    if let Some(language) = state.sessions.language(&job.session_id) {
-        language.append_instructions(&mut preamble);
-    }
-    let Some(conversation) = job.conversation_id else {
-        return StepOutcome::Failed {
-            category: FailureCategory::Authority,
-            error: Some("Ordinary file-change work needs a conversation.".to_owned()),
-        };
-    };
-    let Some(attempt_id) = run.active_attempt() else {
-        return StepOutcome::Failed {
-            category: FailureCategory::Operational,
-            error: Some(OPERATIONAL_STORE_ERROR.to_owned()),
-        };
-    };
-    let tools = settings.tools.clone();
-    let definitions = crate::tools::definitions_for(&tools, location);
-    let skills = match crate::execution::discover_skills(
-        sandbox.map(AsRef::as_ref),
-        &policy,
-        secret,
-    )
-    .await
-    {
-        Ok(skills) => skills,
-        Err(error) => {
-            return StepOutcome::Failed {
-                category: FailureCategory::Authority,
-                error: Some(error.message().to_owned()),
-            };
-        }
-    };
-    let instruction_sources = project_instructions
-        .sources()
-        .iter()
-        .map(|source| source.source.clone())
-        .collect::<Vec<_>>();
-    let turns = if run.revision_feedback(&step_key).is_some() {
-        // Revisions use verified candidate feedback, not the original conversation request.
-        let inputs = run
-            .attempts
-            .last()
-            .map(|attempt| attempt.inputs.as_slice())
-            .unwrap_or_default();
-        let packet = match crate::workflows::input_context::build_attempt_packet_for_request(
-            &run,
-            &step_definition,
-            inputs,
-            &state.workflow_artefacts,
-            project_instructions,
-            &[],
-            &preamble,
-            &definitions,
-            state
-                .models_dev
-                .context_limit(connection.kind, &connection.model),
-            secret,
-        ) {
-            Ok(packet) => packet,
-            Err(error) => {
-                return StepOutcome::Failed {
-                    category: FailureCategory::Definition,
-                    error: Some(error.message().to_owned()),
-                };
-            }
-        };
-        if state
-            .workflow_runs
-            .mutate(&run.id, |run| {
-                run.record_initial_context(attempt_id, packet.clone())
-            })
-            .is_err()
-        {
-            return StepOutcome::Failed {
-                category: FailureCategory::Operational,
-                error: Some(OPERATIONAL_STORE_ERROR.to_owned()),
-            };
-        }
-        preamble = packet.prompt.clone();
-        packet.request_messages()
-    } else {
-        preamble = crate::execution::context::compose_resources(
-            &preamble,
-            project_instructions.sources(),
-            &[],
-        )
-        .text;
-        job.turns.clone()
-    };
-    let composed_resources = crate::execution::context::compose_resources(&preamble, &[], &skills);
-    preamble = composed_resources.text;
-    let host =
-        (location == crate::execution::ToolLocation::Host).then(|| crate::tools::HostRunSpec {
-            session: job.session_id,
-            conversation,
-            execution_revision: job.agent_revision,
-            directory: crate::execution::command_directory(&settings.directories),
-            settings: settings.clone(),
-            run: Some(job.run_id.as_hex()),
-            step: Some(step_key.as_str().to_owned()),
-            attempt: Some(attempt_id.as_hex()),
-        });
-    let spec = AgentRunSpec {
-        agent_id: None,
-        revision: job.agent_revision,
-        preamble,
-        context_prefix_len: 0,
-        tools: definitions,
-        tool_ids: tools,
-        policy,
-        connection: connection.clone(),
-        location,
-        sandbox: sandbox.cloned(),
-        host,
-        output_drafts: None,
-        required_outputs: Vec::new(),
-        evidence: None,
-        output_scope: Some(crate::execution::OutputScope::conversation(conversation)),
-        conversation: Some(conversation),
-        steering_session: Some(job.session_id),
-        budget: crate::execution::BudgetPolicy::ordinary(),
-        sources: instruction_sources,
-        advertised: composed_resources.advertised,
-    };
-    let ended = crate::execution::run_agent_action(state, spec, turns, job.job.clone()).await;
-    if ended.outcome == AgentOutcome::Completed {
-        *job.eligible_reply
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = ended.reply.text.clone();
-    }
-    match ended.outcome {
-        AgentOutcome::Completed => StepOutcome::Completed,
-        AgentOutcome::ProviderFailure => StepOutcome::Failed {
-            category: FailureCategory::Provider,
-            error: ended.error,
-        },
-        AgentOutcome::ToolFailure => StepOutcome::Failed {
-            category: FailureCategory::Tool,
-            error: ended.error,
-        },
-        AgentOutcome::AuthorityFailure => StepOutcome::Failed {
-            category: FailureCategory::Authority,
-            error: ended.error,
-        },
-        AgentOutcome::PersistenceFailure => StepOutcome::Failed {
-            category: FailureCategory::Operational,
-            error: ended.error,
-        },
-        AgentOutcome::UncertainEffect => StepOutcome::Failed {
-            category: FailureCategory::Command,
-            error: ended.error,
-        },
-        AgentOutcome::Cancelled => StepOutcome::Cancelled,
-        AgentOutcome::BudgetExhausted => StepOutcome::Paused {
-            budget: ended.budget.expect("budget pause carries a snapshot"),
-            reply: Box::new(ended.reply),
-        },
-        AgentOutcome::ContextBlocked => StepOutcome::Failed {
-            category: FailureCategory::Provider,
-            error: ended.error,
-        },
-    }
 }
 
 async fn dispatch_step(
@@ -2699,14 +764,8 @@ async fn dispatch_step(
             run_agent_step(state, job, action, Some(sandbox), drafts).await
         }
         StepAction::SystemCommand(action) => match action.command {
-            SystemCommandId::ApplyChanges | SystemCommandId::CommitCandidate => {
-                StepOutcome::Failed {
-                    category: FailureCategory::Definition,
-                    error: Some(OPERATIONAL_STORE_ERROR.to_owned()),
-                }
-            }
             SystemCommandId::RepositoryStatus => {
-                run_system_exec(sandbox, &job.job, guest_command(action.command)).await
+                run_system_exec(state, job, step, sandbox, action.command).await
             }
         },
         StepAction::HumanGate(_) => StepOutcome::Failed {
@@ -2799,7 +858,7 @@ async fn run_agent_step(
         if !action
             .authority
             .allowed_by(&authority.tools, authority.directories())
-            || (action.candidate_authority.access().is_writable()
+            || (action.directory_access.access().is_writable()
                 && !authority.grant_access.is_writable())
         {
             return StepOutcome::Failed {
@@ -2860,35 +919,30 @@ async fn run_agent_step(
                 .map(|authority| &authority.policy)
         })
         .unwrap_or(&job.host_policy);
-    let policy = if let Some(authority) = phase_directory_authority.as_ref() {
-        let grants = phase_policy
+    let policy = DirectoryPolicy::from_grants_with_workspace(
+        phase_policy
             .grants()
             .iter()
             .cloned()
             .map(|mut grant| {
-                if action.candidate_authority == CandidateAuthority::Edit
-                    && authority.reviewed_aliases.contains(&grant.alias)
-                {
-                    grant.access = AccessMode::ReadWrite;
-                }
+                grant.access = run
+                    .attempts
+                    .iter()
+                    .find(|attempt| Some(attempt.id) == run.active_attempt())
+                    .and_then(|attempt| {
+                        attempt
+                            .capabilities
+                            .directories
+                            .iter()
+                            .find(|directory| directory.alias == grant.alias)
+                    })
+                    .map(|directory| directory.access)
+                    .unwrap_or(AccessMode::ReadOnly);
                 grant
             })
-            .collect();
-        DirectoryPolicy::from_grants_with_workspace(grants, phase_policy.primary_alias().to_owned())
-    } else {
-        match intersect_authority(action.candidate_authority, &action.authority, phase_policy) {
-            Ok(policy) => policy,
-            Err(()) => {
-                return StepOutcome::Failed {
-                    category: FailureCategory::Authority,
-                    error: Some(
-                        "The pinned step authority exceeds the current directory policy."
-                            .to_owned(),
-                    ),
-                };
-            }
-        }
-    };
+            .collect(),
+        phase_policy.primary_alias().to_owned(),
+    );
     let policy =
         policy.with_skill_root(crate::execution::global_skill_root(state.skills.host_dir()));
     let policy = if let Some(settings) = run.phase_settings(&step_key)
@@ -2906,18 +960,9 @@ async fn run_agent_step(
     };
     let agent_instructions = run
         .phase_model(&step_key)
-        .map(|selection| {
-            // Quick task roles already contain the instruction snapshot.
-            if run.kind == crate::workflows::RunKind::QuickTask {
-                String::new()
-            } else {
-                selection.instructions.clone()
-            }
-        })
+        .map(|selection| selection.instructions.clone())
         .unwrap_or_else(|| {
-            if run.kind == crate::workflows::RunKind::QuickTask {
-                String::new()
-            } else if let Some(conversation_id) = job.conversation_id {
+            if let Some(conversation_id) = job.conversation_id {
                 state
                     .conversations
                     .get(&conversation_id)
@@ -3014,7 +1059,7 @@ async fn run_agent_step(
             .phase_settings(&step_key)
             .is_some_and(|settings| settings.automatic_host_commands())
         {
-            composed.push_str("This run authorises Run without approval. ");
+            composed.push_str("This run uses Automatic (YOLO) command approval. ");
         } else {
             composed.push_str("Each shell command waits for user approval bound to this run. ");
         }
@@ -3078,14 +1123,14 @@ async fn run_agent_step(
         attempt_id,
         step_key.as_str(),
     );
-    let host = if location == crate::execution::ToolLocation::Host {
+    let host = {
         let settings = run
             .phase_settings(&step_key)
             .cloned()
             .or_else(|| run.directory_settings())
             .ok_or_else(|| StepOutcome::Failed {
                 category: FailureCategory::Authority,
-                error: Some("The pinned host settings are unavailable.".to_owned()),
+                error: Some("The pinned command settings are unavailable.".to_owned()),
             });
         let settings = match settings {
             Ok(settings) => settings,
@@ -3094,7 +1139,7 @@ async fn run_agent_step(
         let Some(conversation) = job.conversation_id else {
             return StepOutcome::Failed {
                 category: FailureCategory::Authority,
-                error: Some("Host workflow steps need a conversation.".to_owned()),
+                error: Some("Workflow commands need a conversation.".to_owned()),
             };
         };
         Some(crate::tools::HostRunSpec {
@@ -3107,8 +1152,6 @@ async fn run_agent_step(
             step: Some(step_key.as_str().to_owned()),
             attempt: Some(attempt_id.as_hex()),
         })
-    } else {
-        None
     };
     let skills = match crate::execution::discover_skills(
         sandbox.map(AsRef::as_ref),
@@ -3142,15 +1185,10 @@ async fn run_agent_step(
         output_drafts: Some(drafts),
         required_outputs: action.required_outputs.clone(),
         evidence: Some(evidence.clone()),
-        output_scope: Some(match (run.kind, job.conversation_id) {
-            (super::run::RunKind::QuickTask, Some(conversation)) => {
-                crate::execution::OutputScope::conversation(conversation)
-            }
-            _ => crate::execution::OutputScope {
-                conversation: job.conversation_id,
-                run: Some(run.id),
-                attempt: Some(attempt_id),
-            },
+        output_scope: Some(crate::execution::OutputScope {
+            conversation: job.conversation_id,
+            run: Some(run.id),
+            attempt: Some(attempt_id),
         }),
         conversation: job.conversation_id,
         steering_session: None,
@@ -3298,163 +1336,114 @@ fn terminal_for_outcome(
     }
 }
 
-async fn run_git_capture(
+async fn run_system_exec(
+    state: &AppState,
+    work: &WorkflowJob,
+    step: &StepDefinition,
     sandbox: &GuestSandbox,
-    job: &Job,
-    exec: GuestExec,
-    cancellable: bool,
-) -> Result<String, crate::workflows::commit::CommitError> {
-    let mut session = sandbox
-        .exec_cmd(exec)
-        .await
-        .map_err(|_| crate::workflows::commit::CommitError::Command)?;
-    let deadline = Instant::now() + COMMAND_DEADLINE;
-    let mut output = Vec::new();
-    let mut exit = None;
-    loop {
-        if cancellable && job.cancel_requested() {
-            session.kill().await;
-            session.close().await;
-            return Err(crate::workflows::commit::CommitError::Operational);
-        }
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            session.kill().await;
-            session.close().await;
-            return Err(crate::workflows::commit::CommitError::Command);
-        }
-        let event = if cancellable {
-            tokio::select! {
-                _ = job.cancelled() => {
-                    session.kill().await;
-                    session.close().await;
-                    return Err(crate::workflows::commit::CommitError::Operational);
-                }
-                _ = tokio::time::sleep(remaining) => {
-                    session.kill().await;
-                    session.close().await;
-                    return Err(crate::workflows::commit::CommitError::Command);
-                }
-                event = session.recv() => event,
-            }
+    command: SystemCommandId,
+) -> StepOutcome {
+    let execute = async {
+        let run = state
+            .workflow_runs
+            .get(&work.run_id)
+            .ok_or(OPERATIONAL_STORE_ERROR)?;
+        let settings = run
+            .directory_settings()
+            .ok_or("The command settings are unavailable.")?;
+        let attempt = run.active_attempt().ok_or(OPERATIONAL_STORE_ERROR)?;
+        let conversation = work
+            .conversation_id
+            .ok_or("Command approval needs a conversation.")?;
+        let directory = run
+            .attempts
+            .iter()
+            .find(|record| record.id == attempt)
+            .and_then(|record| record.capabilities.primary())
+            .map(|directory| directory.guest_path.as_str())
+            .unwrap_or(crate::execution::GUEST_WORKSPACE);
+        let connection = work.active_connection();
+        let secret = match connection.auth {
+            crate::providers::AuthMethod::ApiKey => Some(connection.api_key.expose()),
+            _ => None,
+        };
+        let mut request = crate::execution::HostCommandRequest {
+            token: String::new(),
+            session: work.session_id,
+            job: work.job.id(),
+            conversation,
+            execution_revision: work.agent_revision,
+            command: "git status --porcelain=v1".to_owned(),
+            directory: directory.into(),
+            explanation: command.consequence().to_owned(),
+            run: Some(run.id.as_hex()),
+            step: Some(step.key.as_str().to_owned()),
+            attempt: Some(attempt.as_hex()),
+        };
+        crate::execution::approval::approve_command(
+            state,
+            &mut request,
+            &settings,
+            &work.job,
+            secret,
+        )
+        .await?;
+        confirm_run_authority(state, work)
+            .map_err(|_| "The command authority changed before dispatch.")?;
+        state
+            .workflow_evidence
+            .host_command(&request, "dispatching", "", secret, None)
+            .map_err(|_| OPERATIONAL_STORE_ERROR)?;
+        let key = crate::execution::OutputKey {
+            scope: crate::execution::OutputScope {
+                conversation: Some(conversation),
+                run: Some(run.id),
+                attempt: Some(attempt),
+            },
+            job: work.job.id(),
+            tool_call: request.token.clone(),
+            model_hidden: false,
+        };
+        let result = crate::execution::command::capture_sandbox_command(
+            sandbox,
+            guest_command(command).in_dir(directory),
+            &work.job,
+            secret,
+            COMMAND_DEADLINE,
+            &request.token,
+            Some((&state.outputs, &key)),
+        )
+        .await;
+        let output = match &result {
+            Ok(output) => output,
+            Err(failure) => &failure.result,
+        };
+        state
+            .workflow_evidence
+            .host_command(
+                &request,
+                if output.is_success() {
+                    "completed"
+                } else {
+                    "failed"
+                },
+                &output.report(),
+                secret,
+                Some(output),
+            )
+            .map_err(|_| OPERATIONAL_STORE_ERROR)?;
+        if output.is_success() {
+            Ok(())
         } else {
-            tokio::select! {
-                _ = tokio::time::sleep(remaining) => {
-                    session.kill().await;
-                    session.close().await;
-                    return Err(crate::workflows::commit::CommitError::Command);
-                }
-                event = session.recv() => event,
-            }
-        };
-        let Some(event) = event else {
-            break;
-        };
-        match event {
-            CommandEvent::Output { stream, bytes } => {
-                if stream != crate::execution::CommandStream::Stdout {
-                    continue;
-                }
-                if output.len().saturating_add(bytes.len()) > COMMAND_OUTPUT_LIMIT {
-                    session.kill().await;
-                    session.close().await;
-                    return Err(crate::workflows::commit::CommitError::Command);
-                }
-                output.extend_from_slice(&bytes);
-            }
-            CommandEvent::Exited(code) => exit = Some(code),
-            CommandEvent::Failed => {
-                session.close().await;
-                return Err(crate::workflows::commit::CommitError::Command);
-            }
-        }
-    }
-    session.close().await;
-    if exit != Some(0) {
-        return Err(crate::workflows::commit::CommitError::Command);
-    }
-    Ok(String::from_utf8_lossy(&output).into_owned())
-}
-
-async fn run_system_exec(sandbox: &GuestSandbox, job: &Job, exec: GuestExec) -> StepOutcome {
-    let mut session = match sandbox.exec_cmd(exec).await {
-        Ok(session) => session,
-        Err(_) => {
-            return StepOutcome::Failed {
-                category: FailureCategory::Command,
-                error: Some("Frinkworks could not run the command. Try again.".to_owned()),
-            };
+            Err("The command did not succeed.")
         }
     };
-    let deadline = Instant::now() + COMMAND_DEADLINE;
-    let mut drained = 0usize;
-    let mut exit = None;
-    loop {
-        if job.cancel_requested() {
-            session.kill().await;
-            session.close().await;
-            return StepOutcome::Cancelled;
-        }
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            session.kill().await;
-            session.close().await;
-            return StepOutcome::Failed {
-                category: FailureCategory::Command,
-                error: Some("The command did not finish in time.".to_owned()),
-            };
-        }
-        let event = tokio::select! {
-            biased;
-            _ = job.cancelled() => {
-                session.kill().await;
-                session.close().await;
-                return StepOutcome::Cancelled;
-            }
-            _ = tokio::time::sleep(remaining) => {
-                session.kill().await;
-                session.close().await;
-                return StepOutcome::Failed {
-                    category: FailureCategory::Command,
-                    error: Some("The command did not finish in time.".to_owned()),
-                };
-            }
-            event = session.recv() => event,
-        };
-        let Some(event) = event else {
-            break;
-        };
-        match event {
-            CommandEvent::Output { bytes, .. } => {
-                drained = drained.saturating_add(bytes.len());
-                if drained > COMMAND_OUTPUT_LIMIT {
-                    session.kill().await;
-                    session.close().await;
-                    return StepOutcome::Failed {
-                        category: FailureCategory::Command,
-                        error: Some("The command output was too large.".to_owned()),
-                    };
-                }
-            }
-            CommandEvent::Exited(code) => {
-                exit = Some(code);
-                break;
-            }
-            CommandEvent::Failed => {
-                session.close().await;
-                return StepOutcome::Failed {
-                    category: FailureCategory::Command,
-                    error: Some("Frinkworks could not run the command. Try again.".to_owned()),
-                };
-            }
-        }
-    }
-    session.close().await;
-    match exit {
-        Some(0) => StepOutcome::Completed,
-        _ => StepOutcome::Failed {
+    match execute.await {
+        Ok(()) => StepOutcome::Completed,
+        Err(_) if work.job.cancel_requested() => StepOutcome::Cancelled,
+        Err(error) => StepOutcome::Failed {
             category: FailureCategory::Command,
-            error: Some("The command did not succeed.".to_owned()),
+            error: Some(error.to_owned()),
         },
     }
 }
@@ -3466,57 +1455,7 @@ pub(crate) fn guest_command(command: SystemCommandId) -> GuestExec {
             vec!["status".to_owned(), "--porcelain=v1".to_owned()],
         )
         .in_dir(GUEST_PROJECT),
-        SystemCommandId::ApplyChanges => GuestExec::command("true", Vec::new()),
-        SystemCommandId::CommitCandidate => {
-            GuestExec::command("git", Vec::new()).in_dir(GUEST_PROJECT)
-        }
     }
-}
-
-fn intersect_authority(
-    candidate_authority: CandidateAuthority,
-    authority: &AgentAuthority,
-    host: &DirectoryPolicy,
-) -> Result<DirectoryPolicy, ()> {
-    let primary = host
-        .grants()
-        .iter()
-        .find(|grant| grant.alias == host.primary_alias())
-        .ok_or(())?;
-    if candidate_authority.access().is_writable() && !primary.access.is_writable() {
-        return Err(());
-    }
-    let mut grants = vec![PolicyGrant {
-        alias: primary.alias.clone(),
-        guest_path: primary.guest_path.clone(),
-        host_path: primary.host_path.clone(),
-        access: candidate_authority.access(),
-    }];
-    for directory in &authority.directories {
-        if directory.alias == host.primary_alias() {
-            return Err(());
-        }
-        let Some(host_grant) = host
-            .grants()
-            .iter()
-            .find(|grant| grant.alias == directory.alias)
-        else {
-            return Err(());
-        };
-        if directory.access.is_writable() {
-            return Err(());
-        }
-        grants.push(PolicyGrant {
-            alias: host_grant.alias.clone(),
-            guest_path: host_grant.guest_path.clone(),
-            host_path: host_grant.host_path.clone(),
-            access: AccessMode::ReadOnly,
-        });
-    }
-    Ok(DirectoryPolicy::from_grants(
-        grants,
-        host.primary_alias().to_owned(),
-    ))
 }
 
 async fn start_attempt_sandbox(
@@ -3559,14 +1498,17 @@ async fn start_attempt_sandbox(
         .grants()
         .iter()
         .find(|grant| grant.alias == job.host_policy.primary_alias());
-    let spec = if capabilities.git_admin.is_writable() {
-        let transaction = run
-            .active_attempt()
-            .and_then(|id| run.attempts.iter().find(|attempt| attempt.id == id))
-            .and_then(|attempt| attempt.commit_transaction.as_ref())
-            .ok_or("The commit targets are unavailable.")?;
-        commit_attempt_spec(transaction, state.skills.host_dir())?
-    } else if let Some(authority) = job.project_free_authority.as_ref() {
+    let phase_authority = run
+        .phase_settings(&step.key)
+        .map(|settings| {
+            crate::execution::ProjectFreeAuthority::from_settings(job.agent_revision, settings)
+        })
+        .transpose()
+        .map_err(|_| "The directory authority changed.")?;
+    let spec = if let Some(authority) = phase_authority
+        .as_ref()
+        .or(job.project_free_authority.as_ref())
+    {
         let spec =
             project_free_attempt_spec(capabilities, workspace, authority, state.skills.host_dir())?;
         for grant in authority.policy.grants() {
@@ -3586,7 +1528,7 @@ async fn start_attempt_sandbox(
         crate::sandbox::confirm_host_write_access(
             &spec,
             &user_project.host_path,
-            AccessMode::ReadOnly,
+            user_project.access,
         )
         .map_err(|error| error.message())?;
         spec
@@ -3607,15 +1549,11 @@ async fn start_attempt_sandbox(
 
 fn project_free_attempt_spec(
     capabilities: &crate::workflows::capabilities::AttemptCapabilities,
-    workspace: &crate::workflows::workspace::AttemptWorkspace,
+    _workspace: &crate::workflows::workspace::AttemptWorkspace,
     authority: &crate::execution::ProjectFreeAuthority,
     global_skills: Option<&std::path::Path>,
 ) -> Result<crate::sandbox::SandboxSpec, &'static str> {
-    let mut mounts = vec![crate::sandbox::MountSpec {
-        guest: crate::execution::GUEST_WORKSPACE.to_owned(),
-        host: workspace.project.clone(),
-        read_only: false,
-    }];
+    let mut mounts = Vec::new();
     for directory in &capabilities.directories {
         if directory.guest_path == crate::execution::GUEST_WORKSPACE {
             continue;
@@ -3628,19 +1566,10 @@ fn project_free_attempt_spec(
                 grant.alias == directory.alias && grant.guest_path == directory.guest_path
             })
             .ok_or("The pinned step authority exceeds the current directory policy.")?;
-        let reviewed = authority.reviewed_aliases.contains(&directory.alias);
-        let captured = capabilities.source_location
-            == crate::workflows::capabilities::PrimarySourceLocation::AttemptWorkspace
-            && (reviewed || (authority.reviewed_aliases.is_empty() && !grant.access.is_writable()));
-        if directory.access.is_writable() && !(captured || grant.access.is_writable()) {
-            return Err("Host write access requires an authorised Direct write grant.");
-        }
         mounts.push(crate::sandbox::MountSpec {
             guest: grant.guest_path.clone(),
-            host: if captured {
-                workspace
-                    .reviewed_root(&directory.alias)
-                    .map_err(|_| "Frinkworks cannot create a reviewed root workspace.")?
+            host: if directory.access.is_writable() && !grant.access.is_writable() {
+                return Err("The step exceeds its directory access.");
             } else {
                 grant.host_path.clone()
             },
@@ -3659,44 +1588,9 @@ fn project_free_attempt_spec(
     })
 }
 
-fn commit_attempt_spec(
-    transaction: &crate::workflows::commit::CommitTransaction,
-    global_skills: Option<&std::path::Path>,
-) -> Result<crate::sandbox::SandboxSpec, &'static str> {
-    let mut mounts = Vec::new();
-    for root in &transaction.roots {
-        root.grant
-            .revalidate()
-            .map_err(|_| "A commit directory changed identity.")?;
-        crate::workflows::artefacts::inspect_supported_worktree(&root.grant.host_path)
-            .map_err(|_| "A commit directory is not a supported Git repository.")?;
-        mounts.push(crate::sandbox::MountSpec {
-            guest: root.grant.guest_path(),
-            host: root.grant.host_path.clone(),
-            read_only: false,
-        });
-        mounts.push(crate::sandbox::MountSpec {
-            guest: format!("{}/.git", root.grant.guest_path()),
-            host: root.grant.host_path.join(".git"),
-            read_only: false,
-        });
-    }
-    add_global_skills_mount(&mut mounts, global_skills);
-    Ok(crate::sandbox::SandboxSpec {
-        mounts,
-        workdir: transaction
-            .roots
-            .first()
-            .ok_or("The commit targets are unavailable.")?
-            .grant
-            .guest_path(),
-        network: crate::agents::NetworkAccess::None,
-    })
-}
-
 fn attempt_spec(
     capabilities: &crate::workflows::capabilities::AttemptCapabilities,
-    workspace: &crate::workflows::workspace::AttemptWorkspace,
+    _workspace: &crate::workflows::workspace::AttemptWorkspace,
     user_project: &std::path::Path,
     host: &DirectoryPolicy,
     global_skills: Option<&std::path::Path>,
@@ -3707,20 +1601,9 @@ fn attempt_spec(
     };
     mounts.push(crate::sandbox::MountSpec {
         guest: primary.guest_path.clone(),
-        host: workspace.project.clone(),
+        host: user_project.to_path_buf(),
         read_only: !primary.access.is_writable(),
     });
-    let git = user_project.join(".git");
-    if git.is_dir() {
-        // The guest cannot create a nested mount directory inside a read-only source mount.
-        std::fs::create_dir(workspace.project.join(".git"))
-            .map_err(|_| "Frinkworks cannot create the Git mount directory.")?;
-        mounts.push(crate::sandbox::MountSpec {
-            guest: format!("{}/.git", primary.guest_path),
-            host: git,
-            read_only: true,
-        });
-    }
     for directory in &capabilities.directories {
         if directory.role != crate::workflows::capabilities::DirectoryRole::SecondaryContext {
             continue;
@@ -3761,10 +1644,7 @@ fn add_global_skills_mount(
     }
 }
 
-fn confirm_run_authority(
-    state: &AppState,
-    job: &WorkflowJob,
-) -> Result<std::path::PathBuf, String> {
+fn confirm_run_authority(state: &AppState, job: &WorkflowJob) -> Result<(), String> {
     if let Some(authority) = job.project_free_authority.as_ref() {
         let Some(conversation_id) = job.conversation_id else {
             return Err("The private workspace authority is missing its conversation.".to_owned());
@@ -3778,7 +1658,7 @@ fn confirm_run_authority(
             .ok_or_else(|| "The workflow run is unavailable.".to_owned())?;
         if run.conversation_id != Some(conversation_id) || run.pending_handoff.is_some() {
             return Err(
-                "The prepared changes belong to another conversation or need recovery.".to_owned(),
+                "The workflow belongs to another conversation or needs recovery.".to_owned(),
             );
         }
         let settings = run
@@ -3800,6 +1680,9 @@ fn confirm_run_authority(
         }
         if !state.sessions.contains_live(&job.session_id)
             || phase_settings.into_iter().any(|settings| {
+                if !settings.host_access_allowed() {
+                    return true;
+                }
                 if state.access_consent.authorised_launch(
                     job.run_id,
                     job.session_id,
@@ -3841,114 +1724,9 @@ fn confirm_run_authority(
         if !authority.policy.is_private_workspace() || job.agent_id.is_some() {
             return Err("The conversation tool authority changed before dispatch.".to_owned());
         }
-        return authority
-            .reviewed_aliases
-            .first()
-            .and_then(|alias| {
-                authority
-                    .policy
-                    .grants()
-                    .iter()
-                    .find(|grant| &grant.alias == alias)
-                    .map(|grant| grant.host_path.clone())
-            })
-            .map_or_else(|| Ok(std::path::PathBuf::new()), Ok);
+        return Ok(());
     }
     Err("That project is not in the catalogue.".to_owned())
-}
-
-async fn capture_initial_source(state: &AppState, job: &WorkflowJob) -> Result<(), String> {
-    let host_path = confirm_run_authority(state, job)?;
-    let captured = if job.project_free_authority.is_some() {
-        let run = state
-            .workflow_runs
-            .get(&job.run_id)
-            .ok_or_else(|| "The workflow run is unavailable.".to_owned())?;
-        let conversation = job
-            .conversation_id
-            .and_then(|id| state.conversations.get(&id));
-        let settings = run
-            .directory_settings()
-            .or_else(|| {
-                conversation
-                    .as_ref()?
-                    .model
-                    .as_ref()
-                    .map(|model| model.settings.clone())
-            })
-            .ok_or_else(|| "The reviewed directories are unavailable.".to_owned())?;
-        let capture_dirs = {
-            let reviewed = run.reviewed_directories();
-            if reviewed.is_empty() {
-                settings.directories.clone()
-            } else {
-                reviewed
-            }
-        };
-        crate::workflows::artefacts::CandidateCapture::capture_set(
-            &capture_dirs,
-            state.local_data.root(),
-            &state.workflow_artefacts,
-        )
-        .map(crate::workflows::artefacts::CandidatePayload::Set)
-    } else {
-        crate::workflows::artefacts::CandidateCapture::capture_host(
-            &host_path,
-            &state.workflow_artefacts,
-        )
-        .map(crate::workflows::artefacts::CandidatePayload::Revision)
-    };
-    let captured = match captured {
-        Ok(captured) => captured,
-        Err(error) => return Err(error.message().to_owned()),
-    };
-    let bytes = captured
-        .manifest_bytes()
-        .map_err(|error| error.message().to_owned())?;
-    let object = state
-        .workflow_artefacts
-        .publish(&bytes)
-        .map_err(|error| error.message().to_owned())?;
-    let artefact_hash = crate::workflows::artefacts::artefact_hash_for(
-        crate::workflows::definition::ArtefactKind::CandidateRevision,
-        crate::workflows::artefacts::CANDIDATE_SCHEMA,
-        &bytes,
-    );
-    let id = crate::workflows::id::ArtefactId::generate()
-        .map_err(|_| OPERATIONAL_STORE_ERROR.to_owned())?;
-    let record = crate::workflows::artefacts::ArtefactRecord {
-        id,
-        kind: crate::workflows::definition::ArtefactKind::CandidateRevision,
-        artefact_hash,
-        object_hash: object,
-        payload_bytes: bytes.len() as u64,
-        created_at_ms: now_ms(),
-        provenance: crate::workflows::artefacts::ArtefactProvenance {
-            run_id: job.run_id,
-            producer: crate::workflows::artefacts::ArtefactProducer::RunSourceCapture,
-            inputs: Vec::new(),
-        },
-        summary: crate::workflows::artefacts::ArtefactSummary::Candidate {
-            candidate: captured.candidate_hash(),
-            entries: captured.entry_count(),
-            bytes: captured.byte_count(),
-            disposition: crate::workflows::artefacts::ProductionDisposition::RequiredOutput,
-        },
-    };
-    state
-        .workflow_runs
-        .mutate(&job.run_id, |run| run.record_initial_candidate(record))
-        .map(|_| ())
-        .map_err(|_| OPERATIONAL_STORE_ERROR.to_owned())?;
-    Ok(())
-}
-
-fn persist_initial_fail(state: &AppState, run_id: &RunId) -> Result<(), StoreError> {
-    let at_ms = now_ms();
-    state
-        .workflow_runs
-        .mutate(run_id, |run| run.fail_before_attempt(at_ms))
-        .map(|_| ())
 }
 
 fn resolve_inputs(
@@ -3958,20 +1736,12 @@ fn resolve_inputs(
     let mut inputs = Vec::new();
     for input in &step.inputs {
         let artefact = match &input.source {
-            crate::workflows::definition::ArtefactSource::RunInitialCandidate => {
-                let crate::workflows::RunSource::Captured { source } = &run.source else {
-                    return Err("Source capture has not finished.");
-                };
-                source.initial.clone()
-            }
-            crate::workflows::definition::ArtefactSource::RunCurrentCandidate => {
-                let crate::workflows::RunSource::Captured { source } = &run.source else {
-                    return Err("Source capture has not finished.");
-                };
-                source.accepted.clone()
-            }
             crate::workflows::definition::ArtefactSource::RunCurrentPlan => {
-                run.current_plan().ok_or("The current plan is missing.")?
+                match run.current_plan() {
+                    Some(plan) => plan,
+                    None if step.accepts_missing_initial_plan(input) => continue,
+                    None => return Err("The current plan is missing."),
+                }
             }
 
             crate::workflows::definition::ArtefactSource::StepOutput {
@@ -3998,6 +1768,9 @@ fn resolve_inputs(
                         .and_then(|gate| gate.decision.clone())
                 };
                 let Some(found) = found else {
+                    if run.accepts_missing_initial_review(step, input, run.attempts.len()) {
+                        continue;
+                    }
                     if output.as_str() == crate::workflows::definition::ASSISTANT_REPLY {
                         return Err("Assistant replies cannot be artefact inputs.");
                     }
@@ -4017,329 +1790,30 @@ fn resolve_inputs(
     Ok(inputs)
 }
 
-fn reject_stale_assurance(
-    state: &AppState,
-    run: &crate::workflows::WorkflowRun,
-    inputs: &[super::run::AttemptArtefactInput],
-) -> Result<(), &'static str> {
-    let Some(candidate) = inputs
-        .iter()
-        .find(|input| {
-            input.artefact.kind == crate::workflows::definition::ArtefactKind::CandidateRevision
-        })
-        .and_then(|input| run.artefact(&input.artefact.id))
-        .and_then(candidate_hash_of)
-    else {
-        return Ok(());
-    };
-    for input in inputs {
-        if !input.artefact.kind.is_assurance() {
-            continue;
-        }
-        let Some(record) = run.artefact(&input.artefact.id) else {
-            return Err("That assurance artefact is missing.");
-        };
-        let Ok(bytes) = state.workflow_artefacts.get(&record.object_hash) else {
-            return Err("That assurance artefact is missing.");
-        };
-        let Ok(payload) = crate::workflows::artefacts::parse_typed_payload(record.kind, &bytes)
-        else {
-            return Err("That assurance artefact is unreadable.");
-        };
-        let Some(bound) = crate::workflows::artefacts::assurance::candidate_constraint(&payload)
-        else {
-            return Err("That assurance artefact is unreadable.");
-        };
-        if bound != candidate {
-            return Err("That assurance artefact is stale.");
-        }
-    }
-    Ok(())
-}
-
-fn candidate_hash_of(
-    record: &crate::workflows::artefacts::ArtefactRecord,
-) -> Option<crate::workflows::artefacts::CandidateHash> {
-    match &record.summary {
-        crate::workflows::artefacts::ArtefactSummary::Candidate { candidate, .. }
-        | crate::workflows::artefacts::ArtefactSummary::Review { candidate, .. }
-        | crate::workflows::artefacts::ArtefactSummary::Test { candidate, .. } => Some(*candidate),
-        crate::workflows::artefacts::ArtefactSummary::Plan { .. }
-        | crate::workflows::artefacts::ArtefactSummary::PlanDecision { .. } => None,
-        crate::workflows::artefacts::ArtefactSummary::HumanDecision { candidate, .. } => {
-            Some(*candidate)
-        }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn finalise_attempt(
-    state: &AppState,
-    job: &WorkflowJob,
-    step: &StepDefinition,
-    attempt_id: AttemptId,
-    inputs: &[super::run::AttemptArtefactInput],
-    captured: Option<&crate::workflows::artefacts::CandidatePayload>,
-    outcome: &StepOutcome,
-    published: bool,
-) -> Result<(), StoreError> {
-    match outcome {
-        StepOutcome::Cancelled => persist_cancel(state, &job.run_id),
-        StepOutcome::Failed { category, .. } => {
-            if step.writes_primary_source() {
-                record_observed(state, job, attempt_id, step, inputs, captured)
-                    .map_err(|_| StoreError::Persist)?;
-            }
-            persist_fail(state, &job.run_id, Some(attempt_id), *category)
-        }
-        StepOutcome::Completed if published => {
-            persist_outcome(state, &job.run_id, attempt_id, outcome)
-        }
-        StepOutcome::Completed => persist_fail(
-            state,
-            &job.run_id,
-            Some(attempt_id),
-            FailureCategory::Definition,
-        ),
-        StepOutcome::Paused { .. } => {
-            let candidate = captured
-                .map(|candidate| {
-                    let bytes = candidate
-                        .manifest_bytes()
-                        .map_err(|_| StoreError::Persist)?;
-                    state
-                        .workflow_artefacts
-                        .publish(&bytes)
-                        .map_err(|_| StoreError::Persist)
-                })
-                .transpose()?;
-            state
-                .workflow_runs
-                .mutate(&job.run_id, |run| {
-                    let attempt = run
-                        .attempts
-                        .iter_mut()
-                        .find(|attempt| attempt.id == attempt_id)
-                        .ok_or(super::run::TransitionError::Invalid)?;
-                    attempt.paused_candidate = candidate;
-                    Ok(())
-                })
-                .map(|_| ())
-        }
-    }
-}
-
-fn record_observed(
-    state: &AppState,
-    job: &WorkflowJob,
-    attempt_id: AttemptId,
-    step: &StepDefinition,
-    inputs: &[super::run::AttemptArtefactInput],
-    captured: Option<&crate::workflows::artefacts::CandidatePayload>,
-) -> Result<(), &'static str> {
-    let Some(captured) = captured else {
-        return record_unknown_observed(state, &job.run_id, attempt_id)
-            .map_err(|_| OPERATIONAL_STORE_ERROR);
-    };
-    let record = publish_candidate(
-        state,
-        job,
-        captured,
-        crate::workflows::artefacts::ArtefactProducer::StepAttempt {
-            attempt_id,
-            step: step.key.clone(),
-            output: None,
-            disposition: crate::workflows::artefacts::ProductionDisposition::ObservedAfterFailure,
-        },
-        inputs,
-    )?;
-    let observed = super::run::ObservedCandidate::Exact {
-        artefact: super::artefacts::ArtefactReference {
-            id: record.id,
-            kind: record.kind,
-            artefact_hash: record.artefact_hash,
-        },
-    };
-    state
-        .workflow_runs
-        .mutate(&job.run_id, |run| {
-            run.record_attempt_outputs(attempt_id, vec![record], Vec::new(), None, observed)
-        })
-        .map(|_| ())
-        .map_err(|_| OPERATIONAL_STORE_ERROR)
-}
-
-fn record_unknown_observed(
-    state: &AppState,
-    run_id: &RunId,
-    attempt_id: AttemptId,
-) -> Result<(), StoreError> {
-    state
-        .workflow_runs
-        .mutate(run_id, |run| {
-            run.record_attempt_outputs(
-                attempt_id,
-                Vec::new(),
-                Vec::new(),
-                None,
-                super::run::ObservedCandidate::Unknown,
-            )
-        })
-        .map(|_| ())
-}
-
-struct SuccessAttempt {
-    id: AttemptId,
-    complete: bool,
-}
-
 fn publish_success(
     state: &AppState,
     job: &WorkflowJob,
     step: &StepDefinition,
-    attempt: SuccessAttempt,
+    attempt_id: AttemptId,
     inputs: &[super::run::AttemptArtefactInput],
-    drafts: &std::sync::Mutex<crate::workflows::artefacts::output::OutputDrafts>,
-    captured: Option<&crate::workflows::artefacts::CandidatePayload>,
+    drafts: &std::sync::Mutex<super::artefacts::output::OutputDrafts>,
 ) -> Result<(), &'static str> {
-    let SuccessAttempt {
-        id: attempt_id,
-        complete: complete_attempt,
-    } = attempt;
-    let source_free = job.project_free_authority.is_some();
-    let captured = if source_free {
-        captured
-    } else {
-        Some(captured.ok_or("Frinkworks could not capture isolated outputs.")?)
+    let connection = job.active_connection();
+    let secret = match connection.auth {
+        crate::providers::AuthMethod::ApiKey => Some(connection.api_key.expose()),
+        _ => None,
     };
-    let writes = step.writes_primary_source();
-    let produces_candidate = writes
-        || matches!(
-            step.command_source_effect(),
-            Some(
-                crate::workflows::commands::CommandSourceEffect::Apply
-                    | crate::workflows::commands::CommandSourceEffect::Commit
-            )
-        );
-    let expected = inputs
-        .iter()
-        .find(|input| {
-            input.artefact.kind == crate::workflows::definition::ArtefactKind::CandidateRevision
-        })
-        .and_then(|input| {
-            state
-                .workflow_runs
-                .get(&job.run_id)
-                .and_then(|run| run.artefact(&input.artefact.id).cloned())
-        })
-        .and_then(|record| candidate_hash_of(&record));
-    if !produces_candidate
-        && expected.is_some_and(|hash| captured.is_none_or(|value| hash != value.candidate_hash()))
-    {
-        return Err("The project changed during that step.");
-    }
+    let mut held = drafts.lock().unwrap_or_else(|error| error.into_inner());
     let mut artefacts = Vec::new();
     let mut outputs = Vec::new();
-    let mut accepted = None;
-    let mut observed = match inputs.iter().find(|input| {
-        input.artefact.kind == crate::workflows::definition::ArtefactKind::CandidateRevision
-    }) {
-        Some(input) => super::run::ObservedCandidate::Exact {
-            artefact: input.artefact.clone(),
-        },
-        None => super::run::ObservedCandidate::Unknown,
-    };
-    if produces_candidate {
-        let output = step
-            .required_outputs()
-            .iter()
-            .find(|item| item.kind == crate::workflows::definition::OutputKind::CandidateRevision)
-            .ok_or("A source-write step must produce exactly one candidate revision.")?;
-        let record = publish_candidate(
-            state,
-            job,
-            captured.ok_or("Frinkworks could not capture isolated outputs.")?,
-            crate::workflows::artefacts::ArtefactProducer::StepAttempt {
-                attempt_id,
-                step: step.key.clone(),
-                output: Some(output.key.clone()),
-                disposition: crate::workflows::artefacts::ProductionDisposition::RequiredOutput,
-            },
-            inputs,
-        )?;
-        let reference = super::artefacts::ArtefactReference {
-            id: record.id,
-            kind: record.kind,
-            artefact_hash: record.artefact_hash,
-        };
-        accepted = Some(reference.clone());
-        observed = super::run::ObservedCandidate::Exact {
-            artefact: reference.clone(),
-        };
-        outputs.push(super::run::AttemptArtefactOutput {
-            key: output.key.clone(),
-            artefact: reference,
-        });
-        artefacts.push(record);
-    }
-    let candidate_hash = captured.map(|value| value.candidate_hash());
-    let connection = job.active_connection();
-    let secret = match &connection.auth {
-        crate::providers::AuthMethod::ApiKey => Some(connection.api_key.expose().to_owned()),
-        crate::providers::AuthMethod::Plan => None,
-    };
-    let mut held = drafts
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     for output in step.required_outputs() {
-        if matches!(
-            output.kind,
-            crate::workflows::definition::OutputKind::AssistantReply
-                | crate::workflows::definition::OutputKind::CandidateRevision
-        ) {
+        if output.kind == super::definition::OutputKind::AssistantReply {
             continue;
         }
-        let Some(draft) = held.take(&output.key) else {
-            return Err("A required output is missing.");
-        };
-        let fixing_report_inputs;
-        let provenance_inputs = if output.kind
-            == crate::workflows::definition::OutputKind::ReviewReport
-            && step.writes_primary_source()
-        {
-            let produced = accepted
-                .clone()
-                .ok_or("A fixing review needs a produced candidate revision.")?;
-            fixing_report_inputs = std::iter::once(super::run::AttemptArtefactInput {
-                key: crate::workflows::definition::InputKey::parse("candidate")
-                    .map_err(|_| OPERATIONAL_STORE_ERROR)?,
-                artefact: produced,
-            })
-            .chain(
-                inputs
-                    .iter()
-                    .filter(|input| {
-                        input.artefact.kind
-                            != crate::workflows::definition::ArtefactKind::CandidateRevision
-                    })
-                    .cloned(),
-            )
-            .collect::<Vec<_>>();
-            fixing_report_inputs.as_slice()
-        } else {
-            inputs
-        };
-        let record = publish_draft(
-            state,
-            job,
-            attempt_id,
-            step,
-            output,
-            draft,
-            candidate_hash.ok_or("A structured output needs a candidate source.")?,
-            provenance_inputs,
-            secret.as_deref(),
-        )?;
+        let draft = held
+            .take(&output.key)
+            .ok_or("A required output is missing.")?;
+        let record = publish_draft(state, job, attempt_id, step, output, draft, inputs, secret)?;
         outputs.push(super::run::AttemptArtefactOutput {
             key: output.key.clone(),
             artefact: super::artefacts::ArtefactReference {
@@ -4350,64 +1824,14 @@ fn publish_success(
         });
         artefacts.push(record);
     }
-    drop(held);
     state
         .workflow_runs
         .mutate(&job.run_id, |run| {
-            run.record_attempt_outputs(attempt_id, artefacts, outputs, accepted, observed)?;
-            if complete_attempt {
-                run.complete_attempt(attempt_id, now_ms())?;
-            }
-            Ok(())
+            run.record_attempt_outputs(attempt_id, artefacts, outputs)?;
+            run.complete_attempt(attempt_id, now_ms())
         })
         .map(|_| ())
         .map_err(|_| OPERATIONAL_STORE_ERROR)
-}
-
-fn publish_candidate(
-    state: &AppState,
-    job: &WorkflowJob,
-    captured: &crate::workflows::artefacts::CandidatePayload,
-    producer: crate::workflows::artefacts::ArtefactProducer,
-    inputs: &[super::run::AttemptArtefactInput],
-) -> Result<crate::workflows::artefacts::ArtefactRecord, &'static str> {
-    let bytes = captured
-        .manifest_bytes()
-        .map_err(|_| OPERATIONAL_STORE_ERROR)?;
-    let object = state
-        .workflow_artefacts
-        .publish(&bytes)
-        .map_err(|_| OPERATIONAL_STORE_ERROR)?;
-    let artefact_hash = crate::workflows::artefacts::artefact_hash_for(
-        crate::workflows::definition::ArtefactKind::CandidateRevision,
-        crate::workflows::artefacts::CANDIDATE_SCHEMA,
-        &bytes,
-    );
-    let id = crate::workflows::ArtefactId::generate().map_err(|_| OPERATIONAL_STORE_ERROR)?;
-    Ok(crate::workflows::artefacts::ArtefactRecord {
-        id,
-        kind: crate::workflows::definition::ArtefactKind::CandidateRevision,
-        artefact_hash,
-        object_hash: object,
-        payload_bytes: bytes.len() as u64,
-        created_at_ms: now_ms(),
-        provenance: crate::workflows::artefacts::ArtefactProvenance {
-            run_id: job.run_id,
-            producer: producer.clone(),
-            inputs: inputs.iter().map(|input| input.artefact.clone()).collect(),
-        },
-        summary: crate::workflows::artefacts::ArtefactSummary::Candidate {
-            candidate: captured.candidate_hash(),
-            entries: captured.entry_count(),
-            bytes: captured.byte_count(),
-            disposition: match producer {
-                crate::workflows::artefacts::ArtefactProducer::StepAttempt {
-                    disposition, ..
-                } => disposition,
-                _ => crate::workflows::artefacts::ProductionDisposition::RequiredOutput,
-            },
-        },
-    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4418,7 +1842,6 @@ fn publish_draft(
     step: &StepDefinition,
     output: &crate::workflows::definition::RequiredOutput,
     draft: crate::workflows::artefacts::output::OutputDraft,
-    candidate: crate::workflows::artefacts::CandidateHash,
     inputs: &[super::run::AttemptArtefactInput],
     secret: Option<&str>,
 ) -> Result<crate::workflows::artefacts::ArtefactRecord, &'static str> {
@@ -4439,29 +1862,27 @@ fn publish_draft(
             )
         }
         OutputDraft::Review { verdict, markdown } => {
-            let (bytes, object, hash) = crate::workflows::artefacts::payload::encode_review(
-                candidate, verdict, &markdown, secret,
-            )
-            .map_err(|_| "That review output is not valid.")?;
+            let (bytes, object, hash) =
+                crate::workflows::artefacts::payload::encode_review(verdict, &markdown, secret)
+                    .map_err(|_| "That review output is not valid.")?;
             (
                 bytes,
                 object,
                 hash,
                 crate::workflows::definition::ArtefactKind::ReviewReport,
-                crate::workflows::artefacts::ArtefactSummary::Review { candidate, verdict },
+                crate::workflows::artefacts::ArtefactSummary::Review { verdict },
             )
         }
         OutputDraft::Test { outcome, markdown } => {
-            let (bytes, object, hash) = crate::workflows::artefacts::payload::encode_test(
-                candidate, outcome, &markdown, secret,
-            )
-            .map_err(|_| "That test output is not valid.")?;
+            let (bytes, object, hash) =
+                crate::workflows::artefacts::payload::encode_test(outcome, &markdown, secret)
+                    .map_err(|_| "That test output is not valid.")?;
             (
                 bytes,
                 object,
                 hash,
                 crate::workflows::definition::ArtefactKind::TestReport,
-                crate::workflows::artefacts::ArtefactSummary::Test { candidate, outcome },
+                crate::workflows::artefacts::ArtefactSummary::Test { outcome },
             )
         }
     };
@@ -4508,26 +1929,6 @@ fn persist_start(
         .map(|_| ())
 }
 
-fn persist_outcome(
-    state: &AppState,
-    run_id: &RunId,
-    attempt_id: AttemptId,
-    outcome: &StepOutcome,
-) -> Result<(), StoreError> {
-    let at_ms = now_ms();
-    match outcome {
-        StepOutcome::Completed => state
-            .workflow_runs
-            .mutate(run_id, |run| run.complete_attempt(attempt_id, at_ms))
-            .map(|_| ()),
-        StepOutcome::Failed { category, .. } => {
-            persist_fail(state, run_id, Some(attempt_id), *category)
-        }
-        StepOutcome::Cancelled => persist_cancel(state, run_id),
-        StepOutcome::Paused { .. } => Ok(()),
-    }
-}
-
 fn persist_fail(
     state: &AppState,
     run_id: &RunId,
@@ -4541,7 +1942,7 @@ fn persist_fail(
             if let Some(attempt_id) = attempt_id.or(run.active_attempt()) {
                 run.fail_attempt(attempt_id, category, at_ms)
             } else {
-                Err(crate::workflows::run::TransitionError::Invalid)
+                run.fail_before_attempt()
             }
         })
         .map(|_| ())
@@ -4562,52 +1963,6 @@ fn fail_operational(state: &AppState, workflow: &WorkflowJob) {
         JobStatus::Failed,
         Some(OPERATIONAL_STORE_ERROR),
     );
-}
-
-fn finish_terminal_run(
-    state: &AppState,
-    job: &mut WorkflowJob,
-    run: &crate::workflows::WorkflowRun,
-) -> bool {
-    let (status, error) = match &run.state {
-        crate::workflows::run::RunState::Escalated {
-            reason: crate::workflows::run::EscalationReason::Blocked,
-            ..
-        } => (
-            JobStatus::Failed,
-            Some("The review blocked this workflow run."),
-        ),
-        crate::workflows::run::RunState::Escalated {
-            reason: crate::workflows::run::EscalationReason::AttemptLimit,
-            ..
-        } => (
-            JobStatus::Failed,
-            Some("The review attempt limit escalated this workflow run."),
-        ),
-        crate::workflows::run::RunState::Cancelled => (JobStatus::Cancelled, None),
-        crate::workflows::run::RunState::Failed | crate::workflows::run::RunState::Interrupted => {
-            (JobStatus::Failed, None)
-        }
-        _ => (JobStatus::Completed, None),
-    };
-    finish_driven_job(state, job, status, error)
-}
-
-fn finish_driven_job(
-    state: &AppState,
-    job: &mut WorkflowJob,
-    status: JobStatus,
-    error: Option<&str>,
-) -> bool {
-    match status {
-        JobStatus::Completed if error.is_none() => settle_completed_job(state, job),
-        _ => settle_job(state, job, status, error),
-    }
-    true
-}
-
-pub(crate) fn settle_completed_job(state: &AppState, workflow: &WorkflowJob) {
-    settle_job(state, workflow, JobStatus::Completed, None);
 }
 
 pub(crate) fn settle_cancelled_job(state: &AppState, workflow: &WorkflowJob) {
@@ -4700,62 +2055,6 @@ fn settle_job(state: &AppState, workflow: &WorkflowJob, status: JobStatus, error
     settle_with_reply(state, workflow, status, error, &reply);
 }
 
-fn settle_command_job(
-    state: &AppState,
-    workflow: &WorkflowJob,
-    command: &DirectCommandWork,
-    job_status: JobStatus,
-    failure: Option<&str>,
-) {
-    let Some(conversation_id) = workflow.conversation_id else {
-        let _ = workflow.job.finish(JobStatus::Failed, None);
-        return;
-    };
-    let settlement = command
-        .settlement
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .take();
-    let (output, status, error) = match settlement {
-        Some(settlement) => (settlement.output, settlement.status, settlement.error),
-        None if job_status == JobStatus::Cancelled => {
-            (None, crate::conversations::MessageStatus::Interrupted, None)
-        }
-        None => (
-            None,
-            crate::conversations::MessageStatus::Failed,
-            Some(failure.unwrap_or("The command outcome is unavailable. Inspect the local execution evidence before further work.").to_owned()),
-        ),
-    };
-    if state
-        .conversations
-        .settle_command(
-            &conversation_id,
-            workflow.job.id(),
-            output,
-            status,
-            error.clone(),
-            None,
-            None,
-        )
-        .is_err()
-    {
-        workflow.job.finish(
-            JobStatus::Failed,
-            Some("Frinkworks could not store the command outcome. Restart before you continue."),
-        );
-        return;
-    }
-    workflow
-        .job
-        .finish(job_status, failure.or(error.as_deref()));
-    let _ = state.sessions.finish_conversation_job(
-        &workflow.session_id,
-        conversation_id,
-        workflow.job.id(),
-    );
-}
-
 fn settle_with_reply(
     state: &AppState,
     workflow: &WorkflowJob,
@@ -4766,10 +2065,7 @@ fn settle_with_reply(
     // A direct command owns a command entry, not an assistant message. It also
     // starts no title request. The outcome is taken from the command itself so
     // a gate decision cannot rewrite it.
-    if let Some(command) = workflow.command.as_ref() {
-        settle_command_job(state, workflow, command, status, error);
-        return;
-    }
+
     let connection = workflow.active_connection();
     let secret = match &connection.auth {
         crate::providers::AuthMethod::ApiKey => Some(connection.api_key.expose()),
@@ -4783,12 +2079,8 @@ fn settle_with_reply(
             .workflow_runs
             .get(&workflow.run_id)
             .filter(|run| run.kind == super::run::RunKind::Configured)
-            .map(|run| {
-                let result = if run.completed_without_changes() {
-                    "The task completed without changes. No commit was created."
-                } else {
-                    &reply.text
-                };
+            .map(|_run| {
+                let result = &reply.text;
                 conversation_run_result(workflow.run_id, status, result)
             })
     };
@@ -4880,363 +2172,6 @@ fn conversation_result(status: JobStatus, response: &str, href: &str) -> String 
     format!(
         "Workflow {outcome}.{result}\n\n[Open the run record]({href}) for detailed activity, changes and result."
     )
-}
-
-fn recovery_project_path(
-    _state: &AppState,
-    run: &crate::workflows::WorkflowRun,
-) -> Result<std::path::PathBuf, &'static str> {
-    let error = "Frinkworks could not recover a commit transaction.";
-    let grants = run.reviewed_directories();
-    let [grant] = grants.as_slice() else {
-        return Err(error);
-    };
-    if grant.revalidate().is_err()
-        || crate::workflows::artefacts::inspect_supported_worktree(&grant.host_path).is_err()
-    {
-        return Err(error);
-    }
-    Ok(grant.host_path.clone())
-}
-
-pub(crate) fn recover_apply_transactions(state: &AppState) -> Result<(), &'static str> {
-    const ERROR: &str = "Frinkworks could not recover a file application transaction.";
-    for run in state.workflow_runs.active_runs() {
-        let Some(attempt_id) = run.active_attempt() else {
-            continue;
-        };
-        let Some(attempt) = run.attempts.iter().find(|attempt| attempt.id == attempt_id) else {
-            return Err(ERROR);
-        };
-        let Some(mut transaction) = attempt.apply_transaction.clone() else {
-            continue;
-        };
-        let journal = state
-            .apply_journals
-            .load(run.id, attempt_id)
-            .map_err(|_| ERROR)?;
-        journal.make_sure_binding(&transaction).map_err(|_| ERROR)?;
-        let baseline = load_candidate_payload_reference(state, &run, &transaction.baseline)?;
-        let candidate = load_candidate_payload_reference(state, &run, &transaction.candidate)?;
-        let baseline_manifest = baseline.manifest_bytes().map_err(|_| ERROR)?;
-        journal
-            .make_sure_baseline(&baseline_manifest, transaction.baseline.artefact_hash)
-            .map_err(|_| ERROR)?;
-        let (
-            crate::workflows::artefacts::CandidatePayload::Set(baseline),
-            crate::workflows::artefacts::CandidatePayload::Set(candidate),
-        ) = (&baseline, &candidate)
-        else {
-            mark_apply_uncertain(state, run.id, attempt_id, transaction)?;
-            return Err(ERROR);
-        };
-        if baseline.roots.len() != transaction.roots.len()
-            || candidate.roots.len() != transaction.roots.len()
-        {
-            mark_apply_uncertain(state, run.id, attempt_id, transaction)?;
-            return Err(ERROR);
-        }
-        let mut operations = Vec::new();
-        for ((root, before), after) in transaction
-            .roots
-            .iter()
-            .zip(&baseline.roots)
-            .zip(&candidate.roots)
-        {
-            if root.grant_id != before.grant_id
-                || root.grant_id != after.grant_id
-                || root.identity != before.identity
-                || root.identity != after.identity
-                || root.baseline_candidate != before.candidate.candidate_hash
-                || root.candidate_hash != after.candidate.candidate_hash
-                || root.exclusions != before.candidate.exclusions
-                || root.exclusions != after.candidate.exclusions
-            {
-                mark_apply_uncertain(state, run.id, attempt_id, transaction)?;
-                return Err(ERROR);
-            }
-            operations.extend(
-                crate::workflows::artefacts::apply::changed_paths(
-                    &before.candidate,
-                    &after.candidate,
-                )
-                .into_iter()
-                .map(|path| format!("{}/{}", root.alias, path)),
-            );
-        }
-        let started_paths = journal.started_paths(&operations).map_err(|_| ERROR)?;
-        if started_paths.is_empty() {
-            let mut recovered = transaction;
-            recovered.state = crate::workflows::apply::ApplyTransactionState::Recovered;
-            state
-                .workflow_runs
-                .mutate(&run.id, |run| {
-                    run.record_apply_transaction(attempt_id, recovered)
-                })
-                .map_err(|_| ERROR)?;
-            continue;
-        }
-        transaction.recover_roots(
-            baseline,
-            candidate,
-            &started_paths,
-            &state.workflow_artefacts,
-        );
-        state
-            .workflow_runs
-            .mutate(&run.id, |run| {
-                run.record_apply_transaction(attempt_id, transaction.clone())
-            })
-            .map_err(|_| ERROR)?;
-        if !transaction.is_settled() {
-            return Err(ERROR);
-        }
-        if !transaction.is_verified() {
-            continue;
-        }
-        state
-            .workflow_runs
-            .mutate(&run.id, |run| {
-                run.record_cleanup(
-                    attempt_id,
-                    crate::workflows::run::AttemptCleanupRecord::Complete,
-                )
-            })
-            .map_err(|_| ERROR)?;
-        state
-            .workflow_runs
-            .mutate(&run.id, |run| run.complete_attempt(attempt_id, now_ms()))
-            .map_err(|_| ERROR)?;
-    }
-    Ok(())
-}
-
-fn mark_apply_uncertain(
-    state: &AppState,
-    run_id: RunId,
-    attempt_id: AttemptId,
-    mut transaction: crate::workflows::apply::ApplyTransaction,
-) -> Result<(), &'static str> {
-    transaction.state = crate::workflows::apply::ApplyTransactionState::RecoveryUncertain;
-    for root in &mut transaction.roots {
-        if root.outcome == crate::workflows::apply::ApplyRootOutcome::Pending {
-            root.outcome = crate::workflows::apply::ApplyRootOutcome::Uncertain;
-        }
-    }
-    state
-        .workflow_runs
-        .mutate(&run_id, |run| {
-            run.record_apply_transaction(attempt_id, transaction)
-        })
-        .map(|_| ())
-        .map_err(|_| "Frinkworks could not retain uncertain file application evidence.")
-}
-
-fn capture_commit_candidate(
-    state: &AppState,
-    run: &crate::workflows::WorkflowRun,
-    template: &crate::workflows::artefacts::CandidatePayload,
-) -> Result<crate::workflows::artefacts::CandidatePayload, &'static str> {
-    use crate::workflows::artefacts::{CandidateCapture, CandidatePayload};
-    let error = "Frinkworks could not capture the committed candidate.";
-    match template {
-        CandidatePayload::Set(_) => {
-            let settings = run.directory_settings().ok_or(error)?;
-            CandidateCapture::capture_set(
-                &settings.directories,
-                state.local_data.root(),
-                &state.workflow_artefacts,
-            )
-            .map(CandidatePayload::Set)
-            .map_err(|_| error)
-        }
-        CandidatePayload::Revision(revision) => {
-            let project = recovery_project_path(state, run)?;
-            crate::workflows::commit::capture_revision(
-                &project,
-                revision,
-                &state.workflow_artefacts,
-            )
-            .map(CandidatePayload::Revision)
-            .map_err(|_| error)
-        }
-    }
-}
-
-pub(crate) fn recover_commit_transactions(state: &AppState) -> Result<(), &'static str> {
-    commits::recover(state)
-}
-
-fn load_candidate_payload_reference(
-    state: &AppState,
-    run: &crate::workflows::WorkflowRun,
-    reference: &crate::workflows::artefacts::ArtefactReference,
-) -> Result<crate::workflows::artefacts::CandidatePayload, &'static str> {
-    let record = run
-        .artefact(&reference.id)
-        .filter(|record| record.artefact_hash == reference.artefact_hash)
-        .ok_or("Frinkworks could not recover the transaction candidate.")?;
-    let bytes = state
-        .workflow_artefacts
-        .get(&record.object_hash)
-        .map_err(|_| "Frinkworks could not recover the transaction candidate.")?;
-    crate::workflows::artefacts::CandidatePayload::from_manifest_bytes(&bytes)
-        .ok_or("Frinkworks could not recover the transaction candidate.")
-}
-
-fn current_head(project: &std::path::Path) -> Result<Option<String>, &'static str> {
-    let output = std::process::Command::new("git")
-        .current_dir(project)
-        .args(["rev-parse", "--verify", "HEAD"])
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .output()
-        .map_err(|_| "Frinkworks could not recover a commit transaction.")?;
-    if !output.status.success() {
-        return Ok(None);
-    }
-    String::from_utf8(output.stdout)
-        .map(|head| Some(head.trim().to_owned()))
-        .map_err(|_| "Frinkworks could not recover a commit transaction.")
-}
-
-fn remove_commit_journal(
-    state: &AppState,
-    run_id: RunId,
-    attempt_id: AttemptId,
-) -> Result<(), &'static str> {
-    state
-        .commit_journals
-        .remove(run_id, attempt_id)
-        .map_err(|_| "Frinkworks could not recover a commit transaction.")
-}
-
-fn publish_recovered_commit(
-    state: &AppState,
-    run: &crate::workflows::WorkflowRun,
-    attempt_id: AttemptId,
-    captured: &crate::workflows::artefacts::CandidatePayload,
-) -> Result<(), &'static str> {
-    let attempt = run
-        .attempts
-        .iter()
-        .find(|attempt| attempt.id == attempt_id)
-        .ok_or("Frinkworks could not recover a commit transaction.")?;
-    let step = run
-        .pinned
-        .definition
-        .step(&attempt.step)
-        .ok_or("Frinkworks could not recover a commit transaction.")?;
-    let output = step
-        .required_outputs()
-        .iter()
-        .find(|output| output.kind == crate::workflows::definition::OutputKind::CandidateRevision)
-        .ok_or("Frinkworks could not recover a commit transaction.")?;
-    if !attempt.outputs.is_empty() {
-        let existing = attempt
-            .outputs
-            .iter()
-            .find(|existing| existing.key == output.key)
-            .ok_or("Frinkworks could not recover a commit transaction.")?;
-        let stored = load_candidate_payload_reference(state, run, &existing.artefact)?;
-        if attempt.outputs.len() == 1 && stored == *captured {
-            return Ok(());
-        }
-        return Err("Frinkworks could not recover a commit transaction.");
-    }
-    let bytes = captured
-        .manifest_bytes()
-        .map_err(|_| "Frinkworks could not recover a commit transaction.")?;
-    let object = state
-        .workflow_artefacts
-        .publish(&bytes)
-        .map_err(|_| "Frinkworks could not recover a commit transaction.")?;
-    let artefact_hash = crate::workflows::artefacts::artefact_hash_for(
-        crate::workflows::definition::ArtefactKind::CandidateRevision,
-        crate::workflows::artefacts::CANDIDATE_SCHEMA,
-        &bytes,
-    );
-    let id = crate::workflows::ArtefactId::generate()
-        .map_err(|_| "Frinkworks could not recover a commit transaction.")?;
-    let record = crate::workflows::artefacts::ArtefactRecord {
-        id,
-        kind: crate::workflows::definition::ArtefactKind::CandidateRevision,
-        artefact_hash,
-        object_hash: object,
-        payload_bytes: bytes.len() as u64,
-        created_at_ms: now_ms(),
-        provenance: crate::workflows::artefacts::ArtefactProvenance {
-            run_id: run.id,
-            producer: crate::workflows::artefacts::ArtefactProducer::StepAttempt {
-                attempt_id,
-                step: step.key.clone(),
-                output: Some(output.key.clone()),
-                disposition: crate::workflows::artefacts::ProductionDisposition::RequiredOutput,
-            },
-            inputs: attempt
-                .inputs
-                .iter()
-                .map(|input| input.artefact.clone())
-                .collect(),
-        },
-        summary: crate::workflows::artefacts::ArtefactSummary::Candidate {
-            candidate: captured.candidate_hash(),
-            entries: captured.entry_count(),
-            bytes: captured.byte_count(),
-            disposition: crate::workflows::artefacts::ProductionDisposition::RequiredOutput,
-        },
-    };
-    let reference = crate::workflows::artefacts::ArtefactReference {
-        id,
-        kind: record.kind,
-        artefact_hash,
-    };
-    state
-        .workflow_runs
-        .mutate(&run.id, |run| {
-            run.record_attempt_outputs(
-                attempt_id,
-                vec![record],
-                vec![crate::workflows::run::AttemptArtefactOutput {
-                    key: output.key.clone(),
-                    artefact: reference.clone(),
-                }],
-                Some(reference.clone()),
-                crate::workflows::run::ObservedCandidate::Exact {
-                    artefact: reference,
-                },
-            )
-        })
-        .map(|_| ())
-        .map_err(|_| "Frinkworks could not recover a commit transaction.")
-}
-
-/// Capture the named host directories for one direct command. The returned
-/// object hash is a durable baseline or final manifest. A host command without
-/// named directories returns no evidence. The command action is the first
-/// consumer of this shared capture.
-pub(crate) fn capture_ordinary_command_evidence(
-    state: &AppState,
-    settings: &crate::execution::ExecutionSettings,
-) -> Result<Option<String>, &'static str> {
-    if settings.location != crate::execution::ToolLocation::Host || settings.directories.is_empty()
-    {
-        return Ok(None);
-    }
-    let candidate = crate::workflows::artefacts::CandidateCapture::capture_set(
-        &settings.directories,
-        state.local_data.root(),
-        &state.workflow_artefacts,
-    )
-    .map_err(|_| "Frinkworks cannot capture the named directories for direct-command evidence.")?;
-    let bytes = candidate
-        .manifest_bytes()
-        .map_err(|_| "Frinkworks cannot encode the direct-command evidence.")?;
-    state
-        .workflow_artefacts
-        .publish(&bytes)
-        .map(|hash| Some(hash.as_str()))
-        .map_err(|_| "Frinkworks cannot store the direct-command evidence.")
 }
 
 #[cfg(test)]

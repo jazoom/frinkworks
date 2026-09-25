@@ -362,8 +362,9 @@ fn a_host_path_in_capabilities_fails_startup() {
     let path = dir.path().join(format!("{}.json", run.id.as_hex()));
     let mut value: serde_json::Value =
         serde_json::from_slice(&fs::read(&path).expect("read")).expect("json");
-    value["attempts"][0]["capabilities"]["directories"][0]["guest-path"] =
-        serde_json::json!("/home/user/project");
+    value["attempts"][0]["capabilities"]["directories"] = serde_json::json!([{
+        "alias": "project", "guest-path": "/home/user/project", "access": "read-only", "role": "primary-source"
+    }]);
     fs::write(&path, serde_json::to_vec(&value).expect("bytes")).expect("write");
     assert_eq!(
         WorkflowRunStore::open(dir.path().to_path_buf()).err(),

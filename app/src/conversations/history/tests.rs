@@ -54,8 +54,6 @@ fn command_message(included: bool, termination: CommandTermination) -> Conversat
             included,
             directory: "/workspace".to_owned(),
             output: Some(output),
-            before: None,
-            after: None,
         }),
         attachments: Vec::new(),
         activity: Vec::new(),

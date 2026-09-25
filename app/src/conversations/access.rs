@@ -90,12 +90,11 @@ pub(crate) fn apply_settings_ceiling(
             return Err(ConversationAccessError::Preset);
         };
         let access = match requested.access {
-            crate::execution::DirectoryAccess::ReadOnly => AccessMode::ReadOnly,
-            crate::execution::DirectoryAccess::ReviewBeforeApply if grant.access.is_writable() => {
+            crate::execution::DirectoryAccess::Read => AccessMode::ReadOnly,
+            crate::execution::DirectoryAccess::Write if grant.access.is_writable() => {
                 AccessMode::ReadWrite
             }
-            crate::execution::DirectoryAccess::ReviewBeforeApply
-            | crate::execution::DirectoryAccess::DirectWrite => {
+            crate::execution::DirectoryAccess::Write => {
                 return Err(ConversationAccessError::Preset);
             }
         };

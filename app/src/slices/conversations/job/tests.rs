@@ -563,9 +563,6 @@ fn pending_assistant_output_stays_out_of_the_next_request_history() {
         model: None,
         directory_approvals: Vec::new(),
 
-        source_candidate_review: None,
-        candidate_reviews: Vec::new(),
-        candidate_review_context: None,
         forked_from: None,
         continuation: None,
         compaction: None,

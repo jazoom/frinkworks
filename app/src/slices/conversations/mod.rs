@@ -40,11 +40,9 @@ use hypergraft::{GraftRequest, PatchGraft, PatchStatus};
 use serde::Deserialize;
 
 use crate::{
-    agents::AgentId,
     conversations::{
-        CandidateReviewCreation, CandidateReviewLink, ConversationError, ConversationId,
-        ConversationModelConfiguration, ConversationRecord, MessageId, RevisionRequest,
-        TranscriptCursor,
+        ConversationError, ConversationId, ConversationModelConfiguration, ConversationRecord,
+        MessageId, RevisionRequest, TranscriptCursor,
     },
     environments::EnvironmentId,
     error::{AppError, AppResult},
@@ -52,14 +50,10 @@ use crate::{
     responses,
     sessions::{JobId, RequiredSession},
     state::AppState,
-    workflows::{self, WorkflowRun},
+    workflows::{self},
 };
 
-use self::page::model_picker::ModelPicker;
-use self::page::{
-    CandidateReviewLinkView, CandidateReviewView, CatalogueView, ConversationDetailView,
-    ModelSources, PresetOption, RevisionDraft,
-};
+use self::page::{CatalogueView, ConversationDetailView, ModelSources, RevisionDraft};
 
 const REVISION_MESSAGE: &str = "Reload the conversation and try again.";
 
@@ -190,10 +184,6 @@ pub(super) fn router() -> Router<AppState> {
             post(handoff::recovery::restore),
         )
         .route(
-            "/conversations/candidate-review",
-            get(candidate_review).post(create_candidate_review),
-        )
-        .route(
             "/conversations/{conversation_id}/messages",
             post(send_message),
         )
@@ -212,10 +202,6 @@ pub(super) fn router() -> Router<AppState> {
         .route(
             "/conversations/{conversation_id}/cancel",
             post(cancel_message),
-        )
-        .route(
-            "/conversations/{conversation_id}/runs/{run_id}/settle-partial",
-            post(settle_partial),
         )
         .route(
             "/conversations/{conversation_id}/continue",
@@ -426,27 +412,6 @@ impl MessageForm {
             active_leaf: Some(active_leaf),
         }))
     }
-}
-
-#[derive(Default, Deserialize)]
-#[serde(default)]
-struct CandidateReviewQuery {
-    run: String,
-    candidate: String,
-    diff_base: String,
-}
-
-#[derive(Deserialize)]
-struct CandidateReviewForm {
-    run: String,
-    candidate: String,
-    diff_base: String,
-    brief: String,
-    provider: String,
-    model: String,
-    thinking: String,
-    #[serde(default)]
-    preset: String,
 }
 
 #[derive(Deserialize)]
@@ -826,570 +791,6 @@ fn render_revision(
     render_detail(state, session, graft, status, view)
 }
 
-struct CandidateReviewSelection {
-    run: WorkflowRun,
-    candidate: crate::workflows::artefacts::ArtefactReference,
-    diff_base: crate::workflows::artefacts::ArtefactReference,
-    candidate_hash: crate::workflows::artefacts::CandidateHash,
-    diff_base_hash: crate::workflows::artefacts::CandidateHash,
-    preview: String,
-}
-
-async fn candidate_review(
-    State(state): State<AppState>,
-    _session: RequiredSession,
-    graft: GraftRequest,
-    Query(query): Query<CandidateReviewQuery>,
-) -> AppResult<Response> {
-    let selection =
-        match resolve_candidate_review(&state, &query.run, &query.candidate, &query.diff_base) {
-            Ok(selection) => selection,
-            Err(error) => return render_candidate_review_error(&state, graft, error),
-        };
-    render_candidate_review(&state, graft, PatchStatus::Ok, &selection, "", None, None)
-}
-
-async fn create_candidate_review(
-    State(state): State<AppState>,
-    RequiredSession(session): RequiredSession,
-    graft: PatchGraft,
-    Form(form): Form<CandidateReviewForm>,
-) -> AppResult<Response> {
-    let selection =
-        match resolve_candidate_review(&state, &form.run, &form.candidate, &form.diff_base) {
-            Ok(selection) => selection,
-            Err(error) => return render_candidate_review_error(&state, graft, error),
-        };
-    let source = selection
-        .run
-        .conversation_id
-        .and_then(|id| state.conversations.get(&id));
-    let model = match candidate_review_model(&state, source.as_ref(), &form) {
-        Ok(model) => model,
-        Err(error) => {
-            return render_candidate_review(
-                &state,
-                graft,
-                PatchStatus::UnprocessableEntity,
-                &selection,
-                &form.brief,
-                Some(error),
-                Some(&form),
-            );
-        }
-    };
-    let Some(connection) = state.vault.connection_for(&model.settings.model) else {
-        return render_candidate_review(
-            &state,
-            graft,
-            PatchStatus::UnprocessableEntity,
-            &selection,
-            &form.brief,
-            Some("Choose a stored provider."),
-            Some(&form),
-        );
-    };
-    let secret = match connection.auth {
-        crate::providers::AuthMethod::ApiKey => Some(connection.api_key.expose()),
-        crate::providers::AuthMethod::Plan => None,
-    };
-    if let Err(error) = job::validate_candidate_review(
-        &state,
-        &selection.run,
-        &selection.candidate,
-        &selection.diff_base,
-        secret,
-    ) {
-        return render_candidate_review(
-            &state,
-            graft,
-            PatchStatus::Conflict,
-            &selection,
-            &form.brief,
-            Some(error),
-            Some(&form),
-        );
-    }
-    let source_at_safe_gate = source_at_safe_gate(
-        &state,
-        &selection.run,
-        &selection.candidate,
-        &selection.diff_base,
-        &session,
-    );
-    if source
-        .as_ref()
-        .is_some_and(|record| record.active_job.is_some())
-        && !source_at_safe_gate
-    {
-        return render_candidate_review(
-            &state,
-            graft,
-            PatchStatus::Conflict,
-            &selection,
-            &form.brief,
-            Some("The source run is active. Start this review after it reaches a safe gate."),
-            Some(&form),
-        );
-    }
-    let review = match state
-        .conversations
-        .create_candidate_review(CandidateReviewCreation {
-            source_conversation: source.as_ref().map(|record| (record.id, record.revision)),
-            title: candidate_review_title(&selection.run),
-            model: model.clone(),
-            run_id: selection.run.id,
-            candidate: selection.candidate.clone(),
-            diff_base: selection.diff_base.clone(),
-            task_brief: form.brief.clone(),
-            source_at_safe_gate,
-        }) {
-        Ok(review) => review,
-        Err(error @ (ConversationError::Persist | ConversationError::Corrupt)) => {
-            return Err(AppError::new("store candidate review conversation", error));
-        }
-        Err(error) => {
-            return render_candidate_review(
-                &state,
-                graft,
-                status_for(error),
-                &selection,
-                &form.brief,
-                Some(error.message()),
-                Some(&form),
-            );
-        }
-    };
-    match start_message(
-        &state,
-        session,
-        review.clone(),
-        review.revision,
-        model,
-        form.brief,
-        None,
-        Vec::new(),
-        String::new(),
-    )
-    .await
-    {
-        Ok(_) => Ok(responses::command_navigation(&conversation_path(&review))),
-        Err(StartMessageError::Internal(error)) => Err(error),
-        Err(StartMessageError::User(status, error)) => {
-            let review = state.conversations.get(&review.id).unwrap_or(review);
-            render_detail(
-                &state,
-                session,
-                graft.into(),
-                status,
-                detail_view(&state, session, &review, &review.title, error),
-            )
-        }
-    }
-}
-
-fn resolve_candidate_review(
-    state: &AppState,
-    raw_run: &str,
-    raw_candidate: &str,
-    raw_diff_base: &str,
-) -> Result<CandidateReviewSelection, &'static str> {
-    let run_id = workflows::RunId::parse(raw_run).ok_or("Choose an available source run.")?;
-    let candidate_id = workflows::ArtefactId::parse(raw_candidate)
-        .ok_or("Choose an available candidate artefact.")?;
-    let diff_base_id = workflows::ArtefactId::parse(raw_diff_base)
-        .ok_or("Choose an available diff base artefact.")?;
-    let run = state
-        .workflow_runs
-        .get(&run_id)
-        .ok_or("The source run is unavailable.")?;
-    let candidate = run
-        .artefact(&candidate_id)
-        .filter(|record| record.kind == workflows::definition::ArtefactKind::CandidateRevision)
-        .ok_or("The selected candidate is unavailable.")?;
-    let diff_base = run
-        .artefact(&diff_base_id)
-        .filter(|record| record.kind == workflows::definition::ArtefactKind::CandidateRevision)
-        .ok_or("The selected diff base is unavailable.")?;
-    let candidate_reference = crate::workflows::artefacts::ArtefactReference {
-        id: candidate.id,
-        kind: candidate.kind,
-        artefact_hash: candidate.artefact_hash,
-    };
-    let diff_base_reference = crate::workflows::artefacts::ArtefactReference {
-        id: diff_base.id,
-        kind: diff_base.kind,
-        artefact_hash: diff_base.artefact_hash,
-    };
-    let diff = crate::workflows::artefacts::CandidateDiff::load(
-        &run,
-        &diff_base_reference,
-        &candidate_reference,
-        &state.workflow_artefacts,
-    )
-    .map_err(|_| "The selected immutable candidate or diff base is unavailable.")?;
-    let preview = candidate_review_preview(&diff, &state.workflow_artefacts)?;
-    Ok(CandidateReviewSelection {
-        run,
-        candidate: candidate_reference,
-        diff_base: diff_base_reference,
-        candidate_hash: diff.target,
-        diff_base_hash: diff.base,
-        preview,
-    })
-}
-
-fn candidate_review_preview(
-    diff: &crate::workflows::artefacts::CandidateDiff,
-    store: &crate::workflows::artefacts::WorkflowArtefactRepository,
-) -> Result<String, &'static str> {
-    const MAXIMUM_REVIEW_PREVIEW_BYTES: usize = 256 * 1024;
-    let (total, _) = diff
-        .manifest_page(0, 0)
-        .map_err(|_| "The selected candidate diff is unavailable.")?;
-    if total > crate::workflows::artefacts::candidate::MAXIMUM_PREVIEW_PATHS {
-        return Err(
-            "The selected candidate diff preview is too large. Choose a smaller candidate.",
-        );
-    }
-    let mut preview = String::from("Changed paths:\n");
-    for index in 0..total {
-        let change = diff
-            .change(index, store)
-            .map_err(|_| "The selected candidate diff is unavailable.")?;
-        preview.push_str("- ");
-        preview.push_str(change.status);
-        preview.push(' ');
-        if !change.directory.is_empty() {
-            preview.push_str(&change.directory);
-            preview.push('/');
-        }
-        preview.push_str(&change.path);
-        preview.push('\n');
-        for (side, facts) in [("Before", &change.old), ("After", &change.new)] {
-            if let Some(facts) = facts {
-                use std::fmt::Write;
-                let _ = writeln!(
-                    preview,
-                    "{side}: {}, executable: {}, {}",
-                    facts.kind, facts.executable, facts.detail,
-                );
-            }
-        }
-        if let Some(text) = change.text {
-            for fragment in text {
-                preview.push_str(&fragment.text);
-            }
-        } else if change.binary {
-            preview.push_str("Binary content is not shown.\n");
-        } else if change.text_too_large {
-            return Err(
-                "The selected candidate diff preview is too large. Choose a smaller candidate.",
-            );
-        }
-        if preview.len() > MAXIMUM_REVIEW_PREVIEW_BYTES {
-            return Err(
-                "The selected candidate diff preview is too large. Choose a smaller candidate.",
-            );
-        }
-    }
-    if crate::markdown::escape_plain(&preview).len() > MAXIMUM_REVIEW_PREVIEW_BYTES {
-        return Err(
-            "The selected candidate diff preview is too large. Choose a smaller candidate.",
-        );
-    }
-    Ok(preview)
-}
-
-fn source_at_safe_gate(
-    state: &AppState,
-    run: &WorkflowRun,
-    candidate: &crate::workflows::artefacts::ArtefactReference,
-    diff_base: &crate::workflows::artefacts::ArtefactReference,
-    session: &crate::sessions::SessionId,
-) -> bool {
-    let Some(gate) = run
-        .gates
-        .iter()
-        .rev()
-        .find(|gate| gate.state == crate::workflows::gates::HumanGateState::AwaitingDecision)
-    else {
-        return false;
-    };
-    matches!(run.state, workflows::run::RunState::AwaitingHuman { .. })
-        && gate.candidate == *candidate
-        && gate.diff_base == *diff_base
-        && state.gate_continuations.available(&run.id, session)
-}
-
-fn candidate_review_title(run: &WorkflowRun) -> String {
-    let prefix = "Review candidate: ";
-    let remaining = crate::conversations::MAXIMUM_TITLE_BYTES - prefix.len();
-    let source = run.pinned.definition.name();
-    let end = source.floor_char_boundary(remaining.min(source.len()));
-    format!("{prefix}{}", &source[..end])
-}
-
-fn candidate_review_model(
-    state: &AppState,
-    source: Option<&ConversationRecord>,
-    form: &CandidateReviewForm,
-) -> Result<ConversationModelConfiguration, &'static str> {
-    let selection = if form.preset.trim().is_empty() {
-        candidate_submitted_selection(state, form)?
-    } else {
-        let preset = AgentId::parse(form.preset.trim())
-            .and_then(|id| state.agents.get(&id))
-            .ok_or("Choose an available reviewer agent.")?;
-        preset
-            .selection
-            .clone()
-            .or_else(|| candidate_submitted_selection(state, form).ok())
-            .or_else(|| {
-                source.and_then(|record| {
-                    effective_model(state, record).map(|model| model.settings.model)
-                })
-            })
-            .ok_or("Choose a model before you start this review.")?
-    };
-    valid_new_selection(state, &selection)?;
-    let environment = source
-        .and_then(|record| record.model.as_ref())
-        .map(|model| model.settings.environment)
-        .or_else(|| default_environment(state).ok())
-        .ok_or("The starter environment is unavailable.")?;
-    if form.preset.trim().is_empty() {
-        Ok(ConversationModelConfiguration::direct(
-            selection,
-            environment,
-        ))
-    } else {
-        let preset = AgentId::parse(form.preset.trim())
-            .and_then(|id| state.agents.get(&id))
-            .ok_or("Choose an available reviewer agent.")?;
-        Ok(ConversationModelConfiguration::from_agent_snapshot(
-            &preset,
-            selection,
-            environment,
-        ))
-    }
-}
-
-fn candidate_submitted_selection(
-    state: &AppState,
-    form: &CandidateReviewForm,
-) -> Result<ModelSelection, &'static str> {
-    let provider = ProviderKind::parse(form.provider.trim()).ok_or("Choose a stored provider.")?;
-    let thinking = if form.thinking.trim().is_empty() {
-        None
-    } else {
-        Some(
-            ThinkingEffort::new(form.thinking.clone())
-                .ok_or("Choose an available thinking effort.")?,
-        )
-    };
-    let selection = ModelSelection::new(provider, form.model.clone(), thinking)
-        .ok_or("Enter a valid model name.")?;
-    valid_new_selection(state, &selection)?;
-    Ok(selection)
-}
-
-fn candidate_review_view_model(
-    state: &AppState,
-    source: Option<&ConversationRecord>,
-    form: Option<&CandidateReviewForm>,
-) -> (ModelPicker, Vec<PresetOption>, String) {
-    let (provider, model, thinking) = if let Some(form) = form {
-        // Requested values stay visible so validation errors never silently
-        // substitute another model. The catalogue picker marks unknown values
-        // unavailable and the POST rejects them again.
-        (
-            form.provider.clone(),
-            form.model.clone(),
-            form.thinking.clone(),
-        )
-    } else {
-        let selection = source
-            .and_then(|record| effective_model(state, record).map(|model| model.settings.model))
-            .or_else(|| {
-                state
-                    .preferences
-                    .desk_providers(&state.vault)
-                    .into_iter()
-                    .find(|provider| provider.selected)
-                    .map(|provider| ModelSelection {
-                        provider: provider.kind,
-                        model: provider.model.clone(),
-                        thinking: state.models_dev.effective_effort(
-                            provider.kind,
-                            &provider.model,
-                            provider.thinking.as_ref(),
-                        ),
-                    })
-            });
-        (
-            selection
-                .as_ref()
-                .map_or(String::new(), |item| item.provider.as_str().to_owned()),
-            selection
-                .as_ref()
-                .map_or(String::new(), |item| item.model.clone()),
-            selection
-                .as_ref()
-                .and_then(|item| item.thinking.as_ref())
-                .map_or(String::new(), |effort| effort.as_str().to_owned()),
-        )
-    };
-    let picker = ModelPicker::new(
-        &state.vault,
-        &state.preferences,
-        &state.models_dev,
-        &provider,
-        &model,
-        &thinking,
-    );
-    let selected_preset = form.map(|form| form.preset.trim()).unwrap_or_default();
-    let reviewer_agents = state
-        .agents
-        .list()
-        .into_iter()
-        .map(|agent| PresetOption {
-            id: agent.id.as_hex(),
-            name: agent.name.clone(),
-            description: agent.selection.as_ref().map_or_else(
-                || "Keep the selected direct model".to_owned(),
-                |item| format!("{} · {}", item.provider.label(), item.model),
-            ),
-            selected: agent.id.as_hex() == selected_preset,
-        })
-        .collect();
-    let summary = if let Some(form) = form.filter(|form| !form.preset.trim().is_empty()) {
-        state
-            .agents
-            .list()
-            .into_iter()
-            .find(|agent| agent.id.as_hex() == form.preset.trim())
-            .map_or_else(
-                || "Reviewer agent is unavailable".to_owned(),
-                |agent| format!("Agent: {}", agent.name),
-            )
-    } else {
-        form.and_then(|form| candidate_submitted_selection(state, form).ok())
-            .or_else(|| {
-                source.and_then(|record| {
-                    effective_model(state, record).map(|model| model.settings.model)
-                })
-            })
-            .map_or_else(
-                || "Choose a stored provider and model".to_owned(),
-                |item| {
-                    format!(
-                        "Direct model: {} · {}{}",
-                        item.provider.label(),
-                        item.model,
-                        item.thinking
-                            .as_ref()
-                            .map(|effort| format!(" · Thinking: {}", effort.label()))
-                            .unwrap_or_default()
-                    )
-                },
-            )
-    };
-    (picker, reviewer_agents, summary)
-}
-
-fn default_candidate_review_brief() -> &'static str {
-    "Review this candidate for correctness, risks, missing tests and unintended changes. Return findings and recommendations. Do not approve or apply the candidate."
-}
-
-fn render_candidate_review(
-    state: &AppState,
-    graft: impl Into<GraftRequest>,
-    status: PatchStatus,
-    selection: &CandidateReviewSelection,
-    brief: &str,
-    error: Option<&'static str>,
-    form: Option<&CandidateReviewForm>,
-) -> AppResult<Response> {
-    let graft = graft.into();
-    let source = selection
-        .run
-        .conversation_id
-        .and_then(|id| state.conversations.get(&id));
-    let (model_picker, reviewer_agents, reviewer_summary) =
-        candidate_review_view_model(state, source.as_ref(), form);
-    let source_title = source.as_ref().map_or_else(
-        || selection.run.pinned.definition.name().to_owned(),
-        |record| record.title.clone(),
-    );
-    let view = CandidateReviewView {
-        run_id: selection.run.id.as_hex(),
-        source_title,
-        candidate_id: selection.candidate.id.as_hex(),
-        diff_base_id: selection.diff_base.id.as_hex(),
-        candidate_hash: selection.candidate_hash.as_str(),
-        diff_base_hash: selection.diff_base_hash.as_str(),
-        preview: selection.preview.clone(),
-        instructions_summary: "Automatic project instructions come from the selected candidate's root AGENTS.md. This discussion receives the diff and root instructions without filesystem tools. The current host worktree is not used.".to_owned(),
-        brief: if brief.is_empty() { default_candidate_review_brief().to_owned() } else { brief.to_owned() },
-        reviewer_summary,
-        model_picker,
-        reviewer_agents,
-        error: error.unwrap_or(""),
-    };
-    match graft {
-        GraftRequest::Document => {
-            let mut response =
-                responses::chat_page_response("Review candidate | Frinkworks", state, &view)?;
-            responses::apply_patch_status(&mut response, status);
-            Ok(response)
-        }
-        GraftRequest::Navigation => Ok(hypergraft::outcome::page_patch(
-            "Review candidate | Frinkworks",
-            "chat-main",
-            &view,
-        )?),
-        GraftRequest::Patch => Ok(hypergraft::PatchSet::new()
-            .title("Review candidate | Frinkworks")
-            .with_children("candidate-review-detail", &view.contents())?
-            .respond(status)?),
-    }
-}
-
-fn render_candidate_review_error(
-    state: &AppState,
-    graft: impl Into<GraftRequest>,
-    message: &'static str,
-) -> AppResult<Response> {
-    let graft = graft.into();
-    #[derive(askama::Template)]
-    #[template(
-        source = "<main data-section=\"conversations\" class=\"mx-auto max-w-4xl p-8\"><div role=\"alert\" class=\"alert alert-error\">{{ message }}</div><a href=\"/runs\" data-graft class=\"btn btn-ghost mt-4\">Runs</a></main>",
-        ext = "html"
-    )]
-    struct ErrorView {
-        message: &'static str,
-    }
-    let view = ErrorView { message };
-    match graft {
-        GraftRequest::Document => {
-            let mut response =
-                responses::chat_page_response("Review candidate | Frinkworks", state, &view)?;
-            responses::apply_patch_status(&mut response, PatchStatus::Conflict);
-            Ok(response)
-        }
-        GraftRequest::Navigation => Ok(hypergraft::outcome::page_patch(
-            "Review candidate | Frinkworks",
-            "chat-main",
-            &view,
-        )?),
-        GraftRequest::Patch => Ok(hypergraft::PatchSet::new()
-            .title("Review candidate | Frinkworks")
-            .with_children("chat-main", &view)?
-            .respond(PatchStatus::Conflict)?),
-    }
-}
-
 async fn send_message(
     State(state): State<AppState>,
     session: RequiredSession,
@@ -1462,7 +863,6 @@ async fn send_message(
                 PatchStatus::Ok,
                 detail_view(&state, session.0, &started, &started.title, ""),
             ),
-            Err(StartMessageError::Internal(error)) => Err(error),
             Err(StartMessageError::User(status, error)) => render_detail_command(
                 graft,
                 status,
@@ -1564,7 +964,6 @@ async fn send_message(
             PatchStatus::Ok,
             detail_view(&state, session.0, &started, &started.title, ""),
         ),
-        Err(StartMessageError::Internal(error)) => Err(error),
         Err(StartMessageError::User(status, error)) => render_detail_command(
             graft,
             status,
@@ -1575,7 +974,6 @@ async fn send_message(
 
 pub(super) enum StartMessageError {
     User(PatchStatus, &'static str),
-    Internal(AppError),
 }
 
 pub(super) async fn preflight_execution(
@@ -1584,24 +982,6 @@ pub(super) async fn preflight_execution(
     conversation: Option<ConversationId>,
     model: &ConversationModelConfiguration,
 ) -> Result<(), StartMessageError> {
-    if conversation
-        .and_then(|id| state.conversations.get(&id))
-        .is_some_and(|record| {
-            record.messages.iter().any(|message| {
-                message.command.as_ref().is_some_and(|entry| {
-                    entry.before.is_some()
-                        && entry.after.is_none()
-                        && (entry.output.is_some()
-                            || message.status == crate::conversations::MessageStatus::Interrupted)
-                })
-            })
-        })
-    {
-        return Err(StartMessageError::User(
-            PatchStatus::Conflict,
-            "A direct command has no final file snapshot. Its effects remain uncertain. Use a separate conversation after local recovery.",
-        ));
-    }
     if conversation
         .and_then(|id| state.conversations.get(&id))
         .is_some_and(|record| {
@@ -1627,9 +1007,7 @@ pub(super) async fn preflight_execution(
             "Restore or resolve the pending decision before another message.",
         ));
     }
-    if conversation.is_some_and(|id| {
-        state.conversation_runtime.unsettled(id) || has_uncertain_application(state, id)
-    }) {
+    if conversation.is_some_and(|id| state.conversation_runtime.unsettled(id)) {
         return Err(StartMessageError::User(
             PatchStatus::Conflict,
             "Execution remains unsettled. Continuation and retry stay unavailable until recovery and cleanup finish.",
@@ -1695,29 +1073,12 @@ pub(super) async fn preflight_execution(
             missing.message(),
         ));
     }
-    if crate::execution::ordinary_kind(&model.settings)
-        == Some(crate::execution::OrdinaryKind::Sandbox)
-    {
-        return workflows::validate_replacement_environment(
-            &state.environments,
-            &state.environment_snapshots,
-            model.settings.environment,
-        )
-        .await
-        .map_err(|error| {
-            StartMessageError::User(PatchStatus::UnprocessableEntity, error.message())
-        });
-    }
-    let pinned = workflows::pin_agent_work(&model.settings).map_err(|error| {
-        StartMessageError::User(PatchStatus::UnprocessableEntity, error.message())
-    })?;
-    workflows::resolve_environments(
-        &pinned.definition,
+    workflows::validate_replacement_environment(
         &state.environments,
         &state.environment_snapshots,
+        model.settings.environment,
     )
     .await
-    .map(|_| ())
     .map_err(|error| StartMessageError::User(PatchStatus::UnprocessableEntity, error.message()))
 }
 
@@ -1800,22 +1161,6 @@ async fn start_message_mode(
     append: MessageAppend,
 ) -> Result<ConversationRecord, StartMessageError> {
     let persisted_model = model.clone();
-    // Reject file access for immutable-evidence conversations before any runtime
-    // preflight, so the specific reason reaches the user first. A fork of a
-    // candidate review keeps the same restriction without candidate ownership.
-    let immutable_review = record.candidate_review_context.is_some()
-        || record
-            .forked_from
-            .as_ref()
-            .is_some_and(|provenance| provenance.candidate_review);
-    if immutable_review
-        && (!model.settings.tools.is_empty() || !model.settings.directories.is_empty())
-    {
-        return Err(StartMessageError::User(
-            PatchStatus::Conflict,
-            "Candidate reviews use immutable evidence only. Use a separate conversation for file access.",
-        ));
-    }
     preflight_execution(state, session, Some(record.id), &model).await?;
     if record.active_job.is_some() {
         return Err(StartMessageError::User(
@@ -1863,33 +1208,6 @@ async fn start_message_mode(
         }
     }
     let ordinary = crate::execution::ordinary_kind(&model.settings);
-    let workflow = if ordinary == Some(crate::execution::OrdinaryKind::FileChange) {
-        let project_free =
-            crate::execution::ProjectFreeAuthority::from_settings(record.revision, &model.settings)
-                .map_err(|error| StartMessageError::User(PatchStatus::Conflict, error.message()))?;
-        let pinned = workflows::pin_agent_work(&model.settings).map_err(|error| {
-            StartMessageError::User(PatchStatus::UnprocessableEntity, error.message())
-        })?;
-        let environments = workflows::resolve_environments(
-            &pinned.definition,
-            &state.environments,
-            &state.environment_snapshots,
-        )
-        .await
-        .map_err(|error| {
-            StartMessageError::User(PatchStatus::UnprocessableEntity, error.message())
-        })?;
-        let execution = state
-            .workflow_execution
-            .acquire()
-            .map_err(|error| StartMessageError::User(PatchStatus::Conflict, error))?;
-        let run_id = workflows::RunId::generate().map_err(|error| {
-            StartMessageError::Internal(AppError::new("create workflow run identifier", error))
-        })?;
-        Some((run_id, project_free, pinned, environments, execution))
-    } else {
-        None
-    };
     let ordinary_execution = if matches!(
         ordinary,
         Some(crate::execution::OrdinaryKind::Host | crate::execution::OrdinaryKind::Sandbox)
@@ -1909,8 +1227,6 @@ async fn start_message_mode(
         .map_err(|_| {
             StartMessageError::User(PatchStatus::Conflict, ConversationError::Active.message())
         })?;
-    let launch_brief = text.trim().to_owned();
-    let phase_model = model.clone();
     let started = match append {
         MessageAppend::Revision(revise) => state.conversations.revise_message_with_model(
             &record.id,
@@ -1952,97 +1268,7 @@ async fn start_message_mode(
             return Err(StartMessageError::User(status_for(error), error.message()));
         }
     };
-    if let Some((run_id, project_free, pinned, environments, execution)) = workflow {
-        let secret = match connection.auth {
-            crate::providers::AuthMethod::ApiKey => Some(connection.api_key.expose()),
-            crate::providers::AuthMethod::Plan => None,
-        };
-        let turns = match job::history_with_review(state, &started, secret) {
-            Ok(turns) => turns,
-            Err(error) => {
-                let _ = state.conversations.settle_message(
-                    &started.id,
-                    job.id(),
-                    String::new(),
-                    crate::conversations::MessageStatus::Failed,
-                    Some(error.to_owned()),
-                );
-                let _ = state
-                    .sessions
-                    .finish_conversation_job(&session, started.id, job.id());
-                return Err(StartMessageError::User(
-                    PatchStatus::UnprocessableEntity,
-                    error,
-                ));
-            }
-        };
-        let phase_models = pinned
-            .definition
-            .steps()
-            .iter()
-            .filter(|step| matches!(&step.action, workflows::definition::StepAction::Agent(_)))
-            .map(|step| workflows::PhaseModelSelection {
-                step: step.key.clone(),
-                selection: phase_model.settings.model.clone(),
-                instructions: phase_model.settings.instructions.clone(),
-                preset: phase_model
-                    .preset
-                    .as_ref()
-                    .map(|preset| workflows::PinnedPreset {
-                        id: preset.id,
-                        revision: preset.revision,
-                        name: preset.name.clone(),
-                    }),
-                settings: Some(phase_model.settings.clone()),
-            })
-            .collect::<Vec<_>>();
-        let mut run = WorkflowRun::create_source_free_for_conversation(
-            run_id,
-            workflows::now_ms(),
-            started.id,
-            pinned,
-            environments,
-            phase_models,
-        );
-        run.launch_brief = launch_brief;
-        if let Err(error) = state.workflow_runs.create(run.clone()) {
-            let _ = state.conversations.settle_message(
-                &started.id,
-                job.id(),
-                String::new(),
-                crate::conversations::MessageStatus::Failed,
-                None,
-            );
-            let _ = state
-                .sessions
-                .finish_conversation_job(&session, started.id, job.id());
-            return Err(StartMessageError::Internal(AppError::new(
-                "store workflow run",
-                error,
-            )));
-        }
-        spawn_conversation_work(
-            state.clone(),
-            session,
-            started.id,
-            crate::execution::conversation::run(
-                state.clone(),
-                crate::execution::conversation::OrdinaryRun {
-                    session,
-                    record: started,
-                    connection,
-                    job,
-                    execution,
-                    kind: crate::execution::OrdinaryKind::FileChange,
-                    turns,
-                    file: Some(crate::execution::conversation::FileChangeWork {
-                        run_id,
-                        project_free,
-                    }),
-                },
-            ),
-        );
-    } else if let Some(kind) = ordinary {
+    if let Some(kind) = ordinary {
         let secret = match connection.auth {
             crate::providers::AuthMethod::ApiKey => Some(connection.api_key.expose()),
             crate::providers::AuthMethod::Plan => None,
@@ -2081,7 +1307,6 @@ async fn start_message_mode(
                     execution,
                     kind,
                     turns,
-                    file: None,
                 },
             ),
         );
@@ -2126,7 +1351,6 @@ pub(crate) async fn continue_follow_ups(
     }
     if has_pending_review(&state, conversation)
         || state.conversation_runtime.unsettled(conversation)
-        || has_uncertain_application(&state, conversation)
         || record.continuation.is_some()
     {
         return;
@@ -2205,139 +1429,6 @@ async fn cancel_message(
     if job.snapshot().status == crate::sessions::JobStatus::AwaitingQuestion {
         let _ = job.resume();
     }
-    render_detail_command(
-        graft,
-        PatchStatus::Ok,
-        detail_view(&state, session.0, &record, &record.title, ""),
-    )
-}
-
-#[derive(Deserialize)]
-struct SettlePartialForm {
-    #[serde(default)]
-    attempt: String,
-    #[serde(default)]
-    state: String,
-}
-
-/// Keep applied files and end a known partial task without another write.
-/// Every command revalidates the stored run; disabled controls grant nothing.
-async fn settle_partial(
-    State(state): State<AppState>,
-    session: RequiredSession,
-    graft: PatchGraft,
-    Path((conversation_id, run_id)): Path<(String, String)>,
-    Form(form): Form<SettlePartialForm>,
-) -> AppResult<Response> {
-    let Some(record) = load_conversation(&state, &conversation_id) else {
-        return Ok(responses::command_navigation("/conversations"));
-    };
-    let Some(run_id) = crate::workflows::RunId::parse(&run_id) else {
-        return render_detail_command(
-            graft,
-            PatchStatus::UnprocessableEntity,
-            detail_view(&state, session.0, &record, &record.title, REVISION_MESSAGE),
-        );
-    };
-    let Some(run) = state.workflow_runs.get(&run_id) else {
-        return render_detail_command(
-            graft,
-            PatchStatus::Conflict,
-            detail_view(&state, session.0, &record, &record.title, REVISION_MESSAGE),
-        );
-    };
-    if run.conversation_id != Some(record.id) {
-        return render_detail_command(
-            graft,
-            PatchStatus::Conflict,
-            detail_view(&state, session.0, &record, &record.title, REVISION_MESSAGE),
-        );
-    }
-    let outcome_matches = run
-        .latest_apply_attempt()
-        .is_some_and(|attempt| attempt.id.as_hex() == form.attempt);
-    if !outcome_matches {
-        return render_detail_command(
-            graft,
-            PatchStatus::Conflict,
-            detail_view(
-                &state,
-                session.0,
-                &record,
-                &record.title,
-                "That file application changed. Reload the conversation and try again.",
-            ),
-        );
-    }
-    // Recovery protection retains its reservations; settlement never force-unlocks.
-    if state.gate_continuations.commit_recovery_locked() {
-        return render_detail_command(
-            graft,
-            PatchStatus::Conflict,
-            detail_view(
-                &state,
-                session.0,
-                &record,
-                &record.title,
-                "This operation requires recovery. The conversation remains reserved until a restart reconciles the local records.",
-            ),
-        );
-    }
-    if !run.partial_settlement_eligible() {
-        let message = if run.apply_is_uncertain() {
-            "Execution remains unsettled. Continuation and retry stay unavailable until recovery and cleanup finish."
-        } else if run.is_terminal() {
-            "That task already ended. Continue the conversation for the next task."
-        } else {
-            "That file application changed. Reload the conversation and try again."
-        };
-        return render_detail_command(
-            graft,
-            PatchStatus::Conflict,
-            detail_view(&state, session.0, &record, &record.title, message),
-        );
-    }
-    let expected_state = run
-        .latest_apply_attempt()
-        .and_then(|attempt| attempt.apply_transaction.as_ref())
-        .map(|transaction| match transaction.state {
-            crate::workflows::apply::ApplyTransactionState::Recovered => "recovered",
-            _ => "",
-        })
-        .unwrap_or("");
-    if form.state != expected_state {
-        return render_detail_command(
-            graft,
-            PatchStatus::Conflict,
-            detail_view(
-                &state,
-                session.0,
-                &record,
-                &record.title,
-                "That file application changed. Reload the conversation and try again.",
-            ),
-        );
-    }
-    if state
-        .workflow_runs
-        .mutate(&run_id, |run| {
-            run.settle_known_partial(crate::workflows::now_ms())
-        })
-        .is_err()
-    {
-        return render_detail_command(
-            graft,
-            PatchStatus::Conflict,
-            detail_view(
-                &state,
-                session.0,
-                &record,
-                &record.title,
-                "That file application changed. Reload the conversation and try again.",
-            ),
-        );
-    }
-    let record = load_conversation(&state, &conversation_id).unwrap_or(record);
     render_detail_command(
         graft,
         PatchStatus::Ok,
@@ -2587,7 +1678,6 @@ async fn delete_conversation(
     if state.sessions.conversation_reserved(record.id)
         || has_pending_review(&state, record.id)
         || state.conversation_runtime.unsettled(record.id)
-        || has_uncertain_application(&state, record.id)
     {
         return render_detail_command(
             graft,
@@ -2712,14 +1802,6 @@ pub(super) fn has_pending_review(state: &AppState, conversation: ConversationId)
         })
 }
 
-fn has_uncertain_application(state: &AppState, conversation: ConversationId) -> bool {
-    state
-        .workflow_runs
-        .for_conversation(&conversation)
-        .into_iter()
-        .any(|run| run.apply_is_uncertain())
-}
-
 fn valid_replacement_selection(
     state: &AppState,
     record: &ConversationRecord,
@@ -2782,7 +1864,6 @@ fn conversation_busy(state: &AppState, record: &ConversationRecord) -> bool {
     record.active_job.is_some()
         || state.sessions.conversation_reserved(record.id)
         || state.conversation_runtime.unsettled(record.id)
-        || has_uncertain_application(state, record.id)
 }
 
 fn detail_view(
@@ -2838,11 +1919,7 @@ fn detail_view_with_transcript(
         .active_runs()
         .into_iter()
         .find(|run| run.conversation_id == Some(record.id))
-        .and_then(|run| {
-            let destination = crate::slices::human_gates::application_destination(state, &run);
-            page::pending_code_gate(&run, &state.workflow_artefacts, destination)
-        });
-    let (source_candidate_review, linked_candidate_reviews) = conversation_links(state, record);
+        .and_then(|run| page::pending_code_gate(&run, &state.workflow_artefacts));
     let pending_command = pending_command(state, record);
     let workflow_progress = state
         .workflow_runs
@@ -2864,8 +1941,6 @@ fn detail_view_with_transcript(
         title,
         error,
         pending_gate,
-        source_candidate_review,
-        linked_candidate_reviews,
         attachments::page::view(state, session, &record.id.as_hex()),
         transcript,
         leaf,
@@ -2893,7 +1968,6 @@ fn detail_view_with_transcript(
     )
     .with_pending_command(pending_command)
     .with_workflow_progress(workflow_progress)
-    .with_direct_results(state, record.id)
     .with_prepared_recovery(state, session, record)
 }
 
@@ -2929,37 +2003,6 @@ fn pending_command(
         .to_owned()
     })?;
     Some(page::PendingCommandView { location, cleanup })
-}
-
-fn conversation_links(
-    state: &AppState,
-    record: &ConversationRecord,
-) -> (
-    Option<CandidateReviewLinkView>,
-    Vec<CandidateReviewLinkView>,
-) {
-    let candidate_link_view = |link: &CandidateReviewLink| CandidateReviewLinkView {
-        title: link
-            .conversation_id
-            .and_then(|id| state.conversations.metadata_for(&id))
-            .map_or_else(String::new, |conversation| conversation.title),
-        href: link
-            .conversation_id
-            .map_or_else(String::new, |id| format!("/conversations/{}", id.as_hex())),
-        run_href: format!("/runs/{}", link.run_id.as_hex()),
-        candidate_hash: link.candidate.artefact_hash.as_str(),
-        diff_base_hash: link.diff_base.artefact_hash.as_str(),
-    };
-    let source_candidate_review = record
-        .source_candidate_review
-        .as_ref()
-        .map(candidate_link_view);
-    let linked_candidate_reviews = record
-        .candidate_reviews
-        .iter()
-        .map(candidate_link_view)
-        .collect();
-    (source_candidate_review, linked_candidate_reviews)
 }
 
 fn load_conversation(state: &AppState, raw: &str) -> Option<ConversationRecord> {

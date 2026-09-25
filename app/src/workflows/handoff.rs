@@ -115,13 +115,10 @@ impl WorkflowRun {
             && self.agent_id.is_none()
             && self.directory_settings().is_some()
             && matches!(self.state, super::run::RunState::AwaitingHuman { .. })
-            && matches!(self.source, super::RunSource::Captured { .. })
             && self
                 .attempts
                 .iter()
                 .all(|attempt| attempt.cleanup == super::run::AttemptCleanupRecord::Complete)
-            && !self.apply_is_uncertain()
-            && !self.apply_is_known_partial()
     }
 
     pub(crate) fn transfer(
@@ -138,7 +135,7 @@ impl WorkflowRun {
         {
             return Err(super::run::TransitionError::Invalid);
         }
-        // This run record is the sole ownership authority. Candidates and their original source remain unchanged.
+        // The run record is the sole ownership authority.
         self.ownership_history.push(source);
         self.conversation_id = Some(destination);
         Ok(())

@@ -12,7 +12,8 @@ use crate::{
     sessions,
     state::AppState,
     workflows::{
-        RunId, WorkflowRun, definition::PinnedWorkflowDefinition, seeds::one_agent_definition,
+        RunId, WorkflowRun, definition::PinnedWorkflowDefinition,
+        seeds::implement_a_change_definition as one_agent_definition,
     },
 };
 
@@ -201,20 +202,14 @@ async fn a_detail_patch_targets_run_detail() {
 }
 
 #[test]
-fn review_verdict_skips_candidate_outputs_from_fixing_reviews() {
-    let candidate = crate::workflows::artefacts::ArtefactSummary::Candidate {
-        candidate: crate::workflows::artefacts::CandidateHash::of(b"candidate"),
-        entries: 1,
-        bytes: 1,
-        disposition: crate::workflows::artefacts::ProductionDisposition::RequiredOutput,
-    };
+fn review_verdict_skips_plan_outputs() {
+    let plan = crate::workflows::artefacts::ArtefactSummary::Plan { markdown_bytes: 1 };
     let review = crate::workflows::artefacts::ArtefactSummary::Review {
-        candidate: crate::workflows::artefacts::CandidateHash::of(b"candidate"),
         verdict: crate::workflows::artefacts::ReviewVerdict::Approved,
     };
 
     assert_eq!(
-        super::page::review_verdict_label([&candidate, &review].into_iter()),
+        super::page::review_verdict_label([&plan, &review].into_iter()),
         "Approved"
     );
 }
@@ -233,7 +228,6 @@ fn context_packet(prompt: String) -> crate::workflows::input_context::AttemptCon
         source_available: "Candidate files are available through tools.".to_owned(),
         excluded_context: "Conversation and worker transcripts are excluded.".to_owned(),
         project_instructions: crate::workflows::input_context::ProjectInstructionSnapshot {
-            candidate: None,
             guest_path: "AGENTS.md".to_owned(),
             state: crate::workflows::input_context::ProjectInstructionState::Present {
                 text: "Use the test command.".to_owned(),
@@ -317,25 +311,32 @@ async fn context_routes_reject_cross_run_attempts_and_unsupported_patches() {
     let token = connected(&state);
     let run_id = stored_run(&state);
     let other_run = stored_run(&state);
-    let attempt_id = crate::workflows::AttemptId::generate().expect("attempt");
+    let mut attempt_id = crate::workflows::AttemptId::generate().unwrap();
     state
         .workflow_runs
         .mutate(&run_id, |run| {
-            let sandbox = crate::workflows::run::AttemptSandboxRecord {
-                kind: crate::workflows::run::AttemptSandboxKind::IsolatedAttempt,
-                snapshot_digest: run.environments.steps[0].snapshot_digest.clone(),
-            };
-            run.start_attempt(
-                attempt_id,
-                vec![],
-                crate::tests::test_agent_capabilities(),
-                sandbox,
-                2,
-            )?;
-            run.record_initial_context(
-                attempt_id,
-                context_packet("Private attempt direction".to_owned()),
+            attempt_id = crate::workflows::tests::start(run, vec![], 2);
+            run.launch_brief = "Private attempt direction".into();
+            let step = run.pinned.definition.steps().first().unwrap();
+            let tools = crate::tools::definitions_for_step(
+                &run.attempts[0].capabilities.tools,
+                step.required_outputs(),
+                crate::execution::ToolLocation::Sandbox,
+            );
+            let packet = crate::workflows::input_context::build_attempt_packet_for_request(
+                run,
+                step,
+                &[],
+                &state.workflow_artefacts,
+                crate::workflows::input_context::ProjectInstructions::Absent,
+                &[],
+                "",
+                &tools,
+                None,
+                None,
             )
+            .unwrap();
+            run.record_initial_context(attempt_id, packet)
         })
         .expect("attempt");
     for (owner, representation, status) in [
@@ -373,21 +374,12 @@ async fn evidence_routes_reject_cross_run_attempts_and_unsupported_patches() {
     let token = connected(&state);
     let run_id = stored_run(&state);
     let other_run = stored_run(&state);
-    let attempt_id = crate::workflows::AttemptId::generate().expect("attempt");
+    let mut attempt_id = crate::workflows::AttemptId::generate().unwrap();
     state
         .workflow_runs
         .mutate(&run_id, |run| {
-            let sandbox = crate::workflows::run::AttemptSandboxRecord {
-                kind: crate::workflows::run::AttemptSandboxKind::IsolatedAttempt,
-                snapshot_digest: run.environments.steps[0].snapshot_digest.clone(),
-            };
-            run.start_attempt(
-                attempt_id,
-                vec![],
-                crate::tests::test_agent_capabilities(),
-                sandbox,
-                2,
-            )
+            attempt_id = crate::workflows::tests::start(run, vec![], 2);
+            Ok(())
         })
         .expect("attempt");
     let phase = state.workflow_runs.get(&run_id).unwrap().attempts[0]
@@ -420,7 +412,7 @@ async fn evidence_routes_reject_cross_run_attempts_and_unsupported_patches() {
         Some(&reply.text),
         None,
     );
-    for view in ["activity", "changes", "result"] {
+    for view in ["activity", "result"] {
         for (owner, representation, status) in [
             (run_id, None, 200),
             (run_id, Some("navigation"), 200),

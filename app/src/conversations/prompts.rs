@@ -173,9 +173,7 @@ fn template_from_bytes(
 
 /// Discover project templates from the effective read-only roots. Discovery
 /// reads `.agents/prompts` directly below each root. It never scans a nested
-/// directory or an external application configuration. A candidate-backed
-/// root resolves names from the immutable candidate entries and reports an
-/// unavailable body instead of reading current host files.
+/// directory or an external application configuration.
 pub(crate) fn discover_project(
     roots: &[EffectiveRoot],
     grants: &[DirectoryGrant],
@@ -188,7 +186,7 @@ pub(crate) fn discover_project(
             break;
         }
         let Some(host) = root.host_path.as_deref() else {
-            unavailable += project_candidate_count(&root.candidate_paths);
+            unavailable += 1;
             continue;
         };
         let Some(grant) = grants
@@ -214,28 +212,6 @@ pub(crate) fn discover_project(
             .then(left.name.cmp(&right.name))
     });
     (templates, unavailable)
-}
-
-/// Count the distinct `.agents/prompts/*.md` names in one immutable candidate.
-/// The body bytes are not part of that source, so each name stays unavailable.
-fn project_candidate_count(entries: &[String]) -> usize {
-    let mut seen = BTreeSet::new();
-    for entry in entries {
-        let Some(rest) = entry.strip_prefix(&format!("{PROJECT_PROMPTS_DIRECTORY}/")) else {
-            continue;
-        };
-        if rest.contains('/') {
-            continue;
-        }
-        let Some(name) = rest.strip_suffix(&format!(".{PROMPT_EXTENSION}")) else {
-            continue;
-        };
-        if !valid_name(name) || reserved_name(name) {
-            continue;
-        }
-        seen.insert(name.to_ascii_lowercase());
-    }
-    seen.len()
 }
 
 fn read_project_root(

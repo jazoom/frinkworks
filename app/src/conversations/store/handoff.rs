@@ -66,7 +66,7 @@ impl ConversationStore {
                 (&stored_destination, &next_destination),
             ],
         ) {
-            tracing::error!(%error, run = %committed.id.as_hex(), "Prepared-change ownership needs recovery");
+            tracing::error!(%error, run = %committed.id.as_hex(), "Workflow ownership needs recovery");
         }
         Ok(next_destination)
     }

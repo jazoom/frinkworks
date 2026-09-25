@@ -284,14 +284,14 @@ describe.each(["new", "saved"])("%s conversation settings", (state) => {
             root.insertAdjacentHTML(
                 "beforeend",
                 `
-                <input type="radio" name="access-one" data-execution-directory="one" value="read-only" checked>
-                <input type="radio" name="access-one" data-execution-directory="one" value="direct-write">`,
+                <input type="radio" name="access-one" data-execution-directory="one" value="read" checked>
+                <input type="radio" name="access-one" data-execution-directory="one" value="write">`,
             );
             const original = root.innerHTML;
             const access = root.querySelector<HTMLInputElement>(
                 "#execution-directory-access",
             )!;
-            access.value = JSON.stringify([["one", "direct-write"]]);
+            access.value = JSON.stringify([["one", "write"]]);
             access.dispatchEvent(new Event("input", { bubbles: true }));
             root.innerHTML = original;
             root.querySelector<HTMLInputElement>('[name="revision"]')!.value =
@@ -299,12 +299,12 @@ describe.each(["new", "saved"])("%s conversation settings", (state) => {
             reconcile("command-directory-form");
             expect(
                 root.querySelector<HTMLInputElement>(
-                    '[data-execution-directory][value="direct-write"]',
+                    '[data-execution-directory][value="write"]',
                 )!.checked,
             ).toBe(true);
             expect(
                 root.querySelector<HTMLInputElement>(
-                    '[data-execution-directory][value="direct-write"]',
+                    '[data-execution-directory][value="write"]',
                 )!.defaultChecked,
             ).toBe(false);
             expect(value("revision")).toBe("4");

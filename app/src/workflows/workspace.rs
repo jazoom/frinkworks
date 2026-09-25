@@ -134,46 +134,7 @@ impl WorkflowWorkspaces {
     }
 }
 
-pub(crate) fn reviewed_capture_exclusions(
-    root: &std::path::Path,
-    data_root: &std::path::Path,
-) -> Vec<String> {
-    const ENGINE_PATHS: &[&str] = &[
-        "workflow-apply-journals",
-        "workflow-artefacts",
-        "workflow-commit-journals",
-        "workflow-evidence",
-        "workflow-runs",
-        "workflow-workspaces",
-    ];
-    let mut exclusions = ENGINE_PATHS
-        .iter()
-        .filter_map(|name| {
-            let path = data_root.join(name);
-            // A root inside engine storage has no safe capture boundary.
-            if root.starts_with(&path) {
-                return Some(".".to_owned());
-            }
-            path.strip_prefix(root)
-                .ok()
-                .filter(|relative| !relative.as_os_str().is_empty())
-                .and_then(|relative| relative.to_str())
-                .map(str::to_owned)
-        })
-        .collect::<Vec<_>>();
-    exclusions.sort_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
-    exclusions
-}
-
 impl AttemptWorkspace {
-    pub(crate) fn reviewed_root(&self, alias: &str) -> Result<PathBuf, PersistError> {
-        let roots = storage::confined_child(&self.root, "reviewed")?;
-        storage::ensure_private_dir(&roots)?;
-        let root = storage::confined_child(&roots, alias)?;
-        storage::ensure_private_dir(&root)?;
-        Ok(root)
-    }
-
     pub(crate) fn destroy(self) -> Result<(), PersistError> {
         storage::remove_tree_nofollow(&self.root)
     }

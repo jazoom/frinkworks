@@ -2,6 +2,24 @@ use super::DirectoryPolicy;
 use crate::agents::record::{AccessMode, AgentRecord, DirectoryGrant, NetworkAccess};
 use crate::agents::{AgentId, ToolId};
 
+impl DirectoryPolicy {
+    pub(crate) fn from_record_with_primary(record: &AgentRecord, primary: &str) -> Self {
+        Self::from_grants(
+            record
+                .directories
+                .iter()
+                .map(|grant| super::PolicyGrant {
+                    alias: grant.alias.clone(),
+                    guest_path: crate::agents::guest_path_for(&grant.alias, primary),
+                    host_path: grant.host_path.clone(),
+                    access: grant.access,
+                })
+                .collect(),
+            primary.to_owned(),
+        )
+    }
+}
+
 fn record(primary: &str, grants: Vec<DirectoryGrant>) -> AgentRecord {
     AgentRecord {
         id: AgentId::generate().expect("id"),

@@ -60,12 +60,11 @@
         />
         <p>
           {% if continue_prepared %}
-            The destination will own these exact prepared changes after you send
-            the prompt. The original baseline and remaining decisions stay
-            unchanged.
+            The destination will own this workflow after you send the prompt.
+            The plan and pending decisions stay unchanged.
           {% else %}
-            This prompt carries context only. Isolated changes stay in the
-            source conversation.
+            This prompt carries context only. The workflow stays in the source
+            conversation. Existing file changes remain.
           {% endif %}
         </p>
         <label class="flex flex-col gap-2" for="handoff-prompt">

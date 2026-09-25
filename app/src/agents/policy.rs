@@ -1,9 +1,6 @@
 use std::path::PathBuf;
 
-use super::record::{
-    AccessMode, AgentError, AgentRecord, GUEST_PROJECT, NetworkAccess, canonical_directory,
-    guest_path_for,
-};
+use super::record::{AccessMode, AgentError, GUEST_PROJECT, NetworkAccess, canonical_directory};
 use super::tool_id::ToolId;
 use crate::execution::GUEST_WORKSPACE;
 
@@ -65,27 +62,6 @@ impl EffectiveAuthority {
 impl DirectoryPolicy {
     pub(crate) fn is_private_workspace(&self) -> bool {
         self.private_workspace
-    }
-
-    // The selected project grant is /project even when another grant is the saved primary.
-    pub(crate) fn from_record_with_primary(record: &AgentRecord, primary_alias: &str) -> Self {
-        let grants = record
-            .directories
-            .iter()
-            .map(|grant| PolicyGrant {
-                alias: grant.alias.clone(),
-                guest_path: guest_path_for(&grant.alias, primary_alias),
-                host_path: grant.host_path.clone(),
-                access: grant.access,
-            })
-            .collect();
-        Self {
-            grants,
-            primary_alias: primary_alias.to_owned(),
-            private_workspace: false,
-            skill_root: None,
-            host_directory: None,
-        }
     }
 
     pub(crate) fn from_grants(grants: Vec<PolicyGrant>, primary_alias: String) -> Self {

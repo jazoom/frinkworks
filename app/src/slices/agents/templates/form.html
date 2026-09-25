@@ -303,13 +303,13 @@
                       value="read-write"
                       {% if grant.access == "read-write" %}selected{% endif %}
                     >
-                      Can read and write
+                      Write
                     </option>
                     <option
                       value="read-only"
                       {% if grant.access == "read-only" %}selected{% endif %}
                     >
-                      Read only
+                      Read
                     </option>
                   </select>
                 </label>
@@ -320,9 +320,9 @@
                   <code class="break-all">{{ grant.guest_path }}</code>
                   with
                   {% if grant.access == "read-only" %}
-                    read-only
+                    Read
                   {% else %}
-                    read and write
+                    Write
                   {% endif %}
                   directory access.
                 {% else %}

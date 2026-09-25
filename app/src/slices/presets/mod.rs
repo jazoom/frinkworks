@@ -50,7 +50,7 @@ struct PresetForm {
     network: String,
     network_domains: String,
     read_only: String,
-    reviewed: String,
+
     direct_write: String,
 }
 
@@ -97,7 +97,6 @@ impl PresetForm {
             &self.network,
             &self.network_domains,
             &self.read_only,
-            &self.reviewed,
             &self.direct_write,
         ]
         .into_iter()
@@ -150,10 +149,10 @@ impl PresetForm {
             } else {
                 self.host_approval.trim()
             })
-            .ok_or("Choose host command approval.")?;
+            .ok_or("Choose a command approval policy.")?;
         let network = NetworkAccess::parse_form(&self.network, &self.network_domains)
             .map_err(|_| "Enter valid network access and domains.")?;
-        if self.read_only.len() + self.reviewed.len() + self.direct_write.len() > 32 * 1024 {
+        if self.read_only.len() + self.direct_write.len() > 32 * 1024 {
             return Err("Directory paths exceed 32 KiB.");
         }
         let retained = original
@@ -163,7 +162,7 @@ impl PresetForm {
                     .directories
                     .iter()
                     .filter(|grant| {
-                        [&self.read_only, &self.reviewed, &self.direct_write]
+                        [&self.read_only, &self.direct_write]
                             .into_iter()
                             .flat_map(|text| text.lines())
                             .any(|path| std::path::Path::new(path) == grant.host_path)
@@ -175,9 +174,8 @@ impl PresetForm {
         let mut reserved = retained.clone();
         let mut directories = Vec::new();
         for (text, access) in [
-            (&self.read_only, DirectoryAccess::ReadOnly),
-            (&self.reviewed, DirectoryAccess::ReviewBeforeApply),
-            (&self.direct_write, DirectoryAccess::DirectWrite),
+            (&self.read_only, DirectoryAccess::Read),
+            (&self.direct_write, DirectoryAccess::Write),
         ] {
             for path in text.lines().filter(|v| !v.trim().is_empty()) {
                 let existing = original.and_then(|record| {
@@ -478,9 +476,9 @@ impl From<&PresetRecord> for PresetForm {
             environment: s.environment.as_hex(),
             network: s.network.as_str().to_owned(),
             network_domains: s.network.domains().join("\n"),
-            read_only: paths(DirectoryAccess::ReadOnly),
-            reviewed: paths(DirectoryAccess::ReviewBeforeApply),
-            direct_write: paths(DirectoryAccess::DirectWrite),
+            read_only: paths(DirectoryAccess::Read),
+
+            direct_write: paths(DirectoryAccess::Write),
         }
     }
 }

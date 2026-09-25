@@ -11,7 +11,7 @@ enum Hold {
 
 pub(crate) struct WorkflowExecution {
     held: Mutex<Hold>,
-    application: tokio::sync::Mutex<()>,
+
     #[cfg(feature = "dev")]
     active: AtomicUsize,
 }
@@ -27,7 +27,7 @@ impl WorkflowExecution {
     pub(crate) fn new() -> Self {
         Self {
             held: Mutex::new(Hold::Free),
-            application: tokio::sync::Mutex::new(()),
+
             #[cfg(feature = "dev")]
             active: AtomicUsize::new(0),
         }
@@ -47,17 +47,6 @@ impl WorkflowExecution {
                 .ok_or("Too many executions are active.")?,
         );
         Ok(ExecutionGuard::new(self, false))
-    }
-
-    // The caller retains this lock through cleanup, recovery and publication.
-    pub(crate) async fn lock_application(
-        &self,
-    ) -> Result<tokio::sync::MutexGuard<'_, ()>, &'static str> {
-        let application = self.application.lock().await;
-        if matches!(*lock(&self.held), Hold::Recovery) {
-            return Err(RECOVERY_REQUIRED);
-        }
-        Ok(application)
     }
 
     #[cfg(feature = "dev")]

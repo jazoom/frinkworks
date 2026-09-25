@@ -291,22 +291,19 @@ async fn invalid_query_text_is_rejected_without_a_search() {
 }
 
 #[test]
-fn candidate_search_excludes_git_and_bounds_work_even_without_matches() {
+fn live_search_bounds_work_even_without_matches() {
     use crate::execution::resources::{EffectiveRoot, MAXIMUM_FILE_TRAVERSAL_ENTRIES};
-    let mut root = EffectiveRoot {
-        scope: "project".into(),
-        model_path: "/access/project".into(),
-        host_path: None,
-        candidate_paths: vec![".git/config".into(), "src/.git/config".into()],
+    let directory = tempfile::tempdir().unwrap();
+    for index in 0..=MAXIMUM_FILE_TRAVERSAL_ENTRIES {
+        std::fs::write(directory.path().join(format!("file-{index}")), "").unwrap();
+    }
+    let grant = crate::execution::DirectoryGrant::from_selected(directory.path(), &[]).unwrap();
+    let root = EffectiveRoot {
+        scope: grant.alias.clone(),
+        model_path: grant.guest_path(),
+        host_path: Some(grant.host_path.clone()),
     };
-    let data = Path::new("/private-data");
-    assert!(
-        search(&[root.clone()], "config", data, &[])
-            .suggestions
-            .is_empty()
-    );
-    root.candidate_paths = vec!["src/main.rs".into(); MAXIMUM_FILE_TRAVERSAL_ENTRIES + 1];
-    let result = search(&[root], "absent", data, &[]);
+    let result = search(&[root], "absent", Path::new("/private-data"), &[grant]);
     assert!(result.partial);
     assert!(result.suggestions.is_empty());
 }
@@ -494,21 +491,21 @@ async fn completion_maps_absolute_host_paths_to_the_selected_root() {
 }
 
 #[test]
-fn candidate_completion_returns_directories_and_rejects_parent() {
+fn live_completion_returns_directories_and_rejects_parent() {
     use crate::execution::resources::EffectiveRoot;
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(directory.path().join("src/nested")).unwrap();
+    std::fs::write(directory.path().join("src/main.rs"), "").unwrap();
+    let grant = crate::execution::DirectoryGrant::from_selected(directory.path(), &[]).unwrap();
     let root = EffectiveRoot {
-        scope: "project".into(),
+        scope: grant.alias.clone(),
         model_path: "/access/project".into(),
-        host_path: None,
-        candidate_paths: vec![
-            "src/main.rs".into(),
-            "src/nested/".into(),
-            "src/other.rs".into(),
-        ],
+        host_path: Some(grant.host_path.clone()),
     };
+    let grants = [grant];
     let data = Path::new("/private-data");
-    let result =
-        super::page::complete(std::slice::from_ref(&root), "src/ne", data, &[]).expect("complete");
+    let result = super::page::complete(std::slice::from_ref(&root), "src/ne", data, &grants)
+        .expect("complete");
     assert_eq!(result.suggestions.len(), 1);
     assert_eq!(result.suggestions[0].path, "/access/project/src/nested/");
     assert!(result.suggestions[0].directory);
@@ -517,7 +514,7 @@ fn candidate_completion_returns_directories_and_rejects_parent() {
         std::slice::from_ref(&root),
         "/access/project/src/ma",
         data,
-        &[],
+        &grants,
     )
     .expect("complete");
     assert_eq!(result.suggestions.len(), 1);
@@ -528,7 +525,7 @@ fn candidate_completion_returns_directories_and_rejects_parent() {
         std::slice::from_ref(&root),
         "/access/project-other/src/ma",
         data,
-        &[],
+        &grants,
     )
     .expect("complete");
     assert!(result.foreign);

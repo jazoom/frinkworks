@@ -292,7 +292,6 @@ async fn continue_checkpoint(
             .ok_or("That continuation is no longer valid.")
             .and_then(|run| super::handoff::transfer::validate_pinned(state, &run));
         if state.conversation_runtime.unsettled(record.id)
-            || super::has_uncertain_application(state, record.id)
             || super::has_pending_review(state, record.id)
             || validation.is_err()
         {
@@ -322,7 +321,6 @@ async fn continue_checkpoint(
                 detail_view(state, session.0, &record, &record.title, error),
             );
         }
-        Err(StartMessageError::Internal(error)) => return Err(error),
     }
     continue_ordinary(state, session, graft, record, revision, stored, model).await
 }
@@ -424,29 +422,6 @@ async fn continue_ordinary(
             );
         }
     };
-    if ordinary == Some(crate::execution::OrdinaryKind::FileChange) {
-        let _ = state.conversations.settle_message(
-            &claimed.id,
-            job.id(),
-            String::new(),
-            crate::conversations::MessageStatus::Failed,
-            Some("That continuation is no longer valid.".to_owned()),
-        );
-        state
-            .sessions
-            .finish_conversation_job(&session.0, claimed.id, job.id());
-        return render_detail_command(
-            graft,
-            PatchStatus::Conflict,
-            detail_view(
-                state,
-                session.0,
-                &record,
-                &record.title,
-                "That continuation is no longer valid.",
-            ),
-        );
-    }
     if matches!(
         ordinary,
         Some(crate::execution::OrdinaryKind::Host | crate::execution::OrdinaryKind::Sandbox)
@@ -467,7 +442,6 @@ async fn continue_ordinary(
                     execution,
                     kind,
                     turns,
-                    file: None,
                 },
             ),
         );
@@ -699,7 +673,6 @@ async fn resume_workflow_job(
         project_free_authority: run.directory_settings().and_then(|settings| {
             crate::execution::ProjectFreeAuthority::from_settings(record.revision, &settings).ok()
         }),
-        grant_alias: String::new(),
         connection,
         phase_providers: run
             .model_phases()
@@ -710,13 +683,8 @@ async fn resume_workflow_job(
         turns,
         job,
         eligible_reply: std::sync::Arc::new(std::sync::Mutex::new(String::new())),
-        command: None,
     };
-    if run.kind == crate::workflows::run::RunKind::QuickTask {
-        crate::workflows::drive_ordinary_file_run(state, workflow, execution).await;
-    } else {
-        crate::workflows::execute_run(state, workflow, None, execution).await;
-    }
+    crate::workflows::execute_run(state, workflow, None, execution).await;
 }
 
 fn status_for(error: ConversationError) -> PatchStatus {

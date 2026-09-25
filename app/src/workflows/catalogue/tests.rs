@@ -8,15 +8,6 @@ impl super::WorkflowCatalogue {
             unavailable_starters: Vec::new(),
         }
     }
-    pub(crate) fn open(
-        path: PathBuf,
-        default_environment: crate::environments::EnvironmentId,
-    ) -> Result<Self, CatalogueError> {
-        Self::open_with_seeds(
-            path,
-            &crate::workflows::seeds::production_seeds(default_environment),
-        )
-    }
     pub(crate) fn retired_ids(&self) -> Vec<WorkflowId> {
         self.lock().retired_workflow_ids.clone()
     }
@@ -32,10 +23,9 @@ use super::{
 use crate::agents::{AccessMode, ToolId};
 use crate::tests::{test_environment_id, test_named_definition};
 use crate::workflows::definition::{
-    ASSISTANT_REPLY, AgentAuthority, AgentStep, CandidateAuthority, OutputKey, OutputKind,
-    RequiredOutput, RoleDefinition, RoleKey, StepAction, StepDefinition, StepEnvironment, StepKey,
-    SystemCommandId, SystemCommandStep, WorkflowDefinition, candidate_revision_output,
-    initial_candidate_input,
+    ASSISTANT_REPLY, AgentAuthority, AgentStep, OutputKey, OutputKind, RequiredOutput,
+    RoleDefinition, RoleKey, StepAccess, StepAction, StepDefinition, StepEnvironment, StepKey,
+    SystemCommandId, SystemCommandStep, WorkflowDefinition,
 };
 use crate::workflows::id::WorkflowId;
 use crate::workflows::seeds::{SeedKey, WorkflowSeed};
@@ -454,7 +444,7 @@ fn command_steps_do_not_require_agent_authority() {
             StepDefinition {
                 key: StepKey::parse("status").expect("step"),
                 name: "Status".to_owned(),
-                inputs: vec![initial_candidate_input()],
+                inputs: Vec::new(),
                 action: StepAction::SystemCommand(SystemCommandStep {
                     environment: StepEnvironment::WorkflowDefault,
                     command: SystemCommandId::RepositoryStatus,
@@ -465,20 +455,17 @@ fn command_steps_do_not_require_agent_authority() {
             StepDefinition {
                 key: StepKey::parse("work").expect("step"),
                 name: "Work".to_owned(),
-                inputs: vec![initial_candidate_input()],
+                inputs: Vec::new(),
                 action: StepAction::Agent(AgentStep {
                     environment: StepEnvironment::WorkflowDefault,
                     role: RoleKey::parse("agent").expect("role"),
-                    candidate_authority: CandidateAuthority::Edit,
+                    directory_access: StepAccess::Write,
                     authority,
                     settings: crate::workflows::definition::ModelStepSettings::SameAsRunDefaults,
-                    required_outputs: vec![
-                        RequiredOutput {
-                            key: OutputKey::parse(ASSISTANT_REPLY).expect("output"),
-                            kind: OutputKind::AssistantReply,
-                        },
-                        candidate_revision_output(),
-                    ],
+                    required_outputs: vec![RequiredOutput {
+                        key: OutputKey::parse(ASSISTANT_REPLY).expect("output"),
+                        kind: OutputKind::AssistantReply,
+                    }],
                 }),
                 review: None,
             },

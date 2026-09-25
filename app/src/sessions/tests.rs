@@ -32,14 +32,13 @@ fn state_with_gate(name: &str) -> (AppState, ValidatedToken, SessionId, RunId) {
 
     let definition = crate::tests::test_named_definition(name);
     let environments = crate::tests::test_environment_set(&definition);
-    let mut run = crate::workflows::WorkflowRun::configured(
+    let run = crate::workflows::WorkflowRun::configured(
         RunId::generate().expect("run"),
         1,
         AgentId::generate().expect("agent"),
         crate::workflows::definition::PinnedWorkflowDefinition::pin(None, definition),
         environments,
     );
-    run.state = crate::workflows::run::RunState::InitialisingSource;
     let run_id = run.id;
     state.workflow_runs.create(run).expect("store run");
     let continuation = crate::workflows::WorkflowJob {
@@ -50,7 +49,6 @@ fn state_with_gate(name: &str) -> (AppState, ValidatedToken, SessionId, RunId) {
         conversation_id: None,
         authority: None,
         project_free_authority: None,
-        grant_alias: "project".to_owned(),
         connection: ProviderConnection::with_key(ProviderKind::Xai, "key", "model"),
         phase_providers: Vec::new(),
         active_connection: Arc::new(std::sync::Mutex::new(None)),
@@ -58,7 +56,6 @@ fn state_with_gate(name: &str) -> (AppState, ValidatedToken, SessionId, RunId) {
         turns: Vec::new(),
         job: Job::new(JobId::generate().expect("job"), run_id, 0),
         eligible_reply: Arc::new(std::sync::Mutex::new(String::new())),
-        command: None,
     };
     assert!(state.gate_continuations.insert(continuation));
     (state, raw, session, run_id)

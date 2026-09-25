@@ -7,7 +7,7 @@
   <input type="hidden" name="revision" value="{{ revision }}" />
   {% if can_transfer %}
     <fieldset class="fieldset space-y-3">
-      <legend class="fieldset-legend">Prepared changes</legend>
+      <legend class="fieldset-legend">Workflow ownership</legend>
       <label class="flex items-start gap-3"
         ><input
           class="radio"
@@ -16,9 +16,8 @@
           value="continue-prepared"
           {% if continue_prepared %}checked{% endif %}
         /><span
-          >Continue these exact prepared changes<span
-            class="text-quiet block text-sm"
-            >The original baseline and remaining workflow decisions stay
+          >Continue this workflow<span class="text-quiet block text-sm"
+            >The pinned settings and remaining workflow decisions stay
             intact.</span
           ></span
         ></label
@@ -32,8 +31,8 @@
           {% if !continue_prepared %}checked{% endif %}
         /><span
           >Carry context only<span class="text-quiet block text-sm"
-            >Isolated changes stay in this conversation. The destination uses
-            current directory files.</span
+            >The workflow stays with this conversation. The destination receives
+            no workflow authority.</span
           ></span
         ></label
       >

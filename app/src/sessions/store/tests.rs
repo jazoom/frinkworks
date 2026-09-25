@@ -372,10 +372,7 @@ impl super::SessionStore {
         let job = Job::new(job_id, run_id, conversation.turns.len());
         conversation.job = Some(job.clone());
         session.active = Some(job_id);
-        Ok(BegunTurn {
-            job,
-            turns: conversation.turns.clone(),
-        })
+        Ok(BegunTurn { job })
     }
     pub(crate) fn rollback_turn(
         &self,
@@ -423,5 +420,4 @@ impl super::SessionStore {
 
 pub(crate) struct BegunTurn {
     pub(crate) job: Arc<Job>,
-    pub(crate) turns: Vec<ChatTurn>,
 }

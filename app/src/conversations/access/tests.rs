@@ -22,11 +22,11 @@ fn private_workspace_uses_the_copied_settings_without_a_live_preset_ceiling() {
         None,
     )
     .unwrap();
-    let mut model = crate::conversations::ConversationModelConfiguration::from_agent_snapshot(
-        &preset,
+    let mut model = crate::conversations::ConversationModelConfiguration::direct(
         selection,
         crate::tests::test_environment_id(),
     );
+    model.settings.tools = preset.tools.clone();
     model.settings.network = NetworkAccess::Public;
     model.settings.tools.push(ToolId::Write);
     let record = state

@@ -449,102 +449,11 @@
               {% if fork.entries == 1 %}entry{% else %}entries{% endif %}
               from "{{ fork.source_title }}". It is a context alternative, not
               filesystem rollback. Approvals, runtime consent, queued messages
-              and prepared changes stay with the original conversation.
+              and workflow ownership stay with the original conversation.
             </p>
-            {% if fork.candidate_review %}
-              <p class="text-quiet mt-2 text-sm">
-                The source is a candidate review, so this draft keeps read-only
-                evidence restrictions and receives no filesystem authority.
-              </p>
-            {% endif %}
           </section>
         {% endif %}
         {% if let Some(saved) = self.saved() %}
-
-          {% if let Some(review) = saved.source_candidate_review %}
-            <section
-              class="file-section mx-auto my-3 w-[calc(100%-2rem)] max-w-3xl shrink-0 space-y-4 sm:w-[calc(100%-4rem)]"
-              aria-labelledby="conversation-candidate-review-source-heading"
-            >
-              <div>
-                <h2
-                  id="conversation-candidate-review-source-heading"
-                  class="text-lg font-semibold"
-                >
-                  Candidate under review
-                </h2>
-                <p class="text-quiet mt-1 max-w-[60ch] text-sm">
-                  This conversation received one immutable candidate and diff
-                  base. Its discussion cannot approve or change the source run.
-                </p>
-              </div>
-              <dl class="grid gap-2 text-sm sm:grid-cols-[8rem_1fr]">
-                <dt class="text-quiet">Candidate</dt>
-                <dd class="font-mono break-all">{{ review.candidate_hash }}</dd>
-                <dt class="text-quiet">Diff base</dt>
-                <dd class="font-mono break-all">{{ review.diff_base_hash }}</dd>
-              </dl>
-              <div class="flex flex-wrap gap-2">
-                <a
-                  href="{{ review.run_href }}"
-                  data-graft
-                  class="btn btn-secondary btn-sm"
-                  >Open source run</a
-                >
-                {% if !review.title.is_empty() %}
-                  <a
-                    href="{{ review.href }}"
-                    data-graft
-                    class="btn btn-ghost btn-sm"
-                    >Open source conversation: {{ review.title }}</a
-                  >
-                {% endif %}
-              </div>
-            </section>
-          {% endif %}
-          {% if !saved.linked_candidate_reviews.is_empty() %}
-            <section
-              class="file-section mx-auto my-3 w-[calc(100%-2rem)] max-w-3xl shrink-0 space-y-4 sm:w-[calc(100%-4rem)]"
-              aria-labelledby="conversation-linked-candidate-reviews-heading"
-            >
-              <div>
-                <h2
-                  id="conversation-linked-candidate-reviews-heading"
-                  class="text-lg font-semibold"
-                >
-                  Linked candidate reviews
-                </h2>
-                <p class="text-quiet mt-1 max-w-[60ch] text-sm">
-                  A linked review is discussion only. It never supplies approval
-                  for the source run.
-                </p>
-              </div>
-              <ul class="record-list" aria-label="Linked candidate reviews">
-                {% for review in saved.linked_candidate_reviews %}
-                  <li class="record-row flex-wrap gap-3">
-                    <div class="min-w-0 flex-1">
-                      <a
-                        href="{{ review.href }}"
-                        data-graft
-                        class="link link-hover font-medium break-words"
-                        >{{ review.title }}</a
-                      >
-                      <p class="text-quiet mt-1 text-xs">
-                        Candidate {{ review.candidate_hash }} · base
-                        {{ review.diff_base_hash }}
-                      </p>
-                    </div>
-                    <a
-                      href="{{ review.run_href }}"
-                      data-graft
-                      class="btn btn-ghost btn-sm"
-                      >Open source run</a
-                    >
-                  </li>
-                {% endfor %}
-              </ul>
-            </section>
-          {% endif %}
         {% endif %}
         {% if window_nav %}
           <nav
@@ -709,17 +618,15 @@
               {% if let Some(saved) = self.saved() %}
                 <section
                   class="border-base-300 space-y-3 border-b p-5"
-                  aria-label="Prepared-change recovery"
+                  aria-label="Workflow recovery"
                 >
-                  <h3 class="text-lg font-semibold">
-                    Restore prepared changes
-                  </h3>
+                  <h3 class="text-lg font-semibold">Restore workflow access</h3>
                   <p class="text-sm">
-                    This conversation owns the isolated changes. Runtime consent
-                    expired or the transfer needs recovery.
+                    This conversation owns the workflow. Runtime consent expired
+                    or the transfer needs recovery.
                   </p>
                   <p class="text-sm">
-                    Restoration applies no files and approves no assessment.
+                    Restoration changes no files and makes no plan decision.
                     Each outstanding decision remains separate.
                   </p>
                   <details>
@@ -775,85 +682,14 @@
             {% endif %}
             {% include "conversations/templates/current_work.html" %}
             {% if let Some(saved) = self.saved() %}
-              {% for result in saved.direct_results %}
-                <section
-                  class="border-base-300 border-b p-5"
-                  aria-label="Already-written changes"
-                >
-                  <h3 class="text-lg font-semibold">Already-written changes</h3>
-                  <p class="text-quiet mt-2 text-sm">
-                    These files are not isolated proposals. Stop and handoff do
-                    not undo direct writes.
-                  </p>
-                  {% if result.unknown %}
-                    <p class="mt-3 text-sm">
-                      The final snapshot is unavailable. Direct writes can
-                      remain. This record cannot establish the final file state.
-                    </p>
-                  {% else %}
-                    <p class="mt-3 text-sm">
-                      {{ result.total }} changed
-                      {% if result.total == 1 %}file{% else %}files{% endif %}
-                      in the named directories
-                    </p>
-                    {% for file in result.files %}
-                      <details class="border-base-300 mt-3 border-t pt-3">
-                        <summary
-                          class="min-h-11 cursor-pointer font-mono text-xs break-all"
-                        >
-                          {{ file.path }} · {{ file.status }}
-                        </summary>
-                        <pre
-                          tabindex="0"
-                          class="bg-base-200 max-h-80 overflow-auto p-3 text-xs break-words whitespace-pre-wrap"
-                        >
-{{ file.text }}</pre>
-                      </details>
-                    {% endfor %}
-                  {% endif %}
-                  <a
-                    href="{{ result.href }}"
-                    data-graft
-                    class="btn btn-outline mt-4 w-full"
-                    >View recorded changes</a
-                  >
-                </section>
-              {% endfor %}
-              {% if !job_active && !self.active_workflow() && !self.file_recovery_blocked() && saved.pending_gate.is_none() && pending_host_command.is_none() && pending_question.is_none() && pending_command.is_none() && retry.is_none() && continuation.is_none() %}
+
+              {% if !job_active && !self.active_workflow() && saved.pending_gate.is_none() && pending_host_command.is_none() && pending_question.is_none() && pending_command.is_none() && retry.is_none() && continuation.is_none() %}
                 <section
                   class="workspace-idle space-y-4 p-5"
                   aria-labelledby="workspace-idle-heading"
                 >
                   {% if let Some(run) = saved.workflow_progress %}
-                    {% if run.apply_complete %}
-                      <h3
-                        id="workspace-idle-heading"
-                        class="text-lg font-semibold"
-                      >
-                        Changes applied
-                      </h3>
-                    {% else if run.state == "Cancelled" || run.state == "Stopped" || run.state == "Interrupted" || run.state == "Failed" || run.state == "Blocked" %}
-                      <h3
-                        id="workspace-idle-heading"
-                        class="text-lg font-semibold"
-                      >
-                        The task stopped
-                      </h3>
-                    {% else if run.state == "Completed" %}
-                      <h3
-                        id="workspace-idle-heading"
-                        class="text-lg font-semibold"
-                      >
-                        The response is ready
-                      </h3>
-                    {% else %}
-                      <h3
-                        id="workspace-idle-heading"
-                        class="text-lg font-semibold"
-                      >
-                        Ready when you are
-                      </h3>
-                    {% endif %}
+
                   {% else %}
                     <h3
                       id="workspace-idle-heading"
@@ -1038,14 +874,12 @@
                 {% if !prepared_run.is_empty() %}
                   <section
                     class="mb-4 max-h-[45dvh] space-y-3 overflow-y-auto px-4 pt-4"
-                    aria-label="Prepared-change handoff"
+                    aria-label="Workflow handoff"
                   >
-                    <h2 class="font-semibold">
-                      Continue exact prepared changes
-                    </h2>
+                    <h2 class="font-semibold">Continue this workflow</h2>
                     <p class="text-sm">
-                      Send transfers ownership, not files. The original baseline
-                      and remaining workflow decisions stay unchanged.
+                      Send transfers workflow ownership, not files. The pinned
+                      settings and remaining workflow decisions stay unchanged.
                     </p>
                     <details>
                       <summary class="min-h-11 cursor-pointer text-sm">
@@ -1067,8 +901,8 @@
                       />
                       <span
                         >I approve these pinned settings for this execution
-                        only. This action does not approve commands, assess code
-                        or apply files.</span
+                        only. The command policy and pending plan decisions
+                        remain separate. This action changes no files.</span
                       >
                     </label>
                   </section>
@@ -1526,9 +1360,7 @@
                       <div class="space-y-1">
                         <h3 class="font-semibold">
                           {% if consent_direct %}
-                            Approve direct host writes
-                          {% else if consent_reviewed %}
-                            Approve directory review access
+                            Approve Write access
                           {% else %}
                             Approve sensitive directory access
                           {% endif %}
@@ -1536,11 +1368,9 @@
                         <p class="text-sm break-words">
                           The requested
                           {% if consent_direct %}
-                            Direct write
-                          {% else if consent_reviewed %}
-                            Review before apply
+                            Write
                           {% else %}
-                            read-only
+                            Read
                           {% endif %}
                           directory is
                           <code class="break-all">{{ consent_path }}</code>.
@@ -1562,22 +1392,13 @@
                           </p>
                           {% if consent_sensitive %}
                             <p class="text-sm">
-                              Direct write can alter or corrupt live
+                              Write access can alter or corrupt live
                               configuration, permissions and execution evidence.
                             </p>
                           {% endif %}
                           <p class="text-sm">
-                            Discard, cancellation and environment changes do not
-                            undo these host changes.
-                          </p>
-                        {% else if consent_reviewed %}
-                          <p class="text-sm">
-                            Tools use an isolated copy. Apply changes writes the
-                            exact reviewed changes to the host directory.
-                            {% if consent_sensitive %}
-                              The copy can propose changes to Frinkworks
-                              configuration.
-                            {% endif %}
+                            Cancellation and environment changes do not undo
+                            these host changes.
                           </p>
                         {% endif %}
                       </div>
@@ -1591,11 +1412,9 @@
                         >
                           Approve
                           {% if consent_direct %}
-                            direct write
-                          {% else if consent_reviewed %}
-                            review access
+                            Write access
                           {% else %}
-                            read-only access
+                            Read access
                           {% endif %}
                         </button>
                       {% else if let Some(saved) = self.saved() %}
@@ -1630,11 +1449,9 @@
                           >
                             Approve
                             {% if consent_direct %}
-                              direct write
-                            {% else if consent_reviewed %}
-                              review access
+                              Write access
                             {% else %}
-                              read-only access
+                              Read access
                             {% endif %}
                           </button>
                         </form>
@@ -1652,7 +1469,7 @@
                     Sandbox ·
                     <span data-conversation-environment-summary
                       >{{ environment_summary }}</span
-                    ><br />New directories start read-only.
+                    ><br />New directories use Read by default.
                   {% endif %}
                 </p>
               </div>
@@ -1690,8 +1507,7 @@
                     <div class="min-w-0 space-y-3">
                       <p class="text-quiet text-sm">
                         {% if change.gate.is_some() %}
-                          Resolve the prepared changes before the settings
-                          change.
+                          Resolve the plan decision before the settings change.
                         {% else if change.active_job %}
                           The active task must stop before the settings change.
                         {% else %}
@@ -1743,16 +1559,16 @@
                       {% if change.needs_new_consent %}
                         <p class="text-sm">
                           The replacement configuration needs fresh consent.
-                          Host access, sensitive directories and Direct write
+                          Host access, sensitive directories and Write access
                           retain their separate approval steps.
                         </p>
                       {% endif %}
                       {% if change.active_job %}
                         <p class="text-sm">
                           Stop task and switch cancels the active task and any
-                          waiting host command. Frinkworks waits for the task to
-                          stop and removes any temporary sandbox. Unsaved work
-                          in that sandbox is lost.
+                          pending command. Frinkworks waits for the task to stop
+                          and removes any temporary sandbox. Unsaved work in
+                          that sandbox is lost.
                         </p>
                         <p class="text-sm">
                           Conversation history and existing host files remain.
@@ -1818,20 +1634,20 @@
                         </form>
                       {% else if let Some(gate) = change.gate %}
                         <p class="text-sm">
-                          Proposed changes need a decision before execution
-                          settings can change.
+                          The plan needs a decision before execution settings
+                          can change.
                         </p>
                         <p class="text-sm">
-                          Discard removes the proposed changes, not conversation
-                          history, existing host files or run records. It does
-                          not undo direct writes or host commands.
+                          Discard ends the workflow. Conversation history and
+                          run records remain. It does not undo file changes or
+                          host commands.
                         </p>
                         <div class="flex flex-wrap gap-2">
                           <a
                             href="{{ gate.review_href }}"
                             data-graft
                             class="btn btn-secondary"
-                            >Review changes</a
+                            >Review plan</a
                           >
                           <form
                             data-graft
@@ -1846,7 +1662,7 @@
                             />
                             <input
                               type="hidden"
-                              name="candidate"
+                              name="plan"
                               value="{{ gate.candidate }}"
                             />
                             <input

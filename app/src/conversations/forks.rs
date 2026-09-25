@@ -57,9 +57,6 @@ pub(crate) struct ForkProvenance {
     pub(crate) source: ConversationId,
     pub(crate) source_revision: u32,
     pub(crate) boundary: MessageId,
-    /// The source was a candidate review. The destination keeps immutable
-    /// evidence restrictions and receives no filesystem authority.
-    pub(crate) candidate_review: bool,
 }
 
 #[derive(Clone)]
@@ -70,10 +67,6 @@ pub(crate) struct ForkSnapshot {
     pub(crate) source_title: String,
     pub(crate) messages: Vec<ConversationMessage>,
     pub(crate) model: Option<ConversationModelConfiguration>,
-    /// The source was a candidate review, so the fork keeps no filesystem
-    /// authority and no candidate ownership.
-    pub(crate) candidate_review: bool,
-    pub(crate) review_context: Option<super::store::CandidateReviewContext>,
     attachment_lease: Option<std::sync::Arc<ForkAttachmentLease>>,
 }
 
@@ -221,19 +214,7 @@ pub(crate) fn snapshot(
     };
     let prefix = &record.messages[..=index];
     validate_prefix(prefix)?;
-    let candidate_review = record.source_candidate_review.is_some()
-        || record.candidate_review_context.is_some()
-        || record
-            .forked_from
-            .as_ref()
-            .is_some_and(|source| source.candidate_review);
-    let model = record.model.as_ref().map(|configuration| {
-        if candidate_review {
-            review_only(configuration)
-        } else {
-            configuration.clone()
-        }
-    });
+    let model = record.model.clone();
     Ok(ForkSnapshot {
         attachment_lease: None,
         source: record.id,
@@ -242,8 +223,6 @@ pub(crate) fn snapshot(
         source_title: record.title.clone(),
         messages: prefix.to_vec(),
         model,
-        candidate_review,
-        review_context: record.candidate_review_context.clone(),
     })
 }
 
@@ -383,18 +362,6 @@ fn rebind_tool(
         Ok(rebound) => command.retained = Some(rebound),
         // Storage pressure degrades the link, never the bounded preview.
         Err(_) => command.retained = None,
-    }
-}
-
-fn review_only(configuration: &ConversationModelConfiguration) -> ConversationModelConfiguration {
-    let mut settings = configuration.settings.clone();
-    settings.directories.clear();
-    settings.tools.clear();
-    settings.location = crate::execution::ToolLocation::Sandbox;
-    settings.host_approval = crate::execution::HostApprovalPolicy::AskEachTime;
-    ConversationModelConfiguration {
-        settings,
-        preset: None,
     }
 }
 

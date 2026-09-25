@@ -90,7 +90,7 @@ async fn picker_commands_are_patch_only_and_revision_bound() {
 
 #[tokio::test]
 async fn direct_write_needs_destination_consent() {
-    directory_consent_case(crate::execution::DirectoryAccess::DirectWrite).await;
+    directory_consent_case(crate::execution::DirectoryAccess::Write).await;
 }
 
 async fn directory_consent_case(access: crate::execution::DirectoryAccess) {
@@ -142,7 +142,7 @@ async fn directory_consent_case(access: crate::execution::DirectoryAccess) {
             .settings
             .directories[0]
             .access,
-        crate::execution::DirectoryAccess::ReadOnly
+        crate::execution::DirectoryAccess::Read
     );
     let consent_body = format!(
         "revision={}&consent_request={}&pending_directory={}&existing=true",
@@ -192,12 +192,12 @@ async fn directory_consent_case(access: crate::execution::DirectoryAccess) {
             .settings
             .directories[1]
             .access,
-        crate::execution::DirectoryAccess::ReadOnly
+        crate::execution::DirectoryAccess::Read
     );
 }
 
 #[tokio::test]
-async fn non_sensitive_review_access_needs_no_consent() {
+async fn non_sensitive_read_access_needs_no_consent() {
     let state = test_state();
     let token = connected(&state);
     let directory = tempfile::tempdir().unwrap();
@@ -211,7 +211,7 @@ async fn non_sensitive_review_access_needs_no_consent() {
             &path,
             &token,
             &format!(
-                "action=review-before-apply&directory_0={}",
+                "action=read&directory_0={}",
                 form_value(&grant.form_value())
             ),
         ))
@@ -223,10 +223,7 @@ async fn non_sensitive_review_access_needs_no_consent() {
     assert!(hidden_value(&body, "pending_directory").is_empty());
     let updated =
         crate::execution::DirectoryGrant::parse_form(&hidden_value(&body, "directory_0")).unwrap();
-    assert_eq!(
-        updated.access,
-        crate::execution::DirectoryAccess::ReviewBeforeApply
-    );
+    assert_eq!(updated.access, crate::execution::DirectoryAccess::Read);
 }
 
 #[tokio::test]
@@ -234,10 +231,7 @@ async fn draft_read_only_replaces_stale_write_consent_without_bypassing_sensitiv
     use crate::execution::{DirectoryAccess, DirectoryGrant};
 
     for sensitive in [false, true] {
-        for access in [
-            DirectoryAccess::ReviewBeforeApply,
-            DirectoryAccess::DirectWrite,
-        ] {
+        for access in [DirectoryAccess::Read, DirectoryAccess::Write] {
             let mut state = test_state();
             let token = connected(&state);
             let directory = tempfile::tempdir().unwrap();
@@ -268,7 +262,7 @@ async fn draft_read_only_replaces_stale_write_consent_without_bypassing_sensitiv
             let previous_request = hidden_value(&preview, "consent_request");
             assert_eq!(
                 !previous_request.is_empty(),
-                sensitive || access == DirectoryAccess::DirectWrite
+                sensitive || access == DirectoryAccess::Write
             );
             let fields = [
                 "draft_nonce",
@@ -280,11 +274,7 @@ async fn draft_read_only_replaces_stale_write_consent_without_bypassing_sensitiv
             .map(|name| format!("{name}={}", form_value(&hidden_value(&preview, name))))
             .join("&");
             let response = app(&state)
-                .oneshot(command(
-                    &path,
-                    &token,
-                    &format!("{fields}&action=read-only"),
-                ))
+                .oneshot(command(&path, &token, &format!("{fields}&action=read")))
                 .await
                 .unwrap();
             assert_eq!(response.status(), StatusCode::OK);
@@ -449,7 +439,7 @@ async fn draft_command_directory_preserves_grants_but_not_consent() {
     let first = tempfile::tempdir().unwrap();
     let second = tempfile::tempdir().unwrap();
     let mut one = DirectoryGrant::from_selected(first.path(), &[]).unwrap();
-    one.access = DirectoryAccess::DirectWrite;
+    one.access = DirectoryAccess::Write;
     let two = DirectoryGrant::from_selected(second.path(), std::slice::from_ref(&one)).unwrap();
     let grants = vec![one.clone(), two.clone()];
     let mut form = super::super::new::NewForm {
@@ -556,7 +546,7 @@ async fn saved_command_directory_is_revision_bound_and_invalidates_authority() {
     let first = tempfile::tempdir().unwrap();
     let second = tempfile::tempdir().unwrap();
     let mut one = DirectoryGrant::from_selected(first.path(), &[]).unwrap();
-    one.access = DirectoryAccess::DirectWrite;
+    one.access = DirectoryAccess::Write;
     let two = DirectoryGrant::from_selected(second.path(), std::slice::from_ref(&one)).unwrap();
     let settings = record
         .model

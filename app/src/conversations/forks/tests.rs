@@ -4,8 +4,6 @@ use crate::execution::command::{CommandChunk, CommandResult, CommandStream, Comm
 use crate::execution::{OutputKey, OutputScope, OutputStore};
 use crate::providers::{AssistantActivity, ToolOutput};
 use crate::sessions::{JobId, SessionStore};
-use crate::workflows::artefacts::{ArtefactHash, ArtefactReference};
-use crate::workflows::{ArtefactId, RunId};
 
 use super::{ForkDrafts, ForkError, materialise, snapshot};
 use crate::conversations::{
@@ -61,9 +59,6 @@ fn record(messages: Vec<ConversationMessage>) -> ConversationRecord {
         network: crate::agents::NetworkAccess::None,
         model: None,
         directory_approvals: Vec::new(),
-        source_candidate_review: None,
-        candidate_reviews: Vec::new(),
-        candidate_review_context: None,
         forked_from: None,
         messages,
         active_job: None,
@@ -141,19 +136,8 @@ fn rejects_an_unknown_command_outcome() {
 }
 
 #[test]
-fn a_review_snapshot_drops_filesystem_authority() {
+fn a_fork_preserves_settings_without_copying_consent() {
     let mut record = record(vec![user("Review"), assistant("Reviewed", Vec::new())]);
-    let artefact = |tag: &str| ArtefactReference {
-        id: ArtefactId::generate().expect("artefact"),
-        kind: crate::workflows::definition::ArtefactKind::CandidateRevision,
-        artefact_hash: ArtefactHash::of(tag.as_bytes(), b"payload"),
-    };
-    record.source_candidate_review = Some(crate::conversations::CandidateReviewLink {
-        conversation_id: None,
-        run_id: RunId::generate().expect("run"),
-        candidate: artefact("candidate"),
-        diff_base: artefact("base"),
-    });
     let grant = crate::execution::DirectoryGrant {
         id: crate::execution::DirectoryGrantId::generate().expect("grant"),
         host_path: std::path::PathBuf::from("/tmp/example"),
@@ -162,7 +146,7 @@ fn a_review_snapshot_drops_filesystem_authority() {
             inode: 2,
         },
         alias: "example".to_owned(),
-        access: crate::execution::DirectoryAccess::DirectWrite,
+        access: crate::execution::DirectoryAccess::Write,
     };
     record.model = Some(crate::conversations::ConversationModelConfiguration {
         settings: crate::execution::ExecutionSettings::new(
@@ -184,23 +168,7 @@ fn a_review_snapshot_drops_filesystem_authority() {
     });
     let boundary = record.messages.last().expect("reply").id;
     let snapshot = snapshot(&record, boundary).expect("snapshot");
-    assert!(snapshot.candidate_review);
-    let settings = &snapshot.model.as_ref().expect("model").settings;
-    assert!(settings.directories.is_empty());
-    assert_eq!(settings.location, crate::execution::ToolLocation::Sandbox);
-    assert!(!settings.host_tools());
-    assert!(settings.tools.is_empty());
-
-    record.source_candidate_review = None;
-    record.forked_from = Some(super::ForkProvenance {
-        source: record.id,
-        source_revision: record.revision,
-        boundary,
-        candidate_review: true,
-    });
-    let nested = super::snapshot(&record, boundary).expect("nested snapshot");
-    assert!(nested.candidate_review);
-    assert!(nested.model.unwrap().settings.tools.is_empty());
+    assert_eq!(snapshot.model, record.model);
 }
 
 #[test]
@@ -328,8 +296,6 @@ fn a_fork_with_excluded_commands_remains_durable() {
             Vec::new(),
             CommandTermination::Exited(0),
         )),
-        before: None,
-        after: None,
     });
     let reply = assistant("Settled reply", Vec::new());
     let source = record(vec![command, user("Continue"), reply.clone()]);

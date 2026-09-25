@@ -8,8 +8,8 @@
 
   <p class="text-quiet text-sm">
     A fork copies context up to one settled message. It is a context
-    alternative, not filesystem rollback. Prepare changes stay with the original
-    conversation until you hand them off explicitly.
+    alternative, not filesystem rollback. The workflow stays with the original
+    conversation until an explicit handoff transfers ownership.
   </p>
 
   {% if !error.is_empty() %}
@@ -35,15 +35,6 @@
         class="bg-base-100 mt-3 max-h-48 overflow-auto p-3 text-xs break-words whitespace-pre-wrap"
       ><code>{{ excerpt }}</code></pre>
     </section>
-
-    {% if candidate_review %}
-      <div class="alert alert-warning" role="alert">
-        <p>
-          The source is a candidate review. The fork keeps read-only evidence
-          restrictions and cannot receive filesystem authority.
-        </p>
-      </div>
-    {% endif %}
 
     <form
       data-graft

@@ -308,9 +308,9 @@ fn overlapping_directory_roots_fail() {
     std::fs::create_dir_all(&child).unwrap();
     let mut f = form();
     f.read_only = parent.display().to_string();
-    f.reviewed = child.display().to_string();
+    f.direct_write = child.display().to_string();
     assert!(f.settings(None).is_err());
-    f.reviewed.clear();
+    f.direct_write.clear();
     f.direct_write = f.read_only.clone();
     assert!(f.settings(None).is_err());
 }
@@ -323,7 +323,7 @@ fn edits_keep_directory_order_and_avoid_alias_collisions() {
     std::fs::create_dir_all(&first).unwrap();
     std::fs::create_dir_all(&second).unwrap();
     let mut f = form();
-    f.reviewed = first.display().to_string();
+    f.direct_write = first.display().to_string();
     let store = crate::presets::PresetStore::in_memory();
     let record = store
         .create(
@@ -378,6 +378,6 @@ fn unavailable_directory_keeps_identity_and_duplicate_roots_fail() {
         f.settings(Some(&original)).unwrap().directories[0].identity,
         original.settings.directories[0].identity
     );
-    f.reviewed = f.read_only.clone();
+    f.direct_write = f.read_only.clone();
     assert!(f.settings(Some(&original)).is_err());
 }

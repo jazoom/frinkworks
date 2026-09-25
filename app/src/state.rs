@@ -22,9 +22,8 @@ use crate::{
     skills::SkillStore,
     vault::ProviderVault,
     workflows::{
-        ApplyJournals, CommitJournals, WorkflowArtefactRepository, WorkflowCatalogue,
-        WorkflowContinuationRegistry, WorkflowEvidenceStore, WorkflowExecution, WorkflowRunStore,
-        workspace::WorkflowWorkspaces,
+        WorkflowArtefactRepository, WorkflowCatalogue, WorkflowContinuationRegistry,
+        WorkflowEvidenceStore, WorkflowExecution, WorkflowRunStore, workspace::WorkflowWorkspaces,
     },
 };
 
@@ -60,8 +59,7 @@ pub(crate) struct AppState {
     pub(crate) gate_continuations: Arc<WorkflowContinuationRegistry>,
     pub(crate) handoff_drafts: Arc<crate::workflows::handoff::HandoffDrafts>,
     pub(crate) workflow_workspaces: Arc<WorkflowWorkspaces>,
-    pub(crate) apply_journals: Arc<ApplyJournals>,
-    pub(crate) commit_journals: Arc<CommitJournals>,
+
     pub(crate) environments: Arc<EnvironmentCatalogue>,
     pub(crate) environment_snapshots: Arc<EnvironmentSnapshotRepository>,
     pub(crate) environment_preparations: Arc<EnvironmentPreparationScheduler>,
@@ -141,10 +139,6 @@ pub(crate) async fn build(
     let environment_preparations =
         EnvironmentPreparationScheduler::start(environments.clone(), environment_snapshots.clone());
     environment_preparations.wake();
-    let apply_journals = ApplyJournals::open(data_dir.join("workflow-apply-journals"))
-        .map_err(|_| "The workflow application journal store is unreadable.".to_owned())?;
-    let commit_journals = CommitJournals::open(data_dir.join("workflow-commit-journals"))
-        .map_err(|_| "The workflow commit journal store is unreadable.".to_owned())?;
     let workflow_workspaces = WorkflowWorkspaces::open(data_dir.join("workflow-workspaces"))
         .map_err(|_| "The workflow workspace store is unreadable.".to_owned())?;
     let vault = ProviderVault::open(data_dir.join("providers.json"))
@@ -185,8 +179,7 @@ pub(crate) async fn build(
         gate_continuations: Arc::new(WorkflowContinuationRegistry::new()),
         handoff_drafts: Arc::new(crate::workflows::handoff::HandoffDrafts::default()),
         workflow_workspaces: Arc::new(workflow_workspaces),
-        apply_journals: Arc::new(apply_journals),
-        commit_journals: Arc::new(commit_journals),
+
         environments,
         environment_snapshots,
         environment_preparations,
@@ -196,29 +189,6 @@ pub(crate) async fn build(
     if state.local_data.is_pending() {
         return Err("Frinkworks could not reset local data.".to_owned());
     }
-    let active_commit_attempts: Vec<_> = state
-        .workflow_runs
-        .active_runs()
-        .into_iter()
-        .filter_map(|run| {
-            let attempt = run.active_attempt()?;
-            run.attempts
-                .iter()
-                .find(|record| record.id == attempt)
-                .and_then(|record| record.commit_transaction.as_ref())
-                .map(|_| attempt)
-        })
-        .collect();
-    if !active_commit_attempts.is_empty()
-        && (!guest_recovery.inventory_complete
-            || active_commit_attempts
-                .iter()
-                .any(|attempt| guest_recovery.attempts_remaining.contains(attempt)))
-    {
-        return Err("Frinkworks could not recover a commit transaction.".to_owned());
-    }
-    crate::workflows::recover_apply_transactions(&state).map_err(str::to_owned)?;
-    crate::workflows::recover_commit_transactions(&state).map_err(str::to_owned)?;
     state
         .workflow_runs
         .interrupt_active()

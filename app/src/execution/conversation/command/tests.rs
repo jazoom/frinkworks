@@ -24,11 +24,9 @@ fn settings(tools: Vec<ToolId>, directory: Option<&Path>) -> ExecutionSettings {
     .with_location(ToolLocation::Host)
     .with_host_approval(HostApprovalPolicy::Automatic);
     if let Some(directory) = directory {
-        settings = settings
-            .with_directories(vec![
-                DirectoryGrant::from_selected(directory, &[]).expect("grant"),
-            ])
-            .expect("directories");
+        let mut grant = DirectoryGrant::from_selected(directory, &[]).expect("grant");
+        grant.access = crate::execution::DirectoryAccess::Write;
+        settings = settings.with_directories(vec![grant]).expect("directories");
     }
     settings
 }
@@ -86,6 +84,75 @@ fn run_for(
         directory,
         secret: None,
         execution: state.workflow_execution.acquire().expect("execution guard"),
+    }
+}
+
+#[tokio::test]
+async fn unresolved_preparation_cleanup_blocks_execution_and_reset_after_settlement() {
+    for remains in [false, true] {
+        let (state, session) = state_and_session();
+        let record = state
+            .conversations
+            .create_saved(
+                ConversationId::generate().unwrap(),
+                None,
+                Some(model(settings(vec![ToolId::Run], None))),
+                vec![],
+            )
+            .unwrap();
+        let job = state
+            .sessions
+            .begin_conversation_job(&session, record.id)
+            .unwrap();
+        let started = state
+            .conversations
+            .begin_command(
+                &record.id,
+                record.revision,
+                None,
+                job.id(),
+                "pwd".into(),
+                true,
+                "/".into(),
+            )
+            .unwrap();
+        let message = started.messages.last().unwrap().id;
+        let work = run_for(
+            &state,
+            session,
+            started,
+            job,
+            message,
+            "pwd".into(),
+            true,
+            "/".into(),
+        );
+        state
+            .conversation_runtime
+            .remember(
+                record.id,
+                work.job.id(),
+                crate::workflows::RunId::generate().unwrap(),
+                crate::workflows::AttemptId::generate().unwrap(),
+            )
+            .unwrap();
+        state
+            .conversation_runtime
+            .finish(record.id, remains, remains)
+            .unwrap();
+        super::settle(
+            &state,
+            &work,
+            None,
+            MessageStatus::Failed,
+            Some("Preparation failed".into()),
+        );
+        drop(work);
+        assert_eq!(state.workflow_execution.acquire().is_err(), remains);
+        assert_eq!(
+            state.workflow_execution.acquire_exclusive().is_err(),
+            remains
+        );
     }
 }
 
@@ -159,7 +226,7 @@ async fn missing_run_capability_is_rejected() {
 }
 
 #[tokio::test]
-async fn named_directory_write_settles_with_baseline_and_output_evidence() {
+async fn named_directory_write_settles_with_output_without_tree_capture() {
     let (state, session) = state_and_session();
     let directory = tempfile::tempdir().expect("directory");
     let settings = settings(vec![ToolId::Run], Some(directory.path()));
@@ -225,8 +292,120 @@ async fn named_directory_write_settles_with_baseline_and_output_evidence() {
         .expect("command entry");
     assert_eq!(entry.status, MessageStatus::Complete);
     let command = entry.command.as_ref().expect("command metadata");
-    assert!(command.before.is_some(), "baseline evidence is recorded");
-    assert!(command.after.is_some(), "final evidence is recorded");
+    assert!(command.output.as_ref().unwrap().is_success());
+}
+
+#[tokio::test]
+async fn cancellation_settles_the_transcript_and_releases_ownership_without_reversal() {
+    for dispatched in [false, true] {
+        let (state, session) = state_and_session();
+        let directory = tempfile::tempdir().unwrap();
+        let settings =
+            settings(vec![ToolId::Run], Some(directory.path())).with_host_approval(if dispatched {
+                HostApprovalPolicy::Automatic
+            } else {
+                HostApprovalPolicy::AskEachTime
+            });
+        let record = state
+            .conversations
+            .create_saved(
+                ConversationId::generate().unwrap(),
+                None,
+                Some(model(settings.clone())),
+                Vec::new(),
+            )
+            .unwrap();
+        approve_host(&state, session, record.id, &settings);
+        let job = state
+            .sessions
+            .begin_conversation_job(&session, record.id)
+            .unwrap();
+        let command = "printf written > marker.txt; sleep 30".to_owned();
+        let started = state
+            .conversations
+            .begin_command(
+                &record.id,
+                record.revision,
+                None,
+                job.id(),
+                command.clone(),
+                true,
+                directory.path().to_string_lossy().into_owned(),
+            )
+            .unwrap();
+        let message = started.messages.last().unwrap().id;
+        let work = run_for(
+            &state,
+            session,
+            started,
+            job.clone(),
+            message,
+            command,
+            true,
+            directory.path().to_path_buf(),
+        );
+        let task = tokio::spawn(super::run(state.clone(), work));
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let ready = if dispatched {
+                    directory.path().join("marker.txt").exists()
+                } else {
+                    state
+                        .host_approvals
+                        .pending_for(record.id, job.id())
+                        .is_some()
+                };
+                if ready {
+                    break;
+                }
+                assert!(!task.is_finished());
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        job.request_cancel();
+        state.host_approvals.invalidate_job(job.id());
+        tokio::time::timeout(std::time::Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap();
+        let settled = state.conversations.get(&record.id).unwrap();
+        assert!(settled.active_job.is_none());
+        let entry = settled.messages.last().unwrap();
+        assert_eq!(entry.status, MessageStatus::Interrupted);
+        assert!(entry.error.is_none());
+        let output = &entry.command.as_ref().unwrap().output;
+        if dispatched {
+            assert_eq!(
+                output.as_ref().unwrap().termination,
+                crate::execution::CommandTermination::Cancelled
+            );
+            assert_eq!(
+                std::fs::read_to_string(directory.path().join("marker.txt")).unwrap(),
+                "written"
+            );
+        } else {
+            assert_eq!(
+                output.as_ref().unwrap().termination,
+                crate::execution::CommandTermination::NotDispatched
+            );
+            assert!(!directory.path().join("marker.txt").exists());
+        }
+        assert!(
+            state
+                .host_approvals
+                .pending_for(record.id, job.id())
+                .is_none()
+        );
+        assert_eq!(job.snapshot().status, crate::sessions::JobStatus::Cancelled);
+        assert!(
+            state
+                .sessions
+                .begin_conversation_job(&session, record.id)
+                .is_ok()
+        );
+    }
 }
 
 #[tokio::test]
@@ -349,7 +528,7 @@ async fn restart_marks_a_pending_command_interrupted_without_replay() {
 }
 
 #[tokio::test]
-async fn sandbox_command_uses_guest_capture_without_a_host_write() {
+async fn sandbox_command_uses_live_mounts_without_a_workflow_run() {
     use crate::environments::{EnvironmentDraft, SnapshotAvailability};
 
     let state = crate::tests::test_state(crate::config::RuntimeConfig::development());
@@ -377,7 +556,7 @@ async fn sandbox_command_uses_guest_capture_without_a_host_write() {
     let directory = tempfile::tempdir().expect("directory");
     std::fs::write(directory.path().join("note.txt"), "before\n").expect("note");
     let mut grant = DirectoryGrant::from_selected(directory.path(), &[]).expect("grant");
-    grant.access = crate::execution::DirectoryAccess::ReviewBeforeApply;
+    grant.access = crate::execution::DirectoryAccess::Read;
     let settings = ExecutionSettings::new(
         ModelSelection::new(ProviderKind::Deepseek, "deepseek-chat".to_owned(), None)
             .expect("selection"),
@@ -387,6 +566,7 @@ async fn sandbox_command_uses_guest_capture_without_a_host_write() {
     )
     .expect("settings")
     .with_location(ToolLocation::Sandbox)
+    .with_host_approval(HostApprovalPolicy::Automatic)
     .with_directories(vec![grant])
     .expect("directories");
     let record = state
@@ -430,14 +610,7 @@ async fn sandbox_command_uses_guest_capture_without_a_host_write() {
         ),
     )
     .await;
-    let run = state
-        .workflow_runs
-        .all_summaries()
-        .into_iter()
-        .find_map(|summary| state.workflow_runs.get(&summary.id))
-        .expect("run");
-    // The scripted guest makes no change, so the run completes without a gate.
-    assert_eq!(run.attempts.len(), 1);
+    assert!(state.workflow_runs.all_summaries().is_empty());
     assert_eq!(
         std::fs::read_to_string(directory.path().join("note.txt")).expect("note"),
         "before\n"
@@ -493,7 +666,7 @@ async fn sandbox_command_rejects_a_revoked_run_capability() {
     );
     let settings = run.record.model.as_ref().expect("model").settings.clone();
     assert_eq!(
-        super::validate_sandbox(&state, &run, &settings),
-        Err("The Run capability is not enabled for this conversation.".to_owned())
+        super::validate(&state, &run, &settings),
+        Err("The Run tool is not enabled for this conversation.".to_owned())
     );
 }

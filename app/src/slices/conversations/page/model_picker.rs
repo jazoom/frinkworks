@@ -24,7 +24,6 @@ pub(crate) struct ModelPicker {
     pub(crate) providers: Vec<ProviderOption>,
     pub(crate) unavailable_provider: Option<crate::providers::ProviderKind>,
     pub(crate) catalogue: String,
-    pub(crate) models: Vec<ModelOption>,
     pub(crate) efforts: Vec<EffortOption>,
     pub(crate) model: String,
     pub(crate) model_unavailable: bool,
@@ -129,10 +128,6 @@ impl ModelPicker {
                     label: connection.kind.label(),
                     selected: connection.kind.as_str() == provider,
                 })
-                .collect(),
-            models: models
-                .into_iter()
-                .filter(|model| !model.deprecated)
                 .collect(),
             efforts,
             model: model.to_owned(),

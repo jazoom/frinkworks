@@ -50,17 +50,17 @@ fn project_basename_does_not_use_the_reserved_workflow_alias() {
 }
 
 #[test]
-fn multiple_directories_can_use_review_before_apply() {
+fn multiple_directories_can_use_write() {
     let root = tempfile::tempdir().unwrap();
     let first_path = root.path().join("first");
     let second_path = root.path().join("second");
     std::fs::create_dir(&first_path).unwrap();
     std::fs::create_dir(&second_path).unwrap();
     let mut first = super::DirectoryGrant::from_selected(&first_path, &[]).unwrap();
-    first.access = super::DirectoryAccess::ReviewBeforeApply;
+    first.access = super::DirectoryAccess::Write;
     let mut second =
         super::DirectoryGrant::from_selected(&second_path, std::slice::from_ref(&first)).unwrap();
-    second.access = super::DirectoryAccess::ReviewBeforeApply;
+    second.access = super::DirectoryAccess::Write;
 
     assert_eq!(super::validate_directories(&[first, second]), Ok(()));
 }
@@ -87,10 +87,10 @@ fn duplicate_directory_identity_is_invalid_at_distinct_paths() {
 }
 
 #[test]
-fn direct_write_does_not_replace_reviewed_authority_for_the_same_root() {
+fn combined_ceiling_uses_write_without_changing_read_settings() {
     let root = tempfile::tempdir().unwrap();
     let mut grant = super::DirectoryGrant::from_selected(root.path(), &[]).unwrap();
-    grant.access = super::DirectoryAccess::DirectWrite;
+    grant.access = super::DirectoryAccess::Write;
     let direct = ExecutionSettings::new(
         model(),
         String::new(),
@@ -101,10 +101,7 @@ fn direct_write_does_not_replace_reviewed_authority_for_the_same_root() {
     .with_directories(vec![grant])
     .unwrap();
     let mut reviewed = direct.clone();
-    reviewed.directories[0].access = super::DirectoryAccess::ReviewBeforeApply;
-    assert!(ExecutionSettings::combined([&direct, &reviewed]).is_none());
-    assert!(ExecutionSettings::combined([&reviewed, &direct]).is_none());
-    reviewed.directories[0].access = super::DirectoryAccess::ReadOnly;
+    reviewed.directories[0].access = super::DirectoryAccess::Read;
     assert_eq!(
         ExecutionSettings::combined([&reviewed, &direct]).unwrap(),
         direct
@@ -173,5 +170,5 @@ fn a_non_git_directory_remains_valid_for_file_work() {
     let authority = crate::execution::ProjectFreeAuthority::from_settings(1, &settings).unwrap();
     assert_eq!(authority.policy.grants().len(), 1);
     assert_eq!(authority.policy.grants()[0].host_path, grant.host_path);
-    assert!(crate::workflows::artefacts::inspect_supported_worktree(&path).is_err());
+    assert_eq!(grant.access, super::DirectoryAccess::Read);
 }

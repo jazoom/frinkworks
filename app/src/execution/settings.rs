@@ -99,25 +99,22 @@ pub(crate) struct CanonicalDirectoryIdentity {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum DirectoryAccess {
-    ReadOnly,
-    ReviewBeforeApply,
-    DirectWrite,
+    Read,
+    Write,
 }
 
 impl DirectoryAccess {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
-            Self::ReadOnly => "read-only",
-            Self::ReviewBeforeApply => "review-before-apply",
-            Self::DirectWrite => "direct-write",
+            Self::Read => "read",
+            Self::Write => "write",
         }
     }
 
     pub(crate) fn parse(value: &str) -> Option<Self> {
         match value {
-            "read-only" => Some(Self::ReadOnly),
-            "review-before-apply" => Some(Self::ReviewBeforeApply),
-            "direct-write" => Some(Self::DirectWrite),
+            "read" => Some(Self::Read),
+            "write" => Some(Self::Write),
             _ => None,
         }
     }
@@ -169,7 +166,7 @@ struct DirectoryGrantForm {
 }
 
 impl ExecutionSettings {
-    // This union supplies capture and application authority, never a model step's tool authority.
+    // This union describes run-wide requested access, never a model step's tool authority.
     pub(crate) fn combined<'a>(settings: impl IntoIterator<Item = &'a Self>) -> Option<Self> {
         let mut settings = settings.into_iter();
         let mut combined = settings.next()?.clone();
@@ -186,9 +183,9 @@ impl ExecutionSettings {
                     .find(|existing| existing.identity == grant.identity)
                 {
                     if existing.access != grant.access {
-                        if existing.access == DirectoryAccess::ReadOnly {
+                        if existing.access == DirectoryAccess::Read {
                             existing.access = grant.access;
-                        } else if grant.access != DirectoryAccess::ReadOnly {
+                        } else if grant.access != DirectoryAccess::Read {
                             return None;
                         }
                     }
@@ -249,7 +246,15 @@ impl ExecutionSettings {
     }
 
     pub(crate) fn automatic_host_commands(&self) -> bool {
-        self.host_tools() && self.host_approval.automatic()
+        self.host_approval.automatic()
+    }
+
+    pub(crate) fn host_access_allowed(&self) -> bool {
+        self.location != ToolLocation::Host
+            || self
+                .directories
+                .iter()
+                .all(|grant| grant.access == DirectoryAccess::Write)
     }
 
     pub(crate) fn to_file(&self) -> ExecutionSettingsFile {
@@ -363,7 +368,7 @@ impl DirectoryGrant {
             host_path,
             identity,
             alias,
-            access: DirectoryAccess::ReadOnly,
+            access: DirectoryAccess::Read,
         })
     }
 
@@ -379,9 +384,8 @@ impl DirectoryGrant {
         self.revalidate().is_ok()
     }
 
-    // Review before apply needs no consent: the candidate decision gates the host write.
     pub(crate) fn requires_access_consent(&self, data_root: &Path) -> bool {
-        self.access == DirectoryAccess::DirectWrite
+        self.access == DirectoryAccess::Write
             || crate::execution::authority::sensitive_directory(&self.host_path, data_root)
     }
 

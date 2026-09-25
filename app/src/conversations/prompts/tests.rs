@@ -229,7 +229,6 @@ fn effective(grant: &DirectoryGrant) -> EffectiveRoot {
         scope: grant.alias.clone(),
         model_path: grant.guest_path(),
         host_path: Some(grant.host_path.clone()),
-        candidate_paths: Vec::new(),
     }
 }
 
@@ -298,18 +297,12 @@ fn project_discovery_rejects_case_insensitive_collisions_within_one_root() {
 }
 
 #[test]
-fn candidate_backed_templates_report_unavailable_bodies() {
+fn unavailable_roots_do_not_supply_prompt_bodies() {
     let data_root = tempfile::tempdir().expect("data");
     let root = EffectiveRoot {
         scope: "project".to_owned(),
         model_path: "/access/project".to_owned(),
         host_path: None,
-        candidate_paths: vec![
-            ".agents/prompts/review.md".to_owned(),
-            ".agents/prompts/review.md".to_owned(),
-            ".agents/prompts/nested/other.md".to_owned(),
-            "src/main.rs".to_owned(),
-        ],
     };
     let (templates, unavailable) = discover_project(&[root], &[], data_root.path());
     assert!(templates.is_empty());

@@ -27,26 +27,11 @@
       <article class="prose max-w-none">{{ body|safe }}</article>
     </section>
   {% endif %}
-  {% if body == "" && preview == "" %}
+  {% if body == "" %}
     {% if content_unavailable %}
       <p class="text-quiet">The stored output content is unavailable.</p>
     {% else %}
       <p class="text-quiet">The stored output is empty.</p>
     {% endif %}
-  {% endif %}
-  {% if preview != "" %}
-    <section class="space-y-2">
-      <h2 class="text-base font-semibold">Candidate changes preview</h2>
-      {% if truncated %}
-        <p class="text-quiet text-sm">
-          This preview is truncated. The stored output contains the complete
-          candidate.
-        </p>
-      {% endif %}
-      <pre
-        class="border-base-300 bg-base-200 max-h-[70vh] overflow-auto border p-3 text-xs"
-      >
-{{ preview|safe }}</pre>
-    </section>
   {% endif %}
 </main>

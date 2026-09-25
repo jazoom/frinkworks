@@ -611,38 +611,17 @@ pub(crate) fn compose_instructions(sources: &[InstructionSource]) -> String {
     composed
 }
 
-/// An immutable candidate view for one authorised root alias. A
-/// review-before-apply root reads this captured manifest instead of the host.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct CandidateRoot {
-    pub(crate) alias: String,
-    pub(crate) entries: Vec<String>,
-}
-
-/// The effective read-only source for one authorised root. `model_path` is
-/// the path prefix a model request uses. A candidate-backed root has no host
-/// directory because its entries are the immutable source.
+/// The model path stays separate from the live host path in sandbox previews.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct EffectiveRoot {
     pub(crate) scope: String,
     pub(crate) model_path: String,
     pub(crate) host_path: Option<PathBuf>,
-    pub(crate) candidate_paths: Vec<String>,
 }
 
-impl EffectiveRoot {
-    pub(crate) fn candidate(&self) -> bool {
-        self.host_path.is_none()
-    }
-}
-
-/// Resolve the effective read-only roots for idle previews. This never starts
-/// a sandbox. Host work locations keep their host paths; sandbox roots use
-/// grant aliases. An immutable candidate replaces its review root so a preview
-/// cannot substitute newer host files for a captured candidate.
+/// Idle previews use live directories without a sandbox.
 pub(crate) fn effective_roots(
     policy: &crate::agents::DirectoryPolicy,
-    candidates: &[CandidateRoot],
     data_root: &Path,
 ) -> Vec<EffectiveRoot> {
     let mut roots = Vec::new();
@@ -660,31 +639,16 @@ pub(crate) fn effective_roots(
         {
             continue;
         }
-        if let Some(candidate) = candidates
-            .iter()
-            .find(|candidate| candidate.alias == grant.alias)
-        {
-            roots.push(EffectiveRoot {
-                scope: grant.alias.clone(),
-                model_path: grant.guest_path.clone(),
-                host_path: None,
-                candidate_paths: candidate.entries.clone(),
-            });
-            continue;
-        }
         roots.push(EffectiveRoot {
             scope: grant.alias.clone(),
             model_path: grant.guest_path.clone(),
             host_path: Some(grant.host_path.clone()),
-            candidate_paths: Vec::new(),
         });
     }
     roots
 }
 
-/// A bounded project skill body read from an effective read-only root. This
-/// never starts a sandbox. A candidate-backed root has no host directory, so
-/// its body stays unavailable instead of using current host files.
+/// Skill previews use bounded reads without a sandbox.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PreviewSkill {
     pub(crate) scope: String,
@@ -698,9 +662,7 @@ pub(crate) struct PreviewSkill {
     pub(crate) content_hash: String,
 }
 
-/// Read project skill bodies from the effective read-only roots. The result is
-/// bounded by the skill count and body size. Symbolic links never enter a
-/// preview. A candidate-backed root counts as unavailable.
+/// Skill count and body size bounds apply to previews. Previews exclude symbolic links.
 pub(crate) fn preview_project_skills(
     roots: &[EffectiveRoot],
     grants: &[super::DirectoryGrant],

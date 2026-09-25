@@ -57,7 +57,7 @@
             <p class="text-quiet mt-1 text-sm">{{ catalogue_note }}</p>
           {% endif %}
         </div>
-        {% if state == "Initialising source" || state == "Ready" || state == "Active" || state == "Awaiting decision" %}
+        {% if state == "Ready" || state == "Active" || state == "Awaiting decision" %}
           <form
             data-graft
             method="get"
@@ -84,7 +84,7 @@
           {% endif %}
           <p>{{ state_note }}</p>
           {% if host_approval != "" %}
-            <p class="mt-2 text-sm">Host commands: {{ host_approval }}</p>
+            <p class="mt-2 text-sm">Command approval: {{ host_approval }}</p>
           {% endif %}
 
           {% if context_boundaries != "" %}
@@ -96,7 +96,7 @@
             href="{{ review_href }}"
             data-graft
             class="btn btn-primary btn-sm shrink-0"
-            >Review candidate</a
+            >Review plan</a
           >
         {% endif %}
       </section>
@@ -162,7 +162,7 @@
                     {% endif %}
                     {% if step.host_approval != "" %}
                       <p class="text-quiet text-sm">
-                        This computer · {{ step.host_approval }}
+                        Command approval · {{ step.host_approval }}
                       </p>
                     {% endif %}
                   </div>
@@ -179,10 +179,10 @@
                       <span class="text-quiet">Result</span> {{ step.result }}
                     </p>
                   {% endif %}
-                  {% if step.candidate_access != "" %}
+                  {% if step.directory_access != "" %}
                     <p>
                       <span class="text-quiet">Candidate access</span>
-                      {{ step.candidate_access }}
+                      {{ step.directory_access }}
                     </p>
                   {% endif %}
                   {% if step.review_phase != "" %}
@@ -207,29 +207,12 @@
                   {% if step.environment != "" %}
                     <p class="font-mono text-xs">{{ step.environment }}</p>
                   {% endif %}
-                  {% if !step.commits.is_empty() %}
-                    <ul class="mt-3 space-y-2" aria-label="Repository commits">
-                      {% for repository in step.commits %}
-                        <li>
-                          <p class="font-mono text-xs break-all">
-                            {{ repository.path }}
-                          </p>
-                          <p class="text-sm">{{ repository.status }}</p>
-                          {% if repository.commit != "" %}
-                            <p class="font-mono text-xs break-all">
-                              {{ repository.commit }}
-                            </p>
-                          {% endif %}
-                        </li>
-                      {% endfor %}
-                    </ul>
-                  {% endif %}
                 </div>
 
                 {% if step.gate_href != "" %}
                   <p class="mt-2 text-sm">
                     <a href="{{ step.gate_href }}" data-graft class="link"
-                      >Open candidate review</a
+                      >Open plan review</a
                     >
                   </p>
                 {% endif %}
@@ -245,11 +228,6 @@
                           <a href="{{ artefact.href }}" data-graft class="link"
                             >{{ artefact.key }} · {{ artefact.kind }}</a
                           >
-                          {% if artefact.candidate_hash != "" %}
-                            <span class="font-mono text-xs"
-                              >{{ artefact.candidate_hash }}</span
-                            >
-                          {% endif %}
                           {% if artefact.note != "" %}
                             <span class="text-quiet text-xs"
                               >{{ artefact.note }}</span
@@ -260,14 +238,6 @@
                               class="badge state-badge badge-sm"
                               data-state="{{ artefact.status }}"
                               >{{ artefact.status }}</span
-                            >
-                          {% endif %}
-                          {% if artefact.review_href != "" %}
-                            <a
-                              href="{{ artefact.review_href }}"
-                              data-graft
-                              class="link text-xs"
-                              >Review in a new conversation</a
                             >
                           {% endif %}
                         </li>
@@ -362,33 +332,7 @@
                     {% if attempt.result != "" %}
                       <p>{{ attempt.result }}</p>
                     {% endif %}
-                    {% if !attempt.apply_roots.is_empty() %}
-                      <dl
-                        class="border-base-300 my-3 grid gap-2 border-y py-3 sm:grid-cols-[minmax(0,1fr)_auto]"
-                      >
-                        {% for root in attempt.apply_roots %}
-                          <div class="min-w-0">
-                            <dt class="font-semibold break-all">
-                              {{ root.directory }}
-                            </dt>
-                            <dd class="text-quiet font-mono text-xs break-all">
-                              {{ root.path }}
-                            </dd>
-                          </div>
-                          <dd>
-                            <span
-                              class="badge state-badge badge-sm"
-                              data-state="{{ root.outcome }}"
-                              >{{ root.outcome }}</span
-                            >
-                          </dd>
-                        {% endfor %}
-                      </dl>
-                      <p class="text-quiet text-xs">
-                        Writes across filesystems are not atomic. An uncertain
-                        outcome blocks completion.
-                      </p>
-                    {% endif %}
+
                     <p class="text-quiet">
                       Tools: {{ attempt.tools }} · Source:
                       {{ attempt.primary_access }} ·
@@ -405,9 +349,6 @@
                       <p class="flex flex-wrap items-center gap-2">
                         <a href="{{ report.href }}" data-graft class="link"
                           >{{ report.key }} · {{ report.kind }}</a
-                        >
-                        <span class="font-mono text-xs"
-                          >{{ report.candidate_hash }}</span
                         >
                         <span
                           class="badge state-badge badge-sm"
@@ -427,12 +368,6 @@
                         href="{{ attempt.activity_href }}"
                         data-graft
                         >Activity</a
-                      >
-                      <a
-                        class="link"
-                        href="{{ attempt.changes_href }}"
-                        data-graft
-                        >Changes</a
                       >
                       <a
                         class="link"

@@ -11,9 +11,6 @@ pub(crate) struct ObjectHash([u8; DIGEST_LEN]);
 #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct ArtefactHash([u8; DIGEST_LEN]);
 
-#[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) struct CandidateHash([u8; DIGEST_LEN]);
-
 impl ObjectHash {
     pub(crate) fn of(bytes: &[u8]) -> Self {
         Self(Sha256::digest(bytes).into())
@@ -31,10 +28,6 @@ impl ObjectHash {
         let digest = hex::encode(&self.0);
         (digest[..2].to_owned(), digest[2..].to_owned())
     }
-
-    pub(crate) fn bytes(&self) -> &[u8; DIGEST_LEN] {
-        &self.0
-    }
 }
 
 impl ArtefactHash {
@@ -43,24 +36,6 @@ impl ArtefactHash {
         hasher.update(domain);
         hasher.update(payload);
         Self(hasher.finalize().into())
-    }
-
-    pub(crate) fn parse(value: &str) -> Option<Self> {
-        parse_digest(value).map(Self)
-    }
-
-    pub(crate) fn as_str(&self) -> String {
-        format_digest(&self.0)
-    }
-
-    pub(crate) fn short(&self) -> String {
-        short_digest(&self.0)
-    }
-}
-
-impl CandidateHash {
-    pub(crate) fn of(bytes: &[u8]) -> Self {
-        Self(Sha256::digest(bytes).into())
     }
 
     pub(crate) fn parse(value: &str) -> Option<Self> {
@@ -87,14 +62,6 @@ impl std::fmt::Debug for ObjectHash {
 impl std::fmt::Debug for ArtefactHash {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("ArtefactHash(")?;
-        formatter.write_str(&self.as_str())?;
-        formatter.write_str(")")
-    }
-}
-
-impl std::fmt::Debug for CandidateHash {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("CandidateHash(")?;
         formatter.write_str(&self.as_str())?;
         formatter.write_str(")")
     }

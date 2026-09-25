@@ -16,7 +16,7 @@ use crate::{
     state::AppState,
     workflows::{
         self, PhaseModelSelection, PinnedPreset, ResolveWorkflowError, WorkflowJob, WorkflowRun,
-        WorkflowSelection, definition::CommitPolicy,
+        WorkflowSelection,
     },
 };
 
@@ -28,7 +28,6 @@ pub(super) struct WorkflowQuery {
     stage: String,
     workflow: String,
     brief: String,
-    commit_policy: String,
     #[serde(default)]
     phase: Vec<String>,
 }
@@ -40,11 +39,7 @@ pub(super) struct WorkflowLaunchForm {
     workflow: String,
     brief: String,
     #[serde(default)]
-    commit_policy: String,
-    #[serde(default)]
     preview_workflow: String,
-    #[serde(default)]
-    preview_commit_policy: String,
     #[serde(default)]
     phase: Vec<String>,
     #[serde(default)]
@@ -73,13 +68,6 @@ struct PhaseModelOption {
     choices: Vec<PhaseChoice>,
 }
 
-struct CommitPolicyOption {
-    value: String,
-    label: String,
-    detail: String,
-    selected: bool,
-}
-
 #[derive(Serialize, Deserialize)]
 struct PhaseChoiceToken {
     step: String,
@@ -99,7 +87,6 @@ struct WorkflowLaunchView {
     revision: String,
     brief: String,
     workflows: Vec<WorkflowOption>,
-    commit_policies: Vec<CommitPolicyOption>,
     phase_models: Vec<PhaseModelOption>,
     model_summary: String,
     access_summary: String,
@@ -119,7 +106,6 @@ struct WorkflowLaunchContents<'a> {
     revision: &'a str,
     brief: &'a str,
     workflows: &'a [WorkflowOption],
-    commit_policies: &'a [CommitPolicyOption],
     phase_models: &'a [PhaseModelOption],
     model_summary: &'a str,
     access_summary: &'a str,
@@ -139,7 +125,6 @@ impl WorkflowLaunchView {
             revision: &self.revision,
             brief: &self.brief,
             workflows: &self.workflows,
-            commit_policies: &self.commit_policies,
             phase_models: &self.phase_models,
             model_summary: &self.model_summary,
             access_summary: &self.access_summary,
@@ -182,10 +167,7 @@ pub(super) async fn show(
         .filter(|(key, _)| {
             !matches!(
                 key.as_str(),
-                "revision"
-                    | "preview_workflow"
-                    | "preview_commit_policy"
-                    | "confirm_additional_access"
+                "revision" | "preview_workflow" | "confirm_additional_access"
             )
         })
         .collect();
@@ -208,7 +190,6 @@ pub(super) async fn show(
             Some(query.workflow.as_str())
         },
         &query.brief,
-        &query.commit_policy,
         &query.phase,
         "",
     )
@@ -294,7 +275,6 @@ pub(super) async fn launch(
         let record = record.clone();
         let workflow = form.workflow.clone();
         let brief = form.brief.clone();
-        let commit_policy = form.commit_policy.clone();
         let phase = form.phase.clone();
         async move {
             let view = launch_view(
@@ -302,7 +282,6 @@ pub(super) async fn launch(
                 &record,
                 Some(workflow.as_str()),
                 &brief,
-                &commit_policy,
                 &phase,
                 error,
             )
@@ -346,32 +325,14 @@ pub(super) async fn launch(
             return error_view(status, error.message()).await;
         }
     };
-    if form.workflow != form.preview_workflow || form.commit_policy != form.preview_commit_policy {
+    if form.workflow != form.preview_workflow {
         return error_view(
             PatchStatus::Conflict,
             "The selection changed. Review its access and environment readiness before you start.",
         )
         .await;
     }
-    let commit_policy = if form.commit_policy.trim().is_empty() {
-        resolved.pinned.definition.commit_policy()
-    } else {
-        let Some(policy) = CommitPolicy::parse(form.commit_policy.trim()) else {
-            return error_view(
-                PatchStatus::UnprocessableEntity,
-                "Choose a valid commit policy.",
-            )
-            .await;
-        };
-        policy
-    };
-    let mut pinned = match resolved.pinned.definition.with_commit_policy(commit_policy) {
-        Ok(definition) => workflows::definition::PinnedWorkflowDefinition::pin(
-            resolved.pinned.workflow_id,
-            definition,
-        ),
-        Err(error) => return error_view(PatchStatus::UnprocessableEntity, error.message()).await,
-    };
+    let mut pinned = resolved.pinned;
 
     let Some(settings) = super::effective_model(&state, &record).map(|model| model.settings) else {
         return error_view(
@@ -465,10 +426,14 @@ pub(super) async fn launch(
             run_id,
             session.0,
             current.id,
-            phase_models
-                .iter()
-                .filter_map(|phase| phase.settings.clone())
-                .collect(),
+            if phase_models.is_empty() {
+                vec![settings.clone()]
+            } else {
+                phase_models
+                    .iter()
+                    .filter_map(|phase| phase.settings.clone())
+                    .collect()
+            },
         )
         .is_err()
     {
@@ -485,6 +450,7 @@ pub(super) async fn launch(
         pinned,
         environments,
         phase_models.clone(),
+        settings,
     );
     run.kind = workflows::run::RunKind::Configured;
     run.launch_brief = brief.clone();
@@ -542,7 +508,6 @@ pub(super) async fn launch(
                 conversation_id: Some(follow_conversation),
                 authority: None,
                 project_free_authority: Some(project_free.clone()),
-                grant_alias: String::new(),
                 connection,
                 phase_providers: phase_models
                     .iter()
@@ -553,7 +518,6 @@ pub(super) async fn launch(
                 turns: Vec::new(),
                 job: job.clone(),
                 eligible_reply: std::sync::Arc::new(std::sync::Mutex::new(String::new())),
-                command: None,
             },
             None,
             execution,
@@ -573,7 +537,6 @@ async fn launch_view(
     record: &ConversationRecord,
     workflow_raw: Option<&str>,
     brief: &str,
-    commit_policy_raw: &str,
     phase_raw: &[String],
     error: &'static str,
 ) -> WorkflowLaunchView {
@@ -615,11 +578,7 @@ async fn launch_view(
                 definition_version: record.definition_version,
             };
             let selected = selected_workflow == selection.as_token();
-            let resolved_policy = selected
-                .then(|| CommitPolicy::parse(commit_policy_raw.trim()))
-                .flatten()
-                .and_then(|policy| record.definition.with_commit_policy(policy).ok());
-            let definition = resolved_policy.as_ref().unwrap_or(&record.definition);
+            let definition = &record.definition;
             WorkflowOption {
                 token: selection.as_token(),
                 name: record.definition.name().to_owned(),
@@ -631,38 +590,6 @@ async fn launch_view(
             }
         })
         .collect();
-    let selected_policy = WorkflowSelection::parse(&selected_workflow)
-        .and_then(|selection| state.workflows.resolve(&selection).ok())
-        .map(|resolved| resolved.pinned.definition)
-        .and_then(|definition| {
-            let choices = definition.commit_policy_choices();
-            let requested = CommitPolicy::parse(commit_policy_raw.trim());
-            requested
-                .filter(|policy| choices.contains(policy))
-                .or_else(|| choices.first().copied())
-        });
-    let commit_policies = WorkflowSelection::parse(&selected_workflow)
-        .and_then(|selection| state.workflows.resolve(&selection).ok())
-        .map(|resolved| resolved.pinned.definition)
-        .map(|definition| {
-            let selected = selected_policy;
-            definition
-                .commit_policy_choices()
-                .into_iter()
-                .filter(|policy| *policy != CommitPolicy::NoCommit)
-                .map(|policy| CommitPolicyOption {
-                    value: policy.as_str().to_owned(),
-                    label: policy.label().to_owned(),
-                    detail: match policy {
-                        CommitPolicy::NoCommit => "The workflow stops without changing project files.".to_owned(),
-                        CommitPolicy::HumanApproval => "The exact candidate waits for a human decision before commit.".to_owned(),
-                        CommitPolicy::AutomaticAfterReview => "An approved exact-candidate review permits commit without a human gate.".to_owned(),
-                    },
-                    selected: selected == Some(policy),
-                })
-                .collect()
-        })
-        .unwrap_or_default();
     let (model_summary, access_summary, environment_summary) =
         launch_readiness(state, record, &selected_workflow).await;
     let phase_models = selected_phase_model_options(state, record, &selected_workflow, phase_raw);
@@ -685,7 +612,6 @@ async fn launch_view(
             brief.trim().to_owned()
         },
         workflows,
-        commit_policies,
         phase_models,
         model_summary,
         access_summary,
@@ -738,9 +664,8 @@ async fn launch_readiness(
                 grant.host_path.display(),
                 grant.guest_path(),
                 match grant.access {
-                    crate::execution::DirectoryAccess::ReadOnly => "Read only",
-                    crate::execution::DirectoryAccess::ReviewBeforeApply => "Review before apply",
-                    crate::execution::DirectoryAccess::DirectWrite => "Direct write",
+                    crate::execution::DirectoryAccess::Read => "Read",
+                    crate::execution::DirectoryAccess::Write => "Write",
                 }
             )
         })
@@ -796,44 +721,6 @@ async fn launch_readiness(
             Err(error) => return (model_summary, access, error.message().to_owned()),
         },
         Err(error) => return (model_summary, access, error.message().to_owned()),
-    };
-    let captures_source = definition.steps().iter().any(|step| {
-        step.inputs.iter().any(|input| {
-            matches!(
-                input.source,
-                workflows::definition::ArtefactSource::RunInitialCandidate
-                    | workflows::definition::ArtefactSource::RunCurrentCandidate
-            )
-        })
-    });
-    let reviewed = settings
-        .directories
-        .iter()
-        .any(|grant| grant.access == crate::execution::DirectoryAccess::ReviewBeforeApply);
-    let exclusions = settings
-        .directories
-        .iter()
-        .filter(|grant| {
-            captures_source
-                && (!reviewed
-                    || grant.access == crate::execution::DirectoryAccess::ReviewBeforeApply)
-        })
-        .flat_map(|grant| {
-            workflows::workspace::reviewed_capture_exclusions(
-                &grant.host_path,
-                state.local_data.root(),
-            )
-            .into_iter()
-            .map(|path| grant.host_path.join(path).display().to_string())
-        })
-        .collect::<Vec<_>>();
-    let access = if exclusions.is_empty() {
-        access
-    } else {
-        format!(
-            "{access}. The source snapshot excludes these engine paths: {}",
-            exclusions.join(", ")
-        )
     };
     let environment = match workflows::preview_environments(
         &definition,
@@ -1150,7 +1037,7 @@ async fn preview_phase_access(
         .ok_or("Choose a conversation model before review.")?
         .settings;
     resolve_directory_phase_settings(definition, &defaults, phases)?;
-    let snapshots: Vec<_> = phases
+    let mut snapshots: Vec<_> = phases
         .iter()
         .filter_map(|phase| phase.settings.clone())
         .collect();
@@ -1190,9 +1077,12 @@ async fn preview_phase_access(
                 )
             } else {
                 format!(
-                    "Network: {} · Environment: {}",
+                    "Network: {} · Environment: {} · {}",
                     network_label(&settings.network),
-                    settings.environment.as_hex()
+                    settings.environment.as_hex(),
+                    crate::slices::execution_settings::page::host_approval_label(
+                        settings.host_approval
+                    )
                 )
             },
             if workflows::definition::additional_access(&defaults, settings) {
@@ -1209,7 +1099,7 @@ async fn preview_phase_access(
             );
             if settings.host_approval.automatic() {
                 view.phase_summaries.push(
-                    "This run authorises Run without approval for host commands. Copied conversation consent does not apply.".to_owned(),
+                    "This run uses Automatic (YOLO) command approval. Copied conversation consent does not apply.".to_owned(),
                 );
             } else {
                 view.phase_summaries.push(
@@ -1218,9 +1108,6 @@ async fn preview_phase_access(
                 );
             }
         }
-        let writes = definition
-            .step(&phase.step)
-            .is_some_and(|step| step.writes_primary_source());
         for grant in &settings.directories {
             if host {
                 view.phase_summaries
@@ -1232,51 +1119,32 @@ async fn preview_phase_access(
                 grant.host_path.display(),
                 grant.guest_path(),
                 match grant.access {
-                    crate::execution::DirectoryAccess::ReadOnly => "Read only",
-                    crate::execution::DirectoryAccess::DirectWrite => "Direct write",
-                    crate::execution::DirectoryAccess::ReviewBeforeApply if writes => {
-                        "Review before apply"
-                    }
-                    crate::execution::DirectoryAccess::ReviewBeforeApply => {
-                        "Read only · isolated reviewed copy"
-                    }
+                    crate::execution::DirectoryAccess::Read => "Read",
+                    crate::execution::DirectoryAccess::Write => "Write",
                 }
             ));
-            if grant.access == crate::execution::DirectoryAccess::DirectWrite {
-                view.phase_summaries.push("Direct write changes host files immediately. Candidate approval does not cover these changes. Failure, discard and cancellation leave them intact.".to_owned());
-            }
-            if grant.access == crate::execution::DirectoryAccess::ReviewBeforeApply {
-                for excluded in crate::workflows::workspace::reviewed_capture_exclusions(
-                    &grant.host_path,
-                    state.local_data.root(),
-                ) {
-                    view.phase_summaries.push(format!(
-                        "Excluded from capture and application: {}",
-                        grant.host_path.join(excluded).display()
-                    ));
-                }
+            if grant.access == crate::execution::DirectoryAccess::Write {
+                view.phase_summaries.push("Write changes the original files immediately. Plan acceptance does not approve files. Failure and cancellation leave file changes intact.".to_owned());
             }
             if crate::execution::authority::sensitive_directory(
                 &grant.host_path,
                 state.local_data.root(),
             ) {
                 view.phase_summaries.push(format!("Sensitive access: this root can expose provider credentials and private conversations, even with Network off. Frinkworks data: {}.", state.local_data.root().display()));
-                if grant.access == crate::execution::DirectoryAccess::DirectWrite {
-                    view.phase_summaries.push("Direct write can alter or corrupt live configuration, permissions and execution evidence.".to_owned());
-                }
-                if grant.access == crate::execution::DirectoryAccess::ReviewBeforeApply {
-                    view.phase_summaries.push(
-                        "Reviewed access can propose changes to Frinkworks configuration."
-                            .to_owned(),
-                    );
+                if grant.access == crate::execution::DirectoryAccess::Write {
+                    view.phase_summaries.push("Write access can alter or corrupt live configuration, permissions and execution evidence.".to_owned());
                 }
             }
         }
     }
-    view.environment_summary = if snapshots
-        .iter()
-        .all(|settings| settings.location == crate::execution::ToolLocation::Host)
-    {
+    if snapshots.is_empty() {
+        view.phase_summaries.push(format!(
+            "System commands use Read mounts and {}. The conversation supplies the directory settings.",
+            crate::slices::execution_settings::page::host_approval_label(defaults.host_approval)
+        ));
+        snapshots.push(defaults);
+    }
+    view.environment_summary = if !pinned.steps().iter().any(|step| step.is_sandbox_backed()) {
         "Host steps need no sandbox environment.".to_owned()
     } else {
         match environments {
@@ -1295,7 +1163,7 @@ fn starter_rank(name: &str) -> usize {
     match name {
         "Plan a change" => 1,
         "Review current code" => 2,
-        "Implement with approval" => 3,
+        "Implement a change" => 3,
         "Implement and review" => 4,
         "Plan then implement" => 5,
         _ => usize::MAX,
@@ -1306,8 +1174,10 @@ fn starter_summary(name: &str) -> Option<String> {
     match name {
         "Plan a change" => Some("A focused plan for the proposed change."),
         "Review current code" => Some("An assessment with actionable feedback."),
-        "Implement with approval" => Some("Prepare a change for your review."),
-        "Implement and review" => Some("A fresh reviewer inspects the change before you decide."),
+        "Implement a change" => Some("Change the original files with Write access."),
+        "Implement and review" => {
+            Some("A separate phase reviews the current files after implementation.")
+        }
         "Plan then implement" => Some("Approve a plan before implementation starts."),
         _ => None,
     }
