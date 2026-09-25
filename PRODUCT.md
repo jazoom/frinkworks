@@ -227,7 +227,7 @@ The implementation status and evidence boundary are in `docs/conversation-system
 
 ## Brand
 
-The product name and wordmark are Frinkworks. The mark is `app/public/images/frinkworks.svg`.
+The product name and wordmark are Frinkworks. The symbol assets are `app/public/images/logo.svg` and `app/public/images/logo-dark.svg`. The outlined wordmark is `app/public/images/wordmark.svg`.
 
 Interface copy uses Australian English and sentence case.
 

@@ -9,6 +9,8 @@ colors:
     coverText: "#f5f6ef"
     coverMuted: "#c4c8bc"
     ink: "#171a16"
+    brandInk: "#565c4e"
+    brandReverse: "#f5f2eb"
     quietInk: "#65695f"
     rule: "#d9dad2"
     action: "#b3f04e"
@@ -101,7 +103,7 @@ Error panels use a pale error surface and readable recovery links. Action colour
 
 ## Typography
 
-IBM Plex Sans carries the interface. IBM Plex Mono identifies paths and code.
+IBM Plex Sans carries the interface. IBM Plex Mono identifies paths and code. The wordmark uses vector outlines from `logo.png`, with the source letter shapes and spacing. The application loads no additional font for the wordmark.
 
 Conversation text has a maximum measure of 70 characters. Result headings identify the next decision.
 
@@ -157,7 +159,13 @@ Host consent uses a native modal above Setup with a dimmed backdrop. Its content
 
 Controls retain DaisyUI primitives. Workspace controls use seven-pixel corners. Recent records use five-pixel corners. User messages retain three-pixel corners. The composer uses nine-pixel corners.
 
-The Frinkworks scientist mark uses dark ink and green on a transparent square canvas. A pale backing preserves its contrast across themes. Workspace icons use the shared stroke geometry in `app/public/images/workspace-icons.svg`.
+The Frinkworks symbol uses a lime accent on a transparent canvas. `app/public/images/logo.svg` uses olive-grey ink for light backgrounds. `app/public/images/logo-dark.svg` uses off-white for dark backgrounds. The sidebar and mobile header select the symbol for their cover colour. Other symbols follow the page theme. The favicon follows the system colour preference.
+
+Both symbol variants use identical geometry. Every straight section, including the lime bar, has a perpendicular width of 48 units. The vertical gap is 24 units on the 288-unit canvas.
+
+`app/public/images/wordmark.svg` supplies the outlined wordmark. It matches the symbol’s main stroke colour and retains the accessible name Frinkworks. Its width is 170 pixels in the sidebar and 162 pixels on the connection page. The mobile header uses 148 pixels, or 136 pixels below a viewport width of 361 pixels. The symbol dimensions remain unchanged.
+
+Workspace icons use the shared stroke geometry in `app/public/images/workspace-icons.svg`.
 
 ## Components
 

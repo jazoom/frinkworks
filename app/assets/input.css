@@ -497,23 +497,6 @@
         text-decoration: none;
     }
 
-    .app-brand > span,
-    .app-brand strong,
-    .app-brand small {
-        display: block;
-    }
-
-    .app-brand strong {
-        font-size: 1.08rem;
-        letter-spacing: -0.02em;
-    }
-
-    .app-brand small {
-        margin-top: 0.1rem;
-        color: var(--frinkworks-on-cover-muted);
-        font-size: 0.75rem;
-    }
-
     .app-file {
         display: grid;
         min-width: 0;
@@ -991,12 +974,18 @@
     }
 
     .frinkworks-mark {
+        content: var(--frinkworks-mark);
         display: block;
         flex: none;
-        padding: 2px;
-        border-radius: 7px;
-        background: #fefcf6;
         object-fit: contain;
+    }
+
+    .frinkworks-wordmark {
+        color: light-dark(#565c4e, #f5f2eb);
+        display: block;
+        flex: none;
+        width: 170px;
+        height: auto;
     }
 
     .status-stamp {
@@ -1914,9 +1903,11 @@
 @layer components {
     .connect-brand {
         color: var(--frinkworks-ink);
-        font-size: 21px;
-        letter-spacing: -0.035em;
         text-decoration: none;
+    }
+
+    .connect-brand .frinkworks-wordmark {
+        width: 162px;
     }
 
     .connect-first-use h1 {
