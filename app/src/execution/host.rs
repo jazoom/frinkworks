@@ -50,12 +50,12 @@ impl HostIdentity {
     pub(crate) fn authority_summary(&self) -> String {
         if self.elevated() {
             format!(
-                "Commands run as {} (uid {}, effective uid {}). This process is already elevated. Power Plant adds no privileges of its own.",
+                "Commands run as {} (uid {}, effective uid {}). This process is already elevated. Frinkworks adds no privileges of its own.",
                 self.username, self.uid, self.euid
             )
         } else {
             format!(
-                "Commands run as {} (uid {}). They have that user's existing host authority. Power Plant adds no privileges of its own.",
+                "Commands run as {} (uid {}). They have that user's existing host authority. Frinkworks adds no privileges of its own.",
                 self.username, self.uid
             )
         }
@@ -159,7 +159,7 @@ async fn run_shell_inner(
         Ok(child) => child,
         Err(_) => {
             return Err(not_dispatched(
-                "Power Plant could not start the command. Try again.",
+                "Frinkworks could not start the command. Try again.",
             ));
         }
     };
@@ -264,7 +264,7 @@ async fn run_shell_inner(
                         return Err(command_failure(
                             &mut capture,
                             CommandTermination::Unknown,
-                            "Power Plant lost the command result. Try again.",
+                            "Frinkworks lost the command result. Try again.",
                         ));
                     }
                 });
@@ -371,7 +371,7 @@ async fn read_pipe<R: AsyncRead + Unpin>(
     let count = pipe
         .read(buffer)
         .await
-        .map_err(|_| "Power Plant lost the command result. Try again.")?;
+        .map_err(|_| "Frinkworks lost the command result. Try again.")?;
     if count == 0 {
         return Ok(None);
     }

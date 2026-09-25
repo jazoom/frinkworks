@@ -48,7 +48,7 @@ async fn activity_supports_document_navigation_and_targeted_updates() {
 
     let patch = Request::builder()
         .uri(&path)
-        .header("Cookie", format!("powerplant_session={token}"))
+        .header("Cookie", format!("frinkworks_session={token}"))
         .header(hypergraft::GRAFT_REQUEST, "patch")
         .header("Accept", hypergraft::MEDIA_TYPE)
         .body(Body::empty())

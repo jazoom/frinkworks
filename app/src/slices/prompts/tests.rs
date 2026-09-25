@@ -23,7 +23,7 @@ fn fixture() -> (AppState, String) {
     state.sessions.insert(token.id());
     (
         state,
-        format!("powerplant_session={}", token.raw().as_str()),
+        format!("frinkworks_session={}", token.raw().as_str()),
     )
 }
 

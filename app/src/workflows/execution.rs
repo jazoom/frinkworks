@@ -86,7 +86,7 @@ impl WorkflowExecution {
 }
 
 const RECOVERY_REQUIRED: &str =
-    "Restart Power Plant to reconcile unresolved execution recovery before another operation.";
+    "Restart Frinkworks to reconcile unresolved execution recovery before another operation.";
 
 impl ExecutionGuard {
     pub(crate) fn require_recovery(&self) {

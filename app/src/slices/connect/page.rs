@@ -8,7 +8,7 @@ use crate::{
 
 use super::forms::{ConnectField, ConnectForm, FieldError};
 
-pub(super) const DOCUMENT_TITLE: &str = "Connect | Power Plant";
+pub(super) const DOCUMENT_TITLE: &str = "Connect | Frinkworks";
 
 pub(super) struct ProviderOption {
     pub(super) value: &'static str,

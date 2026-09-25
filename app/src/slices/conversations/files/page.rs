@@ -3,7 +3,7 @@
 //! A suggestion contains a scope label and a model-visible path. It never
 //! contains file contents. Search reads only approved host roots or an
 //! immutable candidate view; it never starts a sandbox and never follows a
-//! symbolic link or the private Power Plant data directory.
+//! symbolic link or the private Frinkworks data directory.
 
 use std::path::Path;
 
@@ -260,7 +260,7 @@ fn complete_host(
             return;
         }
         current_path = current_path.join(component);
-        // Private Power Plant data stays out of previews even below a grant.
+        // Private Frinkworks data stays out of previews even below a grant.
         if overlaps(&current_path, data_root) {
             return;
         }

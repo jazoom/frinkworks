@@ -343,9 +343,9 @@ pub(crate) async fn create_prepared_snapshot(
     let snapshot = Snapshot::builder(artifact_key.as_str())
         .from_sandbox(sandbox_name)
         .dest_dir(dest_dir)
-        .label("works.powerplant.environment", environment_id.as_hex())
-        .label("works.powerplant.preparation", preparation_id.as_hex())
-        .label("works.powerplant.recipe", recipe_version.as_digest())
+        .label("works.frinkworks.environment", environment_id.as_hex())
+        .label("works.frinkworks.preparation", preparation_id.as_hex())
+        .label("works.frinkworks.recipe", recipe_version.as_digest())
         .record_integrity()
         .create()
         .await

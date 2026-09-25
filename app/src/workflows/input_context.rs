@@ -85,7 +85,7 @@ impl InstructionError {
     pub(crate) fn message(self) -> &'static str {
         match self {
             Self::Path => "The project instruction path is not inside the target candidate.",
-            Self::Read => "Power Plant could not read the target project's AGENTS.md file.",
+            Self::Read => "Frinkworks could not read the target project's AGENTS.md file.",
             Self::Invalid => "The target project's AGENTS.md file is not valid text.",
             Self::Bound => "The target project's AGENTS.md file is too large.",
             Self::Credential => {
@@ -604,7 +604,7 @@ pub(crate) fn authorised_source_text(
         format!(
             "Tools run on this computer. Work locations are conveniences, not confinement:\n{}\nSandbox guest paths such as /access/<alias> and /workspace from earlier turns grant no host authority. File import still uses an explicit read-only sandbox.",
             if directories.is_empty() {
-                "None. Commands start in Power Plant's current directory.".to_owned()
+                "None. Commands start in Frinkworks's current directory.".to_owned()
             } else {
                 directories.join("\n")
             }

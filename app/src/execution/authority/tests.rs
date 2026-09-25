@@ -62,23 +62,23 @@ fn symbolic_aliases_cannot_duplicate_a_canonical_root() {
 }
 
 #[test]
-fn power_plant_data_classification_covers_root_descendants_and_ancestors() {
+fn frinkworks_data_classification_covers_root_descendants_and_ancestors() {
     let home = tempfile::tempdir().unwrap();
-    let data = home.path().join(".local").join("power-plant");
+    let data = home.path().join(".local").join("frinkworks");
     let child = data.join("providers");
     std::fs::create_dir_all(&child).unwrap();
 
     assert_eq!(
         super::classify_sensitive_directory(&data, &data),
-        Some(super::SensitiveDirectory::PowerPlantData)
+        Some(super::SensitiveDirectory::FrinkworksData)
     );
     assert_eq!(
         super::classify_sensitive_directory(&child, &data),
-        Some(super::SensitiveDirectory::PowerPlantData)
+        Some(super::SensitiveDirectory::FrinkworksData)
     );
     assert_eq!(
         super::classify_sensitive_directory(home.path(), &data),
-        Some(super::SensitiveDirectory::PowerPlantData)
+        Some(super::SensitiveDirectory::FrinkworksData)
     );
     let unrelated = tempfile::tempdir().unwrap();
     assert_eq!(

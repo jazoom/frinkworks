@@ -1,6 +1,6 @@
 # Model catalogue
 
-Power Plant loads a bundled or local catalogue before the network refresh. It refreshes at startup and once a day.
+Frinkworks loads a bundled or local catalogue before the network refresh. It refreshes at startup and once a day.
 
 A failed refresh keeps the last valid catalogue. Settings shows the last successful check and the last attempt. A failed attempt exposes Retry refresh.
 
@@ -26,7 +26,7 @@ Copied drafts retain their requested settings. A deprecated model requires an ex
 
 Saved conversations keep their exact model identifier. A deprecated selection shows a notice and a Choose model action. Deprecation alone does not block requests.
 
-The provider decides whether it accepts requests for that identifier. Power Plant does not substitute another model after a provider rejection.
+The provider decides whether it accepts requests for that identifier. Frinkworks does not substitute another model after a provider rejection.
 
 ## DeepSeek
 

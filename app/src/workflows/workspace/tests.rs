@@ -33,7 +33,7 @@ fn recursive_disposal_does_not_follow_a_symbolic_link() {
 #[test]
 fn reviewed_capture_excludes_only_engine_paths_inside_the_root() {
     let parent = tempfile::tempdir().expect("parent");
-    let data = parent.path().join("powerplant-data");
+    let data = parent.path().join("frinkworks-data");
     std::fs::create_dir(&data).expect("data");
 
     let engine = data.join("workflow-workspaces");
@@ -61,7 +61,7 @@ fn reviewed_capture_excludes_only_engine_paths_inside_the_root() {
         captured
             .entries
             .iter()
-            .any(|entry| entry.path == "powerplant-data/providers.json")
+            .any(|entry| entry.path == "frinkworks-data/providers.json")
     );
     assert!(
         captured
@@ -72,10 +72,10 @@ fn reviewed_capture_excludes_only_engine_paths_inside_the_root() {
     assert!(!captured.entries.iter().any(|entry| {
         entry
             .path
-            .starts_with("powerplant-data/workflow-workspaces")
+            .starts_with("frinkworks-data/workflow-workspaces")
             || entry
                 .path
-                .starts_with("powerplant-data/workflow-apply-journals")
+                .starts_with("frinkworks-data/workflow-apply-journals")
     }));
     let exclusions = super::reviewed_capture_exclusions(&engine, &data);
     assert!(

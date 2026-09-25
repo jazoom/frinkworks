@@ -154,13 +154,13 @@ pub(crate) enum AgentError {
 impl AgentError {
     pub(crate) fn message(self) -> &'static str {
         match self {
-            Self::Random => "Power Plant could not create an agent identifier. Try again.",
-            Self::Persist => "Power Plant could not store the agent. Try again.",
+            Self::Random => "Frinkworks could not create an agent identifier. Try again.",
+            Self::Persist => "Frinkworks could not store the agent. Try again.",
             Self::Corrupt => "An agent record is unreadable.",
             Self::Full => "The agent catalogue is full.",
             Self::Missing => "That agent does not exist.",
             Self::Conflict => "That agent changed in another tab. Reload it.",
-            Self::Revision => "Power Plant cannot update this agent again.",
+            Self::Revision => "Frinkworks cannot update this agent again.",
             Self::Name => "Enter a name of at most 80 bytes.",
             Self::Instructions => "Those instructions are too long.",
             Self::Model => "Enter a valid model preference.",
@@ -175,7 +175,7 @@ impl AgentError {
             Self::Path => "Enter an absolute directory path.",
             Self::PathMissing => "That directory does not exist.",
             Self::NotADirectory => "That path is not a directory.",
-            Self::PathAccess => "Power Plant cannot access that directory.",
+            Self::PathAccess => "Frinkworks cannot access that directory.",
             Self::NestedPath => "Directory grants cannot overlap.",
             Self::Primary => "Choose one primary directory from the grants.",
             Self::GrantCount => "Add at most eight directory grants.",

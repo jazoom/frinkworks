@@ -8,20 +8,20 @@ use crate::{
     state::AppState,
 };
 
-pub(super) const TITLE: &str = "Settings | Power Plant";
-pub(super) const RESET_STATUS_TITLE: &str = "Reset local data | Power Plant";
+pub(super) const TITLE: &str = "Settings | Frinkworks";
+pub(super) const RESET_STATUS_TITLE: &str = "Reset local data | Frinkworks";
 pub(super) const CONFIRMATION_ABSENT: &str =
     "Select the confirmation checkbox to reset local data.";
 pub(super) const CONFIRMATION_DUPLICATED: &str = "That form includes a duplicate field.";
 pub(super) const CONFIRMATION_MALFORMED: &str = "That form is not valid.";
 pub(super) const WORKFLOW_BUSY: &str = "A workflow is still running. Wait until it finishes.";
-pub(super) const RECORD_FAILED: &str = "Power Plant could not record the reset. Try again.";
+pub(super) const RECORD_FAILED: &str = "Frinkworks could not record the reset. Try again.";
 pub(super) const COMPACTION_MALFORMED: &str = "That compaction form is not valid.";
 pub(super) const COMPACTION_RANGE: &str =
     "Enter a whole percentage from 1 through 100 for automatic compaction.";
-pub(super) const COMPACTION_FAILED: &str = "Power Plant cannot save the compaction preference.";
+pub(super) const COMPACTION_FAILED: &str = "Frinkworks cannot save the compaction preference.";
 pub(super) const DEFAULTS_CLEAR_FAILED: &str =
-    "Power Plant cannot clear the saved conversation defaults.";
+    "Frinkworks cannot clear the saved conversation defaults.";
 
 pub(super) struct DefaultsField {
     pub(super) label: &'static str,

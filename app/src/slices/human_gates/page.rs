@@ -4,7 +4,7 @@ use crate::workflows::artefacts::diff::{CandidateDiff, MANIFEST_PAGE_SIZE, TEXT_
 use crate::workflows::gates::HumanGateRecord;
 use crate::workflows::{RunKind, WorkflowRun};
 
-pub(super) const TITLE: &str = "Human gate | Power Plant";
+pub(super) const TITLE: &str = "Human gate | Frinkworks";
 
 pub(super) struct ChangeRow {
     pub(super) directory: String,

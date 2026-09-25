@@ -7,7 +7,7 @@ pub(crate) const PLAN_SCHEMA: u32 = 1;
 pub(crate) const HUMAN_DECISION_SCHEMA: u32 = 1;
 pub(crate) const PLAN_DECISION_SCHEMA: u32 = 1;
 pub(crate) const MAXIMUM_PLAN_BYTES: usize = 256 * 1024;
-const ARTEFACT_DOMAIN: &[u8] = b"powerplant.artefact.v1";
+const ARTEFACT_DOMAIN: &[u8] = b"frinkworks.artefact.v1";
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]

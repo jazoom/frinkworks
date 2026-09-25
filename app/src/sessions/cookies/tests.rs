@@ -18,7 +18,7 @@ fn invalid_cookie_value_is_invalid() {
     let mut headers = HeaderMap::new();
     headers.insert(
         header::COOKIE,
-        "powerplant_session=not-a-token".parse().unwrap(),
+        "frinkworks_session=not-a-token".parse().unwrap(),
     );
     assert!(matches!(read_session(&headers), CookieRead::Invalid));
 }
@@ -28,13 +28,13 @@ fn duplicate_session_cookies_are_invalid() {
     let mut headers = HeaderMap::new();
     headers.append(
         header::COOKIE,
-        "powerplant_session=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        "frinkworks_session=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             .parse()
             .unwrap(),
     );
     headers.append(
         header::COOKIE,
-        "powerplant_session=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        "frinkworks_session=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
             .parse()
             .unwrap(),
     );
@@ -58,6 +58,6 @@ fn session_cookie_uses_the_server_lifetime() {
 fn deletion_header_has_no_token() {
     let header = session_deletion_header(&RuntimeConfig::development()).unwrap();
     let cookie = Cookie::parse(header.to_str().unwrap()).unwrap();
-    assert_eq!(cookie.name(), "powerplant_session");
+    assert_eq!(cookie.name(), "frinkworks_session");
     assert!(cookie.value().is_empty());
 }

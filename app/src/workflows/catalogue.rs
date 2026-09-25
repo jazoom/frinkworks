@@ -89,14 +89,14 @@ impl CatalogueError {
     pub(crate) fn message(self) -> &'static str {
         match self {
             Self::Corrupt => "The workflow catalogue is unreadable.",
-            Self::Persist => "Power Plant could not store that workflow. Try again.",
-            Self::Random => "Power Plant could not create a workflow identifier. Try again.",
+            Self::Persist => "Frinkworks could not store that workflow. Try again.",
+            Self::Random => "Frinkworks could not create a workflow identifier. Try again.",
             Self::Full => "The workflow catalogue is full.",
             Self::DuplicateName => "A workflow with that name already exists.",
 
             Self::Missing => "That workflow is no longer in the catalogue.",
             Self::Conflict => "That workflow changed in another tab. Reload it.",
-            Self::Revision => "Power Plant could not store another edit of that workflow.",
+            Self::Revision => "Frinkworks could not store another edit of that workflow.",
         }
     }
 }

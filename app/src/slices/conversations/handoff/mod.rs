@@ -416,13 +416,12 @@ fn render(
 ) -> AppResult<Response> {
     match graft {
         GraftRequest::Document => {
-            let mut response =
-                responses::chat_page_response("Handoff | Power Plant", state, &view)?;
+            let mut response = responses::chat_page_response("Handoff | Frinkworks", state, &view)?;
             responses::apply_patch_status(&mut response, status);
             Ok(response)
         }
         GraftRequest::Navigation => Ok(hypergraft::outcome::page_patch(
-            "Handoff | Power Plant",
+            "Handoff | Frinkworks",
             "chat-main",
             &view,
         )?),

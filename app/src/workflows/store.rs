@@ -37,10 +37,10 @@ pub(crate) enum StoreError {
 impl StoreError {
     pub(crate) fn message(self) -> &'static str {
         match self {
-            Self::Persist => "Power Plant could not store the workflow run. Try again.",
+            Self::Persist => "Frinkworks could not store the workflow run. Try again.",
             Self::Corrupt => "A workflow run record is unreadable.",
             Self::Missing => "That workflow run does not exist.",
-            Self::Conflict => "Power Plant could not update that workflow run.",
+            Self::Conflict => "Frinkworks could not update that workflow run.",
         }
     }
 }

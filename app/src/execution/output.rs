@@ -39,11 +39,11 @@ pub(crate) enum OutputError {
 impl OutputError {
     pub(crate) fn message(self) -> &'static str {
         match self {
-            Self::Persist => "Power Plant could not store command output.",
+            Self::Persist => "Frinkworks could not store command output.",
             Self::Corrupt => "The retained command output is unreadable.",
             Self::Missing => "That command output is not available.",
             Self::Forbidden => "That command output belongs to another conversation.",
-            Self::Full => "Power Plant cannot retain more command output.",
+            Self::Full => "Frinkworks cannot retain more command output.",
             Self::Cursor => "That output offset is not valid.",
         }
     }

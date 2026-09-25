@@ -14,10 +14,10 @@ use crate::conversations::{ConversationMetadata, ConversationStore};
 use crate::storage::{self, PersistError};
 use crate::workflows::{ExecutionGuard, WorkflowExecution};
 
-const OWNERSHIP_MARKER_NAME: &str = ".powerplant-data-root";
-const OWNERSHIP_CONTENTS: &[u8] = b"powerplant-data-root-v1\n";
-const RESET_MARKER_NAME: &str = ".powerplant-reset";
-const RESET_CONTENTS: &[u8] = b"powerplant-reset-v1\n";
+const OWNERSHIP_MARKER_NAME: &str = ".frinkworks-data-root";
+const OWNERSHIP_CONTENTS: &[u8] = b"frinkworks-data-root-v1\n";
+const RESET_MARKER_NAME: &str = ".frinkworks-reset";
+const RESET_CONTENTS: &[u8] = b"frinkworks-reset-v1\n";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ResetRequest {
@@ -52,23 +52,23 @@ pub(crate) enum ResetError {
 impl CatalogueResetConflict {
     pub(crate) fn message(self) -> &'static str {
         match self {
-            Self::AgentGrant => "An agent grant is inside the Power Plant data directory.",
+            Self::AgentGrant => "An agent grant is inside the Frinkworks data directory.",
             Self::ConversationGrant => {
-                "A conversation grant is inside the Power Plant data directory."
+                "A conversation grant is inside the Frinkworks data directory."
             }
-            Self::PresetGrant => "A preset grant is inside the Power Plant data directory.",
+            Self::PresetGrant => "A preset grant is inside the Frinkworks data directory.",
             Self::DefaultDirectory => {
-                "A directory in future defaults is inside the Power Plant data directory."
+                "A directory in future defaults is inside the Frinkworks data directory."
             }
             Self::WorkflowGrant => {
-                "A workflow directory setting is inside the Power Plant data directory."
+                "A workflow directory setting is inside the Frinkworks data directory."
             }
         }
     }
 }
 
 pub(crate) const HOST_PATH_RESET_PENDING: &str =
-    "Power Plant is waiting to reset local data. Stop and restart Power Plant.";
+    "Frinkworks is waiting to reset local data. Stop and restart Frinkworks.";
 
 #[derive(Clone)]
 pub(crate) struct LocalDataReset {
@@ -99,12 +99,12 @@ impl PrepareError {
     fn message(self) -> &'static str {
         match self {
             Self::ConfiguredPath => {
-                "POWERPLANT_DATA_DIR must name a directory with a final path component."
+                "FRINKWORKS_DATA_DIR must name a directory with a final path component."
             }
-            Self::UnusableDirectory => "The Power Plant data directory is not a usable directory.",
-            Self::UnownedRoot => "The Power Plant data directory is not a private owned root.",
-            Self::Prepare => "Power Plant could not prepare the data directory.",
-            Self::Reset => "Power Plant could not reset local data.",
+            Self::UnusableDirectory => "The Frinkworks data directory is not a usable directory.",
+            Self::UnownedRoot => "The Frinkworks data directory is not a private owned root.",
+            Self::Prepare => "Frinkworks could not prepare the data directory.",
+            Self::Reset => "Frinkworks could not reset local data.",
         }
     }
 }

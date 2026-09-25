@@ -62,7 +62,7 @@ pub(crate) async fn run(log_level: tracing::Level) -> Result<(), Box<dyn std::er
     let listener = tokio::net::TcpListener::bind(&bind_address).await?;
     tracing::info!(?environment);
     tracing::info!(
-        "Power Plant is available at:\n********************************\n{public_origin}\n********************************"
+        "Frinkworks is available at:\n********************************\n{public_origin}\n********************************"
     );
     axum::serve(
         listener,
@@ -73,7 +73,7 @@ pub(crate) async fn run(log_level: tracing::Level) -> Result<(), Box<dyn std::er
 }
 
 fn is_application_trace_target(target: &str) -> bool {
-    target == "powerplant" || target.starts_with("powerplant::")
+    target == "frinkworks" || target.starts_with("frinkworks::")
 }
 
 fn request_route<B>(request: &axum::http::Request<B>) -> &str {

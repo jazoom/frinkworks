@@ -549,7 +549,7 @@ async fn launch_rejects_stale_definitions_without_reserving_the_conversation() {
                 ))
                 .header(
                     header::COOKIE,
-                    format!("powerplant_session={}", token.raw().as_str()),
+                    format!("frinkworks_session={}", token.raw().as_str()),
                 )
                 .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
                 .header(hypergraft::GRAFT_REQUEST, "patch")
@@ -700,7 +700,7 @@ async fn unavailable_environments_block_sandbox_launch_without_substitution() {
                 ))
                 .header(
                     header::COOKIE,
-                    format!("powerplant_session={}", token.raw().as_str()),
+                    format!("frinkworks_session={}", token.raw().as_str()),
                 )
                 .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
                 .header(hypergraft::GRAFT_REQUEST, "patch")
@@ -869,7 +869,7 @@ async fn launch_preview_mismatch_starts_no_work() {
                     ))
                     .header(
                         header::COOKIE,
-                        format!("powerplant_session={}", token.raw().as_str()),
+                        format!("frinkworks_session={}", token.raw().as_str()),
                     )
                     .body(Body::empty())
                     .expect("request"),
@@ -895,7 +895,7 @@ async fn launch_preview_mismatch_starts_no_work() {
                 ))
                 .header(
                     header::COOKIE,
-                    format!("powerplant_session={}", token.raw().as_str()),
+                    format!("frinkworks_session={}", token.raw().as_str()),
                 )
                 .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
                 .header(hypergraft::GRAFT_REQUEST, "patch")
@@ -1014,7 +1014,7 @@ async fn launch_refuses_a_commit_workflow_with_only_read_access() {
                 ))
                 .header(
                     header::COOKIE,
-                    format!("powerplant_session={}", token.raw().as_str()),
+                    format!("frinkworks_session={}", token.raw().as_str()),
                 )
                 .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
                 .header(hypergraft::GRAFT_REQUEST, "patch")

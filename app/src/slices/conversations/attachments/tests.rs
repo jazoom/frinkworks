@@ -70,7 +70,7 @@ async fn upload_rejects_svg_without_creating_a_conversation() {
     let token = connected(&state);
     let request = Request::builder().method("POST")
         .uri(format!("/conversations/new/attachments?draft={DRAFT}"))
-        .header(header::COOKIE, format!("powerplant_session={token}"))
+        .header(header::COOKIE, format!("frinkworks_session={token}"))
         .header(header::CONTENT_TYPE, "multipart/form-data; boundary=image-test")
         .header(hypergraft::GRAFT_REQUEST, "patch").header(header::ACCEPT, hypergraft::MEDIA_TYPE)
         .body(Body::from("--image-test\r\nContent-Disposition: form-data; name=\"image\"; filename=\"x.png\"\r\nContent-Type: image/png\r\n\r\n<svg></svg>\r\n--image-test--\r\n")).expect("request");
@@ -246,7 +246,7 @@ async fn staged_previews_require_the_owner_and_scope() {
     ] {
         let request = Request::builder()
             .uri(&path)
-            .header(header::COOKIE, format!("powerplant_session={cookie}"))
+            .header(header::COOKIE, format!("frinkworks_session={cookie}"))
             .body(Body::empty())
             .expect("request");
         let response = app(&state).oneshot(request).await.expect("preview");

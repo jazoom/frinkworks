@@ -194,7 +194,7 @@ pub(crate) async fn build(
         scratch: Arc::new(std::sync::Mutex::new(Vec::new())),
     };
     if state.local_data.is_pending() {
-        return Err("Power Plant could not reset local data.".to_owned());
+        return Err("Frinkworks could not reset local data.".to_owned());
     }
     let active_commit_attempts: Vec<_> = state
         .workflow_runs
@@ -215,14 +215,14 @@ pub(crate) async fn build(
                 .iter()
                 .any(|attempt| guest_recovery.attempts_remaining.contains(attempt)))
     {
-        return Err("Power Plant could not recover a commit transaction.".to_owned());
+        return Err("Frinkworks could not recover a commit transaction.".to_owned());
     }
     crate::workflows::recover_apply_transactions(&state).map_err(str::to_owned)?;
     crate::workflows::recover_commit_transactions(&state).map_err(str::to_owned)?;
     state
         .workflow_runs
         .interrupt_active()
-        .map_err(|_| "Power Plant could not record workflow recovery.".to_owned())?;
+        .map_err(|_| "Frinkworks could not record workflow recovery.".to_owned())?;
     state
         .conversations
         .recover_handoffs(&state.workflow_runs)
@@ -246,7 +246,7 @@ pub(crate) async fn build(
                     || guest_recovery.runs_remaining.contains(run)
             },
         )
-        .map_err(|_| "Power Plant could not recover workflow workspaces.".to_owned())?;
+        .map_err(|_| "Frinkworks could not recover workflow workspaces.".to_owned())?;
     for (run_id, attempt_id) in state.workflow_runs.pending_cleanup_attempts() {
         let cleanup = recovered_cleanup_record(
             guest_recovery.inventory_complete,
@@ -259,7 +259,7 @@ pub(crate) async fn build(
         state
             .workflow_runs
             .mutate(&run_id, |run| run.record_cleanup(attempt_id, cleanup))
-            .map_err(|_| "Power Plant could not record workflow recovery.".to_owned())?;
+            .map_err(|_| "Frinkworks could not record workflow recovery.".to_owned())?;
     }
     state
         .conversation_runtime

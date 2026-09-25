@@ -16,7 +16,7 @@ pub(crate) enum ArtefactStoreError {
 impl ArtefactStoreError {
     pub(crate) fn message(self) -> &'static str {
         match self {
-            Self::Persist => "Power Plant could not store that artefact. Try again.",
+            Self::Persist => "Frinkworks could not store that artefact. Try again.",
             Self::Integrity => "An artefact object failed an integrity check.",
             Self::Missing => "An artefact object is missing.",
         }

@@ -1,10 +1,10 @@
-# Power Plant
+# Frinkworks
 
 ## Product
 
-Power Plant is a local coding agent. Axum, Askama, Hypergraft and Rig form its application stack.
+Frinkworks is a local coding agent. Axum, Askama, Hypergraft and Rig form its application stack.
 
-The user supplies a hosted model connection. Power Plant has no user accounts or product account.
+The user supplies a hosted model connection. Frinkworks has no user accounts or product account.
 
 A local vault stores provider credentials until the user forgets that provider. Conversations and configuration persist locally.
 
@@ -46,7 +46,7 @@ The source list excludes summarisation requests and advertised skills. The reque
 
 The transcript retains complete history. Model context is a separate projection. Automatic compaction replaces earlier exchanges with a summary. It runs when the input reaches the configured percentage of a known model context window. The default is enabled at 95 percent. Settings can disable automation or set a whole percentage from 1 through 100.
 
-Automatic compaction applies only when the model catalogue publishes a context window. Unknown capacity keeps the request on the operational bound and never triggers a percentage. Below the threshold, a request can still lack output headroom. Power Plant then reports the shortage and offers manual compaction. Manual compaction is independent of the automatic policy.
+Automatic compaction applies only when the model catalogue publishes a context window. Unknown capacity keeps the request on the operational bound and never triggers a percentage. Below the threshold, a request can still lack output headroom. Frinkworks then reports the shortage and offers manual compaction. Manual compaction is independent of the automatic policy.
 
 ## Workflows
 
@@ -100,7 +100,7 @@ Existing settlement keeps known file outcomes and ends the task through cancella
 
 Cancellation and discarded proposals do not undo direct writes or other host effects.
 
-Sandbox tools use authorised mounts. Host tools run as the Power Plant process user, without additional privileges or path confinement.
+Sandbox tools use authorised mounts. Host tools run as the Frinkworks process user, without additional privileges or path confinement.
 
 Both modes offer the selected file and command tools. Host file changes take effect immediately. Host command approval applies only to Run.
 
@@ -108,7 +108,7 @@ A direct `!command` or `!!command` runs in the selected location. It needs no pr
 
 Ask each time is the default host command policy. Run without approval requires fresh consent for the destination settings.
 
-Command approval covers the submitted command. Power Plant does not inspect script internals. The hosted model receives command output.
+Command approval covers the submitted command. Frinkworks does not inspect script internals. The hosted model receives command output.
 
 The catalogue supplies no file authority. Conversations point at directories only through directory grants.
 
@@ -149,11 +149,11 @@ An ordinary unsent message in a saved conversation survives catalogue navigation
 
 Agents supply reusable instructions and requested settings. A saved agent is not a subagent or an implicit workflow participant.
 
-A skill is an ordinary `SKILL.md` file with YAML frontmatter. Global skills live at `<data_root>/skills/<skill-folder>/SKILL.md`. Users can copy skill folders directly or edit complete files on the Skills page. No Power Plant identifiers or revision fields are required. The next request discovers copied files without a restart.
+A skill is an ordinary `SKILL.md` file with YAML frontmatter. Global skills live at `<data_root>/skills/<skill-folder>/SKILL.md`. Users can copy skill folders directly or edit complete files on the Skills page. No Frinkworks identifiers or revision fields are required. The next request discovers copied files without a restart.
 
 A new global directory starts with code review, debugging and test design skills. Restart does not replace user files or restore deleted defaults.
 
-Project skills live in `.agents/skills` directly inside each authorised directory. Discovery does not search nested project directories. Power Plant advertises a skill name and description in both host and sandbox modes. The model reads the body with the read tool. A skill grants no tool, directory or command authority.
+Project skills live in `.agents/skills` directly inside each authorised directory. Discovery does not search nested project directories. Frinkworks advertises a skill name and description in both host and sandbox modes. The model reads the body with the read tool. A skill grants no tool, directory or command authority.
 
 Environment recipes supply an OCI image and optional setup script. Each sandbox attempt pins a ready prepared snapshot.
 
@@ -227,7 +227,7 @@ The implementation status and evidence boundary are in `docs/conversation-system
 
 ## Brand
 
-The product name and wordmark are Power Plant. The mark is `app/public/images/logo.svg`.
+The product name and wordmark are Frinkworks. The mark is `app/public/images/frinkworks.svg`.
 
 Interface copy uses Australian English and sentence case.
 

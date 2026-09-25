@@ -554,7 +554,7 @@ fn sensitive_dispatch_requires_live_consent_and_the_original_directory() {
     let mut state = crate::tests::test_state(crate::config::RuntimeConfig::development());
     let root = tempfile::tempdir().unwrap();
     let home = root.path().join("home");
-    let data = home.join("power-plant-data");
+    let data = home.join("frinkworks-data");
     std::fs::create_dir_all(&data).unwrap();
     state.local_data = crate::local_data::LocalDataReset::for_test(data);
     let grant = crate::execution::DirectoryGrant::from_selected(&home, &[]).unwrap();
@@ -1639,7 +1639,7 @@ async fn partial_start_cleanup_retains_resources_until_the_guest_is_gone() {
                         .sandboxes
                         .orphans()
                         .iter()
-                        .any(|orphan| orphan.name.starts_with("pp-attempt-"))
+                        .any(|orphan| orphan.name.starts_with("frinkworks-attempt-"))
                 );
             }
         }

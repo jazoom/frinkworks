@@ -195,22 +195,22 @@ impl FailureCategory {
     pub(crate) fn message(self) -> &'static str {
         match self {
             Self::RuntimeUnavailable => {
-                "Power Plant cannot find the microsandbox runtime. Install it, then try again."
+                "Frinkworks cannot find the microsandbox runtime. Install it, then try again."
             }
-            Self::GuestCreate => "Power Plant could not create the preparation guest. Try again.",
+            Self::GuestCreate => "Frinkworks could not create the preparation guest. Try again.",
             Self::SetupExit => "The setup script exited with a non-zero code.",
             Self::SetupTimeout => "The setup script reached the time limit.",
-            Self::GuestStop => "Power Plant could not stop the preparation guest. Try again.",
-            Self::SnapshotCreate => "Power Plant could not create the snapshot. Try again.",
+            Self::GuestStop => "Frinkworks could not stop the preparation guest. Try again.",
+            Self::SnapshotCreate => "Frinkworks could not create the snapshot. Try again.",
             Self::SnapshotIntegrity => "The snapshot failed integrity verification.",
             Self::SnapshotRemove => {
-                "Power Plant could not remove an unpublished snapshot. Try again."
+                "Frinkworks could not remove an unpublished snapshot. Try again."
             }
-            Self::GuestRemove => "Power Plant could not remove the preparation guest. Try again.",
+            Self::GuestRemove => "Frinkworks could not remove the preparation guest. Try again.",
             Self::CataloguePersist => {
-                "Power Plant could not store the preparation result. Try again."
+                "Frinkworks could not store the preparation result. Try again."
             }
-            Self::ProcessRestarted => "Preparation stopped because Power Plant restarted.",
+            Self::ProcessRestarted => "Preparation stopped because Frinkworks restarted.",
             Self::EnvironmentDeleted => "Preparation stopped because the environment was deleted.",
         }
     }

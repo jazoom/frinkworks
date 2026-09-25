@@ -245,7 +245,7 @@ pub(crate) async fn run(state: AppState, work: OrdinaryRun) {
             cleanup_failed = true;
             outcome = AgentOutcome::PersistenceFailure;
             error = Some(
-                "Power Plant could not clean up the sandbox. This operation retains its reservations."
+                "Frinkworks could not clean up the sandbox. This operation retains its reservations."
                     .to_owned(),
             );
         }
@@ -486,7 +486,7 @@ async fn prepare_sandbox(
                 .finish(conversation, false, leftover);
             return Err(prepare_failure(
                 AgentOutcome::PersistenceFailure,
-                "Power Plant could not create the attempt workspace.",
+                "Frinkworks could not create the attempt workspace.",
             ));
         }
     };
@@ -688,7 +688,7 @@ fn host_policy_text(settings: &ExecutionSettings) -> String {
         "Each shell command waits for user approval bound to this conversation, job and settings revision."
     };
     format!(
-        "Tools run on this computer as the Power Plant process user. {approval} Approval does not inspect script internals. Command output is sent to the hosted model. Sandbox guest paths such as /access/<alias> and /workspace from earlier turns are not host paths and grant no authority."
+        "Tools run on this computer as the Frinkworks process user. {approval} Approval does not inspect script internals. Command output is sent to the hosted model. Sandbox guest paths such as /access/<alias> and /workspace from earlier turns are not host paths and grant no authority."
     )
 }
 
@@ -874,7 +874,7 @@ fn prepare_failure(outcome: AgentOutcome, error: impl Into<String>) -> PrepareFa
 }
 
 fn persist_error() -> &'static str {
-    "Power Plant could not store conversation execution state."
+    "Frinkworks could not store conversation execution state."
 }
 
 fn load_dir(dir: &Path) -> Result<BTreeMap<ConversationId, RuntimeRecord>, &'static str> {

@@ -58,7 +58,7 @@ pub(crate) enum ContextError {
 impl ContextError {
     pub(crate) fn message(self) -> &'static str {
         match self {
-            Self::Bound => "The model request is larger than Power Plant can measure.",
+            Self::Bound => "The model request is larger than Frinkworks can measure.",
             Self::Untrusted => "The model request contains invalid context text.",
             Self::Overflow => {
                 "The request does not fit this model's context. Compact earlier exchanges manually or choose a larger model."
@@ -67,7 +67,7 @@ impl ContextError {
                 "Input context is below the automatic compaction threshold, but the output reservation leaves no room. Compact context manually or choose a larger model."
             }
             Self::Capacity => {
-                "This model has no published context capacity, so Power Plant cannot use an automatic percentage. Compact context manually or choose a model with a known context window."
+                "This model has no published context capacity, so Frinkworks cannot use an automatic percentage. Compact context manually or choose a model with a known context window."
             }
             Self::Orphan => {
                 "A tool result is missing its originating call. Compact cannot drop it."

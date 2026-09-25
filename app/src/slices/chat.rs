@@ -41,7 +41,7 @@ async fn update_thinking_visibility(
         return thinking_visibility_patch(
             hypergraft::PatchStatus::UnprocessableEntity,
             state.preferences.show_thinking(),
-            Some("Power Plant could not save this preference. Try again."),
+            Some("Frinkworks could not save this preference. Try again."),
         );
     }
     thinking_visibility_patch(hypergraft::PatchStatus::Ok, form.show_thinking, None)

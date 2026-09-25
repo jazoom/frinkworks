@@ -664,7 +664,7 @@ mod scripted_fixture {
             Self {
                 verify_result: Ok(()),
                 script: Ok(Script::Chunks(
-                    chunk_reply("Hello from Power Plant.")
+                    chunk_reply("Hello from Frinkworks.")
                         .into_iter()
                         .map(Ok)
                         .collect(),

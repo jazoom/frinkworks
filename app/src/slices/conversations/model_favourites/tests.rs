@@ -16,7 +16,7 @@ async fn favourites_require_patch_commands_and_connected_catalogue_models() {
         Request::builder()
             .method("POST")
             .uri(path)
-            .header(header::COOKIE, format!("powerplant_session={token}"))
+            .header(header::COOKIE, format!("frinkworks_session={token}"))
             .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
             .body(Body::from("provider=xai&model=grok-4.6"))
             .unwrap(),

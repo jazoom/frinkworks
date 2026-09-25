@@ -251,7 +251,7 @@ async fn complete_plan_login(
             let Some(staged) = attempt.staged_path().map(std::path::Path::to_path_buf) else {
                 state.plan_login.set_error(
                     generation,
-                    "Power Plant could not store that provider. Try again.".to_owned(),
+                    "Frinkworks could not store that provider. Try again.".to_owned(),
                 );
                 return;
             };
@@ -266,9 +266,9 @@ async fn complete_plan_login(
                 Some(Err(_)) => {
                     let cleanup = attempt.discard();
                     let message = if cleanup.is_ok() {
-                        "Power Plant could not store that provider. Try again."
+                        "Frinkworks could not store that provider. Try again."
                     } else {
-                        "Power Plant could not remove the failed sign-in. Try again."
+                        "Frinkworks could not remove the failed sign-in. Try again."
                     };
                     state.plan_login.set_error(generation, message.to_owned());
                 }
@@ -284,7 +284,7 @@ async fn complete_plan_login(
             let message = if cleanup.is_ok() {
                 ProviderError::Reauthenticate.message()
             } else {
-                "Power Plant could not remove the failed sign-in. Try again."
+                "Frinkworks could not remove the failed sign-in. Try again."
             };
             state.plan_login.set_error(generation, message.to_owned());
         }
@@ -293,7 +293,7 @@ async fn complete_plan_login(
             let message = if cleanup.is_ok() {
                 "Sign-in did not finish. Try again."
             } else {
-                "Power Plant could not remove the failed sign-in. Try again."
+                "Frinkworks could not remove the failed sign-in. Try again."
             };
             state.plan_login.set_error(generation, message.to_owned());
         }

@@ -16,7 +16,7 @@ use crate::workflows::{WorkflowExecution, WorkflowRunStore};
 
 impl super::LocalDataReset {
     pub(crate) fn detached() -> Self {
-        Self::for_test(PathBuf::from("/powerplant-test-local-data"))
+        Self::for_test(PathBuf::from("/frinkworks-test-local-data"))
     }
 
     pub(crate) fn for_test(root: PathBuf) -> Self {
@@ -35,7 +35,7 @@ fn test_config(data_dir: PathBuf, protected_user_roots: Vec<PathBuf>) -> Startup
     StartupConfig {
         bind_address: "localhost:4000".to_owned(),
         runtime: RuntimeConfig::development(),
-        static_dir: PathBuf::from("/tmp/powerplant-static"),
+        static_dir: PathBuf::from("/tmp/frinkworks-static"),
         data_dir,
         protected_user_roots,
     }
@@ -113,7 +113,7 @@ fn rejects_an_unowned_directory_with_a_foreign_entry() {
         .expect("rejected");
     assert_eq!(
         error,
-        "The Power Plant data directory is not a private owned root."
+        "The Frinkworks data directory is not a private owned root."
     );
     assert_secret_safe(&error, &[&root]);
     assert!(!marker_path(&root, OWNERSHIP_MARKER_NAME).exists());
@@ -135,7 +135,7 @@ fn rejects_a_symbolic_entry_before_claiming_the_root() {
 
     assert_eq!(
         error,
-        "The Power Plant data directory is not a private owned root."
+        "The Frinkworks data directory is not a private owned root."
     );
     assert!(!marker_path(&root, OWNERSHIP_MARKER_NAME).exists());
     assert!(outside.exists());
@@ -149,7 +149,7 @@ fn rejects_a_filesystem_root_and_a_path_without_a_final_component() {
             .expect("rejected");
         assert_eq!(
             error,
-            "POWERPLANT_DATA_DIR must name a directory with a final path component."
+            "FRINKWORKS_DATA_DIR must name a directory with a final path component."
         );
         assert_secret_safe(&error, &[Path::new(path)]);
     }
@@ -174,7 +174,7 @@ fn rejects_protected_user_roots_and_allows_a_child_data_root() {
             .expect("equals rejected");
         assert_eq!(
             error,
-            "The Power Plant data directory is not a private owned root."
+            "The Frinkworks data directory is not a private owned root."
         );
         assert_secret_safe(&error, &[root.as_path()]);
         assert!(!marker_path(root, OWNERSHIP_MARKER_NAME).exists());
@@ -187,12 +187,12 @@ fn rejects_protected_user_roots_and_allows_a_child_data_root() {
             .expect("ancestor rejected");
         assert_eq!(
             error,
-            "The Power Plant data directory is not a private owned root."
+            "The Frinkworks data directory is not a private owned root."
         );
         assert_secret_safe(&error, &[&ancestor, home.path()]);
     }
 
-    let child = home.path().join("share").join("powerplant");
+    let child = home.path().join("share").join("frinkworks");
     let (_, local_data) = super::prepare(test_config(child, protected)).expect("child allowed");
     assert_eq!(listed_names(local_data.root()), vec![OWNERSHIP_MARKER_NAME]);
 }
@@ -222,7 +222,7 @@ fn rejects_a_symbolic_link_or_non_directory_root() {
         .expect("link rejected");
     assert_eq!(
         error,
-        "The Power Plant data directory is not a usable directory."
+        "The Frinkworks data directory is not a usable directory."
     );
     assert_secret_safe(&error, &[&link, &target]);
     assert!(!marker_path(&target, OWNERSHIP_MARKER_NAME).exists());
@@ -234,7 +234,7 @@ fn rejects_a_symbolic_link_or_non_directory_root() {
         .expect("file rejected");
     assert_eq!(
         error,
-        "The Power Plant data directory is not a usable directory."
+        "The Frinkworks data directory is not a usable directory."
     );
     assert_secret_safe(&error, &[&file]);
 }
@@ -256,7 +256,7 @@ fn rejects_malformed_oversized_and_symbolic_markers() {
         .expect("ownership symlink");
     assert_eq!(
         error,
-        "The Power Plant data directory is not a private owned root."
+        "The Frinkworks data directory is not a private owned root."
     );
     assert_eq!(fs::read(&outside).expect("kept"), OWNERSHIP_CONTENTS);
 
@@ -267,7 +267,7 @@ fn rejects_malformed_oversized_and_symbolic_markers() {
         .expect("malformed ownership");
     assert_eq!(
         error,
-        "The Power Plant data directory is not a private owned root."
+        "The Frinkworks data directory is not a private owned root."
     );
 
     fs::write(
@@ -280,7 +280,7 @@ fn rejects_malformed_oversized_and_symbolic_markers() {
         .expect("oversized ownership");
     assert_eq!(
         error,
-        "The Power Plant data directory is not a private owned root."
+        "The Frinkworks data directory is not a private owned root."
     );
 
     fs::write(
@@ -294,7 +294,7 @@ fn rejects_malformed_oversized_and_symbolic_markers() {
         .expect("reset directory");
     assert_eq!(
         error,
-        "The Power Plant data directory is not a private owned root."
+        "The Frinkworks data directory is not a private owned root."
     );
     assert!(marker_path(&root, OWNERSHIP_MARKER_NAME).exists());
 
@@ -306,7 +306,7 @@ fn rejects_malformed_oversized_and_symbolic_markers() {
         .expect("reset symlink");
     assert_eq!(
         error,
-        "The Power Plant data directory is not a private owned root."
+        "The Frinkworks data directory is not a private owned root."
     );
     assert_eq!(fs::read(&outside).expect("kept"), OWNERSHIP_CONTENTS);
     assert!(marker_path(&root, OWNERSHIP_MARKER_NAME).exists());
@@ -314,7 +314,7 @@ fn rejects_malformed_oversized_and_symbolic_markers() {
     fs::remove_file(marker_path(&root, RESET_MARKER_NAME)).expect("remove reset link");
     fs::write(
         marker_path(&root, RESET_MARKER_NAME),
-        b"powerplant-reset-v1",
+        b"frinkworks-reset-v1",
     )
     .expect("malformed");
     let error = super::prepare(test_config(root.clone(), Vec::new()))
@@ -322,7 +322,7 @@ fn rejects_malformed_oversized_and_symbolic_markers() {
         .expect("malformed reset");
     assert_eq!(
         error,
-        "The Power Plant data directory is not a private owned root."
+        "The Frinkworks data directory is not a private owned root."
     );
     assert!(marker_path(&root, OWNERSHIP_MARKER_NAME).exists());
     assert!(root.exists());

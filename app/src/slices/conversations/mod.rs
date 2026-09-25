@@ -1340,17 +1340,17 @@ fn render_candidate_review(
     match graft {
         GraftRequest::Document => {
             let mut response =
-                responses::chat_page_response("Review candidate | Power Plant", state, &view)?;
+                responses::chat_page_response("Review candidate | Frinkworks", state, &view)?;
             responses::apply_patch_status(&mut response, status);
             Ok(response)
         }
         GraftRequest::Navigation => Ok(hypergraft::outcome::page_patch(
-            "Review candidate | Power Plant",
+            "Review candidate | Frinkworks",
             "chat-main",
             &view,
         )?),
         GraftRequest::Patch => Ok(hypergraft::PatchSet::new()
-            .title("Review candidate | Power Plant")
+            .title("Review candidate | Frinkworks")
             .with_children("candidate-review-detail", &view.contents())?
             .respond(status)?),
     }
@@ -1374,17 +1374,17 @@ fn render_candidate_review_error(
     match graft {
         GraftRequest::Document => {
             let mut response =
-                responses::chat_page_response("Review candidate | Power Plant", state, &view)?;
+                responses::chat_page_response("Review candidate | Frinkworks", state, &view)?;
             responses::apply_patch_status(&mut response, PatchStatus::Conflict);
             Ok(response)
         }
         GraftRequest::Navigation => Ok(hypergraft::outcome::page_patch(
-            "Review candidate | Power Plant",
+            "Review candidate | Frinkworks",
             "chat-main",
             &view,
         )?),
         GraftRequest::Patch => Ok(hypergraft::PatchSet::new()
-            .title("Review candidate | Power Plant")
+            .title("Review candidate | Frinkworks")
             .with_children("chat-main", &view)?
             .respond(PatchStatus::Conflict)?),
     }
@@ -1857,7 +1857,7 @@ async fn start_message_mode(
             None => {
                 return Err(StartMessageError::User(
                     PatchStatus::UnprocessableEntity,
-                    "Power Plant cannot confirm image input for the selected model. Choose a model with image input.",
+                    "Frinkworks cannot confirm image input for the selected model. Choose a model with image input.",
                 ));
             }
         }

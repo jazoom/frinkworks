@@ -468,7 +468,7 @@ impl Drop for EnvironmentPreparationScheduler {
 }
 
 pub(crate) fn preparation_guest_name(id: &PreparationId) -> String {
-    format!("pp-prep-{}", id.as_hex())
+    format!("frinkworks-prep-{}", id.as_hex())
 }
 
 pub(crate) fn preparation_guest_spec(

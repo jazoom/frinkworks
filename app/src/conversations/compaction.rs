@@ -68,10 +68,10 @@ impl CompactionError {
             Self::Unsettled => {
                 "This conversation cannot compact while work, approval or recovery is active."
             }
-            Self::Bound => "The summary is larger than Power Plant can store.",
+            Self::Bound => "The summary is larger than Frinkworks can store.",
             Self::Malformed => "The summary is not valid replacement context.",
             Self::Persist => {
-                "Power Plant could not store the summary. The last valid context remains."
+                "Frinkworks could not store the summary. The last valid context remains."
             }
             Self::Oversized => {
                 "One complete exchange is too large to summarise. The previous context remains."
@@ -83,10 +83,10 @@ impl CompactionError {
                 "The selected model cannot supply the 10,000-token summary allowance. The previous context remains."
             }
             Self::UnknownCapacity => {
-                "The selected model has unknown context or output capacity. Power Plant cannot budget a summary request. The previous context remains."
+                "The selected model has unknown context or output capacity. Frinkworks cannot budget a summary request. The previous context remains."
             }
             Self::Requests => {
-                "The summary needs more sequential requests than Power Plant allows. The previous context remains."
+                "The summary needs more sequential requests than Frinkworks allows. The previous context remains."
             }
             Self::Continuation => {
                 "This boundary would discard opaque provider continuation data. The previous context remains."

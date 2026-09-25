@@ -165,59 +165,59 @@
 }
 
 @utility text-quiet {
-    color: var(--powerplant-quiet-ink);
+    color: var(--frinkworks-quiet-ink);
 }
 
 @utility text-composer-quiet {
-    color: var(--powerplant-composer-quiet);
+    color: var(--frinkworks-composer-quiet);
 }
 
 @layer base {
     :root,
     [data-theme="springfield"] {
-        --powerplant-cover: oklch(26.7% 0.0333 118.41);
-        --powerplant-cover-deep: oklch(19.34% 0.0197 121.82);
-        --powerplant-paper: oklch(95.96% 0.0434 100.07);
-        --powerplant-paper-green: oklch(93.29% 0.0576 119.18);
-        --powerplant-sky: oklch(83.6% 0.0646 212.34);
-        --powerplant-ink: oklch(29.4% 0.0342 131.83);
-        --powerplant-quiet-ink: oklch(48.42% 0.0377 126.87);
-        --powerplant-rule: oklch(74.54% 0.055 119.43);
-        --powerplant-strong-rule: oklch(54.29% 0.0556 128.1);
-        --powerplant-action: oklch(86.84% 0.1617 96.9);
-        --powerplant-action-deep: oklch(64.79% 0.1318 94.04);
-        --powerplant-action-hover: oklch(82% 0.16 96.9);
-        --powerplant-action-ink: oklch(26.7% 0.0333 118.41);
-        --powerplant-focus: oklch(52.28% 0.1304 133.62);
-        --powerplant-success: oklch(52.37% 0.1292 139.2);
-        --powerplant-success-bright: oklch(78% 0.2 125);
-        --powerplant-success-ink: oklch(34% 0.1 139);
-        --powerplant-success-wash: oklch(91% 0.08 130);
-        --powerplant-error-ink: oklch(37% 0.12 34);
-        --powerplant-error-wash: oklch(91% 0.055 38);
-        --powerplant-warning-wash: oklch(95% 0.09 98);
-        --powerplant-info-border: oklch(60% 0.08 212);
-        --powerplant-info-wash: oklch(93% 0.04 212);
-        --powerplant-control: oklch(99% 0.02 100);
-        --powerplant-composer: oklch(86.84% 0.1617 96.9);
-        --powerplant-composer-control: oklch(97% 0.09 97);
-        --powerplant-composer-link: oklch(31% 0.09 137);
-        --powerplant-composer-quiet: oklch(40% 0.05 115);
-        --powerplant-link: oklch(43% 0.11 137);
-        --powerplant-user-turn: oklch(95.03% 0.0942 98.1);
-        --powerplant-on-cover: oklch(93% 0.05 115);
-        --powerplant-on-cover-bright: oklch(98% 0.03 100);
-        --powerplant-on-cover-mid: oklch(87% 0.055 116);
-        --powerplant-on-cover-muted: oklch(84% 0.06 116);
-        --powerplant-on-cover-dim: oklch(74% 0.07 116);
-        --powerplant-cover-rule: oklch(100% 0 0 / 0.18);
-        --powerplant-cover-rule-soft: oklch(100% 0 0 / 0.17);
-        --powerplant-cover-rule-faint: oklch(100% 0 0 / 0.12);
-        --powerplant-cover-hover: oklch(86.84% 0.1617 96.9 / 0.12);
-        --powerplant-local-centre: oklch(100% 0 0);
-        --powerplant-shadow-deep: oklch(0% 0 0 / 0.34);
-        --powerplant-shadow-medium: oklch(0% 0 0 / 0.22);
-        --powerplant-shadow-soft: oklch(0% 0 0 / 0.08);
+        --frinkworks-cover: oklch(26.7% 0.0333 118.41);
+        --frinkworks-cover-deep: oklch(19.34% 0.0197 121.82);
+        --frinkworks-paper: oklch(95.96% 0.0434 100.07);
+        --frinkworks-paper-green: oklch(93.29% 0.0576 119.18);
+        --frinkworks-sky: oklch(83.6% 0.0646 212.34);
+        --frinkworks-ink: oklch(29.4% 0.0342 131.83);
+        --frinkworks-quiet-ink: oklch(48.42% 0.0377 126.87);
+        --frinkworks-rule: oklch(74.54% 0.055 119.43);
+        --frinkworks-strong-rule: oklch(54.29% 0.0556 128.1);
+        --frinkworks-action: oklch(86.84% 0.1617 96.9);
+        --frinkworks-action-deep: oklch(64.79% 0.1318 94.04);
+        --frinkworks-action-hover: oklch(82% 0.16 96.9);
+        --frinkworks-action-ink: oklch(26.7% 0.0333 118.41);
+        --frinkworks-focus: oklch(52.28% 0.1304 133.62);
+        --frinkworks-success: oklch(52.37% 0.1292 139.2);
+        --frinkworks-success-bright: oklch(78% 0.2 125);
+        --frinkworks-success-ink: oklch(34% 0.1 139);
+        --frinkworks-success-wash: oklch(91% 0.08 130);
+        --frinkworks-error-ink: oklch(37% 0.12 34);
+        --frinkworks-error-wash: oklch(91% 0.055 38);
+        --frinkworks-warning-wash: oklch(95% 0.09 98);
+        --frinkworks-info-border: oklch(60% 0.08 212);
+        --frinkworks-info-wash: oklch(93% 0.04 212);
+        --frinkworks-control: oklch(99% 0.02 100);
+        --frinkworks-composer: oklch(86.84% 0.1617 96.9);
+        --frinkworks-composer-control: oklch(97% 0.09 97);
+        --frinkworks-composer-link: oklch(31% 0.09 137);
+        --frinkworks-composer-quiet: oklch(40% 0.05 115);
+        --frinkworks-link: oklch(43% 0.11 137);
+        --frinkworks-user-turn: oklch(95.03% 0.0942 98.1);
+        --frinkworks-on-cover: oklch(93% 0.05 115);
+        --frinkworks-on-cover-bright: oklch(98% 0.03 100);
+        --frinkworks-on-cover-mid: oklch(87% 0.055 116);
+        --frinkworks-on-cover-muted: oklch(84% 0.06 116);
+        --frinkworks-on-cover-dim: oklch(74% 0.07 116);
+        --frinkworks-cover-rule: oklch(100% 0 0 / 0.18);
+        --frinkworks-cover-rule-soft: oklch(100% 0 0 / 0.17);
+        --frinkworks-cover-rule-faint: oklch(100% 0 0 / 0.12);
+        --frinkworks-cover-hover: oklch(86.84% 0.1617 96.9 / 0.12);
+        --frinkworks-local-centre: oklch(100% 0 0);
+        --frinkworks-shadow-deep: oklch(0% 0 0 / 0.34);
+        --frinkworks-shadow-medium: oklch(0% 0 0 / 0.22);
+        --frinkworks-shadow-soft: oklch(0% 0 0 / 0.08);
     }
 
     :is(
@@ -227,154 +227,154 @@
         [data-theme="stonecutters"],
         [data-theme="sector-7-g"]
     ) {
-        --powerplant-cover: var(--color-neutral);
-        --powerplant-cover-deep: color-mix(
+        --frinkworks-cover: var(--color-neutral);
+        --frinkworks-cover-deep: color-mix(
             in oklch,
             var(--color-neutral) 82%,
             black
         );
-        --powerplant-paper: var(--color-base-100);
-        --powerplant-paper-green: var(--color-base-200);
-        --powerplant-sky: color-mix(
+        --frinkworks-paper: var(--color-base-100);
+        --frinkworks-paper-green: var(--color-base-200);
+        --frinkworks-sky: color-mix(
             in oklch,
             var(--color-secondary) 22%,
             var(--color-base-200)
         );
-        --powerplant-ink: var(--color-base-content);
-        --powerplant-quiet-ink: color-mix(
+        --frinkworks-ink: var(--color-base-content);
+        --frinkworks-quiet-ink: color-mix(
             in oklch,
             var(--color-base-content) 76%,
             var(--color-base-100)
         );
-        --powerplant-rule: var(--color-base-300);
-        --powerplant-strong-rule: color-mix(
+        --frinkworks-rule: var(--color-base-300);
+        --frinkworks-strong-rule: color-mix(
             in oklch,
             var(--color-base-300) 70%,
             var(--color-base-content)
         );
-        --powerplant-action: var(--color-primary);
-        --powerplant-action-deep: color-mix(
+        --frinkworks-action: var(--color-primary);
+        --frinkworks-action-deep: color-mix(
             in oklch,
             var(--color-primary) 78%,
             var(--color-primary-content)
         );
-        --powerplant-action-hover: color-mix(
+        --frinkworks-action-hover: color-mix(
             in oklch,
             var(--color-primary) 88%,
             var(--color-base-content)
         );
-        --powerplant-action-ink: var(--color-primary-content);
-        --powerplant-focus: var(--color-accent);
-        --powerplant-success: var(--color-success);
-        --powerplant-success-bright: color-mix(
+        --frinkworks-action-ink: var(--color-primary-content);
+        --frinkworks-focus: var(--color-accent);
+        --frinkworks-success: var(--color-success);
+        --frinkworks-success-bright: color-mix(
             in oklch,
             var(--color-success) 84%,
             white
         );
-        --powerplant-success-ink: color-mix(
+        --frinkworks-success-ink: color-mix(
             in oklch,
             var(--color-base-content) 82%,
             var(--color-success)
         );
-        --powerplant-success-wash: color-mix(
+        --frinkworks-success-wash: color-mix(
             in oklch,
             var(--color-success) 14%,
             var(--color-base-100)
         );
-        --powerplant-error-ink: color-mix(
+        --frinkworks-error-ink: color-mix(
             in oklch,
             var(--color-base-content) 82%,
             var(--color-error)
         );
-        --powerplant-error-wash: color-mix(
+        --frinkworks-error-wash: color-mix(
             in oklch,
             var(--color-error) 14%,
             var(--color-base-100)
         );
-        --powerplant-warning-wash: color-mix(
+        --frinkworks-warning-wash: color-mix(
             in oklch,
             var(--color-warning) 16%,
             var(--color-base-100)
         );
-        --powerplant-info-border: var(--color-info);
-        --powerplant-info-wash: color-mix(
+        --frinkworks-info-border: var(--color-info);
+        --frinkworks-info-wash: color-mix(
             in oklch,
             var(--color-info) 14%,
             var(--color-base-100)
         );
-        --powerplant-control: var(--color-base-100);
-        --powerplant-composer: color-mix(
+        --frinkworks-control: var(--color-base-100);
+        --frinkworks-composer: color-mix(
             in oklch,
             var(--color-primary) 24%,
             var(--color-base-200)
         );
-        --powerplant-composer-control: var(--color-base-100);
-        --powerplant-composer-link: color-mix(
+        --frinkworks-composer-control: var(--color-base-100);
+        --frinkworks-composer-link: color-mix(
             in oklch,
             var(--color-base-content) 82%,
             var(--color-accent)
         );
-        --powerplant-composer-quiet: color-mix(
+        --frinkworks-composer-quiet: color-mix(
             in oklch,
             var(--color-base-content) 76%,
-            var(--powerplant-composer)
+            var(--frinkworks-composer)
         );
-        --powerplant-link: var(--color-accent);
-        --powerplant-user-turn: color-mix(
+        --frinkworks-link: var(--color-accent);
+        --frinkworks-user-turn: color-mix(
             in oklch,
             var(--color-primary) 13%,
             var(--color-base-100)
         );
-        --powerplant-on-cover: var(--color-neutral-content);
-        --powerplant-on-cover-bright: color-mix(
+        --frinkworks-on-cover: var(--color-neutral-content);
+        --frinkworks-on-cover-bright: color-mix(
             in oklch,
             var(--color-neutral-content) 96%,
             white
         );
-        --powerplant-on-cover-mid: color-mix(
+        --frinkworks-on-cover-mid: color-mix(
             in oklch,
             var(--color-neutral-content) 88%,
             var(--color-neutral)
         );
-        --powerplant-on-cover-muted: color-mix(
+        --frinkworks-on-cover-muted: color-mix(
             in oklch,
             var(--color-neutral-content) 78%,
             var(--color-neutral)
         );
-        --powerplant-on-cover-dim: color-mix(
+        --frinkworks-on-cover-dim: color-mix(
             in oklch,
             var(--color-neutral-content) 68%,
             var(--color-neutral)
         );
-        --powerplant-cover-rule: color-mix(
+        --frinkworks-cover-rule: color-mix(
             in oklch,
             var(--color-neutral-content) 18%,
             transparent
         );
-        --powerplant-cover-rule-soft: color-mix(
+        --frinkworks-cover-rule-soft: color-mix(
             in oklch,
             var(--color-neutral-content) 15%,
             transparent
         );
-        --powerplant-cover-rule-faint: color-mix(
+        --frinkworks-cover-rule-faint: color-mix(
             in oklch,
             var(--color-neutral-content) 10%,
             transparent
         );
-        --powerplant-cover-hover: color-mix(
+        --frinkworks-cover-hover: color-mix(
             in oklch,
             var(--color-primary) 14%,
             transparent
         );
-        --powerplant-local-centre: var(--color-base-100);
-        --powerplant-shadow-deep: oklch(0% 0 0 / 0.48);
-        --powerplant-shadow-medium: oklch(0% 0 0 / 0.34);
-        --powerplant-shadow-soft: oklch(0% 0 0 / 0.2);
+        --frinkworks-local-centre: var(--color-base-100);
+        --frinkworks-shadow-deep: oklch(0% 0 0 / 0.48);
+        --frinkworks-shadow-medium: oklch(0% 0 0 / 0.34);
+        --frinkworks-shadow-soft: oklch(0% 0 0 / 0.2);
     }
 
     html {
-        background: var(--powerplant-cover-deep);
-        scrollbar-color: var(--powerplant-action-deep) var(--powerplant-cover);
+        background: var(--frinkworks-cover-deep);
+        scrollbar-color: var(--frinkworks-action-deep) var(--frinkworks-cover);
         scrollbar-width: thin;
     }
 
@@ -382,7 +382,7 @@
         min-width: 20rem;
         font-family: var(--font-sans);
         line-height: 1.55;
-        background-color: var(--powerplant-cover);
+        background-color: var(--frinkworks-cover);
         background-image: repeating-linear-gradient(
             90deg,
             oklch(100% 0 0 / 0.025) 0,
@@ -393,7 +393,7 @@
     }
 
     :where(h1, h2, h3, h4, legend, th) {
-        color: var(--powerplant-ink);
+        color: var(--frinkworks-ink);
         font-family: var(--font-heading);
     }
 
@@ -403,18 +403,18 @@
     }
 
     :where(a, button, input, select, textarea, summary):focus-visible {
-        outline: 3px solid var(--powerplant-focus);
+        outline: 3px solid var(--frinkworks-focus);
         outline-offset: 3px;
     }
 
     .app-brand:focus-visible,
     .workspace-navigation a:focus-visible,
     .connect-brand:focus-visible {
-        outline-color: var(--powerplant-action);
+        outline-color: var(--frinkworks-action);
     }
 
     :where(input, select, textarea):focus-visible {
-        border-color: var(--powerplant-focus);
+        border-color: var(--frinkworks-focus);
     }
 
     button:not(:disabled),
@@ -424,13 +424,13 @@
     }
 
     ::selection {
-        color: var(--powerplant-action-ink);
-        background: var(--powerplant-action);
+        color: var(--frinkworks-action-ink);
+        background: var(--frinkworks-action);
     }
 
     * {
-        scrollbar-color: var(--powerplant-action-deep)
-            var(--powerplant-paper-green);
+        scrollbar-color: var(--frinkworks-action-deep)
+            var(--frinkworks-paper-green);
         scrollbar-width: thin;
     }
 }
@@ -442,8 +442,8 @@
         left: 0.5rem;
         z-index: 70;
         padding: 0.6rem 0.9rem;
-        color: var(--powerplant-action-ink);
-        background: var(--powerplant-action);
+        color: var(--frinkworks-action-ink);
+        background: var(--frinkworks-action);
         font-weight: 600;
         transform: translateY(-5rem);
     }
@@ -459,8 +459,8 @@
         max-width: 96rem;
         margin: 0 auto;
         overflow: clip;
-        border: 1px solid var(--powerplant-cover-rule);
-        box-shadow: 0 1.1rem 3.4rem var(--powerplant-shadow-deep);
+        border: 1px solid var(--frinkworks-cover-rule);
+        box-shadow: 0 1.1rem 3.4rem var(--frinkworks-shadow-deep);
     }
 
     body:has(.chat-sheet) .app-frame {
@@ -481,9 +481,9 @@
         min-height: 0;
         align-self: start;
         flex-direction: column;
-        color: var(--powerplant-on-cover);
-        background: var(--powerplant-cover);
-        border-right: 1px solid var(--powerplant-cover-deep);
+        color: var(--frinkworks-on-cover);
+        background: var(--frinkworks-cover);
+        border-right: 1px solid var(--frinkworks-cover-deep);
     }
 
     .app-brand {
@@ -492,8 +492,8 @@
         align-items: center;
         gap: 0.75rem;
         padding: 1.15rem 1.25rem;
-        color: var(--powerplant-on-cover-bright);
-        border-bottom: 1px solid var(--powerplant-cover-rule-soft);
+        color: var(--frinkworks-on-cover-bright);
+        border-bottom: 1px solid var(--frinkworks-cover-rule-soft);
         text-decoration: none;
     }
 
@@ -510,7 +510,7 @@
 
     .app-brand small {
         margin-top: 0.1rem;
-        color: var(--powerplant-on-cover-muted);
+        color: var(--frinkworks-on-cover-muted);
         font-size: 0.75rem;
     }
 
@@ -529,9 +529,9 @@
         justify-content: space-between;
         gap: 1rem;
         padding: 0.55rem 1.5rem;
-        color: var(--powerplant-ink);
-        border-bottom: 1px solid var(--powerplant-strong-rule);
-        background: var(--powerplant-sky);
+        color: var(--frinkworks-ink);
+        border-bottom: 1px solid var(--frinkworks-strong-rule);
+        background: var(--frinkworks-sky);
         font-size: 0.74rem;
     }
 
@@ -553,15 +553,15 @@
         height: 0.5rem;
         flex: none;
         content: "";
-        border: 1px solid var(--powerplant-ink);
+        border: 1px solid var(--frinkworks-ink);
         border-radius: 50%;
-        background: var(--powerplant-info-border);
+        background: var(--frinkworks-info-border);
     }
 
     .app-context-status[data-state="Revision requested"]::before,
     .app-context-status[data-state="Waiting"]::before,
     .app-context-status[data-state="Interrupted"]::before {
-        background: var(--powerplant-action-deep);
+        background: var(--frinkworks-action-deep);
     }
 
     .app-context-status[data-state="Failed"]::before,
@@ -591,9 +591,9 @@
         height: 0.55rem;
         flex: none;
         content: "";
-        border: 2px solid var(--powerplant-success);
+        border: 2px solid var(--frinkworks-success);
         border-radius: 50%;
-        background: var(--powerplant-local-centre);
+        background: var(--frinkworks-local-centre);
     }
 
     .app-page {
@@ -615,7 +615,7 @@
         justify-content: space-between;
         gap: 1.5rem;
         padding-bottom: 1rem;
-        border-bottom: 2px solid var(--powerplant-ink);
+        border-bottom: 2px solid var(--frinkworks-ink);
     }
 
     .page-intro h1 {
@@ -628,11 +628,11 @@
     .page-intro p {
         max-width: 65ch;
         margin-top: 0.4rem;
-        color: var(--powerplant-quiet-ink);
+        color: var(--frinkworks-quiet-ink);
     }
 
     .record-list {
-        border-top: 1px solid var(--powerplant-strong-rule);
+        border-top: 1px solid var(--frinkworks-strong-rule);
     }
 
     .record-row {
@@ -642,7 +642,7 @@
         align-items: center;
         gap: 1rem;
         padding: 0.8rem 0;
-        border-bottom: 1px solid var(--powerplant-rule);
+        border-bottom: 1px solid var(--frinkworks-rule);
     }
 
     .record-row > :first-child {
@@ -655,7 +655,7 @@
 
     .file-section {
         padding-top: 1.25rem;
-        border-top: 1px solid var(--powerplant-strong-rule);
+        border-top: 1px solid var(--frinkworks-strong-rule);
     }
 
     .file-section > h2:first-child,
@@ -668,13 +668,13 @@
         gap: 0;
         margin: 0;
         padding: 0;
-        border-top: 1px solid var(--powerplant-strong-rule);
+        border-top: 1px solid var(--frinkworks-strong-rule);
         list-style: none;
     }
 
     .workflow-process-group {
         padding: 1rem 0 0.45rem;
-        border-bottom: 1px solid var(--powerplant-strong-rule);
+        border-bottom: 1px solid var(--frinkworks-strong-rule);
     }
 
     .workflow-process-item {
@@ -682,7 +682,7 @@
         grid-template-columns: 2rem minmax(0, 1fr);
         gap: 0.75rem;
         padding: 0.85rem 0;
-        border-bottom: 1px solid var(--powerplant-rule);
+        border-bottom: 1px solid var(--frinkworks-rule);
     }
 
     .workflow-process-marker {
@@ -690,10 +690,10 @@
         width: 1.6rem;
         height: 1.6rem;
         place-items: center;
-        color: var(--powerplant-action-ink);
-        border: 1px solid var(--powerplant-action-deep);
+        color: var(--frinkworks-action-ink);
+        border: 1px solid var(--frinkworks-action-deep);
         border-radius: 50%;
-        background: var(--powerplant-action);
+        background: var(--frinkworks-action);
         font-family: var(--font-mono);
         font-size: 0.72rem;
         font-weight: 500;
@@ -704,7 +704,7 @@
         gap: 0.5rem;
         overflow-x: auto;
         padding: 0.25rem 0 0.5rem;
-        border-bottom: 1px solid var(--powerplant-strong-rule);
+        border-bottom: 1px solid var(--frinkworks-strong-rule);
         scrollbar-width: thin;
     }
 
@@ -714,10 +714,10 @@
         align-items: center;
         gap: 0.6rem;
         padding: 0.55rem 0.7rem;
-        color: var(--powerplant-quiet-ink);
-        border: 1px solid var(--powerplant-rule);
+        color: var(--frinkworks-quiet-ink);
+        border: 1px solid var(--frinkworks-rule);
         border-radius: 2px;
-        background: var(--powerplant-control);
+        background: var(--frinkworks-control);
         font-size: 0.8rem;
         font-weight: 600;
         text-align: left;
@@ -726,13 +726,13 @@
 
     .workflow-phase-tab:hover,
     .workflow-phase-tab[aria-selected="true"] {
-        color: var(--powerplant-ink);
-        border-color: var(--powerplant-action-deep);
-        background: var(--powerplant-warning-wash);
+        color: var(--frinkworks-ink);
+        border-color: var(--frinkworks-action-deep);
+        background: var(--frinkworks-warning-wash);
     }
 
     .workflow-phase-tab:focus-visible {
-        outline: 2px solid var(--powerplant-focus);
+        outline: 2px solid var(--frinkworks-focus);
         outline-offset: 2px;
     }
 
@@ -749,13 +749,13 @@
     }
 
     .workflow-advanced {
-        border-top: 1px solid var(--powerplant-rule);
+        border-top: 1px solid var(--frinkworks-rule);
     }
 
     .workflow-advanced > summary {
         width: fit-content;
         padding: 0.65rem 0;
-        color: var(--powerplant-link);
+        color: var(--frinkworks-link);
         font-size: 0.8rem;
         font-weight: 600;
         cursor: pointer;
@@ -775,7 +775,7 @@
     .settings-list {
         margin: 0;
         padding: 0;
-        border-top: 1px solid var(--powerplant-strong-rule);
+        border-top: 1px solid var(--frinkworks-strong-rule);
         list-style: none;
     }
 
@@ -785,7 +785,7 @@
         align-items: start;
         gap: 2rem;
         padding: 1.35rem 0 1.5rem;
-        border-bottom: 1px solid var(--powerplant-rule);
+        border-bottom: 1px solid var(--frinkworks-rule);
     }
 
     .settings-row h2 {
@@ -817,7 +817,7 @@
         font-family: var(--font-heading);
         font-weight: 600;
         text-transform: none;
-        box-shadow: 0 0.16rem 0.45rem var(--powerplant-shadow-soft);
+        box-shadow: 0 0.16rem 0.45rem var(--frinkworks-shadow-soft);
     }
 
     .btn-sm {
@@ -825,29 +825,29 @@
     }
 
     .btn-primary {
-        border-color: var(--powerplant-cover);
-        color: var(--powerplant-action-ink);
-        background: var(--powerplant-action);
+        border-color: var(--frinkworks-cover);
+        color: var(--frinkworks-action-ink);
+        background: var(--frinkworks-action);
     }
 
     .btn-primary:hover {
-        border-color: var(--powerplant-cover-deep);
-        background: var(--powerplant-action-hover);
+        border-color: var(--frinkworks-cover-deep);
+        background: var(--frinkworks-action-hover);
     }
 
     .btn-outline {
-        border-color: var(--powerplant-strong-rule);
-        color: var(--powerplant-ink);
-        background: var(--powerplant-paper);
+        border-color: var(--frinkworks-strong-rule);
+        color: var(--frinkworks-ink);
+        background: var(--frinkworks-paper);
     }
 
     .btn-ghost {
-        color: var(--powerplant-ink);
+        color: var(--frinkworks-ink);
     }
 
     .btn-ghost:hover {
-        color: var(--powerplant-ink);
-        background: var(--powerplant-paper-green);
+        color: var(--frinkworks-ink);
+        background: var(--frinkworks-paper-green);
     }
 
     .btn-error:not(.btn-outline) {
@@ -864,13 +864,13 @@
 
     .btn-error.btn-outline {
         border-color: var(--color-error);
-        color: var(--powerplant-error-ink);
+        color: var(--frinkworks-error-ink);
         background: transparent;
     }
 
     .btn-error.btn-outline:hover {
-        color: var(--powerplant-error-ink);
-        background: var(--powerplant-error-wash);
+        color: var(--frinkworks-error-ink);
+        background: var(--frinkworks-error-wash);
     }
 
     .btn:disabled,
@@ -885,10 +885,10 @@
     .select,
     .textarea {
         min-height: 2.5rem;
-        border-color: var(--powerplant-strong-rule);
+        border-color: var(--frinkworks-strong-rule);
         border-radius: 0.125rem;
-        color: var(--powerplant-ink);
-        background: var(--powerplant-control);
+        color: var(--frinkworks-ink);
+        background: var(--frinkworks-control);
     }
 
     .textarea {
@@ -903,25 +903,25 @@
 
     .input::placeholder,
     .textarea::placeholder {
-        color: var(--powerplant-quiet-ink);
+        color: var(--frinkworks-quiet-ink);
         opacity: 1;
     }
 
     .checkbox,
     .radio {
-        border-color: var(--powerplant-strong-rule);
-        background: var(--powerplant-control);
+        border-color: var(--frinkworks-strong-rule);
+        background: var(--frinkworks-control);
     }
 
     :is(.app-frame, .connect-frame) :is(.label, .label-text, legend) {
-        color: var(--powerplant-ink) !important;
+        color: var(--frinkworks-ink) !important;
         font-family: var(--font-heading);
         font-size: 0.8125rem;
         font-weight: 600;
     }
 
     .link {
-        color: var(--powerplant-link);
+        color: var(--frinkworks-link);
         font-weight: 600;
         text-decoration-thickness: 1px;
         text-underline-offset: 0.2em;
@@ -935,72 +935,76 @@
 
     .alert-error {
         border-color: var(--color-error);
-        color: var(--powerplant-error-ink);
-        background: var(--powerplant-error-wash);
+        color: var(--frinkworks-error-ink);
+        background: var(--frinkworks-error-wash);
     }
 
     .alert-warning {
-        border-color: var(--powerplant-action-deep);
-        color: var(--powerplant-ink);
-        background: var(--powerplant-warning-wash);
+        border-color: var(--frinkworks-action-deep);
+        color: var(--frinkworks-ink);
+        background: var(--frinkworks-warning-wash);
     }
 
     .alert-info {
-        border-color: var(--powerplant-info-border);
-        color: var(--powerplant-ink);
-        background: var(--powerplant-info-wash);
+        border-color: var(--frinkworks-info-border);
+        color: var(--frinkworks-ink);
+        background: var(--frinkworks-info-wash);
     }
 
     .badge {
-        border-color: var(--powerplant-strong-rule);
+        border-color: var(--frinkworks-strong-rule);
         border-radius: 0.125rem;
-        background: var(--powerplant-paper-green);
+        background: var(--frinkworks-paper-green);
         font-variant-numeric: tabular-nums;
     }
 
     .badge-success {
-        border-color: var(--powerplant-success);
-        color: var(--powerplant-success-ink);
-        background: var(--powerplant-success-wash);
+        border-color: var(--frinkworks-success);
+        color: var(--frinkworks-success-ink);
+        background: var(--frinkworks-success-wash);
     }
 
     .badge-warning {
-        border-color: var(--powerplant-action-deep);
-        color: var(--powerplant-ink);
-        background: var(--powerplant-warning-wash);
+        border-color: var(--frinkworks-action-deep);
+        color: var(--frinkworks-ink);
+        background: var(--frinkworks-warning-wash);
     }
 
     .badge-info {
-        border-color: var(--powerplant-info-border);
-        color: var(--powerplant-ink);
-        background: var(--powerplant-info-wash);
+        border-color: var(--frinkworks-info-border);
+        color: var(--frinkworks-ink);
+        background: var(--frinkworks-info-wash);
     }
 
     .table :where(th, td) {
-        border-color: var(--powerplant-rule);
+        border-color: var(--frinkworks-rule);
     }
 
     .table thead {
-        background: var(--powerplant-paper-green);
+        background: var(--frinkworks-paper-green);
     }
 
     .dropdown-content {
-        border-color: var(--powerplant-strong-rule);
-        background: var(--powerplant-paper);
-        box-shadow: 0 0.8rem 2rem var(--powerplant-shadow-medium);
+        border-color: var(--frinkworks-strong-rule);
+        background: var(--frinkworks-paper);
+        box-shadow: 0 0.8rem 2rem var(--frinkworks-shadow-medium);
     }
 
-    .powerplant-mark {
+    .frinkworks-mark {
         display: block;
         flex: none;
+        padding: 2px;
+        border-radius: 7px;
+        background: #fefcf6;
+        object-fit: contain;
     }
 
     .status-stamp {
         display: inline-block;
         padding: 0.35rem 0.65rem;
-        color: var(--powerplant-success-ink);
-        border: 2px solid var(--powerplant-success);
-        background: var(--powerplant-success-wash);
+        color: var(--frinkworks-success-ink);
+        border: 2px solid var(--frinkworks-success);
+        background: var(--frinkworks-success-wash);
         font-family: var(--font-mono);
         font-size: 0.72rem;
         font-weight: 600;
@@ -1013,17 +1017,17 @@
     :is(.status-stamp, .state-badge)[data-state="Completed"],
     :is(.status-stamp, .state-badge)[data-state="Approved"],
     :is(.status-stamp, .state-badge)[data-state="Current"] {
-        border-color: var(--powerplant-success);
-        color: var(--powerplant-success-ink);
-        background: var(--powerplant-success-wash);
+        border-color: var(--frinkworks-success);
+        color: var(--frinkworks-success-ink);
+        background: var(--frinkworks-success-wash);
     }
 
     :is(.status-stamp, .state-badge)[data-state="Active"],
     :is(.status-stamp, .state-badge)[data-state="Source capture"],
     :is(.status-stamp, .state-badge)[data-state="Awaiting decision"] {
-        border-color: var(--powerplant-info-border);
-        color: var(--powerplant-ink);
-        background: var(--powerplant-info-wash);
+        border-color: var(--frinkworks-info-border);
+        color: var(--frinkworks-ink);
+        background: var(--frinkworks-info-wash);
     }
 
     .status-stamp[data-state="Active"] {
@@ -1038,7 +1042,7 @@
         flex: none;
         content: "";
         border-radius: 50%;
-        background: var(--powerplant-info-border);
+        background: var(--frinkworks-info-border);
         animation: agent-work-pulse 1.35s ease-in-out infinite;
     }
 
@@ -1052,16 +1056,16 @@
     :is(.status-stamp, .state-badge)[data-state="Stale"],
     :is(.status-stamp, .state-badge)[data-state="Cancelled"],
     :is(.status-stamp, .state-badge)[data-state="Interrupted"] {
-        border-color: var(--powerplant-action-deep);
-        color: var(--powerplant-ink);
-        background: var(--powerplant-warning-wash);
+        border-color: var(--frinkworks-action-deep);
+        color: var(--frinkworks-ink);
+        background: var(--frinkworks-warning-wash);
     }
 
     :is(.status-stamp, .state-badge)[data-state="Failed"],
     :is(.status-stamp, .state-badge)[data-state^="Escalated"] {
         border-color: var(--color-error);
-        color: var(--powerplant-error-ink);
-        background: var(--powerplant-error-wash);
+        color: var(--frinkworks-error-ink);
+        background: var(--frinkworks-error-wash);
     }
 
     .danger-zone {
@@ -1071,14 +1075,14 @@
     }
 
     .run-summary {
-        border-block: 1px solid var(--powerplant-info-border);
-        background: var(--powerplant-info-wash);
+        border-block: 1px solid var(--frinkworks-info-border);
+        background: var(--frinkworks-info-wash);
     }
 
     .run-step-list {
         margin: 0;
         padding: 0;
-        border-top: 1px solid var(--powerplant-strong-rule);
+        border-top: 1px solid var(--frinkworks-strong-rule);
         list-style: none;
         counter-reset: run-step;
     }
@@ -1088,7 +1092,7 @@
         grid-template-columns: 2rem minmax(0, 1fr);
         gap: 0.8rem;
         padding: 1rem 0;
-        border-bottom: 1px solid var(--powerplant-rule);
+        border-bottom: 1px solid var(--frinkworks-rule);
         counter-increment: run-step;
     }
 
@@ -1098,27 +1102,27 @@
         height: 1.75rem;
         place-items: center;
         content: counter(run-step);
-        color: var(--powerplant-quiet-ink);
-        border: 1px solid var(--powerplant-strong-rule);
+        color: var(--frinkworks-quiet-ink);
+        border: 1px solid var(--frinkworks-strong-rule);
         font-family: var(--font-mono);
         font-size: 0.72rem;
         font-variant-numeric: tabular-nums;
     }
 
     .file-disclosure {
-        border-top: 1px solid var(--powerplant-strong-rule);
+        border-top: 1px solid var(--frinkworks-strong-rule);
     }
 
     .file-disclosure > summary {
         min-height: 2.75rem;
         padding-block: 0.75rem;
-        color: var(--powerplant-ink);
+        color: var(--frinkworks-ink);
         font-family: var(--font-heading);
         font-weight: 600;
     }
 
     .file-disclosure[open] > summary {
-        border-bottom: 1px solid var(--powerplant-rule);
+        border-bottom: 1px solid var(--frinkworks-rule);
     }
 }
 
@@ -1150,11 +1154,11 @@
         gap: 0.75rem;
         flex: none;
         padding: 0.65rem 2rem 0.5rem;
-        border-bottom: 1px solid var(--powerplant-rule);
+        border-bottom: 1px solid var(--frinkworks-rule);
         background: color-mix(
             in oklch,
-            var(--powerplant-paper-green) 46%,
-            var(--powerplant-paper)
+            var(--frinkworks-paper-green) 46%,
+            var(--frinkworks-paper)
         );
     }
 
@@ -1186,7 +1190,7 @@
         width: 100%;
         min-width: min(26rem, calc(100vw - 27rem));
         max-height: min(28rem, 50dvh);
-        box-shadow: 0 0.8rem 2rem var(--powerplant-shadow-medium);
+        box-shadow: 0 0.8rem 2rem var(--frinkworks-shadow-medium);
     }
 
     .chat-thinking-field {
@@ -1202,7 +1206,7 @@
         min-width: 0;
         min-height: 2rem;
         padding: 0.15rem 10rem 0 0;
-        color: var(--powerplant-quiet-ink);
+        color: var(--frinkworks-quiet-ink);
         font-size: 0.72rem;
     }
 
@@ -1215,7 +1219,7 @@
     }
 
     .chat-model-context-label {
-        color: var(--powerplant-ink);
+        color: var(--frinkworks-ink);
         font-weight: 600;
     }
 
@@ -1236,7 +1240,7 @@
         flex: none;
         gap: 1rem;
         padding: 1rem 2rem 0.85rem;
-        border-bottom: 1px solid var(--powerplant-rule);
+        border-bottom: 1px solid var(--frinkworks-rule);
     }
 
     .chat-title-row h1 {
@@ -1260,7 +1264,7 @@
         display: inline-flex;
         align-items: center;
         gap: 0.45rem;
-        color: var(--powerplant-quiet-ink);
+        color: var(--frinkworks-quiet-ink);
         font-size: 0.75rem;
         font-weight: 600;
         white-space: nowrap;
@@ -1271,18 +1275,18 @@
         height: 0.52rem;
         flex: none;
         content: "";
-        border: 1px solid var(--powerplant-success-ink);
+        border: 1px solid var(--frinkworks-success-ink);
         border-radius: 50%;
-        background: var(--powerplant-success);
+        background: var(--frinkworks-success);
     }
 
     .desk-status-indicator[data-state="Active"]::before {
-        background: var(--powerplant-info-border);
+        background: var(--frinkworks-info-border);
         animation: agent-work-pulse 1.35s ease-in-out infinite;
     }
 
     .desk-status-indicator[data-state="Awaiting decision"]::before {
-        background: var(--powerplant-action-deep);
+        background: var(--frinkworks-action-deep);
     }
 
     .chat-desk-options {
@@ -1308,15 +1312,15 @@
         width: 18rem;
         margin-top: 0.4rem;
         padding: 0.4rem;
-        color: var(--powerplant-ink);
-        border: 1px solid var(--powerplant-strong-rule);
-        background: var(--powerplant-paper);
-        box-shadow: 0 0.8rem 2rem var(--powerplant-shadow-medium);
+        color: var(--frinkworks-ink);
+        border: 1px solid var(--frinkworks-strong-rule);
+        background: var(--frinkworks-paper);
+        box-shadow: 0 0.8rem 2rem var(--frinkworks-shadow-medium);
     }
 
     .chat-desk-menu-label {
         padding: 0.35rem 0.65rem 0.25rem;
-        color: var(--powerplant-quiet-ink);
+        color: var(--frinkworks-quiet-ink);
         font-family: var(--font-mono);
         font-size: 0.66rem;
         letter-spacing: 0.06em;
@@ -1335,14 +1339,14 @@
         align-items: center;
         gap: 0.5rem;
         padding: 0.5rem 0.65rem;
-        color: var(--powerplant-ink);
+        color: var(--frinkworks-ink);
         text-decoration: none;
     }
 
     .chat-agent-list a:hover,
     .chat-agent-list a.active,
     .chat-desk-links a:hover {
-        background: var(--powerplant-paper-green);
+        background: var(--frinkworks-paper-green);
     }
 
     .chat-thinking-toggle {
@@ -1350,14 +1354,14 @@
         min-height: 2rem;
         align-items: center;
         gap: 0.65rem;
-        color: var(--powerplant-quiet-ink);
+        color: var(--frinkworks-quiet-ink);
         font-size: 0.75rem;
         font-weight: 400;
         cursor: pointer;
     }
 
     .chat-thinking-toggle:has(:focus-visible) {
-        outline: 3px solid var(--powerplant-focus);
+        outline: 3px solid var(--frinkworks-focus);
         outline-offset: 2px;
     }
 
@@ -1379,16 +1383,16 @@
     }
 
     .chat-transcript:focus-visible {
-        outline: 2px solid var(--powerplant-focus);
+        outline: 2px solid var(--frinkworks-focus);
         outline-offset: -3px;
     }
 
     .conversation-panel {
-        color: var(--powerplant-ink);
-        border: 1px solid var(--powerplant-strong-rule);
+        color: var(--frinkworks-ink);
+        border: 1px solid var(--frinkworks-strong-rule);
         border-radius: var(--radius-box);
-        background: var(--powerplant-paper);
-        box-shadow: 0 0.8rem 2rem var(--powerplant-shadow-medium);
+        background: var(--frinkworks-paper);
+        box-shadow: 0 0.8rem 2rem var(--frinkworks-shadow-medium);
     }
 
     .chat-turn {
@@ -1408,19 +1412,19 @@
 
     .chat-turn-user {
         margin-block: 0.5rem;
-        border-block: 1px solid var(--powerplant-rule);
-        background: var(--powerplant-user-turn);
+        border-block: 1px solid var(--frinkworks-rule);
+        background: var(--frinkworks-user-turn);
     }
 
     .chat-turn-meta {
-        color: var(--powerplant-quiet-ink);
+        color: var(--frinkworks-quiet-ink);
         font-size: 0.75rem;
         line-height: 1.75;
     }
 
     .chat-turn-meta strong {
         display: block;
-        color: var(--powerplant-ink);
+        color: var(--frinkworks-ink);
         font-family: var(--font-sans);
         font-size: 0.8125rem;
     }
@@ -1441,7 +1445,7 @@
         justify-content: space-between;
         gap: 1rem;
         margin: 0 0 0.55rem;
-        color: var(--powerplant-quiet-ink);
+        color: var(--frinkworks-quiet-ink);
         font-size: 0.75rem;
         font-weight: 600;
     }
@@ -1449,12 +1453,12 @@
     .chat-thinking {
         margin-bottom: 1rem;
         padding: 0.8rem 1rem;
-        border: 1px solid var(--powerplant-info-border);
-        background: var(--powerplant-info-wash);
+        border: 1px solid var(--frinkworks-info-border);
+        background: var(--frinkworks-info-wash);
     }
 
     .chat-thinking .chat-prose {
-        color: var(--powerplant-quiet-ink);
+        color: var(--frinkworks-quiet-ink);
         font-size: 0.875rem;
     }
 
@@ -1463,7 +1467,7 @@
         align-items: center;
         gap: 0.45rem;
         margin: 0 0 0.8rem;
-        color: var(--powerplant-quiet-ink);
+        color: var(--frinkworks-quiet-ink);
         font-family: var(--font-mono);
         font-size: 0.72rem;
         font-weight: 500;
@@ -1502,7 +1506,7 @@
 
     .chat-tools-heading {
         margin: 0 0 0.45rem;
-        color: var(--powerplant-quiet-ink);
+        color: var(--frinkworks-quiet-ink);
         font-family: var(--font-mono);
         font-size: 0.7rem;
         font-weight: 600;
@@ -1517,9 +1521,9 @@
 
     .chat-tool-output {
         min-height: 0;
-        border: 1px solid var(--powerplant-rule);
+        border: 1px solid var(--frinkworks-rule);
         border-radius: 0.125rem;
-        background: var(--powerplant-paper-green);
+        background: var(--frinkworks-paper-green);
     }
 
     .chat-tool-output > summary {
@@ -1541,7 +1545,7 @@
     .chat-tool-label {
         min-width: 0;
         overflow: hidden;
-        color: var(--powerplant-ink);
+        color: var(--frinkworks-ink);
         font-family: var(--font-mono);
         font-size: 0.75rem;
         font-weight: 500;
@@ -1551,7 +1555,7 @@
 
     .chat-tool-action {
         flex: none;
-        color: var(--powerplant-link);
+        color: var(--frinkworks-link);
         font-size: 0.72rem;
         font-weight: 600;
     }
@@ -1568,8 +1572,8 @@
     .chat-tool-full pre {
         overflow: auto;
         margin: 0;
-        border-top: 1px solid var(--powerplant-rule);
-        background: var(--powerplant-control);
+        border-top: 1px solid var(--frinkworks-rule);
+        background: var(--frinkworks-control);
         padding: 0.7rem 0.8rem;
         font-family: var(--font-mono);
         font-size: 0.75rem;
@@ -1581,7 +1585,7 @@
         display: block;
         max-height: 3.5rem;
         overflow: hidden;
-        color: var(--powerplant-quiet-ink);
+        color: var(--frinkworks-quiet-ink);
     }
 
     .chat-tool-output[open] .chat-tool-preview {
@@ -1619,9 +1623,9 @@
     }
 
     .chat-prose blockquote {
-        border-inline-start: 1px solid var(--powerplant-strong-rule);
+        border-inline-start: 1px solid var(--frinkworks-strong-rule);
         padding-inline-start: 1rem;
-        color: var(--powerplant-quiet-ink);
+        color: var(--frinkworks-quiet-ink);
     }
 
     .chat-prose table {
@@ -1633,14 +1637,14 @@
     }
 
     .chat-prose :is(th, td) {
-        border-bottom: 1px solid var(--powerplant-rule);
+        border-bottom: 1px solid var(--frinkworks-rule);
         padding: 0.6rem 0.75rem;
         text-align: start;
         vertical-align: top;
     }
 
     .chat-prose th {
-        background: var(--powerplant-paper-green);
+        background: var(--frinkworks-paper-green);
         font-weight: 600;
     }
 
@@ -1678,9 +1682,9 @@
     .chat-prose pre,
     .prose pre {
         overflow-x: auto;
-        border: 1px solid var(--powerplant-strong-rule);
+        border: 1px solid var(--frinkworks-strong-rule);
         border-radius: 0.125rem;
-        background: var(--powerplant-control);
+        background: var(--frinkworks-control);
         padding: 0.75rem 1rem;
         font-family: var(--font-mono);
         font-size: 0.875rem;
@@ -1694,13 +1698,13 @@
 
     .chat-prose :not(pre) > code,
     .prose :not(pre) > code {
-        background: var(--powerplant-paper-green);
+        background: var(--frinkworks-paper-green);
         padding: 0.1em 0.35em;
     }
 
     .chat-prose a,
     .prose a {
-        color: var(--powerplant-link);
+        color: var(--frinkworks-link);
         text-underline-offset: 0.2em;
         text-decoration: underline;
     }
@@ -1723,8 +1727,8 @@
         align-items: center;
         gap: 0.75rem 1.25rem;
         padding: 0.7rem 0.8rem;
-        border: 1px solid var(--powerplant-action-deep);
-        background: var(--powerplant-warning-wash);
+        border: 1px solid var(--frinkworks-action-deep);
+        background: var(--frinkworks-warning-wash);
     }
 
     .agent-work-state-title {
@@ -1740,9 +1744,9 @@
         width: 0.55rem;
         height: 0.55rem;
         flex: none;
-        border: 1px solid var(--powerplant-success-ink);
+        border: 1px solid var(--frinkworks-success-ink);
         border-radius: 50%;
-        background: var(--powerplant-success);
+        background: var(--frinkworks-success);
         animation: agent-work-pulse 1.35s ease-in-out infinite;
     }
 
@@ -1754,7 +1758,7 @@
         width: fit-content;
         min-height: 2rem;
         padding: 0.35rem 0.15rem;
-        color: var(--powerplant-composer-link);
+        color: var(--frinkworks-composer-link);
         font-size: 0.8rem;
         font-weight: 600;
         cursor: pointer;
@@ -1768,7 +1772,7 @@
         overflow-y: auto;
         overscroll-behavior-y: contain;
         padding: 0.75rem 0.25rem;
-        border-top: 1px solid var(--powerplant-rule);
+        border-top: 1px solid var(--frinkworks-rule);
     }
 
     @keyframes agent-work-pulse {
@@ -1787,12 +1791,12 @@
         position: relative;
         flex: none;
         padding: 0.6rem 2rem max(0.5rem, env(safe-area-inset-bottom));
-        color: var(--powerplant-ink);
-        border-top: 1px solid var(--powerplant-rule);
+        color: var(--frinkworks-ink);
+        border-top: 1px solid var(--frinkworks-rule);
         background: color-mix(
             in oklch,
-            var(--powerplant-composer) 22%,
-            var(--powerplant-paper)
+            var(--frinkworks-composer) 22%,
+            var(--frinkworks-paper)
         );
     }
 
@@ -1807,8 +1811,8 @@
 
     .chat-jump-latest.btn {
         pointer-events: auto;
-        background: var(--powerplant-paper);
-        box-shadow: 0 0.35rem 1rem var(--powerplant-shadow-soft);
+        background: var(--frinkworks-paper);
+        box-shadow: 0 0.35rem 1rem var(--frinkworks-shadow-soft);
     }
 
     .chat-jump-latest[hidden] {
@@ -1819,7 +1823,7 @@
         display: flex;
         align-items: center;
         gap: 0.45rem;
-        color: var(--powerplant-composer-quiet);
+        color: var(--frinkworks-composer-quiet);
     }
 
     .composer-readiness::before {
@@ -1828,21 +1832,21 @@
         flex: none;
         content: "";
         border-radius: 50%;
-        background: var(--powerplant-success);
+        background: var(--frinkworks-success);
     }
 
     .composer-readiness[data-state="active"]::before {
-        background: var(--powerplant-info-border);
+        background: var(--frinkworks-info-border);
     }
 
     .composer-form {
-        border: 1px solid var(--powerplant-strong-rule);
+        border: 1px solid var(--frinkworks-strong-rule);
         border-radius: 0.125rem;
-        background: var(--powerplant-control);
+        background: var(--frinkworks-control);
     }
 
     .composer-form:has(.composer-message:focus-visible) {
-        outline: 3px solid var(--powerplant-focus);
+        outline: 3px solid var(--frinkworks-focus);
         outline-offset: 2px;
     }
 
@@ -1863,7 +1867,7 @@
         line-height: 1.6;
         field-sizing: content;
         resize: vertical;
-        caret-color: var(--powerplant-ink);
+        caret-color: var(--frinkworks-ink);
     }
 
     .composer-message.textarea:focus-visible {
@@ -1882,7 +1886,7 @@
     .composer-dock .input,
     .composer-dock .select,
     .composer-dock .textarea {
-        background: var(--powerplant-control);
+        background: var(--frinkworks-control);
     }
 
     .composer-dock .composer-message {
@@ -1890,11 +1894,11 @@
     }
 
     .composer-dock .btn-outline {
-        background: var(--powerplant-composer-control);
+        background: var(--frinkworks-composer-control);
     }
 
     .composer-dock .link {
-        color: var(--powerplant-composer-link);
+        color: var(--frinkworks-composer-link);
     }
 
     .composer-dock :disabled {
@@ -1902,14 +1906,14 @@
     }
 
     .composer-dock .textarea:disabled::placeholder {
-        color: var(--powerplant-composer-quiet);
+        color: var(--frinkworks-composer-quiet);
         opacity: 1;
     }
 }
 
 @layer components {
     .connect-brand {
-        color: var(--powerplant-ink);
+        color: var(--frinkworks-ink);
         font-size: 21px;
         letter-spacing: -0.035em;
         text-decoration: none;
@@ -1931,16 +1935,16 @@
     }
 
     .connect-first-use .btn-outline {
-        border-color: var(--powerplant-rule);
-        background: var(--powerplant-paper);
-        color: var(--powerplant-ink);
+        border-color: var(--frinkworks-rule);
+        background: var(--frinkworks-paper);
+        color: var(--frinkworks-ink);
     }
 
     .connect-first-use .input:not([aria-invalid="true"]) {
         border-color: color-mix(
             in srgb,
-            var(--powerplant-quiet-ink) 80%,
-            var(--powerplant-paper)
+            var(--frinkworks-quiet-ink) 80%,
+            var(--frinkworks-paper)
         );
     }
 
@@ -1951,7 +1955,7 @@
     }
 
     .connect-or {
-        color: var(--powerplant-quiet-ink);
+        color: var(--frinkworks-quiet-ink);
     }
 
     .connect-or::before,
@@ -1959,7 +1963,7 @@
         content: "";
         height: 1px;
         flex: 1;
-        background: var(--powerplant-rule);
+        background: var(--frinkworks-rule);
     }
 
     .provider-logo {
@@ -1967,7 +1971,7 @@
         width: 1.5rem;
         height: 1.5rem;
         flex: none;
-        background: var(--powerplant-ink);
+        background: var(--frinkworks-ink);
         mask: var(--provider-logo) center / contain no-repeat;
         -webkit-mask: var(--provider-logo) center / contain no-repeat;
     }
@@ -2259,5 +2263,5 @@ form[data-graft-progress] [data-composer-progress] {
 }
 
 #composer[data-graft-progress] {
-    box-shadow: inset 0 2px 0 var(--powerplant-success);
+    box-shadow: inset 0 2px 0 var(--frinkworks-success);
 }

@@ -49,7 +49,7 @@ fn connected(state: &AppState) -> String {
 }
 
 fn cookie(token: &str) -> String {
-    format!("powerplant_session={token}")
+    format!("frinkworks_session={token}")
 }
 
 #[tokio::test]
@@ -238,7 +238,7 @@ fn owned_state() -> AppState {
     let config = StartupConfig {
         bind_address: "localhost:4000".to_owned(),
         runtime: RuntimeConfig::development(),
-        static_dir: PathBuf::from("/tmp/powerplant-static"),
+        static_dir: PathBuf::from("/tmp/frinkworks-static"),
         data_dir: dir.path().join("data"),
         protected_user_roots: Vec::new(),
     };
@@ -546,7 +546,7 @@ async fn a_confirmed_reset_records_the_request_and_keeps_the_theme() {
     assert_eq!(response.status(), StatusCode::OK);
     let text = body_text(response).await;
     assert!(text.contains("target=\"chat-main\""));
-    assert!(text.contains("Stop and restart Power Plant to finish the reset."));
+    assert!(text.contains("Stop and restart Frinkworks to finish the reset."));
     assert!(text.contains("The next start removes local data before normal store initialisation."));
     assert!(state.local_data.is_pending());
     assert_eq!(state.preferences.theme(), Theme::Sector7G);
@@ -563,7 +563,7 @@ async fn a_confirmed_reset_records_the_request_and_keeps_the_theme() {
         .await
         .expect("pending document");
     let document_text = body_text(document).await;
-    assert!(document_text.contains("Stop and restart Power Plant to finish the reset."));
+    assert!(document_text.contains("Stop and restart Frinkworks to finish the reset."));
     assert!(!document_text.contains("id=\"local-data-reset\""));
 
     let repeated = app(&state)
@@ -573,5 +573,5 @@ async fn a_confirmed_reset_records_the_request_and_keeps_the_theme() {
     assert_eq!(repeated.status(), StatusCode::OK);
     let repeated_text = body_text(repeated).await;
     assert!(repeated_text.contains("target=\"chat-main\""));
-    assert!(repeated_text.contains("Stop and restart Power Plant to finish the reset."));
+    assert!(repeated_text.contains("Stop and restart Frinkworks to finish the reset."));
 }

@@ -364,7 +364,7 @@ fn collect_leaves(
 fn temporary_name() -> String {
     let mut bytes = [0u8; 8];
     let _ = SysRng.try_fill_bytes(&mut bytes);
-    let mut name = String::from(".pp-");
+    let mut name = String::from(".frinkworks-");
     for byte in bytes {
         const HEX: &[u8; 16] = b"0123456789abcdef";
         name.push(HEX[(byte >> 4) as usize] as char);

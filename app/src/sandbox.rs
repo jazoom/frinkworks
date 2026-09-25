@@ -15,17 +15,17 @@ pub(crate) use crate::agents::GUEST_PROJECT;
 pub(crate) use access::public_network_policy;
 pub(crate) use command::{CommandEvent, CommandSession};
 
-pub(crate) const SANDBOX_OWNER_LABEL: &str = "works.powerplant.owner";
-pub(crate) const SANDBOX_OWNER_VALUE: &str = "powerplant";
-pub(crate) const SANDBOX_KIND_LABEL: &str = "works.powerplant.guest-kind";
+pub(crate) const SANDBOX_OWNER_LABEL: &str = "works.frinkworks.owner";
+pub(crate) const SANDBOX_OWNER_VALUE: &str = "frinkworks";
+pub(crate) const SANDBOX_KIND_LABEL: &str = "works.frinkworks.guest-kind";
 pub(crate) const GUEST_KIND_PREPARATION: &str = "preparation";
 pub(crate) const GUEST_KIND_WORKFLOW_RUN: &str = "workflow-run";
 pub(crate) const GUEST_KIND_WORKFLOW_ATTEMPT: &str = "workflow-attempt";
-pub(crate) const SANDBOX_ENVIRONMENT_LABEL: &str = "works.powerplant.environment";
-pub(crate) const SANDBOX_PREPARATION_LABEL: &str = "works.powerplant.preparation";
-pub(crate) const SANDBOX_RUN_LABEL: &str = "works.powerplant.run";
-pub(crate) const SANDBOX_ATTEMPT_LABEL: &str = "works.powerplant.attempt";
-pub(crate) const SANDBOX_SNAPSHOT_LABEL: &str = "works.powerplant.snapshot";
+pub(crate) const SANDBOX_ENVIRONMENT_LABEL: &str = "works.frinkworks.environment";
+pub(crate) const SANDBOX_PREPARATION_LABEL: &str = "works.frinkworks.preparation";
+pub(crate) const SANDBOX_RUN_LABEL: &str = "works.frinkworks.run";
+pub(crate) const SANDBOX_ATTEMPT_LABEL: &str = "works.frinkworks.attempt";
+pub(crate) const SANDBOX_SNAPSHOT_LABEL: &str = "works.frinkworks.snapshot";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum GuestStatus {
@@ -46,13 +46,13 @@ impl MissingRuntime {
     pub(crate) fn message(self) -> &'static str {
         match self {
             Self::Msb => {
-                "Power Plant cannot find the microsandbox program (`msb`). Install the microsandbox runtime, then start Power Plant again."
+                "Frinkworks cannot find the microsandbox program (`msb`). Install the microsandbox runtime, then start Frinkworks again."
             }
             Self::Libkrunfw => {
-                "Power Plant cannot find the microsandbox library (`libkrunfw`). Install the microsandbox runtime, then start Power Plant again."
+                "Frinkworks cannot find the microsandbox library (`libkrunfw`). Install the microsandbox runtime, then start Frinkworks again."
             }
             Self::Both => {
-                "Power Plant cannot find the microsandbox runtime (`msb` and `libkrunfw`). Install the microsandbox runtime, then start Power Plant again."
+                "Frinkworks cannot find the microsandbox runtime (`msb` and `libkrunfw`). Install the microsandbox runtime, then start Frinkworks again."
             }
         }
     }
@@ -109,21 +109,21 @@ impl SandboxError {
         match self {
             Self::Missing(missing) => missing.message(),
             Self::Busy => "Wait until the sandbox finishes starting.",
-            Self::Start => "Power Plant could not start the sandbox. Try again.",
-            Self::Inspect => "Power Plant could not read the sandbox status. Try again.",
+            Self::Start => "Frinkworks could not start the sandbox. Try again.",
+            Self::Inspect => "Frinkworks could not read the sandbox status. Try again.",
             Self::Ownership => {
-                "Power Plant cannot use the sandbox name because another sandbox owns it."
+                "Frinkworks cannot use the sandbox name because another sandbox owns it."
             }
             Self::NeedProject => "Choose a project directory.",
             Self::DirectoryMissing => "That directory does not exist.",
             Self::NotADirectory => "That path is not a directory.",
-            Self::DirectoryAccess => "Power Plant cannot access that directory.",
+            Self::DirectoryAccess => "Frinkworks cannot access that directory.",
             Self::StaleMount => "A granted directory is no longer at the saved path.",
             Self::Active => "Wait until the running command finishes.",
             Self::NotRunning => "Start the sandbox.",
-            Self::Exec => "Power Plant could not run the command. Try again.",
-            Self::Stop => "Power Plant could not stop the sandbox. Try again.",
-            Self::Remove => "Power Plant could not remove the sandbox. Try again.",
+            Self::Exec => "Frinkworks could not run the command. Try again.",
+            Self::Stop => "Frinkworks could not stop the sandbox. Try again.",
+            Self::Remove => "Frinkworks could not remove the sandbox. Try again.",
             Self::UserProjectWrite => "The host directory lacks Direct write authority.",
         }
     }
@@ -414,7 +414,7 @@ impl SandboxFleet {
     }
 
     fn new_handle(&self, run: RunId, attempt: AttemptId) -> GuestSandbox {
-        let name = format!("pp-attempt-{}", attempt.as_hex());
+        let name = format!("frinkworks-attempt-{}", attempt.as_hex());
         let live = Arc::new(Live::new());
         let inner = if self.scripted {
             #[cfg(test)]

@@ -67,15 +67,15 @@ fn capture(
         state.local_data.root(),
         &state.workflow_artefacts,
     )
-    .map_err(|_| "Power Plant cannot capture the named directories for direct-write evidence.")?;
+    .map_err(|_| "Frinkworks cannot capture the named directories for direct-write evidence.")?;
     let bytes = candidate
         .manifest_bytes()
-        .map_err(|_| "Power Plant cannot encode the direct-write evidence.")?;
+        .map_err(|_| "Frinkworks cannot encode the direct-write evidence.")?;
     state
         .workflow_artefacts
         .publish(&bytes)
         .map(|hash| Some(hash.as_str()))
-        .map_err(|_| "Power Plant cannot store the direct-write evidence.")
+        .map_err(|_| "Frinkworks cannot store the direct-write evidence.")
 }
 
 pub(super) fn before(
@@ -105,7 +105,7 @@ pub(super) fn before(
                 Ok(())
             })
             .map(|_| ())
-            .map_err(|_| "Power Plant cannot retain the direct-write baseline.");
+            .map_err(|_| "Frinkworks cannot retain the direct-write baseline.");
     }
     let Some(before) = capture(state, &run, step)? else {
         return Ok(());
@@ -125,7 +125,7 @@ pub(super) fn before(
             Ok(())
         })
         .map(|_| ())
-        .map_err(|_| "Power Plant cannot store the direct-write baseline.")
+        .map_err(|_| "Frinkworks cannot store the direct-write baseline.")
 }
 
 pub(super) fn after(
@@ -169,7 +169,7 @@ pub(super) fn after(
             Ok(())
         })
         .map(|_| ())
-        .map_err(|_| "Power Plant cannot store the observed direct writes.")
+        .map_err(|_| "Frinkworks cannot store the observed direct writes.")
 }
 
 #[cfg(test)]

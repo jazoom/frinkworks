@@ -25,7 +25,7 @@ async fn recent_projection_is_bounded_escaped_and_uses_the_canonical_catalogue_r
     }
     let request = Request::builder()
         .uri("/conversations?index=true")
-        .header(header::COOKIE, format!("powerplant_session={token}"))
+        .header(header::COOKIE, format!("frinkworks_session={token}"))
         .header("Graft-Request", "patch")
         .header(header::ACCEPT, "text/vnd.hypergraft.patches+html")
         .body(Body::empty())
@@ -58,7 +58,7 @@ async fn sidebar_projection_counts_the_authoritative_gate() {
     awaiting_gate(&state);
     let request = Request::builder()
         .uri("/conversations?index=true")
-        .header(header::COOKIE, format!("powerplant_session={token}"))
+        .header(header::COOKIE, format!("frinkworks_session={token}"))
         .header("Graft-Request", "patch")
         .header(header::ACCEPT, "text/vnd.hypergraft.patches+html")
         .body(Body::empty())

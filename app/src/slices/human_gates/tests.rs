@@ -381,7 +381,7 @@ impl GateFixture {
 }
 
 fn cookie(token: &str) -> String {
-    format!("powerplant_session={token}")
+    format!("frinkworks_session={token}")
 }
 
 fn git_worktree() -> tempfile::TempDir {

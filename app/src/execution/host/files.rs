@@ -37,7 +37,7 @@ pub(crate) async fn capture(
     let mut child = command.spawn().map_err(|_| {
         failure(
             CommandTermination::NotDispatched,
-            "Power Plant cannot start the file command.",
+            "Frinkworks cannot start the file command.",
         )
     })?;
     let _group = super::ProcessGroup(child.id());
@@ -62,14 +62,14 @@ pub(crate) async fn capture(
                 async {
                     if let Some(bytes) = request.stdin {
                         stdin.as_mut().expect("stdin pipe").write_all(&bytes).await
-                            .map_err(|_| failure(CommandTermination::Unknown, "Power Plant cannot send the file contents."))?;
+                            .map_err(|_| failure(CommandTermination::Unknown, "Frinkworks cannot send the file contents."))?;
                     }
                     drop(stdin);
                     Ok(())
                 },
                 async {
                     child.wait().await.map_err(|_| failure(
-                        CommandTermination::Unknown, "Power Plant lost the file command result.",
+                        CommandTermination::Unknown, "Frinkworks lost the file command result.",
                     ))
                 },
             )?;
@@ -95,7 +95,7 @@ async fn read_bounded(
         .map_err(|_| {
             failure(
                 CommandTermination::Unknown,
-                "Power Plant cannot read the file command output.",
+                "Frinkworks cannot read the file command output.",
             )
         })?;
     if bytes.len() > maximum {

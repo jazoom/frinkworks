@@ -138,7 +138,7 @@ impl CommandResult {
                 Some("The command exceeded the output resource limit.".to_owned())
             }
             CommandTermination::StorageFailure => {
-                Some("Power Plant could not store command output.".to_owned())
+                Some("Frinkworks could not store command output.".to_owned())
             }
             CommandTermination::Cancelled => Some("The command was cancelled.".to_owned()),
             CommandTermination::TimedOut => Some("The command exceeded the time limit.".to_owned()),
@@ -297,7 +297,7 @@ pub(crate) struct CommandFailure {
 impl CommandFailure {
     pub(crate) fn new(result: CommandResult, message: &'static str) -> Self {
         let message = if result.termination == CommandTermination::StorageFailure {
-            "Power Plant could not store command output. Command effects can remain incomplete."
+            "Frinkworks could not store command output. Command effects can remain incomplete."
         } else {
             message
         };

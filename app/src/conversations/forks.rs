@@ -29,7 +29,7 @@ pub(crate) enum ForkError {
 impl ForkError {
     pub(crate) fn message(self) -> &'static str {
         match self {
-            Self::Random => "Power Plant could not create a fork draft. Try again.",
+            Self::Random => "Frinkworks could not create a fork draft. Try again.",
             Self::Missing => "That message is no longer in the conversation.",
             Self::Boundary => {
                 "Fork only between complete exchanges. Pick an earlier settled message."

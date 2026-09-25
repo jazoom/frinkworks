@@ -36,7 +36,7 @@ pub(crate) enum ApprovalError {
 impl ApprovalError {
     pub(crate) fn message(self) -> &'static str {
         match self {
-            Self::Random => "Power Plant could not create a command approval. Try again.",
+            Self::Random => "Frinkworks could not create a command approval. Try again.",
             Self::Invalid => "That command approval is not valid.",
             Self::Duplicate => "That command was already decided.",
             Self::Cancelled => "Stopped.",

@@ -438,7 +438,7 @@ impl DirectoryGrantId {
 impl DirectoryGrantError {
     pub(crate) fn message(self) -> &'static str {
         match self {
-            Self::Random => "Power Plant could not create a directory grant. Try again.",
+            Self::Random => "Frinkworks could not create a directory grant. Try again.",
             Self::Path => "Choose an absolute directory path.",
             Self::Unavailable => "That directory is unavailable or changed at the saved path.",
             Self::Duplicate => "That directory already has access.",

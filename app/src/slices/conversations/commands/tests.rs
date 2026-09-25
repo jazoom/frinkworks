@@ -58,7 +58,7 @@ fn conversation(state: &AppState, directory: &Path) -> (ConversationRecord, Dire
 fn json_request(path: &str, token: &str) -> Request<Body> {
     Request::builder()
         .uri(path)
-        .header(header::COOKIE, format!("powerplant_session={token}"))
+        .header(header::COOKIE, format!("frinkworks_session={token}"))
         .header(header::ACCEPT, "application/json")
         .body(Body::empty())
         .expect("request")
@@ -67,7 +67,7 @@ fn json_request(path: &str, token: &str) -> Request<Body> {
 fn patch_request(path: &str, token: &str) -> Request<Body> {
     Request::builder()
         .uri(path)
-        .header(header::COOKIE, format!("powerplant_session={token}"))
+        .header(header::COOKIE, format!("frinkworks_session={token}"))
         .header(hypergraft::GRAFT_REQUEST, "patch")
         .header(header::ACCEPT, hypergraft::MEDIA_TYPE)
         .body(Body::empty())

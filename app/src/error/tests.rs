@@ -109,7 +109,7 @@ fn debug_logs_and_browser_response_do_not_expose_the_source_message() {
     let output = tracing.output();
     assert!(output.contains("operation=\"call provider\""), "{output}");
     assert!(
-        output.contains("source=\"powerplant::error::tests::SecretSource\""),
+        output.contains("source=\"frinkworks::error::tests::SecretSource\""),
         "{output}"
     );
     assert!(!output.contains("do-not-log"), "{output}");

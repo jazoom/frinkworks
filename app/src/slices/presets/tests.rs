@@ -72,7 +72,7 @@ async fn routes_support_navigation_and_patch_commands_only() {
     ] {
         let mut request = Request::builder().uri("/presets").header(
             header::COOKIE,
-            format!("powerplant_session={}", token.raw().as_str()),
+            format!("frinkworks_session={}", token.raw().as_str()),
         );
         if let Some(kind) = kind {
             request = request
@@ -97,7 +97,7 @@ async fn routes_support_navigation_and_patch_commands_only() {
                     .uri(path)
                     .header(
                         header::COOKIE,
-                        format!("powerplant_session={}", token.raw().as_str()),
+                        format!("frinkworks_session={}", token.raw().as_str()),
                     )
                     .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
                     .body(Body::from("name=Forged"))

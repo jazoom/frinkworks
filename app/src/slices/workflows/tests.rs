@@ -28,7 +28,7 @@ fn app(state: &AppState) -> axum::Router {
 }
 
 fn cookie(token: &str) -> String {
-    format!("powerplant_session={token}")
+    format!("frinkworks_session={token}")
 }
 
 fn connected(state: &AppState) -> String {

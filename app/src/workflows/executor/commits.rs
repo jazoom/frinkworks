@@ -49,7 +49,7 @@ pub(super) async fn isolate(
             return IsolatedRun::Finished {
                 outcome: StepOutcome::Failed {
                     category: FailureCategory::Operational,
-                    error: Some("Power Plant cannot create the commit workspace.".to_owned()),
+                    error: Some("Frinkworks cannot create the commit workspace.".to_owned()),
                 },
                 cleanup: if error.orphaned {
                     crate::workflows::run::AttemptCleanupRecord::Orphaned {
@@ -114,7 +114,7 @@ pub(super) async fn isolate(
     if matches!(outcome, StepOutcome::Completed) && captured.is_none() {
         outcome = StepOutcome::Failed {
             category: FailureCategory::Commit,
-            error: Some("Power Plant cannot capture the committed files.".to_owned()),
+            error: Some("Frinkworks cannot capture the committed files.".to_owned()),
         };
     }
     let sandbox_gone = stopped && sandbox.remove().await.is_ok();
@@ -233,7 +233,7 @@ fn prepare(
 }
 
 pub(super) fn recover(state: &AppState) -> Result<(), &'static str> {
-    const ERROR: &str = "Power Plant cannot recover a repository commit. Earlier commits remain.";
+    const ERROR: &str = "Frinkworks cannot recover a repository commit. Earlier commits remain.";
     for run in state.workflow_runs.active_runs() {
         let Some(attempt_id) = run.active_attempt() else {
             continue;
@@ -265,12 +265,12 @@ pub(super) fn recover(state: &AppState) -> Result<(), &'static str> {
             let recovered = recover_root(state, &run, attempt_id, root, &initial, &target)
                 .map_err(|error| error.message())?;
             persist_commit_root(state, run.id, attempt_id, recovered)
-                .map_err(|_| "Power Plant cannot record the recovered repository.")?;
+                .map_err(|_| "Frinkworks cannot record the recovered repository.")?;
             let temporary = root
                 .grant
                 .host_path
                 .join(".git")
-                .join(format!("powerplant-commit-index-{}", attempt_id.as_hex()));
+                .join(format!("frinkworks-commit-index-{}", attempt_id.as_hex()));
             match std::fs::remove_file(temporary) {
                 Ok(()) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -303,7 +303,7 @@ pub(super) fn recover(state: &AppState) -> Result<(), &'static str> {
                     )?;
                     run.complete_attempt(attempt_id, now_ms())
                 })
-                .map_err(|_| "Power Plant cannot complete the recovered commit step.")?;
+                .map_err(|_| "Frinkworks cannot complete the recovered commit step.")?;
         } else {
             remove_commit_journal(state, run.id, attempt_id)?;
         }

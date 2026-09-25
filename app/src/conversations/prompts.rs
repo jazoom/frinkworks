@@ -1,7 +1,7 @@
 //! Prompt templates with non-recursive argument substitution.
 //!
-//! Global discovery reads bounded Markdown files directly inside the Power
-//! Plant data-directory `prompts` folder. Project discovery reads
+//! Global discovery reads bounded Markdown files directly inside the Frinkworks
+//! data-directory `prompts` folder. Project discovery reads
 //! `.agents/prompts/*.md` directly below an authorised work location. The
 //! parser and renderer are pure. Template text is never executed and
 //! expansion output never runs command classification again.

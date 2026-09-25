@@ -20,5 +20,5 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Update => "update",
         Command::Check => "check",
     };
-    powerplant::run_catalogue_utility(command).await
+    frinkworks::run_catalogue_utility(command).await
 }

@@ -7,22 +7,22 @@ taplo = "0.10.0"
 
 [env]
 _.path = ["{{config_root}}/node_modules/.bin"]
-POWERPLANT_ENVIRONMENT = "development"
-POWERPLANT_BIND_ADDRESS = "localhost:4000"
-POWERPLANT_PUBLIC_ORIGIN = "http://localhost:4000"
+FRINKWORKS_ENVIRONMENT = "development"
+FRINKWORKS_BIND_ADDRESS = "localhost:4000"
+FRINKWORKS_PUBLIC_ORIGIN = "http://localhost:4000"
 
 [tasks.build]
-description = "Build Power Plant"
-run = "cargo build -p powerplant --release"
+description = "Build Frinkworks"
+run = "cargo build -p frinkworks --release"
 
 [tasks.server]
 alias = "s"
-description = "Run Power Plant"
-run = "cargo run -p powerplant"
+description = "Run Frinkworks"
+run = "cargo run -p frinkworks"
 
 [tasks.dev]
 alias = "d"
-description = "Run the Power Plant Rust web server with asset and template reloads"
+description = "Run the Frinkworks Rust web server with asset and template reloads"
 run = """
 #!/usr/bin/env bash
 set -euo pipefail
@@ -55,7 +55,7 @@ watchexec --restart \
   --watch app/askama.toml \
   --watch app/Cargo.toml \
   --watch Cargo.lock \
-  -- cargo run -p powerplant --features dev
+  -- cargo run -p frinkworks --features dev
 """
 
 [tasks.format]
@@ -68,7 +68,7 @@ run = [
 ]
 
 [tasks.check]
-description = "Check the Power Plant Rust project"
+description = "Check the Frinkworks Rust project"
 run = [
   "taplo format --check",
   "pnpm tsgo --noEmit --incremental --tsBuildInfoFile .cache/tsgo.tsbuildinfo --project app/tsconfig.json",
@@ -77,7 +77,7 @@ run = [
 ]
 
 [tasks.test]
-description = "Run the Power Plant test suite"
+description = "Run the Frinkworks test suite"
 run = [
   "pnpm test",
   "cargo test --workspace --all-features --quiet",
@@ -85,7 +85,7 @@ run = [
 
 [tasks.clean]
 alias = "c"
-description = "Format and check the Power Plant Rust project"
+description = "Format and check the Frinkworks Rust project"
 run = [
   "mise run format",
   "mise run check",
@@ -93,11 +93,11 @@ run = [
 
 [tasks."catalogue:update"]
 description = "Update the models.dev catalogue and provider logos"
-run = "cargo run -p powerplant --bin catalogue -- update"
+run = "cargo run -p frinkworks --bin catalogue -- update"
 
 [tasks."catalogue:check"]
 description = "Validate the checked-in models.dev catalogue and provider logos"
-run = "cargo run -p powerplant --bin catalogue -- check"
+run = "cargo run -p frinkworks --bin catalogue -- check"
 
 [tasks."assets:build"]
 description = "Build front-end assets"

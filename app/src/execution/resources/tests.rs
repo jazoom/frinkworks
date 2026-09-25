@@ -125,7 +125,7 @@ fn discovery_bounds_entries_and_returns_the_full_body_hash() {
 #[test]
 fn effective_roots_skip_the_private_data_directory() {
     let parent = tempfile::tempdir().expect("parent");
-    let data_root = parent.path().join("powerplant-data");
+    let data_root = parent.path().join("frinkworks-data");
     std::fs::create_dir_all(&data_root).expect("data root");
     let project = parent.path().join("project");
     std::fs::create_dir_all(&project).expect("project");

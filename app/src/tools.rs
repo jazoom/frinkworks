@@ -27,7 +27,7 @@ impl ToolId {
     fn description_for(self, location: ToolLocation) -> &'static str {
         match (self, location) {
             (Self::List, ToolLocation::Host) => {
-                "List files on this computer with the Power Plant process user's permissions."
+                "List files on this computer with the Frinkworks process user's permissions."
             }
             (Self::Read, ToolLocation::Host) => {
                 "Read a file on this computer, up to the 8 MiB scan limit. Offset is a 1-based line. Returns the next offset when more content remains."
@@ -1026,7 +1026,7 @@ async fn dispatch_host_command(
                     label,
                     failure: crate::execution::CommandFailure::new(
                         command,
-                        "Power Plant could not store command output. Command effects can remain incomplete.",
+                        "Frinkworks could not store command output. Command effects can remain incomplete.",
                     ),
                 });
             }
@@ -1610,7 +1610,7 @@ cd -P -- "$dir" || exit 1
 target=./${resolved##*/}
 [ ! -L "$target" ] || exit 4
 umask 077
-tmp=$(mktemp -d .pp-edit.XXXXXXXXXX) || exit 1
+tmp=$(mktemp -d .frinkworks-edit.XXXXXXXXXX) || exit 1
 orig=$tmp/original
 next=$tmp/next
 trap 'rm -f -- "$orig" "$next"; rmdir -- "$tmp"' EXIT
@@ -1756,7 +1756,7 @@ async fn capture_stdout_bytes(
                 session.kill().await;
                 session.close().await;
                 return Err(ToolFailure::Ordinary(
-                    "Power Plant could not run the command. Try again.",
+                    "Frinkworks could not run the command. Try again.",
                 ));
             }
         }
@@ -1797,7 +1797,7 @@ fn file_stdout(exit: Option<i32>, stdout: Vec<u8>) -> Result<Vec<u8>, ToolFailur
         Some(1) => Err(ToolFailure::Ordinary("That path does not exist.")),
         Some(_) => Err(ToolFailure::Ordinary("The file tool command failed.")),
         None => Err(ToolFailure::Ordinary(
-            "Power Plant could not run the command. Try again.",
+            "Frinkworks could not run the command. Try again.",
         )),
     }
 }

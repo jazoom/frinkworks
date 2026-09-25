@@ -19,7 +19,7 @@ const MAXIMUM_ETAG_BYTES: usize = 256;
 const MAXIMUM_EFFORTS: usize = 16;
 const MAXIMUM_SVG_BYTES: usize = 256 * 1024;
 const SOURCE_ORIGIN: &str = "models.dev";
-pub(super) const USER_AGENT: &str = "PowerPlant-model-catalogue/1";
+pub(super) const USER_AGENT: &str = "Frinkworks-model-catalogue/1";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

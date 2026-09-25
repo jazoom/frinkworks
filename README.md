@@ -1,6 +1,6 @@
-# Power Plant
+# Frinkworks
 
-Power Plant is a local coding agent. The process is a web server. You use it in a browser.
+Frinkworks is a local coding agent. The process is a web server. You use it in a browser.
 
 The stack is Rust, Axum, Askama, Hypergraft and Rig.
 
@@ -33,23 +33,25 @@ Connect with an API key for one of these providers:
 - OpenAI Codex
 - Synthetic
 
-The key stays in process memory. The key is not written to disk.
+The local vault stores provider credentials until you forget that provider.
 
 ## Skills
 
 Skills supply reusable instructions. They grant no file or command access.
 
 Global skills are available across projects. The Skills page in the sidebar manages these skills.
-Power Plant stores each global skill at `<data_root>/skills/<id>/SKILL.md`.
+Frinkworks stores each global skill at `<data_root>/skills/<id>/SKILL.md`.
 
 The data directory follows this order:
 
-- `POWERPLANT_DATA_DIR`, when set.
-- `$XDG_DATA_HOME/powerplant`, when set.
-- `$HOME/.local/share/powerplant` otherwise.
+- `FRINKWORKS_DATA_DIR`, when set.
+- `$XDG_DATA_HOME/frinkworks`, when set.
+- `$HOME/.local/share/frinkworks` otherwise.
+
+Frinkworks uses its own storage identifiers. Earlier alpha data is incompatible. No migration or compatibility loader exists.
 
 Project skills stay in the project at `.agents/skills/<name>/SKILL.md`.
-Power Plant discovers them below each directory in the conversation or workflow settings.
+Frinkworks discovers them below each directory in the conversation or workflow settings.
 
 ### Add a global skill
 
@@ -80,13 +82,13 @@ Report defects with file paths and line numbers.
 
 Host and sandbox modes advertise skill names, descriptions and read paths.
 The model reads a skill body with the read tool when the task needs it.
-Power Plant does not insert every skill body into each request.
+Frinkworks does not insert every skill body into each request.
 
-Power Plant advertises at most 64 skills per request preparation.
+Frinkworks advertises at most 64 skills per request preparation.
 Each skill file has a 256 KiB limit. The frontmatter header has a 4 KiB limit.
 The name and description each occupy one line. Skill discovery rejects symbolic links.
 
-The selected tools work in both modes. Host tools use Power Plant's host permissions and need explicit host consent.
+The selected tools work in both modes. Host tools use Frinkworks's host permissions and need explicit host consent.
 Host file changes take effect immediately. Host command approval applies only to Run.
 
 ## Tasks

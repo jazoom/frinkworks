@@ -51,7 +51,7 @@ impl VaultError {
     pub(crate) fn message(self) -> &'static str {
         match self {
             Self::Corrupt => "The provider vault is unreadable.",
-            Self::Persist => "Power Plant could not store the provider vault. Try again.",
+            Self::Persist => "Frinkworks could not store the provider vault. Try again.",
         }
     }
 }

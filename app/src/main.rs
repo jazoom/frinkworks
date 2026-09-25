@@ -12,7 +12,7 @@ struct Arguments {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let arguments = Arguments::parse();
-    powerplant::run_server(arguments.log_level).await
+    frinkworks::run_server(arguments.log_level).await
 }
 
 #[cfg(test)]

@@ -305,7 +305,7 @@ fn stale_mounts_are_rejected() {
     let sandbox_spec = SandboxSpec {
         mounts: vec![MountSpec {
             guest: "/project".to_owned(),
-            host: PathBuf::from("/no/such/powerplant-mount"),
+            host: PathBuf::from("/no/such/frinkworks-mount"),
             read_only: false,
         }],
         workdir: "/project".to_owned(),

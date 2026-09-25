@@ -11,9 +11,9 @@ pub(crate) const MAXIMUM_TOTAL_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 pub(crate) const MAXIMUM_MANIFEST_BYTES: usize = 32 * 1024 * 1024;
 pub(crate) const MAXIMUM_PREVIEW_PATHS: usize = 200;
 pub(crate) const MAXIMUM_PREVIEW_BYTES: usize = 1024 * 1024;
-const CANDIDATE_DOMAIN: &[u8] = b"powerplant.candidate.v1";
-const GIT_ADMIN_DOMAIN: &[u8] = b"powerplant.git-admin.v1";
-const CANDIDATE_SET_DOMAIN: &[u8] = b"powerplant.candidate-set.v1";
+const CANDIDATE_DOMAIN: &[u8] = b"frinkworks.candidate.v1";
+const GIT_ADMIN_DOMAIN: &[u8] = b"frinkworks.git-admin.v1";
+const CANDIDATE_SET_DOMAIN: &[u8] = b"frinkworks.candidate-set.v1";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CandidateRevisionArtefact {
@@ -100,8 +100,8 @@ impl CaptureError {
             }
             Self::SourceTooLarge => "The directory is too large to capture.",
             Self::SourceChanged => "The directory changed during source capture.",
-            Self::SourceRead => "Power Plant could not read the directory files.",
-            Self::ArtefactWrite => "Power Plant could not store the candidate. Try again.",
+            Self::SourceRead => "Frinkworks could not read the directory files.",
+            Self::ArtefactWrite => "Frinkworks could not store the candidate. Try again.",
             Self::ArtefactIntegrity => "The stored candidate failed an integrity check.",
         }
     }

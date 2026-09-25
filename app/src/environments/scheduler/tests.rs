@@ -248,7 +248,7 @@ fn preparation_guests_have_no_project_mount_or_secret() {
     assert!(spec.network_public);
     assert!(!spec.network_allows_host);
     assert!(!spec.network_allows_private);
-    assert!(spec.name.starts_with("pp-prep-"));
+    assert!(spec.name.starts_with("frinkworks-prep-"));
     assert!(!spec.name.contains("alpine"));
 }
 

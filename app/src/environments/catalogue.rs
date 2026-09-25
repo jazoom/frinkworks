@@ -100,13 +100,13 @@ impl EnvironmentError {
     pub(crate) fn message(self) -> &'static str {
         match self {
             Self::Corrupt => "The environment catalogue is unreadable.",
-            Self::Persist => "Power Plant could not store that environment. Try again.",
-            Self::Random => "Power Plant could not create an environment identifier. Try again.",
+            Self::Persist => "Frinkworks could not store that environment. Try again.",
+            Self::Random => "Frinkworks could not create an environment identifier. Try again.",
             Self::Full => "The environment catalogue is full.",
             Self::DuplicateName => "An environment with that name already exists.",
             Self::Missing => "That environment is no longer in the catalogue.",
             Self::Conflict => "That environment changed in another tab. Reload it.",
-            Self::Revision => "Power Plant could not store another edit of that environment.",
+            Self::Revision => "Frinkworks could not store another edit of that environment.",
             Self::Name => RecipeError::Name.message(),
             Self::Image => RecipeError::Image.message(),
             Self::Script => RecipeError::Script.message(),

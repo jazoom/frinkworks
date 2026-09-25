@@ -321,11 +321,11 @@ pub(crate) enum EvidenceError {
 impl EvidenceError {
     pub(crate) fn message(self) -> &'static str {
         match self {
-            Self::Persist => "Power Plant could not store workflow evidence.",
+            Self::Persist => "Frinkworks could not store workflow evidence.",
             Self::Corrupt => "Workflow evidence is unreadable.",
             Self::Conflict => "Workflow evidence already has a different terminal result.",
             Self::Full => {
-                "This workflow attempt produced more evidence than Power Plant can retain."
+                "This workflow attempt produced more evidence than Frinkworks can retain."
             }
         }
     }

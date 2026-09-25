@@ -198,7 +198,7 @@ pub(crate) enum ResourceError {
 impl ResourceError {
     pub(crate) fn message(self) -> &'static str {
         match self {
-            Self::Read => "Power Plant could not read a project resource.",
+            Self::Read => "Frinkworks could not read a project resource.",
             Self::UnsafeLink => "A project resource path is a link outside its authorised root.",
             Self::Invalid => "A project resource is not valid text.",
             Self::Bound => "A project resource exceeds its size limit.",
@@ -650,7 +650,7 @@ pub(crate) fn effective_roots(
         if !grant.host_path.is_absolute() {
             continue;
         }
-        // Private Power Plant data stays out of previews even when a parent
+        // Private Frinkworks data stays out of previews even when a parent
         // directory is authorised. The traversal also rejects nested data.
         if grant.host_path.starts_with(data_root)
             || grant

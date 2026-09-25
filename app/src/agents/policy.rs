@@ -15,7 +15,7 @@ pub(crate) struct PolicyGrant {
     pub(crate) access: AccessMode,
 }
 
-/// A read-only skill root outside the directory grants. Power Plant owns the
+/// A read-only skill root outside the directory grants. Frinkworks owns the
 /// global skills directory and mounts it into each sandbox. The root is not
 /// part of the directory authority, so policy equality ignores it.
 #[derive(Clone, Debug, Eq, PartialEq)]

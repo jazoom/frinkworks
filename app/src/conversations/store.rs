@@ -336,8 +336,8 @@ pub(crate) enum ConversationError {
 impl ConversationError {
     pub(crate) fn message(self) -> &'static str {
         match self {
-            Self::Random => "Power Plant could not create a conversation identifier. Try again.",
-            Self::Persist => "Power Plant cannot store the conversation.",
+            Self::Random => "Frinkworks could not create a conversation identifier. Try again.",
+            Self::Persist => "Frinkworks cannot store the conversation.",
             Self::Busy => "The conversation database is busy. The request did not commit.",
             Self::Unsettled => {
                 "The local history commit has an uncertain outcome. Restart before you continue."
@@ -346,7 +346,7 @@ impl ConversationError {
             Self::Full => "The disk has no space for more conversation data.",
             Self::Missing => "That conversation is not in the catalogue.",
             Self::Conflict => "That conversation changed in another tab. Reload it.",
-            Self::Revision => "Power Plant cannot update this conversation again.",
+            Self::Revision => "Frinkworks cannot update this conversation again.",
             Self::Title => "Enter a title of 1 to 120 bytes without control characters.",
             Self::Message => "Enter a message within the conversation limit.",
             Self::Entry => "That entry is not part of this conversation.",

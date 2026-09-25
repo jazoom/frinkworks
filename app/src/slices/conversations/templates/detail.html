@@ -1472,7 +1472,7 @@
                     <div class="alert alert-warning items-start">
                       <p class="text-sm break-words">
                         Access to sensitive directories can expose private
-                        records. Power Plant stores its data at
+                        records. Frinkworks stores its data at
                         <code class="break-all">{{ data_root }}</code>. Tool
                         output can disclose credentials and private
                         conversations to the model even with Network off.
@@ -1497,7 +1497,7 @@
                     </p>
                     <p class="text-quiet text-sm">
                       {% if location_host %}
-                        Commands start in Power Plant's current directory.
+                        Commands start in Frinkworks's current directory.
                       {% else %}
                         Add a directory to work on your files. Tools can use
                         private scratch storage without directory access.
@@ -1547,7 +1547,7 @@
                         </p>
                         {% if consent_sensitive %}
                           <p class="text-sm">
-                            Power Plant stores provider credentials and private
+                            Frinkworks stores provider credentials and private
                             conversations at
                             <code class="break-all">{{ data_root }}</code>. Tool
                             output can expose provider credentials, private
@@ -1575,7 +1575,7 @@
                             Tools use an isolated copy. Apply changes writes the
                             exact reviewed changes to the host directory.
                             {% if consent_sensitive %}
-                              The copy can propose changes to Power Plant
+                              The copy can propose changes to Frinkworks
                               configuration.
                             {% endif %}
                           </p>
@@ -1750,9 +1750,9 @@
                       {% if change.active_job %}
                         <p class="text-sm">
                           Stop task and switch cancels the active task and any
-                          waiting host command. Power Plant waits for the task
-                          to stop and removes any temporary sandbox. Unsaved
-                          work in that sandbox is lost.
+                          waiting host command. Frinkworks waits for the task to
+                          stop and removes any temporary sandbox. Unsaved work
+                          in that sandbox is lost.
                         </p>
                         <p class="text-sm">
                           Conversation history and existing host files remain.

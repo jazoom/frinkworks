@@ -141,7 +141,7 @@ async fn run_sandbox(state: AppState, work: DirectCommandRun) {
                 &work,
                 None,
                 MessageStatus::Failed,
-                Some("Power Plant could not create a command run identifier.".to_owned()),
+                Some("Frinkworks could not create a command run identifier.".to_owned()),
                 None,
                 None,
             );
@@ -190,7 +190,7 @@ async fn run_sandbox(state: AppState, work: DirectCommandRun) {
             &work,
             None,
             MessageStatus::Failed,
-            Some("Power Plant could not store the command run.".to_owned()),
+            Some("Frinkworks could not store the command run.".to_owned()),
             None,
             None,
         );
@@ -339,7 +339,7 @@ async fn run_host(state: AppState, work: DirectCommandRun) {
     {
         let _ = work.job.finish(
             JobStatus::Failed,
-            Some("Power Plant could not store the command baseline. No command ran."),
+            Some("Frinkworks could not store the command baseline. No command ran."),
         );
         return;
     }
@@ -622,7 +622,7 @@ pub(crate) fn settle(
         // a restart reports an uncertain outcome instead of replaying it.
         let _ = work.job.finish(
             JobStatus::Failed,
-            Some("Power Plant could not store the command outcome. Restart before you continue."),
+            Some("Frinkworks could not store the command outcome. Restart before you continue."),
         );
         return;
     }

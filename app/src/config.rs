@@ -13,7 +13,7 @@ impl RuntimeEnvironment {
         match value {
             "development" => Ok(Self::Development),
             "production" => Ok(Self::Production),
-            _ => Err("POWERPLANT_ENVIRONMENT must be development or production".to_owned()),
+            _ => Err("FRINKWORKS_ENVIRONMENT must be development or production".to_owned()),
         }
     }
 }
@@ -53,26 +53,26 @@ impl StartupConfig {
     }
 
     fn from_values(values: HashMap<String, String>) -> Result<Self, String> {
-        let environment = RuntimeEnvironment::parse(&required(&values, "POWERPLANT_ENVIRONMENT")?)?;
+        let environment = RuntimeEnvironment::parse(&required(&values, "FRINKWORKS_ENVIRONMENT")?)?;
         let public_origin = match environment {
             RuntimeEnvironment::Development => values
-                .get("POWERPLANT_PUBLIC_ORIGIN")
+                .get("FRINKWORKS_PUBLIC_ORIGIN")
                 .cloned()
                 .unwrap_or_else(|| "http://localhost:4000".to_owned()),
-            RuntimeEnvironment::Production => required(&values, "POWERPLANT_PUBLIC_ORIGIN")?,
+            RuntimeEnvironment::Production => required(&values, "FRINKWORKS_PUBLIC_ORIGIN")?,
         };
         let runtime = RuntimeConfig {
             environment,
             public_origin: parse_public_origin(&public_origin)?,
         };
         let bind_address = values
-            .get("POWERPLANT_BIND_ADDRESS")
+            .get("FRINKWORKS_BIND_ADDRESS")
             .map(String::as_str)
             .unwrap_or("localhost:4000")
             .to_owned();
-        let static_dir = match values.get("POWERPLANT_STATIC_DIR") {
+        let static_dir = match values.get("FRINKWORKS_STATIC_DIR") {
             Some(path) if PathBuf::from(path).is_absolute() => PathBuf::from(path),
-            Some(_) => return Err("POWERPLANT_STATIC_DIR must be absolute".to_owned()),
+            Some(_) => return Err("FRINKWORKS_STATIC_DIR must be absolute".to_owned()),
             None => PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(match environment {
                 RuntimeEnvironment::Development => "static-development",
                 RuntimeEnvironment::Production => "static-production",
@@ -97,13 +97,13 @@ fn required(values: &HashMap<String, String>, name: &str) -> Result<String, Stri
 }
 
 fn parse_data_dir(values: &HashMap<String, String>) -> Result<PathBuf, String> {
-    if let Some(path) = values.get("POWERPLANT_DATA_DIR") {
+    if let Some(path) = values.get("FRINKWORKS_DATA_DIR") {
         if path.is_empty() {
-            return Err("POWERPLANT_DATA_DIR must not be empty".to_owned());
+            return Err("FRINKWORKS_DATA_DIR must not be empty".to_owned());
         }
         let path = PathBuf::from(path);
         if !path.is_absolute() {
-            return Err("POWERPLANT_DATA_DIR must be absolute".to_owned());
+            return Err("FRINKWORKS_DATA_DIR must be absolute".to_owned());
         }
         return Ok(path);
     }
@@ -111,12 +111,12 @@ fn parse_data_dir(values: &HashMap<String, String>) -> Result<PathBuf, String> {
         .get("XDG_DATA_HOME")
         .filter(|value| !value.is_empty())
     {
-        return Ok(PathBuf::from(xdg).join("powerplant"));
+        return Ok(PathBuf::from(xdg).join("frinkworks"));
     }
     if let Some(home) = values.get("HOME").filter(|value| !value.is_empty()) {
-        return Ok(PathBuf::from(home).join(".local/share/powerplant"));
+        return Ok(PathBuf::from(home).join(".local/share/frinkworks"));
     }
-    Err("POWERPLANT_DATA_DIR must be set".to_owned())
+    Err("FRINKWORKS_DATA_DIR must be set".to_owned())
 }
 
 fn protected_user_roots(values: &HashMap<String, String>) -> Vec<PathBuf> {
@@ -131,7 +131,7 @@ fn protected_user_roots(values: &HashMap<String, String>) -> Vec<PathBuf> {
 }
 
 fn parse_public_origin(value: &str) -> Result<String, String> {
-    let url = Url::parse(value).map_err(|_| "POWERPLANT_PUBLIC_ORIGIN is invalid".to_owned())?;
+    let url = Url::parse(value).map_err(|_| "FRINKWORKS_PUBLIC_ORIGIN is invalid".to_owned())?;
     if !matches!(url.scheme(), "http" | "https")
         || url.host().is_none()
         || !url.username().is_empty()
@@ -140,7 +140,7 @@ fn parse_public_origin(value: &str) -> Result<String, String> {
         || url.query().is_some()
         || url.fragment().is_some()
     {
-        return Err("POWERPLANT_PUBLIC_ORIGIN must be a canonical HTTP(S) origin".to_owned());
+        return Err("FRINKWORKS_PUBLIC_ORIGIN must be a canonical HTTP(S) origin".to_owned());
     }
     let host = match url.host().expect("host was checked above") {
         Host::Domain(domain) => domain.to_string(),
@@ -152,7 +152,7 @@ fn parse_public_origin(value: &str) -> Result<String, String> {
         None => format!("{}://{host}", url.scheme()),
     };
     if value != canonical {
-        return Err("POWERPLANT_PUBLIC_ORIGIN must be canonical".to_owned());
+        return Err("FRINKWORKS_PUBLIC_ORIGIN must be canonical".to_owned());
     }
     Ok(canonical)
 }

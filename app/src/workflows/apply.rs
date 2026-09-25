@@ -81,8 +81,8 @@ impl ApplyExecutionError {
             Self::Authority => "Directory access changed before file application.",
             Self::Conflict => "The host directory changed before file application.",
             Self::Integrity => "The stored candidate failed an integrity check.",
-            Self::Write => "Power Plant could not apply the prepared files.",
-            Self::Operational => "Power Plant could not store the file application transaction.",
+            Self::Write => "Frinkworks could not apply the prepared files.",
+            Self::Operational => "Frinkworks could not store the file application transaction.",
         }
     }
 }

@@ -20,7 +20,7 @@ use crate::{
     },
 };
 
-const TITLE_SUFFIX: &str = " | Power Plant";
+const TITLE_SUFFIX: &str = " | Frinkworks";
 
 #[derive(Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -1260,13 +1260,13 @@ async fn preview_phase_access(
                 &grant.host_path,
                 state.local_data.root(),
             ) {
-                view.phase_summaries.push(format!("Sensitive access: this root can expose provider credentials and private conversations, even with Network off. Power Plant data: {}.", state.local_data.root().display()));
+                view.phase_summaries.push(format!("Sensitive access: this root can expose provider credentials and private conversations, even with Network off. Frinkworks data: {}.", state.local_data.root().display()));
                 if grant.access == crate::execution::DirectoryAccess::DirectWrite {
                     view.phase_summaries.push("Direct write can alter or corrupt live configuration, permissions and execution evidence.".to_owned());
                 }
                 if grant.access == crate::execution::DirectoryAccess::ReviewBeforeApply {
                     view.phase_summaries.push(
-                        "Reviewed access can propose changes to Power Plant configuration."
+                        "Reviewed access can propose changes to Frinkworks configuration."
                             .to_owned(),
                     );
                 }

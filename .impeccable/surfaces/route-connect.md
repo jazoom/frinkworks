@@ -17,7 +17,7 @@ The focused provider chooser has right-aligned method descriptions on wider scre
 
 ## Layout and flow
 
-The standalone page places a compact form below the Power Plant mark and wordmark. The form has no introductory sidebar or product tagline.
+The standalone page places a compact form below the Frinkworks mark and wordmark. The form has no introductory sidebar or product tagline.
 
 Both versions use the resource page background. In-app Providers uses the shared catalogue header with the storage note beneath its title.
 
@@ -27,7 +27,7 @@ A native provider link opens `/connect?provider=…`. The form identifies that p
 
 Plan-capable providers offer plan login and API key entry. API-only providers show the key field without an introductory sentence.
 
-The storage note reads: “Power Plant stores your key or plan login on this machine.”
+The storage note reads: “Frinkworks stores your key or plan login on this machine.”
 
 ## Constraints
 

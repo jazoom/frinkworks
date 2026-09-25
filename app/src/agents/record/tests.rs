@@ -159,7 +159,7 @@ fn relative_and_missing_paths_are_rejected() {
         primary_directory: "project".to_owned(),
     };
     assert_eq!(item.clone().validate().err(), Some(AgentError::Path));
-    item.directories[0].host_path = PathBuf::from("/no/such/powerplant-agent-dir");
+    item.directories[0].host_path = PathBuf::from("/no/such/frinkworks-agent-dir");
     assert_eq!(item.validate().err(), Some(AgentError::PathMissing));
 }
 

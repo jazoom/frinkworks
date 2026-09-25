@@ -250,7 +250,7 @@ function syncThinkingChoice() {
 const IMAGE_UNSUPPORTED_NOTE =
     "The selected model does not accept images. Choose a model with image input.";
 const IMAGE_UNKNOWN_NOTE =
-    "Power Plant cannot confirm image input for the selected model. Choose a model with image input.";
+    "Frinkworks cannot confirm image input for the selected model. Choose a model with image input.";
 
 function syncImageCompatibility() {
     const note = document.querySelector<HTMLElement>(
@@ -717,7 +717,7 @@ listenForRequestSettled((detail) => {
             );
             if (status)
                 status.textContent =
-                    "Power Plant could not save the favourite. Try again.";
+                    "Frinkworks could not save the favourite. Try again.";
         }
     }
     if (pendingModel && detail.form.id === "conversation-model-form") {
@@ -1978,7 +1978,7 @@ function stageAttachmentFiles(files: File[]): boolean {
     );
     if (!form || !input || input.disabled) {
         setAttachmentError(
-            "Power Plant cannot attach another image to this message.",
+            "Frinkworks cannot attach another image to this message.",
         );
         return false;
     }
@@ -2010,7 +2010,7 @@ function stageTransferredFiles(files: File[]) {
     const unsupported = files.some((file) => !supportedImage(file));
     const staged = supported.length > 0 && stageAttachmentFiles(supported);
     if (!unsupported) return;
-    const warning = "Power Plant can attach PNG, JPEG and WebP images only.";
+    const warning = "Frinkworks can attach PNG, JPEG and WebP images only.";
     if (staged && pendingAttachmentUpload) {
         pendingAttachmentUpload.warning = warning;
     }
@@ -2141,7 +2141,7 @@ listenForRequestSettled((detail) => {
         return;
     }
     setAttachmentError(
-        "Power Plant could not confirm the upload. Reload this page before another attempt.",
+        "Frinkworks could not confirm the upload. Reload this page before another attempt.",
     );
 });
 
@@ -3067,7 +3067,7 @@ listenForLocationChanges(() => {
 });
 
 const LIVE_RELOAD_EVENT_STREAM = "/_tower-livereload/event-stream";
-const LIVE_RELOAD_CHANNEL = "powerplant-live-reload";
+const LIVE_RELOAD_CHANNEL = "frinkworks-live-reload";
 
 // One event stream per tab can exhaust the browser HTTP/1.1 connection pool.
 // Keep the stream in the visible tab. Use BroadcastChannel to notify hidden tabs to reload.

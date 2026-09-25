@@ -91,7 +91,7 @@ fn draft_consent_is_single_use_and_becomes_conversation_consent() {
 #[test]
 fn direct_write_consent_is_destination_bound_and_single_use() {
     let home = tempfile::tempdir().unwrap();
-    let data = home.path().join("powerplant");
+    let data = home.path().join("frinkworks");
     std::fs::create_dir(&data).unwrap();
     let mut grant = crate::execution::DirectoryGrant::from_selected(home.path(), &[]).unwrap();
     grant.access = crate::execution::DirectoryAccess::DirectWrite;

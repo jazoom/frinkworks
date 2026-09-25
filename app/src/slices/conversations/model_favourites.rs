@@ -40,7 +40,7 @@ pub(super) async fn toggle(
             Ok(_) => "",
             Err(FavouriteError::Full) => "The favourites list is full. Remove a favourite first.",
             Err(FavouriteError::Persist(_)) => {
-                "Power Plant could not save the favourite. Try again."
+                "Frinkworks could not save the favourite. Try again."
             }
         },
     };

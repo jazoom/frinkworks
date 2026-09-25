@@ -117,7 +117,7 @@ pub(super) async fn run(
     } else {
         job.finish(
             JobStatus::Failed,
-            Some("Power Plant could not store the reply. Try again."),
+            Some("Frinkworks could not store the reply. Try again."),
         );
     }
 }

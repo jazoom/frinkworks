@@ -242,7 +242,7 @@ async fn draft_read_only_replaces_stale_write_consent_without_bypassing_sensitiv
             let token = connected(&state);
             let directory = tempfile::tempdir().unwrap();
             if sensitive {
-                let data = directory.path().join("powerplant-data");
+                let data = directory.path().join("frinkworks-data");
                 std::fs::create_dir(&data).unwrap();
                 state.local_data = crate::local_data::LocalDataReset::for_test(data);
             }
@@ -316,7 +316,7 @@ async fn draft_read_only_replaces_stale_write_consent_without_bypassing_sensitiv
 async fn sensitive_saved_grant_needs_exact_single_use_consent() {
     let mut state = test_state();
     let home = tempfile::tempdir().unwrap();
-    let data = home.path().join("power-plant-data");
+    let data = home.path().join("frinkworks-data");
     std::fs::create_dir(&data).unwrap();
     state.local_data = crate::local_data::LocalDataReset::for_test(data.clone());
     let token = connected(&state);

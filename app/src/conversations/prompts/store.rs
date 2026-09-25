@@ -282,7 +282,7 @@ impl PromptStoreError {
     pub(crate) fn message(self) -> &'static str {
         match self {
             Self::Persist => {
-                "Power Plant cannot read or store a prompt file. Make sure that the global prompt directory is accessible."
+                "Frinkworks cannot read or store a prompt file. Make sure that the global prompt directory is accessible."
             }
             Self::Unsafe => "A prompt path is not a regular file. Symbolic links are not allowed.",
             Self::Full => "The prompt directory exceeds the limit of 64 templates or 256 files.",

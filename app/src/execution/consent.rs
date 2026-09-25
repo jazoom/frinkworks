@@ -367,7 +367,7 @@ impl AccessConsentStore {
         let mut launches = lock(&self.launches);
         if !launches.contains_key(&run) && launches.len() >= MAXIMUM_RUNTIME_RECORDS {
             return Err(
-                "The runtime consent limit is full. Restart Power Plant before continuation.",
+                "The runtime consent limit is full. Restart Frinkworks before continuation.",
             );
         }
         launches.insert(
@@ -563,7 +563,7 @@ pub(crate) fn draft_nonce() -> Result<String, ConsentError> {
 
 fn access_digest(directories: &[DirectoryGrant]) -> [u8; 32] {
     let mut digest = Sha256::new();
-    digest.update(b"power-plant-access-consent-v1\0");
+    digest.update(b"frinkworks-access-consent-v1\0");
     for grant in directories {
         digest.update(grant.id.as_hex());
         digest.update([0]);

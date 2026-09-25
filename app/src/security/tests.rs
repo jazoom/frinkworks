@@ -13,8 +13,8 @@ fn test_state(config: RuntimeConfig) -> AppState {
 #[test]
 fn normalise_accepts_canonical_origin() {
     assert_eq!(
-        normalise_origin("https://powerplant.example.com").as_deref(),
-        Some("https://powerplant.example.com")
+        normalise_origin("https://frinkworks.example.com").as_deref(),
+        Some("https://frinkworks.example.com")
     );
     assert_eq!(
         normalise_origin("http://localhost:4000").as_deref(),
@@ -25,8 +25,8 @@ fn normalise_accepts_canonical_origin() {
 #[test]
 fn normalise_lowercases_domain_host() {
     assert_eq!(
-        normalise_origin("https://POWERPLANT.Example.COM").as_deref(),
-        Some("https://powerplant.example.com")
+        normalise_origin("https://FRINKWORKS.Example.COM").as_deref(),
+        Some("https://frinkworks.example.com")
     );
 }
 
@@ -44,12 +44,12 @@ fn normalise_rejects_non_http_schemes() {
 #[test]
 fn normalise_rejects_origin_with_path_query_or_fragment() {
     assert_eq!(
-        normalise_origin("https://powerplant.example.com/connect"),
+        normalise_origin("https://frinkworks.example.com/connect"),
         None
     );
-    assert_eq!(normalise_origin("https://powerplant.example.com?x=1"), None);
+    assert_eq!(normalise_origin("https://frinkworks.example.com?x=1"), None);
     assert_eq!(
-        normalise_origin("https://powerplant.example.com#frag"),
+        normalise_origin("https://frinkworks.example.com#frag"),
         None
     );
 }
@@ -57,7 +57,7 @@ fn normalise_rejects_origin_with_path_query_or_fragment() {
 #[test]
 fn normalise_rejects_origin_with_credentials() {
     assert_eq!(
-        normalise_origin("https://user:pass@powerplant.example.com"),
+        normalise_origin("https://user:pass@frinkworks.example.com"),
         None
     );
 }

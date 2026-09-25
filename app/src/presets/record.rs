@@ -91,8 +91,8 @@ impl std::fmt::Debug for PresetId {
 impl PresetError {
     pub(crate) fn message(self) -> &'static str {
         match self {
-            Self::Random => "Power Plant cannot create a preset identifier. Try again.",
-            Self::Persist => "Power Plant cannot store the preset. Try again.",
+            Self::Random => "Frinkworks cannot create a preset identifier. Try again.",
+            Self::Persist => "Frinkworks cannot store the preset. Try again.",
             Self::Corrupt => "The preset store is unreadable.",
             Self::Full => "Delete a preset before you save another one.",
             Self::Missing => "That preset is no longer available.",

@@ -99,24 +99,24 @@
 }
 :root,
 [data-theme] {
-    --powerplant-paper: var(--color-base-100);
-    --powerplant-paper-green: var(--color-base-200);
-    --powerplant-control: var(--color-base-100);
-    --powerplant-ink: var(--color-base-content);
-    --powerplant-rule: var(--color-base-300);
-    --powerplant-strong-rule: var(--color-base-300);
-    --powerplant-cover: var(--workspace-cover);
-    --powerplant-on-cover: var(--workspace-cover-text);
-    --powerplant-on-cover-bright: var(--workspace-cover-text);
-    --powerplant-on-cover-mid: var(--workspace-cover-muted);
-    --powerplant-on-cover-muted: var(--workspace-cover-muted);
-    --powerplant-on-cover-dim: var(--workspace-cover-muted);
-    --powerplant-quiet-ink: var(--workspace-muted);
-    --powerplant-user-turn: var(--color-base-200);
-    --powerplant-action: var(--color-primary);
-    --powerplant-action-ink: var(--color-primary-content);
-    --powerplant-composer: var(--color-base-100);
-    --powerplant-composer-quiet: var(--workspace-muted);
+    --frinkworks-paper: var(--color-base-100);
+    --frinkworks-paper-green: var(--color-base-200);
+    --frinkworks-control: var(--color-base-100);
+    --frinkworks-ink: var(--color-base-content);
+    --frinkworks-rule: var(--color-base-300);
+    --frinkworks-strong-rule: var(--color-base-300);
+    --frinkworks-cover: var(--workspace-cover);
+    --frinkworks-on-cover: var(--workspace-cover-text);
+    --frinkworks-on-cover-bright: var(--workspace-cover-text);
+    --frinkworks-on-cover-mid: var(--workspace-cover-muted);
+    --frinkworks-on-cover-muted: var(--workspace-cover-muted);
+    --frinkworks-on-cover-dim: var(--workspace-cover-muted);
+    --frinkworks-quiet-ink: var(--workspace-muted);
+    --frinkworks-user-turn: var(--color-base-200);
+    --frinkworks-action: var(--color-primary);
+    --frinkworks-action-ink: var(--color-primary-content);
+    --frinkworks-composer: var(--color-base-100);
+    --frinkworks-composer-quiet: var(--workspace-muted);
 }
 .input,
 .select,
@@ -140,8 +140,8 @@ body {
 }
 .alert-info {
     color: var(--color-base-content);
-    background: var(--powerplant-info-wash);
-    border-color: var(--powerplant-info-border);
+    background: var(--frinkworks-info-wash);
+    border-color: var(--frinkworks-info-border);
 }
 .workspace-icon {
     width: 16px;
@@ -242,9 +242,9 @@ body {
     font-size: 23px;
     letter-spacing: -0.025em;
 }
-.app-brand .powerplant-mark {
+.app-brand .frinkworks-mark {
     width: 48px;
-    height: 36px;
+    height: 48px;
 }
 .workspace-search {
     margin: 20px 16px 12px;
@@ -746,7 +746,7 @@ body:has(.workspace-catalogue) .app-frame {
     background: transparent;
 }
 .app-frame .workspace-effective .workspace-add-directory {
-    color: var(--powerplant-composer-link);
+    color: var(--frinkworks-composer-link);
 }
 .workspace-effective .workspace-icon {
     width: 22px;
@@ -758,7 +758,7 @@ body:has(.workspace-catalogue) .app-frame {
     background: var(--color-base-100);
 }
 .workspace-composer-surface:has(#composer-message:focus-visible) {
-    outline: 2px solid var(--powerplant-focus);
+    outline: 2px solid var(--frinkworks-focus);
     outline-offset: 2px;
 }
 #conversation-attachment-controls:has(
@@ -1785,7 +1785,7 @@ body:has(.workspace-catalogue) .app-frame {
     font-weight: 600;
 }
 .setup-tabs button:focus-visible {
-    outline: 2px solid var(--powerplant-focus);
+    outline: 2px solid var(--frinkworks-focus);
     outline-offset: -2px;
 }
 .configured-draft h2 {
@@ -1816,7 +1816,7 @@ body:has(.workspace-catalogue) .app-frame {
 .app-frame .draft-change-setup,
 .app-frame .directory-add {
     min-height: 40px;
-    color: var(--powerplant-composer-link);
+    color: var(--frinkworks-composer-link);
     font-size: 16px;
     font-weight: 400;
 }
@@ -1844,7 +1844,7 @@ body:has(.workspace-catalogue) .app-frame {
 .directory-access-options .radio {
     width: 22px;
     height: 22px;
-    color: var(--powerplant-composer-link);
+    color: var(--frinkworks-composer-link);
     border-color: var(--workspace-muted);
 }
 .directory-access-options .radio:checked {
@@ -1940,7 +1940,7 @@ body:has(.workspace-catalogue) .app-frame {
 }
 .preset-value:focus-visible,
 .presets-setup summary:focus-visible {
-    outline: 2px solid var(--powerplant-focus);
+    outline: 2px solid var(--frinkworks-focus);
     outline-offset: 3px;
 }
 .app-frame .presets-setup .btn {
@@ -2002,11 +2002,11 @@ body:has(.workspace-catalogue) .app-frame {
     height: 22px;
     flex-shrink: 0;
     border-color: var(--workspace-muted);
-    color: var(--powerplant-composer-link);
+    color: var(--frinkworks-composer-link);
 }
 .instructions-setup .checkbox:checked,
 .instructions-setup .checkbox:indeterminate {
-    border-color: var(--powerplant-composer-link);
+    border-color: var(--frinkworks-composer-link);
     background: var(--color-primary);
     color: var(--color-primary-content);
 }
@@ -2014,7 +2014,7 @@ body:has(.workspace-catalogue) .app-frame {
     background: var(--workspace-control-hover);
 }
 .instructions-setup .checkbox:focus-visible {
-    outline: 2px solid var(--powerplant-focus);
+    outline: 2px solid var(--frinkworks-focus);
     outline-offset: 3px;
 }
 .execution-setup {
@@ -2027,7 +2027,7 @@ body:has(.workspace-catalogue) .app-frame {
     width: 22px;
     height: 22px;
     flex-shrink: 0;
-    color: var(--powerplant-composer-link);
+    color: var(--frinkworks-composer-link);
     border-color: var(--workspace-muted);
 }
 .execution-location {
@@ -2035,14 +2035,14 @@ body:has(.workspace-catalogue) .app-frame {
 }
 .execution-location:has(:checked) {
     background: var(--workspace-selected);
-    border-color: var(--powerplant-composer-link);
+    border-color: var(--frinkworks-composer-link);
 }
 .execution-location small {
     font-size: 13px;
     line-height: 1.4;
 }
 .execution-location:focus-within {
-    outline: 2px solid var(--powerplant-focus);
+    outline: 2px solid var(--frinkworks-focus);
     outline-offset: 2px;
 }
 #conversation-settings .execution-setup :is(.select, .textarea) {
@@ -2053,11 +2053,11 @@ body:has(.workspace-catalogue) .app-frame {
     font-weight: 600;
 }
 .environment-ready {
-    color: var(--powerplant-composer-link);
+    color: var(--frinkworks-composer-link);
 }
 .execution-warning {
     color: var(--color-base-content);
-    background: var(--powerplant-warning-wash);
+    background: var(--frinkworks-warning-wash);
     border-color: var(--color-warning);
 }
 .execution-consent .modal-box {

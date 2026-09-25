@@ -94,7 +94,7 @@ async fn update_theme(
         return theme_patch(
             PatchStatus::UnprocessableEntity,
             &state,
-            Some("Power Plant could not save the theme. Try again."),
+            Some("Frinkworks could not save the theme. Try again."),
         );
     }
     theme_patch(PatchStatus::Ok, &state, None)
@@ -199,7 +199,7 @@ async fn refresh_model_catalogue(
         RefreshResult::Failed => (
             PatchStatus::UnprocessableEntity,
             None,
-            Some("The refresh failed. Power Plant kept the last valid catalogue."),
+            Some("The refresh failed. Frinkworks kept the last valid catalogue."),
         ),
     };
     Ok(hypergraft::outcome::children_patch(

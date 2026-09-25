@@ -62,7 +62,7 @@ fn connected(state: &AppState) -> String {
 }
 
 fn cookie(token: &str) -> String {
-    format!("powerplant_session={token}")
+    format!("frinkworks_session={token}")
 }
 
 fn session_id(token: &str) -> SessionId {
@@ -119,7 +119,7 @@ async fn an_expired_cookie_without_a_vault_cannot_resolve_a_session() {
     assert!(
         cookies
             .iter()
-            .any(|value| value.contains("powerplant_session="))
+            .any(|value| value.contains("frinkworks_session="))
     );
     assert!(cookies.iter().all(|value| !value.contains(&token)));
     assert!(cookies.iter().all(|value| !value.contains(SECRET_KEY)));
@@ -182,7 +182,7 @@ async fn forget_of_the_last_provider_stops_an_active_stream() {
     assert!(
         cookies
             .iter()
-            .any(|value| value.contains("powerplant_session="))
+            .any(|value| value.contains("frinkworks_session="))
     );
     assert!(cookies.iter().all(|value| !value.contains(&token)));
     assert!(cookies.iter().all(|value| !value.contains(SECRET_KEY)));
@@ -226,7 +226,7 @@ async fn forget_of_the_last_provider_clears_the_session_despite_preference_failu
     assert!(
         cookies
             .iter()
-            .any(|value| value.contains("powerplant_session="))
+            .any(|value| value.contains("frinkworks_session="))
     );
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let text = String::from_utf8(body.to_vec()).unwrap();
@@ -560,7 +560,7 @@ async fn a_new_process_restores_a_session_from_the_vault_file() {
     assert!(
         cookies
             .iter()
-            .any(|value| value.contains("powerplant_session="))
+            .any(|value| value.contains("frinkworks_session="))
     );
     assert!(cookies.iter().all(|value| !value.contains(SECRET_KEY)));
 }

@@ -26,7 +26,7 @@ async fn decisions_retain_gate_and_conversation_identity_without_commands() {
     for kind in [None, Some("navigation"), Some("patch")] {
         let mut request = Request::builder()
             .uri("/attention?page=18446744073709551615")
-            .header(header::COOKIE, format!("powerplant_session={token}"));
+            .header(header::COOKIE, format!("frinkworks_session={token}"));
         if let Some(kind) = kind {
             request = request
                 .header(hypergraft::GRAFT_REQUEST, kind)
@@ -62,7 +62,7 @@ async fn decisions_retain_gate_and_conversation_identity_without_commands() {
         .oneshot(
             Request::builder()
                 .uri("/runs")
-                .header(header::COOKIE, format!("powerplant_session={token}"))
+                .header(header::COOKIE, format!("frinkworks_session={token}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -170,7 +170,7 @@ async fn contextual_attention_validates_identifiers_and_preserves_context() {
         ))
         .layer(axum::middleware::from_fn(hypergraft::middleware::classify))
         .with_state(state.clone());
-    let cookie = format!("powerplant_session={token}");
+    let cookie = format!("frinkworks_session={token}");
     let conversation = child.conversation_id.unwrap().as_hex();
     for (uri, has_context) in [
         (format!("/attention?conversation={conversation}"), true),

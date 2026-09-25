@@ -1,5 +1,8 @@
 # UI overhaul
 
+This document records past reviews. The local screenshot archive and review data were discarded after the Frinkworks rename.
+The evidence paths below describe the original review locations, not current files.
+
 ## Direction
 
 `DESIGN.md` records the visual system. This tracker records the approved scope and implementation evidence.
@@ -427,7 +430,7 @@ The frontend suite passed all 145 tests. The Rust suites passed 1,346 tests. Dev
 
 `mise run clean` completed without errors or warnings. `git diff --check` passed. The named browser session and temporary server closed.
 
-The temporary fixture source remains under `/tmp/powerplant-active-TpjTmC` for evidence. No fixture hook or test server remains in application code.
+The temporary fixture source remains under `/tmp/frinkworks-active-TpjTmC` for evidence. No fixture hook or test server remains in application code.
 
 The original server remains available at `http://localhost:4000`. The user subsequently authorised Stage 3b after the tree correction. The Impeccable sidecar refresh remains outside the authorised scope.
 
@@ -521,7 +524,7 @@ The frontend suite passed all 147 tests. The Rust suites passed 1,348 tests. Dev
 
 `mise run clean` completed without errors or warnings. `git diff --check` passed. The named browser session closed and the isolated server stopped.
 
-The fixture source remains under `/tmp/powerplant-current-work-2JSLFz`. No fixture hook remains in application code. Hosted-model execution remains outside this evidence.
+The fixture source remains under `/tmp/frinkworks-current-work-2JSLFz`. No fixture hook remains in application code. Hosted-model execution remains outside this evidence.
 
 The original server remains available at `http://localhost:4000`. The staged patch remains byte-identical to its initial snapshot. All earlier work remains uncommitted.
 
@@ -604,7 +607,7 @@ The visual review ran in-thread because this harness has no subagent tool. Scree
 
 `mise run clean` completed without errors or warnings. Both staged and unstaged diff checks passed.
 
-The named browser session closed and the isolated server stopped. Temporary fixture sources remain under `/tmp/powerplant-stage4a`.
+The named browser session closed and the isolated server stopped. Temporary fixture sources remain under `/tmp/frinkworks-stage4a`.
 
 The original server remains available at `http://localhost:4000`. The staged patch remains byte-identical to the initial snapshot. Stage 4a remains unstaged and uncommitted.
 
@@ -650,7 +653,7 @@ Other records supplied incomplete cleanup and mixed repository results. These re
 
 The temporary fixture compiled the application router, security middleware and templates. No fixture hook entered application code.
 
-The previous `/tmp/powerplant-stage4a/` fixture was absent. This pass created a separate fixture under `/tmp/powerplant-stage4b/`.
+The previous `/tmp/frinkworks-stage4a/` fixture was absent. This pass created a separate fixture under `/tmp/frinkworks-stage4b/`.
 
 Browser exercises covered:
 
@@ -774,7 +777,7 @@ Final browser diagnostics contained no console or page errors. The final network
 
 Final accessibility scans reported zero violations, with zero or one incomplete check. Desktop, compact desktop, mobile, narrow mobile and Sector 7-G received visual inspection.
 
-The named browser session closed and the isolated server stopped. Temporary fixture sources and logs remain under `/tmp/powerplant-stage5a/`.
+The named browser session closed and the isolated server stopped. Temporary fixture sources and logs remain under `/tmp/frinkworks-stage5a/`.
 
 The original server remains available at `http://localhost:4000`. No fixture hook entered application code.
 

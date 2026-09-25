@@ -87,7 +87,7 @@ async fn browser_language_belongs_to_the_resolved_live_session() {
         .uri("/private")
         .header(
             header::COOKIE,
-            format!("powerplant_session={}", token.raw().as_str()),
+            format!("frinkworks_session={}", token.raw().as_str()),
         )
         .header(header::ACCEPT_LANGUAGE, "en-GB,en;q=0.9")
         .body(Body::empty())
@@ -177,7 +177,7 @@ async fn a_live_cookie_remains_valid_without_provider_credentials() {
                 .uri("/private")
                 .header(
                     header::COOKIE,
-                    format!("powerplant_session={}", token.as_str()),
+                    format!("frinkworks_session={}", token.as_str()),
                 )
                 .body(Body::empty())
                 .expect("request"),

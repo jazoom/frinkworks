@@ -47,7 +47,7 @@ impl SkillError {
     pub(crate) fn message(self) -> &'static str {
         match self {
             Self::Persist => {
-                "Power Plant cannot read or store a skill file. Make sure that the global directory is accessible."
+                "Frinkworks cannot read or store a skill file. Make sure that the global directory is accessible."
             }
             Self::Unsafe => {
                 "A skill path is not a regular file or directory. Symbolic links are not allowed."

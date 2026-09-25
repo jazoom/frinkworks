@@ -36,9 +36,9 @@ pub(super) struct ProviderChoice {
     pub(super) label: &'static str,
 }
 
-pub(super) const INDEX_TITLE: &str = "Workflows | Power Plant";
-pub(super) const NEW_TITLE: &str = "New workflow | Power Plant";
-pub(super) const CONFIG_TITLE: &str = "Configure workflow | Power Plant";
+pub(super) const INDEX_TITLE: &str = "Workflows | Frinkworks";
+pub(super) const NEW_TITLE: &str = "New workflow | Frinkworks";
+pub(super) const CONFIG_TITLE: &str = "Configure workflow | Frinkworks";
 
 pub(super) struct CatalogueItem {
     pub(super) id: String,

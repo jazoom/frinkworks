@@ -3,7 +3,7 @@ use serde::Deserialize;
 
 use crate::conversations::prompts::{PromptRecord, PromptStore, PromptStoreError};
 
-pub(super) const TITLE: &str = "Prompts | Power Plant";
+pub(super) const TITLE: &str = "Prompts | Frinkworks";
 const NEW_PROMPT: &str =
     "State the task for the model.\n\nUse $1 for the first argument and $@ for every argument.\n";
 

@@ -127,14 +127,14 @@ test("a user who scrolls upward is unpinned", () => {
 });
 
 test("a short buffer reveals one character in each frame", () => {
-    const root = transcript("Plant");
+    const root = transcript("Fresh");
     const destroy = initTranscript(root);
 
     expect(streamedText(root)).toBe("");
     runAnimationFrame();
-    expect(streamedText(root)).toBe("P");
+    expect(streamedText(root)).toBe("F");
     runAnimationFrame();
-    expect(streamedText(root)).toBe("Pl");
+    expect(streamedText(root)).toBe("Fr");
 
     destroy();
 });
@@ -146,24 +146,24 @@ test("a large backlog uses a larger catch-up batch", () => {
 });
 
 test("replacement markup keeps the revealed prefix and adopts new text", async () => {
-    const root = transcript("Plant");
+    const root = transcript("Fresh");
     const destroy = initTranscript(root);
     runAnimationFrame();
-    expect(streamedText(root)).toBe("P");
+    expect(streamedText(root)).toBe("F");
 
     root.querySelector(".chat-turn-body")!.outerHTML = `
         <div class="chat-turn-body" data-streaming="true">
             <section data-streaming-content>
-                <div data-streaming-text><strong>Power</strong> Plant</div>
+                <div data-streaming-text><strong>Frink</strong>works</div>
             </section>
         </div>`;
     await mutationsSettled();
 
-    expect(streamedText(root)).toBe("P");
+    expect(streamedText(root)).toBe("F");
     runAnimationFrame();
-    expect(streamedText(root)).toBe("Po");
+    expect(streamedText(root)).toBe("Fr");
     destroy();
-    expect(streamedText(root)).toBe("Power Plant");
+    expect(streamedText(root)).toBe("Frinkworks");
 });
 
 test("retained markup adopts authoritative text updates", async () => {
@@ -191,53 +191,53 @@ test("retained markup adopts authoritative text updates", async () => {
 });
 
 test("stream completion flushes a buffer without a final replacement", async () => {
-    const root = transcript("Power Plant");
+    const root = transcript("Frinkworks");
     const destroy = initTranscript(root);
     runAnimationFrame();
-    expect(streamedText(root)).toBe("P");
+    expect(streamedText(root)).toBe("F");
 
     root.querySelector("[data-streaming]")!.removeAttribute("data-streaming");
     await mutationsSettled();
 
-    expect(streamedText(root)).toBe("Power Plant");
+    expect(streamedText(root)).toBe("Frinkworks");
     destroy();
 });
 
 test("reduced motion leaves streamed text complete", () => {
     reducedMotion = true;
-    const root = transcript("Power Plant");
+    const root = transcript("Frinkworks");
     const destroy = initTranscript(root);
 
-    expect(streamedText(root)).toBe("Power Plant");
+    expect(streamedText(root)).toBe("Frinkworks");
     expect(animationFrames.size).toBe(1);
 
     destroy();
 });
 
 test("a motion preference change flushes the buffer", () => {
-    const root = transcript("Power Plant");
+    const root = transcript("Frinkworks");
     const destroy = initTranscript(root);
     runAnimationFrame();
-    expect(streamedText(root)).toBe("P");
+    expect(streamedText(root)).toBe("F");
 
     reducedMotion = true;
     for (const listener of motionListeners) {
         listener();
     }
 
-    expect(streamedText(root)).toBe("Power Plant");
+    expect(streamedText(root)).toBe("Frinkworks");
     destroy();
 });
 
 test("cleanup cancels frames, restores text, and removes listeners", () => {
-    const root = transcript("Power Plant");
+    const root = transcript("Frinkworks");
     const destroy = initTranscript(root);
     runAnimationFrame();
-    expect(streamedText(root)).toBe("P");
+    expect(streamedText(root)).toBe("F");
 
     destroy();
 
-    expect(streamedText(root)).toBe("Power Plant");
+    expect(streamedText(root)).toBe("Frinkworks");
     expect(animationFrames.size).toBe(0);
     expect(motionListeners.size).toBe(0);
 });

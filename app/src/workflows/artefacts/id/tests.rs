@@ -15,6 +15,6 @@ fn exact_byte_changes_create_different_object_hashes() {
 fn artefact_and_object_hash_contracts_remain_separate() {
     let payload = b"{\"format-version\":1}";
     let object = ObjectHash::of(payload);
-    let artefact = ArtefactHash::of(b"powerplant.artefact.v1\0plan\0\0\0\0\x01", payload);
+    let artefact = ArtefactHash::of(b"frinkworks.artefact.v1\0plan\0\0\0\0\x01", payload);
     assert_ne!(object.as_str(), artefact.as_str());
 }

@@ -28,7 +28,7 @@ fn composed_preamble_omits_host_paths() {
         &record.tools,
         &policy,
     );
-    assert!(preamble.contains("Power Plant contract"));
+    assert!(preamble.contains("Frinkworks contract"));
     assert!(preamble.contains("Keep public interfaces stable."));
     assert!(preamble.contains("/project"));
     assert!(preamble.contains("- list"));

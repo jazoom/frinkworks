@@ -3,7 +3,7 @@ use serde::Deserialize;
 
 use crate::skills::{SkillRecord, SkillStore};
 
-pub(super) const TITLE: &str = "Skills | Power Plant";
+pub(super) const TITLE: &str = "Skills | Frinkworks";
 const NEW_SKILL: &str = "---\nname: my-skill\ndescription: State what this skill does and when the model must use it.\n---\n\n# My skill\n\n## When to use\n\nDescribe the tasks that need this skill.\n\n## Instructions\n\n1. Write the first instruction.\n";
 
 #[derive(Default, Deserialize)]

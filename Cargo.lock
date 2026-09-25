@@ -2016,6 +2016,46 @@ dependencies = [
 ]
 
 [[package]]
+name = "frinkworks"
+version = "0.0.1"
+dependencies = [
+ "ammonia",
+ "askama",
+ "axum",
+ "base64 0.23.1",
+ "cap-std",
+ "clap",
+ "cookie",
+ "futures-util",
+ "hypergraft",
+ "image",
+ "microsandbox",
+ "nix 0.31.3",
+ "pulldown-cmark",
+ "quick-xml 0.39.4",
+ "rand 0.10.2",
+ "reqwest",
+ "rfd",
+ "rig-core",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "sha2 0.11.0",
+ "similar",
+ "tempfile",
+ "tiktoken-rs",
+ "time",
+ "tokio",
+ "tower",
+ "tower-http 0.7.0",
+ "tower-livereload",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
 name = "fs-set-times"
 version = "0.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4456,46 +4496,6 @@ name = "powerfmt"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
-
-[[package]]
-name = "powerplant"
-version = "0.0.1"
-dependencies = [
- "ammonia",
- "askama",
- "axum",
- "base64 0.23.1",
- "cap-std",
- "clap",
- "cookie",
- "futures-util",
- "hypergraft",
- "image",
- "microsandbox",
- "nix 0.31.3",
- "pulldown-cmark",
- "quick-xml 0.39.4",
- "rand 0.10.2",
- "reqwest",
- "rfd",
- "rig-core",
- "rusqlite",
- "serde",
- "serde_json",
- "serde_yaml_ng",
- "sha2 0.11.0",
- "similar",
- "tempfile",
- "tiktoken-rs",
- "time",
- "tokio",
- "tower",
- "tower-http 0.7.0",
- "tower-livereload",
- "tracing",
- "tracing-subscriber",
- "url",
-]
 
 [[package]]
 name = "ppv-lite86"

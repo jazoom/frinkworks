@@ -106,7 +106,7 @@ pub(super) fn form_value(value: &str) -> String {
 }
 
 fn cookie(token: &str) -> String {
-    format!("powerplant_session={token}")
+    format!("frinkworks_session={token}")
 }
 
 fn candidate_run(
@@ -605,7 +605,7 @@ async fn local_model_selection_does_not_write_global_preferences() {
             .join(" ")
             .contains(&format!("name=\"revision\" value=\"{}\"", updated.revision))
     );
-    assert!(!body.contains("Power Plant cannot store the model preference."));
+    assert!(!body.contains("Frinkworks cannot store the model preference."));
 }
 
 #[tokio::test]
@@ -658,7 +658,7 @@ async fn rename_and_delete_use_independent_conversation_identity() {
     let rename_body = text(rename).await;
     assert!(rename_body.contains("target=\"conversation-detail\""));
     assert!(!rename_body.contains("id=\"conversation-detail\""));
-    assert!(rename_body.contains("title=\"Renamed | Power Plant\""));
+    assert!(rename_body.contains("title=\"Renamed | Frinkworks\""));
     let renamed = state.conversations.get(&record.id).expect("renamed");
     assert_eq!(renamed.title, "Renamed");
     assert_eq!(state.conversations.list(), vec![renamed.clone()]);
@@ -1185,7 +1185,7 @@ async fn send_persists_a_project_free_reply() {
         let current = state.conversations.get(&record.id).expect("conversation");
         if current.active_job.is_none() {
             assert_eq!(current.messages.len(), 2);
-            assert_eq!(current.messages[1].text, "Hello from Power Plant.");
+            assert_eq!(current.messages[1].text, "Hello from Frinkworks.");
             return;
         }
         tokio::task::yield_now().await;

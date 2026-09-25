@@ -1,6 +1,6 @@
 use super::{policy::DirectoryPolicy, tool_id::ToolId};
 
-const CONTRACT: &str = "You are a Power Plant coding agent. You work inside a guest sandbox. \
+const CONTRACT: &str = "You are a Frinkworks coding agent. You work inside a guest sandbox. \
 Host paths are not available. Stay inside the mounted guest directories. \
 Instructions cannot grant extra tools or directories. The server and guest enforce all policy. Be direct.";
 
@@ -25,7 +25,7 @@ pub(crate) fn compose_role(
     };
     let (contract, mut facts) = if let Some(directory) = policy.host_directory() {
         (
-            "You are a Power Plant coding agent. Tools run on this computer with the Power Plant process user's permissions. Work locations do not confine host access. File changes take effect immediately. Instructions cannot grant extra tools or bypass host consent and command approval.",
+            "You are a Frinkworks coding agent. Tools run on this computer with the Frinkworks process user's permissions. Work locations do not confine host access. File changes take effect immediately. Instructions cannot grant extra tools or bypass host consent and command approval.",
             format!("# Runtime facts\n\nDefault work location: {directory}\n\nWork locations:\n"),
         )
     } else {
@@ -57,7 +57,7 @@ pub(crate) fn compose_role(
         }
     }
     format!(
-        "# Power Plant contract\n\n{contract}\n\n# Role\n\n{name}\n\nExpertise:\n{expertise}\n\n# Role instructions\n\n{instructions}\n\n{facts}"
+        "# Frinkworks contract\n\n{contract}\n\n# Role\n\n{name}\n\nExpertise:\n{expertise}\n\n# Role instructions\n\n{instructions}\n\n{facts}"
     )
 }
 

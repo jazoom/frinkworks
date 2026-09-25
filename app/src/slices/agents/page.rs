@@ -6,9 +6,9 @@ use crate::sandbox::OrphanSandbox;
 
 use super::forms::AgentFormState;
 
-pub(super) const CATALOGUE_TITLE: &str = "Agents | Power Plant";
-pub(super) const NEW_TITLE: &str = "New agent | Power Plant";
-pub(super) const CONFIG_TITLE: &str = "Configure agent | Power Plant";
+pub(super) const CATALOGUE_TITLE: &str = "Agents | Frinkworks";
+pub(super) const NEW_TITLE: &str = "New agent | Frinkworks";
+pub(super) const CONFIG_TITLE: &str = "Configure agent | Frinkworks";
 
 pub(super) struct AgentListItem {
     pub(super) id: String,

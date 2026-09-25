@@ -106,7 +106,7 @@ pub(in crate::slices::conversations) async fn restore(
         .is_err()
     {
         return reject(
-            "Power Plant cannot finish ownership recovery. The prepared changes remain reserved.",
+            "Frinkworks cannot finish ownership recovery. The prepared changes remain reserved.",
         );
     }
     let current = state

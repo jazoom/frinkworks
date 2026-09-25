@@ -1,6 +1,6 @@
 [package]
-name = "powerplant"
-default-run = "powerplant"
+name = "frinkworks"
+default-run = "frinkworks"
 version = "0.0.1"
 edition = "2024"
 publish = false

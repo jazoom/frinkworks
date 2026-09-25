@@ -10,7 +10,7 @@
     reply style.
   </p>
   <p id="{{ field_prefix }}instructions-help" class="text-quiet text-sm">
-    Power Plant sends this text as system instructions with each model request,
+    Frinkworks sends this text as system instructions with each model request,
     separate from your chat messages.
     {% if settings_form == "conversation-settings-form" %}
       Saved changes take effect from your next message. Earlier replies stay
@@ -37,7 +37,7 @@
   <legend class="text-sm font-semibold">Available tools</legend>
   <p class="text-quiet text-xs">
     {% if tools_host %}
-      The selected tools use Power Plant's host permissions. File changes take
+      The selected tools use Frinkworks's host permissions. File changes take
       effect immediately. Host command approval applies only to Run.
     {% else %}
       The model can use the execution tools that you select. Plan actions grant

@@ -40,7 +40,7 @@ pub(crate) use settings::{
 };
 
 pub(crate) const GUEST_WORKSPACE: &str = "/workspace";
-/// The read-only guest mount of the Power Plant global skills directory.
+/// The read-only guest mount of the Frinkworks global skills directory.
 pub(crate) const GUEST_GLOBAL_SKILLS: &str = "/.agents/skills";
 
 /// Build the ambient skill root for the current process. The policy equality

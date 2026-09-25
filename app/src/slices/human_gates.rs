@@ -430,7 +430,7 @@ async fn discard_and_switch(
         return command_error_target(
             graft,
             PatchStatus::Conflict,
-            "The changes were discarded, but Power Plant could not save the new execution settings.",
+            "The changes were discarded, but Frinkworks could not save the new execution settings.",
             "conversation-settings",
         );
     };
@@ -461,7 +461,7 @@ async fn discard_and_switch(
         return command_error_target(
             graft,
             PatchStatus::Conflict,
-            "The changes were discarded, but Power Plant could not save the new execution settings.",
+            "The changes were discarded, but Frinkworks could not save the new execution settings.",
             "conversation-settings",
         );
     }
@@ -804,7 +804,7 @@ async fn decide(
                     return command_error_for_run(
                         graft,
                         PatchStatus::Conflict,
-                        "Power Plant could not prepare the plan revision. Try again.",
+                        "Frinkworks could not prepare the plan revision. Try again.",
                         &run,
                         form.conversation_surface,
                     );
@@ -847,7 +847,7 @@ async fn decide(
             return command_error_for_run(
                 graft,
                 PatchStatus::Conflict,
-                "Power Plant could not store the plan decision. Try again.",
+                "Frinkworks could not store the plan decision. Try again.",
                 &run,
                 form.conversation_surface,
             );
@@ -945,7 +945,7 @@ async fn decide(
                 return command_error_for_run(
                     graft,
                     PatchStatus::Conflict,
-                    "Power Plant could not prepare the revision. Try again.",
+                    "Frinkworks could not prepare the revision. Try again.",
                     &run,
                     form.conversation_surface,
                 );
@@ -989,7 +989,7 @@ async fn decide(
         return command_error_for_run(
             graft,
             PatchStatus::Conflict,
-            "Power Plant could not store the decision. Try again.",
+            "Frinkworks could not store the decision. Try again.",
             &run,
             form.conversation_surface,
         );

@@ -53,7 +53,7 @@ impl ProcessPhase {
             ),
             ProcessAction::Command(command) => (
                 "System action",
-                format!("Power Plant runs {}.", command.label()),
+                format!("Frinkworks runs {}.", command.label()),
                 match command {
                     SystemCommandId::RepositoryStatus => {
                         "Reads repository status. Does not change project files."

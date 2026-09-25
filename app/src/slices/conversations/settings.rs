@@ -529,7 +529,7 @@ pub(super) async fn stop_and_switch_environment(
             session.0,
             graft,
             &record,
-            "Power Plant is still stopping the task. Execution settings did not change.",
+            "Frinkworks is still stopping the task. Execution settings did not change.",
         );
     }
     let current = state
@@ -545,7 +545,7 @@ pub(super) async fn stop_and_switch_environment(
             session.0,
             graft,
             &current,
-            "Power Plant could not clean up the task. Execution settings did not change.",
+            "Frinkworks could not clean up the task. Execution settings did not change.",
         );
     }
     if let Err(error) =
@@ -1236,7 +1236,7 @@ pub(super) async fn request_host(
                         session.0,
                         &record,
                         &record.title,
-                        "Power Plant could not start host access approval. Try again.",
+                        "Frinkworks could not start host access approval. Try again.",
                     )
                     .open_settings(),
                 );
@@ -1364,7 +1364,7 @@ pub(super) async fn request_host_draft(
                 session.0,
                 form,
                 PatchStatus::UnprocessableEntity,
-                "Power Plant could not start host access approval. Try again.",
+                "Frinkworks could not start host access approval. Try again.",
             );
         }
     }

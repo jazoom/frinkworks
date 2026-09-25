@@ -617,7 +617,7 @@ impl ProviderError {
             }
             Self::EmptyReply => "The model returned an empty reply. Try again.",
             Self::ReplyTooLong => {
-                "Power Plant truncated the model reply because it was too long. Try again."
+                "Frinkworks truncated the model reply because it was too long. Try again."
             }
             Self::Incomplete => "The model response was incomplete. No tool ran.",
             Self::ContextOverflow => {

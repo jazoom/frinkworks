@@ -19,7 +19,7 @@ use super::run::{FailureCategory, now_ms};
 use super::store::StoreError;
 
 pub(crate) const OPERATIONAL_STORE_ERROR: &str =
-    "Power Plant could not store the workflow run. Try again.";
+    "Frinkworks could not store the workflow run. Try again.";
 
 const COMMAND_DEADLINE: Duration = if cfg!(test) {
     Duration::from_millis(50)
@@ -52,7 +52,7 @@ impl WorkflowContinuationRegistry {
     ) {
         let _ = job.finish(
             JobStatus::Failed,
-            Some("Restart Power Plant to reconcile the uncertain file application. This operation retains its reservations."),
+            Some("Restart Frinkworks to reconcile the uncertain file application. This operation retains its reservations."),
         );
         self.retain_recovery(agent, execution);
     }
@@ -65,7 +65,7 @@ impl WorkflowContinuationRegistry {
     ) {
         let _ = job.finish(
             JobStatus::Failed,
-            Some("Restart Power Plant to reconcile the uncertain Git commit. This operation retains its reservations."),
+            Some("Restart Frinkworks to reconcile the uncertain Git commit. This operation retains its reservations."),
         );
         self.retain_recovery(agent, execution);
     }
@@ -78,7 +78,7 @@ impl WorkflowContinuationRegistry {
     ) {
         let _ = job.finish(
             JobStatus::Failed,
-            Some("Power Plant could not clean up the sandbox. This operation retains its reservations."),
+            Some("Frinkworks could not clean up the sandbox. This operation retains its reservations."),
         );
         self.retain_recovery(agent, execution);
     }
@@ -1008,7 +1008,7 @@ async fn drive_attempts(
                 };
                 outcome = StepOutcome::Failed {
                     category: FailureCategory::Cleanup,
-                    error: Some("Power Plant could not clean up the commit journal.".to_owned()),
+                    error: Some("Frinkworks could not clean up the commit journal.".to_owned()),
                 };
             }
         }
@@ -1251,7 +1251,7 @@ async fn isolate_and_run(
                     StepOutcome::Failed {
                         category: FailureCategory::Operational,
                         error: Some(
-                            "Power Plant could not create the attempt workspace.".to_owned(),
+                            "Frinkworks could not create the attempt workspace.".to_owned(),
                         ),
                     },
                     &cleanup,
@@ -1275,7 +1275,7 @@ async fn isolate_and_run(
             workspace,
             StepOutcome::Failed {
                 category: FailureCategory::Operational,
-                error: Some("Power Plant could not materialise the source tree.".to_owned()),
+                error: Some("Frinkworks could not materialise the source tree.".to_owned()),
             },
         );
         return IsolatedRun::Finished {
@@ -1443,7 +1443,7 @@ async fn isolate_and_run(
         (paused @ StepOutcome::Paused { .. }, true, true) => paused,
         (StepOutcome::Completed | StepOutcome::Paused { .. }, _, _) => StepOutcome::Failed {
             category: FailureCategory::Operational,
-            error: Some("Power Plant could not capture isolated outputs.".to_owned()),
+            error: Some("Frinkworks could not capture isolated outputs.".to_owned()),
         },
         (other, _, _) => other,
     };
@@ -1599,7 +1599,7 @@ fn fail_for_orphan(
     } else {
         StepOutcome::Failed {
             category: FailureCategory::Cleanup,
-            error: Some("Power Plant could not clean up the isolated sandbox.".to_owned()),
+            error: Some("Frinkworks could not clean up the isolated sandbox.".to_owned()),
         }
     }
 }
@@ -1883,7 +1883,7 @@ async fn execute_commit_root(
     let index_guest = crate::workflows::commit::temporary_index_guest(attempt_id);
     let index_host = user_project
         .join(".git")
-        .join(format!("powerplant-commit-index-{}", attempt_id.as_hex()));
+        .join(format!("frinkworks-commit-index-{}", attempt_id.as_hex()));
     if index_host.exists() {
         return Err(CommitError::Preflight);
     }
@@ -2501,7 +2501,7 @@ async fn run_ordinary_file_agent(
         append_preamble(
             &mut preamble,
             &format!(
-                "Tools run on this computer as the Power Plant process user. {approval} Approval does not inspect script internals. Command output is sent to the hosted model. Sandbox guest paths such as /access/<alias> and /workspace from earlier turns are not host paths and grant no authority."
+                "Tools run on this computer as the Frinkworks process user. {approval} Approval does not inspect script internals. Command output is sent to the hosted model. Sandbox guest paths such as /access/<alias> and /workspace from earlier turns are not host paths and grant no authority."
             ),
         );
     }
@@ -3009,7 +3009,7 @@ async fn run_agent_step(
         .map(|settings| settings.location)
         .unwrap_or(crate::execution::ToolLocation::Sandbox);
     if location == crate::execution::ToolLocation::Host {
-        composed.push_str("\n\nTools run on this computer as the Power Plant process user. ");
+        composed.push_str("\n\nTools run on this computer as the Frinkworks process user. ");
         if run
             .phase_settings(&step_key)
             .is_some_and(|settings| settings.automatic_host_commands())
@@ -3382,7 +3382,7 @@ async fn run_system_exec(sandbox: &GuestSandbox, job: &Job, exec: GuestExec) -> 
         Err(_) => {
             return StepOutcome::Failed {
                 category: FailureCategory::Command,
-                error: Some("Power Plant could not run the command. Try again.".to_owned()),
+                error: Some("Frinkworks could not run the command. Try again.".to_owned()),
             };
         }
     };
@@ -3444,7 +3444,7 @@ async fn run_system_exec(sandbox: &GuestSandbox, job: &Job, exec: GuestExec) -> 
                 session.close().await;
                 return StepOutcome::Failed {
                     category: FailureCategory::Command,
-                    error: Some("Power Plant could not run the command. Try again.".to_owned()),
+                    error: Some("Frinkworks could not run the command. Try again.".to_owned()),
                 };
             }
         }
@@ -3640,7 +3640,7 @@ fn project_free_attempt_spec(
             host: if captured {
                 workspace
                     .reviewed_root(&directory.alias)
-                    .map_err(|_| "Power Plant cannot create a reviewed root workspace.")?
+                    .map_err(|_| "Frinkworks cannot create a reviewed root workspace.")?
             } else {
                 grant.host_path.clone()
             },
@@ -3714,7 +3714,7 @@ fn attempt_spec(
     if git.is_dir() {
         // The guest cannot create a nested mount directory inside a read-only source mount.
         std::fs::create_dir(workspace.project.join(".git"))
-            .map_err(|_| "Power Plant cannot create the Git mount directory.")?;
+            .map_err(|_| "Frinkworks cannot create the Git mount directory.")?;
         mounts.push(crate::sandbox::MountSpec {
             guest: format!("{}/.git", primary.guest_path),
             host: git,
@@ -4210,7 +4210,7 @@ fn publish_success(
     let captured = if source_free {
         captured
     } else {
-        Some(captured.ok_or("Power Plant could not capture isolated outputs.")?)
+        Some(captured.ok_or("Frinkworks could not capture isolated outputs.")?)
     };
     let writes = step.writes_primary_source();
     let produces_candidate = writes
@@ -4258,7 +4258,7 @@ fn publish_success(
         let record = publish_candidate(
             state,
             job,
-            captured.ok_or("Power Plant could not capture isolated outputs.")?,
+            captured.ok_or("Frinkworks could not capture isolated outputs.")?,
             crate::workflows::artefacts::ArtefactProducer::StepAttempt {
                 attempt_id,
                 step: step.key.clone(),
@@ -4742,7 +4742,7 @@ fn settle_command_job(
     {
         workflow.job.finish(
             JobStatus::Failed,
-            Some("Power Plant could not store the command outcome. Restart before you continue."),
+            Some("Frinkworks could not store the command outcome. Restart before you continue."),
         );
         return;
     }
@@ -4886,7 +4886,7 @@ fn recovery_project_path(
     _state: &AppState,
     run: &crate::workflows::WorkflowRun,
 ) -> Result<std::path::PathBuf, &'static str> {
-    let error = "Power Plant could not recover a commit transaction.";
+    let error = "Frinkworks could not recover a commit transaction.";
     let grants = run.reviewed_directories();
     let [grant] = grants.as_slice() else {
         return Err(error);
@@ -4900,7 +4900,7 @@ fn recovery_project_path(
 }
 
 pub(crate) fn recover_apply_transactions(state: &AppState) -> Result<(), &'static str> {
-    const ERROR: &str = "Power Plant could not recover a file application transaction.";
+    const ERROR: &str = "Frinkworks could not recover a file application transaction.";
     for run in state.workflow_runs.active_runs() {
         let Some(attempt_id) = run.active_attempt() else {
             continue;
@@ -5029,7 +5029,7 @@ fn mark_apply_uncertain(
             run.record_apply_transaction(attempt_id, transaction)
         })
         .map(|_| ())
-        .map_err(|_| "Power Plant could not retain uncertain file application evidence.")
+        .map_err(|_| "Frinkworks could not retain uncertain file application evidence.")
 }
 
 fn capture_commit_candidate(
@@ -5038,7 +5038,7 @@ fn capture_commit_candidate(
     template: &crate::workflows::artefacts::CandidatePayload,
 ) -> Result<crate::workflows::artefacts::CandidatePayload, &'static str> {
     use crate::workflows::artefacts::{CandidateCapture, CandidatePayload};
-    let error = "Power Plant could not capture the committed candidate.";
+    let error = "Frinkworks could not capture the committed candidate.";
     match template {
         CandidatePayload::Set(_) => {
             let settings = run.directory_settings().ok_or(error)?;
@@ -5075,13 +5075,13 @@ fn load_candidate_payload_reference(
     let record = run
         .artefact(&reference.id)
         .filter(|record| record.artefact_hash == reference.artefact_hash)
-        .ok_or("Power Plant could not recover the transaction candidate.")?;
+        .ok_or("Frinkworks could not recover the transaction candidate.")?;
     let bytes = state
         .workflow_artefacts
         .get(&record.object_hash)
-        .map_err(|_| "Power Plant could not recover the transaction candidate.")?;
+        .map_err(|_| "Frinkworks could not recover the transaction candidate.")?;
     crate::workflows::artefacts::CandidatePayload::from_manifest_bytes(&bytes)
-        .ok_or("Power Plant could not recover the transaction candidate.")
+        .ok_or("Frinkworks could not recover the transaction candidate.")
 }
 
 fn current_head(project: &std::path::Path) -> Result<Option<String>, &'static str> {
@@ -5091,13 +5091,13 @@ fn current_head(project: &std::path::Path) -> Result<Option<String>, &'static st
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .output()
-        .map_err(|_| "Power Plant could not recover a commit transaction.")?;
+        .map_err(|_| "Frinkworks could not recover a commit transaction.")?;
     if !output.status.success() {
         return Ok(None);
     }
     String::from_utf8(output.stdout)
         .map(|head| Some(head.trim().to_owned()))
-        .map_err(|_| "Power Plant could not recover a commit transaction.")
+        .map_err(|_| "Frinkworks could not recover a commit transaction.")
 }
 
 fn remove_commit_journal(
@@ -5108,7 +5108,7 @@ fn remove_commit_journal(
     state
         .commit_journals
         .remove(run_id, attempt_id)
-        .map_err(|_| "Power Plant could not recover a commit transaction.")
+        .map_err(|_| "Frinkworks could not recover a commit transaction.")
 }
 
 fn publish_recovered_commit(
@@ -5121,43 +5121,43 @@ fn publish_recovered_commit(
         .attempts
         .iter()
         .find(|attempt| attempt.id == attempt_id)
-        .ok_or("Power Plant could not recover a commit transaction.")?;
+        .ok_or("Frinkworks could not recover a commit transaction.")?;
     let step = run
         .pinned
         .definition
         .step(&attempt.step)
-        .ok_or("Power Plant could not recover a commit transaction.")?;
+        .ok_or("Frinkworks could not recover a commit transaction.")?;
     let output = step
         .required_outputs()
         .iter()
         .find(|output| output.kind == crate::workflows::definition::OutputKind::CandidateRevision)
-        .ok_or("Power Plant could not recover a commit transaction.")?;
+        .ok_or("Frinkworks could not recover a commit transaction.")?;
     if !attempt.outputs.is_empty() {
         let existing = attempt
             .outputs
             .iter()
             .find(|existing| existing.key == output.key)
-            .ok_or("Power Plant could not recover a commit transaction.")?;
+            .ok_or("Frinkworks could not recover a commit transaction.")?;
         let stored = load_candidate_payload_reference(state, run, &existing.artefact)?;
         if attempt.outputs.len() == 1 && stored == *captured {
             return Ok(());
         }
-        return Err("Power Plant could not recover a commit transaction.");
+        return Err("Frinkworks could not recover a commit transaction.");
     }
     let bytes = captured
         .manifest_bytes()
-        .map_err(|_| "Power Plant could not recover a commit transaction.")?;
+        .map_err(|_| "Frinkworks could not recover a commit transaction.")?;
     let object = state
         .workflow_artefacts
         .publish(&bytes)
-        .map_err(|_| "Power Plant could not recover a commit transaction.")?;
+        .map_err(|_| "Frinkworks could not recover a commit transaction.")?;
     let artefact_hash = crate::workflows::artefacts::artefact_hash_for(
         crate::workflows::definition::ArtefactKind::CandidateRevision,
         crate::workflows::artefacts::CANDIDATE_SCHEMA,
         &bytes,
     );
     let id = crate::workflows::ArtefactId::generate()
-        .map_err(|_| "Power Plant could not recover a commit transaction.")?;
+        .map_err(|_| "Frinkworks could not recover a commit transaction.")?;
     let record = crate::workflows::artefacts::ArtefactRecord {
         id,
         kind: crate::workflows::definition::ArtefactKind::CandidateRevision,
@@ -5208,7 +5208,7 @@ fn publish_recovered_commit(
             )
         })
         .map(|_| ())
-        .map_err(|_| "Power Plant could not recover a commit transaction.")
+        .map_err(|_| "Frinkworks could not recover a commit transaction.")
 }
 
 /// Capture the named host directories for one direct command. The returned
@@ -5228,15 +5228,15 @@ pub(crate) fn capture_ordinary_command_evidence(
         state.local_data.root(),
         &state.workflow_artefacts,
     )
-    .map_err(|_| "Power Plant cannot capture the named directories for direct-command evidence.")?;
+    .map_err(|_| "Frinkworks cannot capture the named directories for direct-command evidence.")?;
     let bytes = candidate
         .manifest_bytes()
-        .map_err(|_| "Power Plant cannot encode the direct-command evidence.")?;
+        .map_err(|_| "Frinkworks cannot encode the direct-command evidence.")?;
     state
         .workflow_artefacts
         .publish(&bytes)
         .map(|hash| Some(hash.as_str()))
-        .map_err(|_| "Power Plant cannot store the direct-command evidence.")
+        .map_err(|_| "Frinkworks cannot store the direct-command evidence.")
 }
 
 #[cfg(test)]

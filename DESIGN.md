@@ -1,5 +1,5 @@
 ---
-name: Power Plant
+name: Frinkworks
 description: A local conversation workspace with an optional work companion.
 colors:
     canvas: "#f5f5ed"
@@ -65,7 +65,7 @@ spacing:
     lg: "24px"
 ---
 
-# Design system: Power Plant
+# Design system: Frinkworks
 
 ## Overview
 
@@ -157,7 +157,7 @@ Host consent uses a native modal above Setup with a dimmed backdrop. Its content
 
 Controls retain DaisyUI primitives. Workspace controls use seven-pixel corners. Recent records use five-pixel corners. User messages retain three-pixel corners. The composer uses nine-pixel corners.
 
-The existing Power Plant mark remains unchanged. Workspace icons use the shared stroke geometry in `app/public/images/workspace-icons.svg`.
+The Frinkworks scientist mark uses dark ink and green on a transparent square canvas. A pale backing preserves its contrast across themes. Workspace icons use the shared stroke geometry in `app/public/images/workspace-icons.svg`.
 
 ## Components
 
@@ -185,7 +185,7 @@ Valid context retains Back to conversation. Without valid context, the selected 
 
 Skills combines the global skill catalogue and a plain Markdown editor on one page. The editor contains the complete `SKILL.md` file, including standard YAML frontmatter. The page shows the actual global directory and explains direct file placement. Copied files appear on refresh and become available to the next request without a restart.
 
-Project skills live in `.agents/skills` directly inside each authorised directory. Discovery does not search nested project directories. Power Plant advertises the skill name and description. The model reads the body with the read tool.
+Project skills live in `.agents/skills` directly inside each authorised directory. Discovery does not search nested project directories. Frinkworks advertises the skill name and description. The model reads the body with the read tool.
 
 Stale workflow or preset identities report an error without substitution. Resource navigation starts no work and grants no access. The breadcrumb group reads Resources.
 
@@ -197,7 +197,7 @@ Directory actions retain transparent backgrounds on hover. Button text has no ho
 
 The paperclip uses a continuous diagonal stroke. The help icon uses a centred question mark and a separate dot. Both retain labelled controls.
 
-User messages use a tinted, ruled surface. Assistant messages identify Power Plant with its mark.
+User messages use a tinted, ruled surface. Assistant messages identify Frinkworks with its mark.
 
 Avatars sit beside desktop author labels and message bodies. Mobile avatars sit beside the labels, above full-width content.
 

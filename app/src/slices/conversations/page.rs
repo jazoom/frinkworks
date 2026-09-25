@@ -22,7 +22,7 @@ use crate::{
     workflows::WorkflowRun,
 };
 
-pub(super) const CATALOGUE_TITLE: &str = "Conversations | Power Plant";
+pub(super) const CATALOGUE_TITLE: &str = "Conversations | Frinkworks";
 
 pub(super) struct ConversationListItem {
     pub(super) title: String,
@@ -744,7 +744,7 @@ impl ConversationDetailView {
             show_thinking: state.preferences.show_thinking(),
             thinking_visibility_error: None,
             heading: "New conversation".to_owned(),
-            document_title: "New conversation | Power Plant".to_owned(),
+            document_title: "New conversation | Frinkworks".to_owned(),
             title: form.title,
             model_picker: ModelPicker::new(
                 &state.vault,
@@ -1117,7 +1117,7 @@ impl ConversationDetailView {
                 "The selected model does not accept images. Choose a model with image input."
             }
             None => {
-                "Power Plant cannot confirm image input for the selected model. Choose a model with image input."
+                "Frinkworks cannot confirm image input for the selected model. Choose a model with image input."
             }
         }
     }
@@ -1358,7 +1358,7 @@ impl ConversationDetailView {
             show_thinking: sources.preferences.show_thinking(),
             thinking_visibility_error: None,
             heading: record.title.clone(),
-            document_title: format!("{} | Power Plant", record.title),
+            document_title: format!("{} | Frinkworks", record.title),
             title: title.to_owned(),
             error,
             messages,
@@ -1959,7 +1959,7 @@ fn execution_access_lines(
 ) -> Vec<String> {
     if replacement.directories.is_empty() {
         return vec![if requested == crate::execution::ToolLocation::Host {
-            "No work locations. Commands start in Power Plant's current directory. These paths do not confine host access.".to_owned()
+            "No work locations. Commands start in Frinkworks's current directory. These paths do not confine host access.".to_owned()
         } else {
             "No host directory access. Tools use private scratch storage at /workspace.".to_owned()
         }];
@@ -1985,7 +1985,7 @@ fn execution_access_lines(
             if requested == crate::execution::ToolLocation::Host {
                 if sensitive {
                     format!(
-                        "{path} · Work location. Sandbox strategy: {access}. This path contains sensitive Power Plant data."
+                        "{path} · Work location. Sandbox strategy: {access}. This path contains sensitive Frinkworks data."
                     )
                 } else {
                     format!("{path} · Work location. Sandbox strategy: {access}.")
@@ -2471,7 +2471,7 @@ pub(super) fn message_view_in(
         is_command: command_entry,
         role_label: match message.role {
             MessageRole::User => "You",
-            MessageRole::Assistant => "Power Plant",
+            MessageRole::Assistant => "Frinkworks",
             MessageRole::Command => "Command",
         }
         .to_owned(),
@@ -2672,7 +2672,7 @@ pub(super) fn response_view(
         id,
         user: false,
         is_command: false,
-        role_label: "Power Plant".to_owned(),
+        role_label: "Frinkworks".to_owned(),
         excluded: false,
         command: None,
         copy,

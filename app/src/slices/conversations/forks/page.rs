@@ -64,7 +64,7 @@ pub(crate) async fn show(
         &state,
         graft.into(),
         PatchStatus::Ok,
-        "Fork | Power Plant",
+        "Fork | Frinkworks",
         &view,
     )
 }
@@ -85,7 +85,7 @@ pub(crate) async fn create(
             &state,
             GraftRequest::Patch,
             status,
-            "Fork | Power Plant",
+            "Fork | Frinkworks",
             &view,
         )
     };

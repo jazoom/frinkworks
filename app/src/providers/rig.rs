@@ -24,7 +24,7 @@ const OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
 
 const MAXIMUM_PROVIDER_ERROR_BYTES: usize = 4_096;
 
-const PREAMBLE: &str = "You are Power Plant, a local coding agent. Help the user write, explain and review code. Be direct.";
+const PREAMBLE: &str = "You are Frinkworks, a local coding agent. Help the user write, explain and review code. Be direct.";
 
 pub(super) const VERIFY_TIMEOUT: Duration = Duration::from_secs(10);
 

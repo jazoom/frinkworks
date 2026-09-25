@@ -5,7 +5,7 @@ use cookie::{Cookie, SameSite, time::Duration};
 
 use crate::{config::RuntimeConfig, sessions::tokens::ValidatedToken};
 
-pub(crate) const SESSION_COOKIE_NAME: &str = "powerplant_session";
+pub(crate) const SESSION_COOKIE_NAME: &str = "frinkworks_session";
 
 #[derive(Debug)]
 pub(crate) enum CookieRead {

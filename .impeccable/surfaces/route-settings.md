@@ -14,7 +14,7 @@ The primary target is `route:/settings`. The visitor mode is Operate.
 
 ## Job
 
-A local developer chooses the colour theme for Power Plant. The selected theme applies immediately and persists on the local machine.
+A local developer chooses the colour theme for Frinkworks. The selected theme applies immediately and persists on the local machine.
 
 The same page offers a confirmed local data reset. Reset records a request. The next start removes owned local data before stores open.
 
@@ -30,11 +30,11 @@ Springfield, Evergreen Terrace, Leftorium, Stonecutters and Sector 7-G form one 
 
 Local data is a separate danger section. Reset removes providers, projects, agents, environments, workflows, runs, artefacts and preferences.
 
-Project source directories outside the Power Plant data directory remain unchanged.
+Project source directories outside the Frinkworks data directory remain unchanged.
 
-The destructive action requires the checkbox labelled "I understand that this deletes all local Power Plant data." The command label is "Reset local data".
+The destructive action requires the checkbox labelled "I understand that this deletes all local Frinkworks data." The command label is "Reset local data".
 
-A successful command replaces the main page with "Stop and restart Power Plant to finish the reset." The next start removes local data before normal store initialisation.
+A successful command replaces the main page with "Stop and restart Frinkworks to finish the reset." The next start removes local data before normal store initialisation.
 
 The command does not stop the process. The browser does not submit a deletion path.
 
@@ -44,7 +44,7 @@ The page inherits the repository case-file shell. It uses a canonical GET route 
 
 The full desk changes colour while the selector stays in place.
 
-The reset status page gives one instruction: stop and restart Power Plant.
+The reset status page gives one instruction: stop and restart Frinkworks.
 
 ## Unresolved decisions
 

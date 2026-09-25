@@ -447,7 +447,7 @@ async fn first_send_does_not_write_preferences() {
     let record = state.conversations.list().pop().unwrap();
     let body = text(response).await;
     assert!(body.contains(&format!("location=\"/conversations/{}\"", record.id)));
-    assert!(!body.contains("Power Plant cannot store the model preference."));
+    assert!(!body.contains("Frinkworks cannot store the model preference."));
     assert_eq!(record.messages[0].text, "Hello");
 }
 
@@ -709,7 +709,7 @@ async fn sensitive_draft_consent_is_consumed_by_one_valid_first_message() {
 async fn sensitive_first_message_case(access: crate::execution::DirectoryAccess) {
     let mut state = test_state();
     let home = tempfile::tempdir().unwrap();
-    let data = home.path().join("power-plant-data");
+    let data = home.path().join("frinkworks-data");
     std::fs::create_dir(&data).unwrap();
     state.local_data = crate::local_data::LocalDataReset::for_test(data);
     let token = connected(&state);

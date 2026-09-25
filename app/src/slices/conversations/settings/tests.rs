@@ -964,7 +964,7 @@ async fn host_approval_policy_needs_fresh_consent_and_does_not_settle_pending_co
 async fn strategy_switch_binds_existing_roots_and_waits_for_cancelled_commands() {
     let mut state = test_state();
     let home = tempfile::tempdir().unwrap();
-    let data = home.path().join("power-plant-data");
+    let data = home.path().join("frinkworks-data");
     std::fs::create_dir(&data).unwrap();
     state.local_data = crate::local_data::LocalDataReset::for_test(data);
     let token = connected(&state);

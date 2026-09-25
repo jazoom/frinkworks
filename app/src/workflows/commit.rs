@@ -16,10 +16,10 @@ pub(crate) use targets::{commit_targets, destination_pair, target_grant};
 
 pub(crate) use journal::{CommitJournal, CommitJournals};
 
-const AUTHOR_NAME: &str = "Power Plant";
-const AUTHOR_EMAIL: &str = "powerplant@localhost";
-const COMMIT_MESSAGE: &str = "Apply Power Plant workflow candidate";
-const TEMP_INDEX_GUEST_PREFIX: &str = "/project/.git/powerplant-commit-index-";
+const AUTHOR_NAME: &str = "Frinkworks";
+const AUTHOR_EMAIL: &str = "frinkworks@localhost";
+const COMMIT_MESSAGE: &str = "Apply Frinkworks workflow candidate";
+const TEMP_INDEX_GUEST_PREFIX: &str = "/project/.git/frinkworks-commit-index-";
 pub(crate) const NON_APPROVED_MESSAGE: &str = "The review did not approve this candidate.";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -85,9 +85,9 @@ impl CommitError {
             Self::Assurance => NON_APPROVED_MESSAGE,
             Self::Authority => "Project access changed before that commit.",
             Self::Preflight => "The project changed before that commit.",
-            Self::Command => "Power Plant could not create the Git commit.",
-            Self::Apply => "Power Plant could not apply the candidate.",
-            Self::Operational => "Power Plant could not store the workflow run. Try again.",
+            Self::Command => "Frinkworks could not create the Git commit.",
+            Self::Apply => "Frinkworks could not apply the candidate.",
+            Self::Operational => "Frinkworks could not store the workflow run. Try again.",
         }
     }
 }

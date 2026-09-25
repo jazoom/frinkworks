@@ -9,9 +9,9 @@ use crate::environments::{
 
 use super::forms::{EnvironmentFormState, FormErrors};
 
-pub(super) const INDEX_TITLE: &str = "Environments | Power Plant";
-pub(super) const NEW_TITLE: &str = "New environment | Power Plant";
-pub(super) const CONFIG_TITLE: &str = "Configure environment | Power Plant";
+pub(super) const INDEX_TITLE: &str = "Environments | Frinkworks";
+pub(super) const NEW_TITLE: &str = "New environment | Frinkworks";
+pub(super) const CONFIG_TITLE: &str = "Configure environment | Frinkworks";
 const HISTORY_LIMIT: usize = 20;
 
 pub(super) struct CatalogueItem {

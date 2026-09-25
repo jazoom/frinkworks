@@ -7,9 +7,9 @@ use crate::state::AppState;
 use crate::workflows::summary::ProcessPhase;
 use crate::workflows::{RunSummary, WorkflowCatalogue, WorkflowRun};
 
-pub(super) const INDEX_TITLE: &str = "Runs | Power Plant";
-pub(super) const DETAIL_TITLE: &str = "Run | Power Plant";
-pub(super) const ARTEFACT_TITLE: &str = "Artefact | Power Plant";
+pub(super) const INDEX_TITLE: &str = "Runs | Frinkworks";
+pub(super) const DETAIL_TITLE: &str = "Run | Frinkworks";
+pub(super) const ARTEFACT_TITLE: &str = "Artefact | Frinkworks";
 
 #[derive(Template)]
 #[template(path = "workflow_runs/templates/context.html")]
@@ -1224,7 +1224,7 @@ fn step_status(
 fn state_note(state: &crate::workflows::run::RunState) -> &'static str {
     match state {
         crate::workflows::run::RunState::InitialisingSource => {
-            "Power Plant captures the authorised reviewed directories before the first step starts."
+            "Frinkworks captures the authorised reviewed directories before the first step starts."
         }
         crate::workflows::run::RunState::Ready { .. } => {
             "The next step is queued. Apply changes updates host files. An explicit Git commit creates a commit."

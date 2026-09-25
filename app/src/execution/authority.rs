@@ -111,7 +111,7 @@ impl ProjectFreeAuthority {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SensitiveDirectory {
-    PowerPlantData,
+    FrinkworksData,
     Home,
 }
 
@@ -120,7 +120,7 @@ pub(crate) fn classify_sensitive_directory(
     data_root: &Path,
 ) -> Option<SensitiveDirectory> {
     if paths_overlap(path, data_root) {
-        return Some(SensitiveDirectory::PowerPlantData);
+        return Some(SensitiveDirectory::FrinkworksData);
     }
     std::env::var_os("HOME")
         .and_then(|home| std::fs::canonicalize(home).ok())

@@ -97,14 +97,14 @@ pub(super) fn file_outcome_run(
 }
 
 const EXAMPLE: &str = "Explain how this project is structured.";
-const USEFUL_REPLY: &str = "Hello from Power Plant.";
+const USEFUL_REPLY: &str = "Hello from Frinkworks.";
 
 fn activation_state() -> AppState {
     let scratch = tempfile::tempdir().expect("data");
     let (config, local_data) = crate::local_data::prepare(StartupConfig {
         bind_address: "localhost:4000".to_owned(),
         runtime: RuntimeConfig::development(),
-        static_dir: PathBuf::from("/tmp/powerplant-static"),
+        static_dir: PathBuf::from("/tmp/frinkworks-static"),
         data_dir: scratch.path().join("data"),
         protected_user_roots: Vec::new(),
     })
@@ -166,7 +166,7 @@ fn app(state: &AppState) -> axum::Router {
 }
 
 fn cookie(token: &str) -> String {
-    format!("powerplant_session={token}")
+    format!("frinkworks_session={token}")
 }
 
 fn session_cookie(headers: &HeaderMap) -> String {
@@ -176,7 +176,7 @@ fn session_cookie(headers: &HeaderMap) -> String {
         .to_str()
         .expect("cookie utf8");
     let start =
-        header.find("powerplant_session=").expect("session name") + "powerplant_session=".len();
+        header.find("frinkworks_session=").expect("session name") + "frinkworks_session=".len();
     let rest = &header[start..];
     rest[..rest.find(';').unwrap_or(rest.len())].to_owned()
 }

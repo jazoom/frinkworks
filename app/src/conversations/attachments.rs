@@ -72,7 +72,7 @@ impl std::fmt::Debug for AttachmentId {
     }
 }
 
-/// The raster formats that Power Plant accepts and re-encodes. SVG and any
+/// The raster formats that Frinkworks accepts and re-encodes. SVG and any
 /// animated container are not in this set and never reach storage.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -198,7 +198,7 @@ impl AttachmentError {
             Self::Dimensions => "That image has dimensions that are too large.",
             Self::Count => "One message can hold at most eight images.",
             Self::Aggregate => "Those images together are too large for one message.",
-            Self::Persist => "Power Plant could not store the image.",
+            Self::Persist => "Frinkworks could not store the image.",
             Self::Foreign | Self::Consumed => {
                 "That image is not available for this conversation. Add it again."
             }
