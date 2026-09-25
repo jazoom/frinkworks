@@ -72,6 +72,11 @@ fn failed_preparation_retains_reservations_until_cleanup_settles() {
     assert!(state.sessions.conversation_reserved(record.id));
     assert!(state.workflow_execution.acquire_exclusive().is_err());
     assert!(state.conversation_runtime.unsettled(record.id));
+    #[cfg(feature = "dev")]
+    {
+        assert!(!state.sessions.has_active_work());
+        assert!(!state.workflow_execution.has_active_work());
+    }
 }
 
 #[test]

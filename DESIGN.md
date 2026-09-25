@@ -362,7 +362,9 @@ Saved access changes retain Review changes and the existing execution review. A 
 
 Configured drafts show the actual directory paths and access states. The summary names the execution location and network setting without a readiness claim.
 
-Directory commands retain the unsent message. Add, remove and Change setup retain transparent hover backgrounds without text underlines.
+Directory commands retain the unsent message. Add and remove retain transparent hover backgrounds without text underlines.
+
+Draft summary items open their relevant Setup section. Directory names, paths and access labels share one button. Execution and network summaries open Execution.
 
 Add a directory below the composer opens the native directory picker directly. The response opens Directories with the applicable access controls and approval steps.
 

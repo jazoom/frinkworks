@@ -56,9 +56,9 @@ pub(crate) async fn run(log_level: tracing::Level) -> Result<(), Box<dyn std::er
     tokio::spawn(models::models_dev::refresh_worker(state.clone()));
     let environment = state.config.environment();
     let public_origin = state.config.public_origin().to_owned();
-    let app = build_router(state, static_dir.clone());
+    let app = build_router(state.clone(), static_dir.clone());
     #[cfg(feature = "dev")]
-    let app = development::with_live_reload(app, static_dir);
+    let app = development::with_development(app, state, static_dir);
     let listener = tokio::net::TcpListener::bind(&bind_address).await?;
     tracing::info!(?environment);
     tracing::info!(

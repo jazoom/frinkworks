@@ -417,6 +417,12 @@ body {
     height: 24px;
     color: var(--workspace-cover-text);
 }
+.app-frame .workspace-local [data-supervised-rebuild] {
+    min-height: 44px;
+    font-size: inherit;
+    border-radius: 5px;
+}
+.app-frame .workspace-local [data-supervised-rebuild]:is(:hover, :active),
 .workspace-navigation a:hover,
 .workspace-navigation a[aria-current="page"] {
     background: color-mix(in srgb, var(--workspace-cover-text) 8%, transparent);
@@ -1829,14 +1835,13 @@ body:has(.workspace-catalogue) .app-frame {
 .directory-access-approved {
     background: var(--workspace-selected);
 }
-.app-frame .draft-change-setup,
 .app-frame .directory-add {
     min-height: 40px;
     color: var(--frinkworks-composer-link);
     font-size: 16px;
     font-weight: 400;
 }
-.app-frame :is(.draft-change-setup, .directory-add, .directory-remove):hover {
+.app-frame :is(.directory-add, .directory-remove):hover {
     background: transparent;
     text-decoration: none;
 }

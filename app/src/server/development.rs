@@ -7,11 +7,56 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use axum::{Router, http::header, routing::get};
+use crate::{config::RuntimeEnvironment, state::AppState};
+use axum::{
+    Router,
+    http::{HeaderMap, StatusCode, header},
+    routing::get,
+};
 use rand::{rand_core::TryRng, rngs::SysRng};
 use tower_livereload::LiveReloadLayer;
 
-pub(super) fn with_live_reload(app: Router, static_dir: PathBuf) -> Router {
+pub(super) fn with_development(app: Router, state: AppState, static_dir: PathBuf) -> Router {
+    if state.config.environment() != RuntimeEnvironment::Development {
+        return app;
+    }
+    match std::env::var("FRINKWORKS_SUPERVISOR_TOKEN") {
+        Ok(token) if !token.is_empty() => with_supervisor(app, state, token),
+        _ => with_live_reload(app, static_dir),
+    }
+}
+
+fn with_supervisor(app: Router, state: AppState, token: String) -> Router {
+    app.route(
+        "/_dev/supervised/idle",
+        get(move |headers: HeaderMap| {
+            let state = state.clone();
+            let token = token.clone();
+            async move {
+                let (status, message) = if headers
+                    .get("x-frinkworks-supervisor")
+                    .and_then(|value| value.to_str().ok())
+                    != Some(token.as_str())
+                {
+                    (StatusCode::FORBIDDEN, "The supervisor token is invalid.")
+                } else if state.sessions.has_active_work()
+                    || state.workflow_execution.has_active_work()
+                    || state.environment_preparations.has_active_work()
+                {
+                    (
+                        StatusCode::CONFLICT,
+                        "Work is active. Finish or stop it before a restart.",
+                    )
+                } else {
+                    (StatusCode::NO_CONTENT, "")
+                };
+                (status, [(header::CACHE_CONTROL, "no-store")], message)
+            }
+        }),
+    )
+}
+
+fn with_live_reload(app: Router, static_dir: PathBuf) -> Router {
     let mut boot = [0u8; 16];
     SysRng
         .try_fill_bytes(&mut boot)
@@ -58,3 +103,6 @@ fn modified(path: &Path) -> Option<SystemTime> {
 fn suppress_injection<B>(_: &axum::http::Request<B>) -> bool {
     false
 }
+
+#[cfg(test)]
+mod tests;

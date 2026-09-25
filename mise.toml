@@ -58,6 +58,11 @@ watchexec --restart \
   -- cargo run -p frinkworks --features dev
 """
 
+[tasks.dev-supervised]
+alias = "ds"
+description = "Run Frinkworks with an explicit rebuild and restart control"
+run = "node scripts/dev-supervised/index.mjs"
+
 [tasks.format]
 alias = "f"
 description = "Format Rust and front-end files"
@@ -80,6 +85,7 @@ run = [
 description = "Run the Frinkworks test suite"
 run = [
   "pnpm test",
+  "node --test scripts/dev-supervised/tests.mjs",
   "cargo test --workspace --all-features --quiet",
 ]
 

@@ -25,6 +25,8 @@ pub(crate) struct EnvironmentPreparationScheduler {
     snapshots: Arc<EnvironmentSnapshotRepository>,
     notify: Arc<Notify>,
     stop: Arc<AtomicBool>,
+    #[cfg(feature = "dev")]
+    executing: AtomicBool,
     runtime: PreparationRuntime,
 }
 
@@ -81,6 +83,8 @@ impl EnvironmentPreparationScheduler {
             snapshots,
             notify: Arc::new(Notify::new()),
             stop: Arc::new(AtomicBool::new(false)),
+            #[cfg(feature = "dev")]
+            executing: AtomicBool::new(false),
             runtime,
         });
         let worker = scheduler.clone();
@@ -116,13 +120,23 @@ impl EnvironmentPreparationScheduler {
         }
     }
 
+    #[cfg(feature = "dev")]
+    pub(crate) fn has_active_work(&self) -> bool {
+        self.catalogue.has_active_preparations() || self.executing.load(Ordering::SeqCst)
+    }
+
     pub(crate) async fn prepare_next(&self) -> bool {
         let claimed = match self.catalogue.claim_oldest_queued() {
             Ok(Some(record)) => record,
             Ok(None) => return false,
             Err(_) => return false,
         };
+        // Retain the active marker through guest cleanup, after the catalogue reaches a terminal state.
+        #[cfg(feature = "dev")]
+        self.executing.store(true, Ordering::SeqCst);
         self.execute(claimed).await;
+        #[cfg(feature = "dev")]
+        self.executing.store(false, Ordering::SeqCst);
         true
     }
 

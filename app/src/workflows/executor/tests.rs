@@ -2122,6 +2122,11 @@ fn uncertain_commit_protection_is_not_a_resumable_gate() {
             .is_err()
     );
     assert!(state.sessions.busy(&session));
+    #[cfg(feature = "dev")]
+    {
+        assert!(!state.sessions.has_active_work());
+        assert!(!state.workflow_execution.has_active_work());
+    }
     assert!(
         !state
             .gate_continuations

@@ -3174,6 +3174,149 @@ function enableLiveReload() {
     });
 }
 
+function enableSupervisedDevelopment() {
+    const endpoint = "/_dev/supervised";
+    let phase = "ready";
+    let message = "";
+    let notice = "";
+    let submitting = false;
+    let reloading = false;
+    let requestVersion = 0;
+    const render = () => {
+        const busy =
+            submitting ||
+            ["checking", "building", "restarting"].includes(phase);
+        const text = notice || (phase === "ready" ? "" : message);
+        document
+            .querySelectorAll<HTMLElement>("[data-supervised-development]")
+            .forEach((control) => {
+                control.hidden = false;
+                const button = control.querySelector<HTMLButtonElement>(
+                    "[data-supervised-rebuild]",
+                );
+                const progress = control.querySelector<HTMLElement>(
+                    "[data-supervised-progress]",
+                );
+                const status = control.querySelector<HTMLElement>(
+                    "[data-supervised-status]",
+                );
+                if (button) button.disabled = busy;
+                if (progress) progress.hidden = !busy;
+                if (status && status.textContent !== text)
+                    status.textContent = text;
+            });
+    };
+    const receive = (data: {
+        phase: string;
+        revision: string;
+        message: string;
+    }) => {
+        phase = data.phase;
+        message = data.message;
+        if (["checking", "building", "restarting"].includes(phase)) notice = "";
+        render();
+        if (
+            phase === "ready" &&
+            data.revision !== import.meta.env.VITE_SUPERVISED_REVISION &&
+            !reloading
+        ) {
+            reloading = true;
+            window.location.reload();
+        }
+    };
+    render();
+    listenForLocationChanges(render);
+    document.addEventListener("click", async (event) => {
+        const button =
+            event.target instanceof Element
+                ? event.target.closest<HTMLButtonElement>(
+                      "[data-supervised-rebuild]",
+                  )
+                : null;
+        if (!button || button.disabled || submitting) return;
+        submitting = true;
+        requestVersion++;
+        phase = "checking";
+        message = "Idle check in progress.";
+        notice = "";
+        render();
+        try {
+            const response = await fetch(endpoint, {
+                method: "POST",
+                headers: { "X-Frinkworks-Dev": "restart" },
+                signal: AbortSignal.timeout(10000),
+            });
+            const data = await response.json();
+            if (!response.ok) notice = data.message;
+            receive(data);
+        } catch {
+            phase = "error";
+            notice =
+                "The supervisor did not answer. See the terminal output before another attempt.";
+        } finally {
+            submitting = false;
+            render();
+            const status = button
+                .closest("[data-supervised-development]")
+                ?.querySelector<HTMLElement>("[data-supervised-status]");
+            if (status?.getClientRects().length)
+                status.scrollIntoView({ block: "nearest" });
+        }
+    });
+    window.addEventListener("pageshow", () => {
+        const lifetime = new AbortController();
+        let timer: number;
+        const poll = async () => {
+            const version = requestVersion;
+            try {
+                if (submitting) return;
+                const response = await fetch(endpoint, {
+                    cache: "no-store",
+                    signal: AbortSignal.any([
+                        lifetime.signal,
+                        AbortSignal.timeout(5000),
+                    ]),
+                });
+                if (!response.ok)
+                    throw new Error("The supervisor request failed.");
+                const data = await response.json();
+                // A status request from before a click cannot overwrite that command's result.
+                if (
+                    !lifetime.signal.aborted &&
+                    version === requestVersion &&
+                    !submitting
+                )
+                    receive(data);
+            } catch {
+                if (
+                    !lifetime.signal.aborted &&
+                    version === requestVersion &&
+                    !submitting
+                ) {
+                    phase = "error";
+                    message =
+                        "The supervisor is unavailable. See the terminal output.";
+                    render();
+                }
+            } finally {
+                if (!lifetime.signal.aborted && !reloading)
+                    timer = window.setTimeout(poll, 1500);
+            }
+        };
+        window.addEventListener(
+            "pagehide",
+            () => {
+                lifetime.abort();
+                window.clearTimeout(timer);
+            },
+            { once: true },
+        );
+        void poll();
+    });
+}
+
 if (import.meta.env.MODE === "development") {
     enableLiveReload();
+} else if (import.meta.env.MODE === "supervised") {
+    enableSupervisedDevelopment();
 }

@@ -148,6 +148,31 @@ impl SessionStore {
         live(&mut sessions, id, self.clock.now()).is_some_and(|session| session.active.is_some())
     }
 
+    #[cfg(feature = "dev")]
+    pub(crate) fn has_active_work(&self) -> bool {
+        // Terminal jobs can retain reservations until restart reconciles recovery.
+        let active = |job: &Job| {
+            matches!(
+                job.snapshot().status,
+                super::JobStatus::Running
+                    | super::JobStatus::AwaitingDecision
+                    | super::JobStatus::AwaitingQuestion
+            )
+        };
+        let sessions = self.lock();
+        sessions.values().any(|session| {
+            !session.commands.is_empty()
+                || session
+                    .conversations
+                    .values()
+                    .filter_map(|conversation| conversation.job.as_ref())
+                    .any(|job| active(job))
+        }) || self
+            .conversation_jobs()
+            .values()
+            .any(|entry| active(&entry.job))
+    }
+
     pub(crate) fn command_reserved(&self, id: &SessionId, conversation: &ConversationId) -> bool {
         let mut sessions = self.lock();
         let now = self.clock.now();

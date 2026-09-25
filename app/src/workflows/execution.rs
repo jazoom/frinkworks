@@ -1,3 +1,5 @@
+#[cfg(feature = "dev")]
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 enum Hold {
@@ -10,11 +12,15 @@ enum Hold {
 pub(crate) struct WorkflowExecution {
     held: Mutex<Hold>,
     application: tokio::sync::Mutex<()>,
+    #[cfg(feature = "dev")]
+    active: AtomicUsize,
 }
 
 pub(crate) struct ExecutionGuard {
     execution: Arc<WorkflowExecution>,
     exclusive: bool,
+    #[cfg(feature = "dev")]
+    blocks_restart: AtomicBool,
 }
 
 impl WorkflowExecution {
@@ -22,6 +28,8 @@ impl WorkflowExecution {
         Self {
             held: Mutex::new(Hold::Free),
             application: tokio::sync::Mutex::new(()),
+            #[cfg(feature = "dev")]
+            active: AtomicUsize::new(0),
         }
     }
 
@@ -38,10 +46,7 @@ impl WorkflowExecution {
                 .checked_add(1)
                 .ok_or("Too many executions are active.")?,
         );
-        Ok(ExecutionGuard {
-            execution: Arc::clone(self),
-            exclusive: false,
-        })
+        Ok(ExecutionGuard::new(self, false))
     }
 
     // The caller retains this lock through cleanup, recovery and publication.
@@ -55,16 +60,19 @@ impl WorkflowExecution {
         Ok(application)
     }
 
+    #[cfg(feature = "dev")]
+    pub(crate) fn has_active_work(&self) -> bool {
+        // Recovery can coexist with another operation's unfinished cleanup.
+        self.active.load(Ordering::SeqCst) != 0
+    }
+
     pub(crate) fn acquire_exclusive(self: &Arc<Self>) -> Result<ExecutionGuard, ()> {
         let mut held = lock(&self.held);
         if !matches!(*held, Hold::Free) {
             return Err(());
         }
         *held = Hold::Exclusive;
-        Ok(ExecutionGuard {
-            execution: Arc::clone(self),
-            exclusive: true,
-        })
+        Ok(ExecutionGuard::new(self, true))
     }
 
     fn release(&self, exclusive: bool) {
@@ -89,15 +97,37 @@ const RECOVERY_REQUIRED: &str =
     "Restart Frinkworks to reconcile unresolved execution recovery before another operation.";
 
 impl ExecutionGuard {
+    fn new(execution: &Arc<WorkflowExecution>, exclusive: bool) -> Self {
+        #[cfg(feature = "dev")]
+        execution.active.fetch_add(1, Ordering::SeqCst);
+        Self {
+            execution: Arc::clone(execution),
+            exclusive,
+            #[cfg(feature = "dev")]
+            blocks_restart: AtomicBool::new(true),
+        }
+    }
+
     pub(crate) fn require_recovery(&self) {
         // Recovery survives every lease release until process restart.
         *lock(&self.execution.held) = Hold::Recovery;
+        #[cfg(feature = "dev")]
+        self.release_restart_blocker();
+    }
+
+    #[cfg(feature = "dev")]
+    fn release_restart_blocker(&self) {
+        if self.blocks_restart.swap(false, Ordering::SeqCst) {
+            self.execution.active.fetch_sub(1, Ordering::SeqCst);
+        }
     }
 }
 
 impl Drop for ExecutionGuard {
     fn drop(&mut self) {
         self.execution.release(self.exclusive);
+        #[cfg(feature = "dev")]
+        self.release_restart_blocker();
     }
 }
 

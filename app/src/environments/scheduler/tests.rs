@@ -64,6 +64,8 @@ impl super::EnvironmentPreparationScheduler {
             snapshots,
             notify: Arc::new(Notify::new()),
             stop: Arc::new(AtomicBool::new(false)),
+            #[cfg(feature = "dev")]
+            executing: AtomicBool::new(false),
             runtime: PreparationRuntime::Scripted(ScriptedRuntime {
                 inner: Arc::new(std::sync::Mutex::new(ScriptedInner {
                     fail_at: None,

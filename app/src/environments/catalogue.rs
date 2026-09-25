@@ -274,6 +274,14 @@ impl EnvironmentCatalogue {
             .cloned()
     }
 
+    #[cfg(feature = "dev")]
+    pub(crate) fn has_active_preparations(&self) -> bool {
+        self.lock()
+            .preparations
+            .iter()
+            .any(|record| record.state.is_active())
+    }
+
     pub(crate) fn preparations_for(&self, id: &EnvironmentId) -> Vec<PreparationRecord> {
         let mut records: Vec<_> = self
             .lock()
