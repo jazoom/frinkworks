@@ -3033,9 +3033,16 @@ function focusWorkflowSelection() {
     target.focus({ preventScroll: true });
 }
 
-startApp();
+document
+    .querySelector("[data-live-reload]")
+    ?.addEventListener("click", () => location.reload());
+
+const stopApp = startApp();
+import.meta.hot?.dispose(stopApp);
 focusWorkflowSelection();
-listenForLocationChanges(() => {
+listenForLocationChanges((detail) => {
+    // History restoration owns the saved position, including chooser pages.
+    if (detail.cause === "history-traversal") return;
     // The installed runtime focuses its patch target after this event.
     queueMicrotask(focusWorkflowSelection);
 });

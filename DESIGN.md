@@ -169,6 +169,18 @@ Workspace icons use the shared stroke geometry in `app/public/images/workspace-i
 
 ## Components
 
+### Transport feedback
+
+A delayed accent bar identifies page requests, including streamed GET responses. It describes transport, not execution progress.
+
+A failed navigation keeps the current page and offers Retry navigation or Dismiss. An uncertain command result takes precedence and requires a reload.
+
+Connection feedback reports disconnected or stopped WebSocket updates. The conversation list shows receipt time only after its projection updates both the list and attention count.
+
+That timestamp does not describe reply output or execution completeness. Reply output uses separate streamed requests.
+
+Back and Forward restore the catalogue content position after a fresh response. The transcript retains its own auto-scroll behaviour. Intent prefetch stays disabled.
+
 ### Navigation
 
 New conversation remains prominent. The index contains up to twelve server-derived recent conversations with real titles and status.

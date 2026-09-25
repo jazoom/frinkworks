@@ -27,37 +27,114 @@
   <body class="text-base-content min-h-screen">
     {% block body %}{% endblock %}
     <div
-      data-graft-feedback
-      class="alert alert-error fixed right-4 bottom-4 z-50 max-w-md"
-      role="alert"
-      aria-live="assertive"
+      data-graft-read-indicator
+      class="bg-primary pointer-events-none fixed inset-x-0 top-0 z-50 h-1 motion-safe:animate-pulse"
+      aria-hidden="true"
       hidden
     >
-      <span data-graft-feedback-safe>
-        We could not update the page. Check your connection and try again.
-      </span>
-      <span data-graft-feedback-blocked hidden>
-        Another request is active. This command was not sent. You can try again
-        after that request finishes.
-      </span>
-      <span data-graft-feedback-uncertain hidden>
-        The change may have been saved. Reload the page before trying again.
-      </span>
-      <button
-        class="btn btn-ghost btn-sm"
-        type="button"
-        data-graft-feedback-dismiss
-      >
-        Dismiss
-      </button>
-      <button
-        class="btn btn-ghost btn-sm"
-        type="button"
-        data-graft-feedback-reload
+      <span class="sr-only">A page request is in progress.</span>
+    </div>
+    <p
+      data-graft-read-status
+      class="sr-only"
+      role="status"
+      aria-atomic="true"
+    ></p>
+    <p
+      data-graft-navigation-status
+      class="sr-only"
+      role="status"
+      aria-atomic="true"
+    ></p>
+    <p
+      data-graft-live-announcement
+      class="sr-only"
+      role="status"
+      aria-atomic="true"
+    ></p>
+    <div
+      class="fixed inset-x-4 bottom-4 z-50 ml-auto flex max-w-md flex-col gap-3"
+    >
+      <aside
+        data-graft-live-connection
+        class="alert alert-info block text-sm"
         hidden
       >
-        Reload page
-      </button>
+        <span data-graft-live-reconnecting>
+          Live updates are disconnected. The app will reconnect.
+        </span>
+        <div data-graft-live-stopped hidden>
+          <p>Live updates stopped.</p>
+          <button
+            type="button"
+            data-live-reload
+            class="btn btn-ghost btn-sm mt-2 min-h-11"
+          >
+            Reload page
+          </button>
+        </div>
+      </aside>
+      <aside
+        data-graft-navigation-failure
+        class="alert alert-error block text-sm"
+        hidden
+      >
+        <p data-graft-navigation-message>
+          The connection failed. The current page remains open.
+        </p>
+        <div class="mt-2 flex flex-wrap gap-2">
+          <a
+            href="/"
+            data-graft
+            data-graft-navigation-retry
+            class="btn btn-outline btn-sm min-h-11"
+            >Retry navigation</a
+          >
+          <button
+            type="button"
+            data-graft-navigation-dismiss
+            class="btn btn-ghost btn-sm min-h-11"
+          >
+            Dismiss
+          </button>
+        </div>
+      </aside>
+      <div
+        data-graft-feedback
+        class="alert alert-error block text-sm"
+        role="alert"
+        aria-live="assertive"
+        hidden
+      >
+        <p data-graft-feedback-safe>
+          The page update failed. You can try again.
+        </p>
+        <p data-graft-feedback-blocked hidden>
+          Another request is active. This command was not sent. You can try
+          again after that request finishes.
+        </p>
+        <div data-graft-feedback-uncertain hidden>
+          <p>The command result is uncertain.</p>
+          <p>Reload the page before another attempt.</p>
+        </div>
+        <div class="mt-2 flex flex-wrap gap-2">
+          <button
+            class="btn btn-ghost btn-sm min-h-11"
+            type="button"
+            data-graft-feedback-dismiss
+          >
+            Dismiss
+          </button>
+          <button
+            class="btn btn-ghost btn-sm min-h-11"
+            type="button"
+            data-graft-feedback-reload
+            hidden
+          >
+            Reload page
+          </button>
+        </div>
+      </div>
     </div>
   </body>
 </html>

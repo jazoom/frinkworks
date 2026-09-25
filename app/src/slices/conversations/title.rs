@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod tests;
+
 use askama::Template;
 use axum::extract::{Path, State};
 use hypergraft::{
@@ -50,7 +53,7 @@ async fn live(
 ) -> Result<LiveProjection<SessionId>, LiveReject> {
     let updates = state.conversations.subscribe_titles();
     let id = ConversationId::parse(&raw).ok_or(LiveReject::Invalid)?;
-    if !state.vault.has_providers() || state.conversations.get(&id).is_none() {
+    if state.conversations.get(&id).is_none() {
         return Err(LiveReject::Retire);
     }
     Ok(LiveProjection::new(
@@ -58,9 +61,6 @@ async fn live(
         move |_| {
             let state = state.clone();
             async move {
-                if !state.vault.has_providers() {
-                    return Err(ProjectionError::Retire);
-                }
                 let record = state
                     .conversations
                     .get(&id)

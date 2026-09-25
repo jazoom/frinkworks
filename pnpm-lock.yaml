@@ -15,8 +15,8 @@ importers:
         specifier: ^5.2.8
         version: 5.3.0
       hypergraft:
-        specifier: 0.1.0
-        version: 0.1.0
+        specifier: 0.2.0
+        version: 0.2.0
     devDependencies:
       '@tailwindcss/vite':
         specifier: ^4.3.1
@@ -550,8 +550,8 @@ packages:
     resolution: {integrity: sha512-Hldbg8AdAa5a5oDcZpjqnGitp7JB0hqWmfv/8qr+kft4vzSD8BHsbdRfzYvL/0QcbKcURC/yyoygbeDQarPvYg==}
     engines: {node: '>=20.0.0'}
 
-  hypergraft@0.1.0:
-    resolution: {integrity: sha512-4MdNmu3z1TxFPn8riMoXbnLjnS9kK7rYK5038Y9t3wHUtOqDJmI+f6bklSEku1mSjRw9PeU7Vd8EJHq7RVDA0A==}
+  hypergraft@0.2.0:
+    resolution: {integrity: sha512-vhMGRKRLeoLw2+IRmoMRJkjZ5mISxFUgFMDruawMjim06My44cWUmJKUp2ItgIx669j967ch5GDKDz/HDOlAuA==}
     engines: {node: '>=22.12.0'}
 
   jiti@2.7.0:
@@ -1309,7 +1309,7 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  hypergraft@0.1.0:
+  hypergraft@0.2.0:
     dependencies:
       morphlex: 1.4.0
 

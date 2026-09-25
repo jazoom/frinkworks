@@ -87,6 +87,18 @@
         >
           <input type="hidden" name="index" value="true" />
         </form>
+        <p
+          data-graft-live-status="recent-conversations-projection"
+          data-graft-live-targets="recent-conversations attention-count"
+          class="px-3 py-1 text-xs text-(--workspace-cover-muted)"
+        >
+          <span data-graft-live-unverified role="status">
+            The conversation list awaits an update.
+          </span>
+          <span data-graft-live-updated hidden>
+            List update received <time data-graft-live-time></time>.
+          </span>
+        </p>
         <div class="workspace-resources">
           <p class="workspace-resources-heading">Resources</p>
           <a href="/environments" data-graft

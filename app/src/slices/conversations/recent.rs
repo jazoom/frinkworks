@@ -167,9 +167,6 @@ pub(super) fn response(state: &AppState) -> AppResult<axum::response::Response> 
 pub(super) async fn live(
     State(state): State<AppState>,
 ) -> Result<LiveProjection<SessionId>, LiveReject> {
-    if !state.vault.has_providers() {
-        return Err(LiveReject::Retire);
-    }
     // Execution and title stores have separate clocks. The bounded projection reads both.
     let ticks = futures_util::stream::unfold(
         tokio::time::interval(std::time::Duration::from_secs(2)),
@@ -180,11 +177,6 @@ pub(super) async fn live(
     );
     Ok(LiveProjection::new(ticks, move |_| {
         let state = state.clone();
-        async move {
-            if !state.vault.has_providers() {
-                return Err(ProjectionError::Retire);
-            }
-            patches(&state).map_err(|_| ProjectionError::Retire)
-        }
+        async move { patches(&state).map_err(|_| ProjectionError::Retire) }
     }))
 }

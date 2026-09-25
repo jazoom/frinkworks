@@ -2650,9 +2650,9 @@ dependencies = [
 
 [[package]]
 name = "hypergraft"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2fc8c88ffe08a3ed690b4e780cb2f41a6bad7b7f6bbf274bc9e672ca63e7b0b2"
+checksum = "9e757e9a870cccd63f89782c6d7856ab29e0cd863edf46055b4d14a5c10bf09b"
 dependencies = [
  "askama",
  "async-stream",

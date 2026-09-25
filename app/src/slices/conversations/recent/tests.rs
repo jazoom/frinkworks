@@ -73,6 +73,9 @@ async fn sidebar_projection_counts_the_authoritative_gate() {
         .await
         .expect("catalogue");
     assert_eq!(response.status(), StatusCode::OK);
-    assert!(text(response).await.contains("id=\"attention-count\""));
+    let body = text(response).await;
+    assert!(body.contains("id=\"attention-count\""));
+    assert!(body.contains("data-graft-live-status=\"recent-conversations-projection\""));
+    assert!(body.contains("data-graft-live-targets=\"recent-conversations attention-count\""));
     assert_eq!(state.workflow_runs.active_runs().len(), 1);
 }

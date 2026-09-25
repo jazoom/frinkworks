@@ -1,4 +1,7 @@
 import {
+    bindLiveFeedback,
+    bindNavigationRecovery,
+    bindReadFeedback,
     bindTransportFeedback,
     listenForDiagnostics,
     startHypergraft,
@@ -16,17 +19,21 @@ import { initTranscript } from "./transcript";
 import { initWorkflowEditor } from "./workflow-editor";
 import { initWorkspace } from "./workspace";
 
-export function startApp(): void {
+export function startApp(): () => void {
+    const stopDiagnostics = import.meta.env.DEV
+        ? listenForDiagnostics((detail) => {
+              console.error("Hypergraft diagnostic", detail.reason);
+          })
+        : () => {};
     const bound = bindTransportFeedback(document);
+    const stopLiveFeedback = bindLiveFeedback(document);
+    const stopReadFeedback = bindReadFeedback(document);
+    const stopNavigationRecovery = bindNavigationRecovery(document);
 
-    if (import.meta.env.DEV) {
-        listenForDiagnostics((detail) => {
-            console.error("Hypergraft diagnostic", detail.reason);
-        });
-    }
-
-    startHypergraft({
+    const stopRuntime = startHypergraft({
         feedback: bound.feedback,
+        // Only catalogue containers opt in. The transcript owns its auto-scroll.
+        scrollRestoration: true,
         enterEffects: {
             message: {
                 keyframes: [
@@ -62,4 +69,13 @@ export function startApp(): void {
             workspace: initWorkspace,
         },
     });
+
+    return () => {
+        stopLiveFeedback();
+        stopRuntime();
+        stopReadFeedback();
+        stopNavigationRecovery();
+        bound.destroy();
+        stopDiagnostics();
+    };
 }

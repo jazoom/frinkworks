@@ -1,5 +1,6 @@
 {% block page %}
   <main
+    tabindex="-1"
     data-section="{% block section %}{% endblock %}"
     {% block context %}{% endblock %}
     class="workspace-catalogue flex min-h-0 w-full min-w-0 flex-1 flex-col"
@@ -28,6 +29,8 @@
       {% block actions %}{% endblock %}
     </header>
     <div
+      id="catalogue-scroll"
+      data-graft-scroll
       class="min-h-0 flex-1 overflow-y-auto px-11 pt-8 pb-[70px] max-[700px]:px-5 max-[700px]:pt-6"
     >
       {% block page_content %}{% endblock %}
