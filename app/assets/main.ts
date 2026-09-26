@@ -3019,6 +3019,46 @@ document.addEventListener("submit", (event) => {
     reconcileCommandPreview();
 });
 
+// Transcript snapshots contain previews, not the user's expanded records.
+// Keep inert DOM copies only while their output targets remain in this page.
+const expandedOutputs = new Map<string, Node[]>();
+
+function reconcileExpandedOutputs() {
+    for (const [id, nodes] of expandedOutputs) {
+        const target = document.getElementById(id);
+        if (!target?.hasAttribute("data-retained-output")) {
+            expandedOutputs.delete(id);
+        } else if (target.querySelector("form")) {
+            target.replaceChildren(
+                ...nodes.map((node) => node.cloneNode(true)),
+            );
+        }
+    }
+}
+
+listenForRequestSettled((detail) => {
+    if (detail.outcome !== "applied-patch") return;
+    for (const id of detail.targetIds) {
+        const target = document.getElementById(id);
+        if (!target?.hasAttribute("data-retained-output")) continue;
+        if (detail.status === 200) {
+            expandedOutputs.set(
+                id,
+                Array.from(target.childNodes, (node) => node.cloneNode(true)),
+            );
+        } else {
+            expandedOutputs.delete(id);
+        }
+    }
+    reconcileExpandedOutputs();
+});
+listenForLivePatches(reconcileExpandedOutputs);
+document.addEventListener("hypergraft:progress", reconcileExpandedOutputs);
+listenForLocationChanges((detail) => {
+    if (detail.cause !== "command-patch-replacement") expandedOutputs.clear();
+    reconcileExpandedOutputs();
+});
+
 function focusWorkflowSelection() {
     const target = document.querySelector<HTMLElement>(
         "#workflow-destination-heading, #workflow-selection-error",

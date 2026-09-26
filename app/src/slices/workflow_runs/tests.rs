@@ -113,7 +113,7 @@ async fn a_runs_navigation_patches_chat_main() {
 }
 
 #[tokio::test]
-async fn a_runs_patch_is_rejected() {
+async fn a_runs_patch_fills_the_chat_main_target() {
     let state = test_state();
     let token = connected(&state);
     let response = app(&state)
@@ -128,7 +128,12 @@ async fn a_runs_patch_is_rejected() {
         )
         .await
         .expect("patch");
-    assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let text = String::from_utf8(body.to_vec()).unwrap();
+    assert!(!text.contains("<!doctype html>"));
+    assert!(text.contains("operation=\"children\" target=\"chat-main\""));
+    assert!(text.contains("No runs yet"));
 }
 
 #[tokio::test]
@@ -651,7 +656,12 @@ async fn history_directory_filter_matches_stored_identities_before_the_limit() {
         )
         .await
         .expect("filtered patch");
-    assert_eq!(patch.status(), axum::http::StatusCode::BAD_REQUEST);
+    assert_eq!(patch.status(), axum::http::StatusCode::OK);
+    let body = to_bytes(patch.into_body(), usize::MAX).await.unwrap();
+    let text = String::from_utf8(body.to_vec()).unwrap();
+    assert!(text.contains("operation=\"children\" target=\"chat-main\""));
+    assert!(text.contains(&older.as_hex()));
+    assert!(!text.contains(&newer.as_hex()));
 
     let unknown = app(&state)
         .oneshot(

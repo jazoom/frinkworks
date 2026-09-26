@@ -518,6 +518,51 @@ fn read_spec(
 }
 
 #[tokio::test]
+async fn stream_fragmentation_does_not_limit_reply_length() {
+    use crate::providers::{
+        ChatBackend, ChatTurn, CompletionReason, ModelEvent, ProviderConnection, ProviderKind,
+    };
+
+    for fragmented in [false, true] {
+        let mut state = crate::tests::test_state(crate::config::RuntimeConfig::development());
+        let mut events = Vec::new();
+        let pieces = if fragmented { 4097 } else { 1 };
+        let piece = if fragmented {
+            "x".to_owned()
+        } else {
+            "x".repeat(4097)
+        };
+        for _ in 0..pieces {
+            events.push(Ok(ModelEvent::Thinking(piece.clone())));
+        }
+        for _ in 0..pieces {
+            events.push(Ok(ModelEvent::Text(piece.clone())));
+        }
+        events.push(Ok(ModelEvent::Complete {
+            reason: CompletionReason::Stop,
+        }));
+        state.chat = std::sync::Arc::new(ChatBackend::Scripted(
+            crate::tests::ScriptedBackend::events(events),
+        ));
+        let connection = ProviderConnection::with_key(ProviderKind::Xai, "test-key", "grok-4.6");
+        let (record, job) = conversation_job(&state);
+        let mut spec = read_spec(connection, record.id, record.revision);
+        spec.conversation = None;
+        let ended = super::run_agent_action(
+            &state,
+            spec,
+            vec![ChatTurn::user("Explain the result".to_owned())],
+            job,
+        )
+        .await;
+        assert_eq!(ended.outcome, super::AgentOutcome::Completed);
+        assert!(ended.error.is_none());
+        assert_eq!(ended.reply.text, "x".repeat(4097));
+        assert_eq!(ended.reply.thinking, "x".repeat(4097));
+    }
+}
+
+#[tokio::test]
 async fn truncated_tool_arguments_do_not_dispatch() {
     use crate::config::RuntimeConfig;
     use crate::providers::{

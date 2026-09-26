@@ -135,7 +135,6 @@ pub(crate) async fn run_agent_action(
     let mut output_visible = false;
     let mut response_redactor = StreamRedactor::new(secret);
     let mut thinking_redactor = StreamRedactor::new(secret);
-    let mut event_count = 0usize;
     let mut budget = Budget::start(spec.budget);
     let mut turns = turns;
     let mut compaction_guard = CompactionGuard::default();
@@ -291,7 +290,6 @@ pub(crate) async fn run_agent_action(
                                     committed_visible_tool_bytes,
                                     &mut response_redactor,
                                     &mut thinking_redactor,
-                                    &mut event_count,
                                     secret,
                                     &job,
                                 );
@@ -330,7 +328,6 @@ pub(crate) async fn run_agent_action(
                                 committed_visible_tool_bytes,
                                 &mut response_redactor,
                                 &mut thinking_redactor,
-                                &mut event_count,
                                 secret,
                                 &job,
                             );
@@ -398,9 +395,7 @@ pub(crate) async fn run_agent_action(
                 let Some(chunk) = chunk else {
                     break;
                 };
-                event_count += 1;
-                if event_count > 4096
-                    || reply.activity.len() >= 256
+                if reply.activity.len() >= 256
                     || matches!(&chunk, Ok(ModelEvent::Text(text) | ModelEvent::Thinking(text)) if text.contains('\0'))
                 {
                     return AgentActionEnd {
@@ -653,7 +648,6 @@ pub(crate) async fn run_agent_action(
                                     committed_visible_tool_bytes,
                                     &mut response_redactor,
                                     &mut thinking_redactor,
-                                    &mut event_count,
                                     secret,
                                     &job,
                                 );
@@ -706,7 +700,6 @@ pub(crate) async fn run_agent_action(
                                 committed_visible_tool_bytes,
                                 &mut response_redactor,
                                 &mut thinking_redactor,
-                                &mut event_count,
                                 secret,
                                 &job,
                             );
@@ -805,7 +798,6 @@ pub(crate) async fn run_agent_action(
                         committed_visible_tool_bytes,
                         &mut response_redactor,
                         &mut thinking_redactor,
-                        &mut event_count,
                         secret,
                         &job,
                     );
@@ -2288,7 +2280,6 @@ fn restore_request(
     committed_visible_tool_bytes: usize,
     response_redactor: &mut StreamRedactor<'_>,
     thinking_redactor: &mut StreamRedactor<'_>,
-    event_count: &mut usize,
     _secret: Option<&str>,
     job: &Job,
 ) {
@@ -2303,7 +2294,6 @@ fn restore_request(
     *visible_tool_bytes = committed_visible_tool_bytes;
     let _ = response_redactor.finish();
     let _ = thinking_redactor.finish();
-    *event_count = 0;
     job.restore_output(committed.clone());
 }
 

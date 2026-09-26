@@ -2391,7 +2391,7 @@ fn reply_status(activity: &[crate::providers::AssistantActivity]) -> &'static st
 #[template(path = "conversations/templates/message_content.html")]
 struct MessageContent<'a> {
     id: &'a str,
-    output_base: &'a str,
+    output_action: &'a str,
     blocks: Vec<MessageBlock>,
     usage: Option<UsagePanelView>,
 }
@@ -2419,16 +2419,11 @@ struct MessageBlock {
 }
 
 struct CommandView {
-    chunks: Vec<CommandChunkView>,
+    body: String,
     status: String,
     error: bool,
     reference: Option<String>,
-}
-
-struct CommandChunkView {
-    stream: &'static str,
-    stderr: bool,
-    text: String,
+    target: String,
 }
 
 struct ProgressChunkView {
@@ -2437,20 +2432,34 @@ struct ProgressChunkView {
     text: String,
 }
 
+/// The transcript element that an on-demand retained-output patch fills.
+pub(super) fn output_target(reference: &str) -> String {
+    format!("output-{reference}")
+}
+
 fn command_view(command: &crate::execution::CommandResult) -> CommandView {
+    let preview_bytes = command
+        .chunks
+        .iter()
+        .map(|chunk| chunk.text.len())
+        .sum::<usize>();
+    // The expansion control is only useful when the retained record holds more
+    // text than the preview already shows.
+    let reference = command
+        .retained
+        .as_ref()
+        .filter(|retained| retained.bytes > preview_bytes)
+        .map(|retained| retained.reference.clone());
+    let truncated = command
+        .retained
+        .as_ref()
+        .is_some_and(|retained| retained.truncated);
     CommandView {
-        chunks: command
-            .chunks
-            .iter()
-            .map(|chunk| CommandChunkView {
-                stream: chunk.stream.label(),
-                stderr: chunk.stream.is_stderr(),
-                text: chunk.text.clone(),
-            })
-            .collect(),
+        body: super::output::body_html(String::new(), &command.chunks, truncated),
         status: command.status_text(),
         error: command.is_error(),
-        reference: command.retained_reference().map(str::to_owned),
+        target: reference.as_deref().map(output_target).unwrap_or_default(),
+        reference,
     }
 }
 
@@ -2462,7 +2471,7 @@ fn command_entry_html(
     message: &ConversationMessage,
     streaming: bool,
 ) -> String {
-    let output_base = format!("/conversations/{}/output/", conversation.as_hex());
+    let output_action = format!("/conversations/{}/output", conversation.as_hex());
     let context_base = format!("/conversations/{}/context/", conversation.as_hex());
     let block = match message
         .command
@@ -2490,7 +2499,7 @@ fn command_entry_html(
     };
     let output = MessageContent {
         id,
-        output_base: &output_base,
+        output_action: &output_action,
         blocks: vec![block],
         usage: usage_panel(&[], &context_base),
     }
@@ -2519,7 +2528,7 @@ fn activity_html(
     incomplete: bool,
 ) -> String {
     use crate::providers::AssistantActivity;
-    let output_base = format!("/conversations/{}/output/", conversation.as_hex());
+    let output_action = format!("/conversations/{}/output", conversation.as_hex());
     let context_base = format!("/conversations/{}/context/", conversation.as_hex());
     let progress_blocks: Vec<MessageBlock> = progress
         .iter()
@@ -2608,7 +2617,7 @@ fn activity_html(
     }
     MessageContent {
         id,
-        output_base: &output_base,
+        output_action: &output_action,
         blocks,
         usage: usage_panel(requests, &context_base),
     }

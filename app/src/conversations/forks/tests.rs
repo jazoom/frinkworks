@@ -252,7 +252,7 @@ fn materialise_rebinds_retained_output_to_the_destination() {
     let request = crate::tools::read::parse_request(None, None).expect("request");
     assert!(
         outputs
-            .page(
+            .model_page(
                 &rebound.reference,
                 &OutputScope::conversation(destination),
                 request
@@ -261,7 +261,7 @@ fn materialise_rebinds_retained_output_to_the_destination() {
     );
     assert!(
         outputs
-            .page(
+            .model_page(
                 &retained.reference,
                 &OutputScope::conversation(source),
                 request
@@ -270,7 +270,7 @@ fn materialise_rebinds_retained_output_to_the_destination() {
     );
     assert!(
         outputs
-            .page(
+            .model_page(
                 &rebound.reference,
                 &OutputScope::conversation(source),
                 request

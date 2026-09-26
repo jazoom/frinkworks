@@ -90,6 +90,49 @@ afterEach(() => {
     document.body.replaceChildren();
     vi.unstubAllGlobals();
 });
+test("expanded output stays inert across snapshots and does not cross navigation", () => {
+    const target = document.createElement("div");
+    target.id = "output-record";
+    target.setAttribute("data-retained-output", "");
+    const output = document.createElement("pre");
+    output.textContent = '<img src=x onerror="alert(1)">';
+    target.append(output);
+    document.body.append(target);
+    const form = document.createElement("form");
+    for (const listener of settled)
+        listener({
+            requestKind: "patch",
+            form,
+            url: "/conversations/one/output?reference=record",
+            outcome: "applied-patch",
+            status: 200,
+            targetIds: [target.id],
+        });
+    target.replaceChildren(form);
+    document.dispatchEvent(new Event("hypergraft:progress"));
+    expect(target.textContent).toBe(output.textContent);
+    expect(target.querySelector("img")).toBeNull();
+    const restored = target.firstChild;
+    document.dispatchEvent(new Event("hypergraft:progress"));
+    expect(target.firstChild).toBe(restored);
+    target.replaceChildren(form);
+    for (const listener of settled)
+        listener({
+            requestKind: "patch",
+            form,
+            url: "/conversations/one/observe",
+            outcome: "applied-patch",
+            status: 200,
+            targetIds: ["conversation-detail"],
+        });
+    expect(target.textContent).toBe(output.textContent);
+    target.replaceChildren(form);
+    for (const listener of locations)
+        listener({ url: "/conversations/two", cause: "link-navigation" });
+    document.dispatchEvent(new Event("hypergraft:progress"));
+    expect(target.firstChild).toBe(form);
+});
+
 test("catalogue selection receives focus after the runtime navigation target", async () => {
     document.body.insertAdjacentHTML(
         "beforeend",

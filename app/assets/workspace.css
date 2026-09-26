@@ -349,7 +349,7 @@ body {
     height: 100dvh;
 }
 .app-frame .btn.workspace-new {
-    margin: 0 16px;
+    margin: 12px 16px 0;
     padding: 10px 16px;
     gap: 16px;
     font-size: 17px;
@@ -414,15 +414,25 @@ body {
     background: color-mix(in srgb, var(--workspace-cover-text) 8%, transparent);
 }
 #recent-conversations {
+    display: flex;
+    flex: 1;
+    /* A short viewport must still reveal at least one recent record while the
+       navigation itself scrolls to the remaining resources. */
+    min-height: 120px;
+    flex-direction: column;
+    overflow: hidden;
     margin-top: 20px;
     border-top: 1px solid var(--workspace-cover-rule);
 }
 .recent-heading {
+    flex: none;
     margin: 16px 12px 4px;
     font-size: 15px;
     color: var(--workspace-cover-muted);
 }
 .recent-list {
+    min-height: 0;
+    overflow: hidden;
     margin: 0;
     padding: 0;
     list-style: none;
@@ -458,6 +468,7 @@ body {
     );
 }
 .recent-empty {
+    flex: none;
     padding: 8px 12px 0;
     color: var(--workspace-cover-muted);
     font-size: 14px;
@@ -500,7 +511,7 @@ body:has(.workspace-catalogue) .app-frame {
 }
 .catalogue-head h1 {
     margin: 0;
-    font-size: 18px;
+    font-size: 24px;
     font-weight: 600;
 }
 .catalogue-head p {
@@ -589,7 +600,7 @@ body:has(.workspace-catalogue) .app-frame {
     margin-top: 17px;
 }
 .workspace-resources {
-    margin-top: 24px;
+    margin-top: auto;
     padding-top: 12px;
     border-top: 1px solid var(--workspace-cover-rule);
 }
@@ -633,7 +644,7 @@ body:has(.workspace-catalogue) .app-frame {
     background: var(--workspace-canvas);
 }
 #conversation-heading {
-    font-size: 28px;
+    font-size: 24px;
     line-height: 1.3;
     letter-spacing: -0.02em;
 }
@@ -1165,26 +1176,6 @@ body:has(.workspace-catalogue) .app-frame {
 #workflow-detail .page-intro {
     border-bottom: 1px solid var(--color-base-300);
 }
-.workspace-library {
-    font-size: 14px;
-}
-.workspace-library .page-intro {
-    border-bottom: 1px solid var(--color-base-300);
-}
-.workspace-library .page-intro h1 {
-    font-size: 24px;
-}
-.workspace-library .page-intro p {
-    font-size: 14px;
-}
-.workspace-library .btn-secondary {
-    border: 1px solid var(--color-base-300);
-    background: var(--color-base-100);
-    color: var(--color-base-content);
-}
-.workspace-library .btn-secondary:hover {
-    background: var(--color-base-200);
-}
 #workflow-detail #workflow-launch > form {
     flex: 1;
     min-height: 0;
@@ -1357,6 +1348,14 @@ body:has(.workspace-catalogue) .app-frame {
     .app-index {
         display: none;
     }
+    #recent-conversations {
+        flex: none;
+        min-height: 0;
+        overflow: visible;
+    }
+    .recent-list {
+        overflow: visible;
+    }
     .app-index[data-menu-open] {
         display: flex;
         position: fixed;
@@ -1507,9 +1506,6 @@ body:has(.workspace-catalogue) .app-frame {
     }
     .conversation-settings-footer .btn {
         min-height: 44px;
-    }
-    #conversation-heading {
-        font-size: 24px;
     }
     .app-frame .workspace-header-actions .btn {
         min-height: 44px;

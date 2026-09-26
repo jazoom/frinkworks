@@ -336,35 +336,27 @@ impl OutputStore {
         }
     }
 
-    pub(crate) fn has_scope(&self, scope: &OutputScope) -> bool {
-        self.lock()
-            .records
-            .values()
-            .any(|record| scope.matches(record))
-    }
-
-    /// One bounded page of retained output. Offset values are 1-based lines.
-    pub(crate) fn page(
+    /// Every retained chunk for one record. Display views request this only
+    /// after an explicit user action; the record itself is already bounded.
+    pub(crate) fn full(
         &self,
         reference: &str,
         scope: &OutputScope,
-        request: crate::tools::read::PageRequest,
-    ) -> Result<OutputPage, OutputError> {
+    ) -> Result<(Vec<CommandChunk>, bool), OutputError> {
         let inner = self.lock();
         let record = inner.records.get(reference).ok_or(OutputError::Missing)?;
         if !scope.matches(record) {
             // Do not disclose another conversation's output.
             return Err(OutputError::Forbidden);
         }
-        match crate::tools::read::page_chunks(&record.chunks, request) {
-            Ok((chunks, next, line_truncated)) => Ok(OutputPage {
-                chunks,
-                next,
-                truncated: record.truncated,
-                line_truncated,
-            }),
-            Err(_) => Err(OutputError::Cursor),
-        }
+        Ok((record.chunks.clone(), record.truncated))
+    }
+
+    pub(crate) fn has_scope(&self, scope: &OutputScope) -> bool {
+        self.lock()
+            .records
+            .values()
+            .any(|record| scope.matches(record))
     }
 
     pub(crate) fn remove_scope(&self, scope: &OutputScope) {

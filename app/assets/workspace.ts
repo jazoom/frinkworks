@@ -131,29 +131,46 @@ export function initWorkspace(
 
     // The sidebar input filters the bounded recent list without navigation.
     // Untrusted titles stay inert because matching reads text, never markup.
+    // Desktop also keeps whole rows that fit the unclipped list area. The
+    // measured height is natural on mobile, so every match stays reachable
+    // through the scrolling menu.
     function applyRecentFilter() {
         const query = recentFilterQuery();
         const container = root.querySelector<HTMLElement>(
             "#recent-conversations",
         );
         if (!container) return;
-        const items = container.querySelectorAll<HTMLElement>(
-            "[data-recent-conversation]",
+        const links = Array.from(
+            container.querySelectorAll<HTMLElement>(
+                "[data-recent-conversation]",
+            ),
         );
+        const matching: HTMLElement[] = [];
         let visible = 0;
-        items.forEach((link) => {
+        for (const link of links) {
             const title =
                 link.querySelector("strong")?.textContent?.toLowerCase() ??
                 link.textContent?.toLowerCase() ??
                 "";
             const match = query === "" || title.includes(query);
-            link.closest("li")?.toggleAttribute("hidden", !match);
+            const item = link.closest<HTMLElement>("li");
+            if (item) item.hidden = !match;
             if (match) visible += 1;
-        });
+            if (match && item) matching.push(item);
+        }
+        // Reveal every match before measuring. Hiding the trailing rows then
+        // shrinks the list until no partial row remains. The list owns the
+        // overflow, so it has the measured content height.
+        const list =
+            container.querySelector<HTMLElement>(".recent-list") ?? container;
+        for (const item of matching) item.hidden = false;
+        while (matching.length > 0 && list.scrollHeight > list.clientHeight) {
+            matching.pop()!.hidden = true;
+        }
         let notice = container.querySelector<HTMLElement>(
             "[data-recent-no-match]",
         );
-        if (query !== "" && visible === 0 && items.length > 0) {
+        if (query !== "" && visible === 0 && links.length > 0) {
             if (!notice) {
                 notice = document.createElement("p");
                 notice.className = "recent-empty";
@@ -466,6 +483,9 @@ export function initWorkspace(
         },
         { signal },
     );
+    window.addEventListener("resize", () => applyRecentFilter(), {
+        signal,
+    });
     mobile.addEventListener(
         "change",
         () => {

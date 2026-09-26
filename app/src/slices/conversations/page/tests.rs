@@ -177,6 +177,155 @@ fn dense_markup_uses_escaped_text_with_bounded_nodes() {
     assert!(html.contains("&lt;script&gt;"));
 }
 
+#[test]
+fn retained_output_stays_out_until_the_transcript_patch_fills_it() {
+    use crate::execution::command::{
+        CommandChunk, CommandResult, CommandStream, CommandTermination,
+    };
+    use crate::providers::{AssistantActivity, ToolOutput};
+
+    let state = crate::tests::test_state(RuntimeConfig::development());
+    let mut record = state
+        .conversations
+        .create("Discussion".to_owned())
+        .expect("record");
+    let command = CommandResult::new(
+        vec![
+            CommandChunk {
+                stream: CommandStream::Stdout,
+                text: "VISIBLE-PREVIEW".to_owned(),
+            },
+            CommandChunk {
+                stream: CommandStream::Stdout,
+                text: " HIDDEN-RETAINED".to_owned(),
+            },
+        ],
+        CommandTermination::Exited(0),
+    );
+    let retained = state
+        .outputs
+        .store(
+            &crate::execution::OutputKey {
+                scope: crate::execution::OutputScope::conversation(record.id),
+                job: crate::sessions::JobId::generate().expect("job"),
+                tool_call: "call-1".to_owned(),
+                model_hidden: false,
+            },
+            &command,
+        )
+        .expect("store output");
+    let (preview, _) = command.bounded("VISIBLE-PREVIEW".len());
+    let mut message = assistant_message("", MessageStatus::Complete);
+    message.activity = vec![AssistantActivity::ToolCall {
+        id: "call-1".to_owned(),
+        name: "run".to_owned(),
+        arguments: serde_json::json!({ "command": "grep" }),
+        result: Some(ToolOutput {
+            resource: None,
+            label: "run".to_owned(),
+            output: String::new(),
+            command: Some(preview.retain(retained.clone())),
+        }),
+    }];
+    record.messages = vec![message];
+    let view = ConversationDetailView::from_record(
+        &record,
+        ModelSources {
+            vault: &state.vault,
+            preferences: &state.preferences,
+            models: &state.models_dev,
+            environments: &state.environments,
+            environment_snapshots: &state.environment_snapshots,
+            presets: &[],
+        },
+        &[],
+        None,
+        &record.title,
+        "",
+        None,
+    );
+    let rendered = view.render().expect("page");
+    assert!(rendered.contains("VISIBLE-PREVIEW"));
+    assert!(!rendered.contains("HIDDEN-RETAINED"));
+    assert!(rendered.contains("View full retained output"));
+    assert!(rendered.contains(&format!("id=\"output-{}\"", retained.reference)));
+    assert!(rendered.contains(&format!(
+        "action=\"/conversations/{}/output\"",
+        record.id.as_hex()
+    )));
+    assert!(rendered.contains("name=\"reference\""));
+    assert!(rendered.contains(&format!("value=\"{}\"", retained.reference)));
+    assert!(rendered.contains("method=\"get\""));
+    assert!(rendered.contains("data-graft-history=\"none\""));
+}
+
+#[test]
+fn retained_output_omits_the_control_when_the_preview_shows_everything() {
+    use crate::execution::command::{
+        CommandChunk, CommandResult, CommandStream, CommandTermination,
+    };
+    use crate::providers::{AssistantActivity, ToolOutput};
+
+    let state = crate::tests::test_state(RuntimeConfig::development());
+    let mut record = state
+        .conversations
+        .create("Discussion".to_owned())
+        .expect("record");
+    let command = CommandResult::new(
+        vec![CommandChunk {
+            stream: CommandStream::Stdout,
+            text: "ONLY-OUTPUT".to_owned(),
+        }],
+        CommandTermination::Exited(0),
+    );
+    let retained = state
+        .outputs
+        .store(
+            &crate::execution::OutputKey {
+                scope: crate::execution::OutputScope::conversation(record.id),
+                job: crate::sessions::JobId::generate().expect("job"),
+                tool_call: "call-1".to_owned(),
+                model_hidden: false,
+            },
+            &command,
+        )
+        .expect("store output");
+    let (preview, _) = command.bounded("ONLY-OUTPUT".len());
+    let mut message = assistant_message("", MessageStatus::Complete);
+    message.activity = vec![AssistantActivity::ToolCall {
+        id: "call-1".to_owned(),
+        name: "run".to_owned(),
+        arguments: serde_json::json!({ "command": "grep" }),
+        result: Some(ToolOutput {
+            resource: None,
+            label: "run".to_owned(),
+            output: String::new(),
+            command: Some(preview.retain(retained.clone())),
+        }),
+    }];
+    record.messages = vec![message];
+    let view = ConversationDetailView::from_record(
+        &record,
+        ModelSources {
+            vault: &state.vault,
+            preferences: &state.preferences,
+            models: &state.models_dev,
+            environments: &state.environments,
+            environment_snapshots: &state.environment_snapshots,
+            presets: &[],
+        },
+        &[],
+        None,
+        &record.title,
+        "",
+        None,
+    );
+    let rendered = view.render().expect("page");
+    assert!(rendered.contains("ONLY-OUTPUT"));
+    assert!(!rendered.contains("View full retained output"));
+    assert!(!rendered.contains(&format!("id=\"output-{}\"", retained.reference)));
+}
+
 fn assistant_message(text: &str, status: MessageStatus) -> ConversationMessage {
     let id = crate::conversations::MessageId::generate().expect("message id");
     ConversationMessage {

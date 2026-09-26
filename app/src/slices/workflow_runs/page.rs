@@ -805,8 +805,7 @@ pub(super) fn attempt_result_view(
                 output: tool.output,
                 truncated: tool.truncated,
                 command: tool.command.map(|command| AttemptCommandView {
-                    chunks: command
-                        .chunks
+                    chunks: crate::execution::command::merge_adjacent_streams(&command.chunks)
                         .iter()
                         .map(|chunk| AttemptCommandChunkView {
                             stream: chunk.stream.label(),

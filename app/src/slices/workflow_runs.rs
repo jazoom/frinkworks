@@ -41,7 +41,7 @@ pub(super) fn router() -> Router<AppState> {
 async fn index(
     State(state): State<AppState>,
     _session: RequiredSession,
-    graft: PageGraft,
+    graft: GraftRequest,
     Query(query): Query<HistoryQuery>,
 ) -> AppResult<Response> {
     let valid = query.directory.is_empty() || known_history_directory(&state, &query.directory);
@@ -57,13 +57,18 @@ async fn index(
     };
     let view = RunIndexView::filtered(&state, &query.directory, error);
     match graft {
-        PageGraft::Document => {
+        GraftRequest::Document => {
             let mut response = responses::chat_page_response(page::INDEX_TITLE, &state, &view)?;
             responses::apply_patch_status(&mut response, status);
             Ok(response)
         }
-        PageGraft::Navigation => Ok(hypergraft::outcome::page_patch(
+        GraftRequest::Navigation => Ok(hypergraft::outcome::page_patch(
             page::INDEX_TITLE,
+            "chat-main",
+            &view,
+        )?),
+        GraftRequest::Patch => Ok(hypergraft::outcome::children_patch(
+            status,
             "chat-main",
             &view,
         )?),

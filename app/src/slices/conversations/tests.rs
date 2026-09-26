@@ -127,6 +127,16 @@ pub(super) fn navigation(path: &str, token: &str) -> Request<Body> {
         .expect("request")
 }
 
+pub(super) fn get_patch(path: &str, token: &str) -> Request<Body> {
+    Request::builder()
+        .header(header::COOKIE, cookie(token))
+        .header(hypergraft::GRAFT_REQUEST, "patch")
+        .header(header::ACCEPT, hypergraft::MEDIA_TYPE)
+        .uri(path)
+        .body(Body::empty())
+        .expect("request")
+}
+
 pub(super) fn command(path: &str, token: &str, body: &str) -> Request<Body> {
     Request::builder()
         .method("POST")

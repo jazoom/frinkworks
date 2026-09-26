@@ -139,8 +139,8 @@ pub(super) fn router() -> Router<AppState> {
         )
         .route("/conversations/{conversation_id}", get(detail))
         .route(
-            "/conversations/{conversation_id}/output/{reference}",
-            get(output::show),
+            "/conversations/{conversation_id}/output",
+            get(output::expand),
         )
         .route(
             "/conversations/{conversation_id}/context/{request_id}",

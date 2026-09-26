@@ -434,6 +434,31 @@ test("skip link keeps the main content destination on catalogue pages", () => {
     controller.abort();
 });
 
+test("the recent list hides whole rows that do not fit", () => {
+    const items = ["one", "two", "three", "four"]
+        .map(
+            (name) =>
+                `<li><a href="/conversations/${name}" data-graft data-recent-conversation><strong>${name}</strong></a></li>`,
+        )
+        .join("");
+    const { root, island, controller } = mountSidebar(
+        false,
+        `<div id="recent-conversations"><ul class="recent-list">${items}</ul></div>`,
+    );
+    const list = root.querySelector<HTMLElement>(".recent-list")!;
+    const visible = () =>
+        Array.from(list.children).filter(
+            (item) => !(item as HTMLElement).hidden,
+        ).length;
+    Object.defineProperty(list, "clientHeight", { get: () => 88 });
+    Object.defineProperty(list, "scrollHeight", { get: () => visible() * 44 });
+    window.dispatchEvent(new Event("resize"));
+    const rows = Array.from(list.children) as HTMLElement[];
+    expect(rows.map((row) => row.hidden)).toEqual([false, false, true, true]);
+    island.destroy?.();
+    controller.abort();
+});
+
 test("every menu trigger shares open state and Escape restores its trigger", () => {
     const { root, island, controller } = mountSidebar(
         true,

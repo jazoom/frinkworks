@@ -75,7 +75,7 @@ fn partial_output_survives_restart_and_storage_failure_retains_its_reference() {
     capture.push(CommandStream::Stdout, b"before secret after");
     let reopened = OutputStore::open(path.clone()).unwrap();
     let page = reopened
-        .page(
+        .model_page(
             &reference,
             &scope,
             crate::tools::read::parse_request(None, None).expect("page"),

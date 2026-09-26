@@ -19,10 +19,7 @@ colors:
 typography:
     title:
         fontFamily: "IBM Plex Sans, ui-sans-serif, system-ui, sans-serif"
-        fontSize: "18px"
-        fontWeight: 600
-    conversationTitle:
-        fontSize: "28px"
+        fontSize: "24px"
         fontWeight: 600
     conversationWelcome:
         fontSize: "34px"
@@ -107,9 +104,9 @@ IBM Plex Sans carries the interface. IBM Plex Mono identifies paths and code. Th
 
 Conversation text has a maximum measure of 70 characters. Result headings identify the next decision.
 
-Conversation titles use 28-pixel text. The empty-state heading uses 34-pixel text with a 20-pixel description. Navigation uses 16-pixel text.
+Page titles use 24-pixel text. The conversation empty-state heading uses 34-pixel text with a 20-pixel description. Navigation uses 16-pixel text.
 
-Mobile conversation titles use 24-pixel text. The empty-state heading uses 26-pixel text with a 16-pixel description.
+The empty-state heading uses 26-pixel text with a 16-pixel description on narrow screens.
 
 Catalogue forms retain their existing type scale. The workspace's smaller metadata is not a new standard for all form text.
 
@@ -183,7 +180,7 @@ Back and Forward restore the catalogue content position after a fresh response. 
 
 ### Navigation
 
-New conversation remains prominent. The index contains up to twelve server-derived recent conversations with real titles and status.
+New conversation remains prominent. The index contains up to twelve server-derived recent conversations with real titles and status. The recent list fills the space between the primary navigation and the resource group, and shows only whole rows that fit. Resources stay pinned, and a short viewport scrolls the index itself.
 
 The search field has a visible boundary. Recent rows pair a conversation icon with a title and status dot. Resource links have a Resources heading.
 
@@ -224,6 +221,8 @@ Avatars sit beside desktop author labels and message bodies. Mobile avatars sit 
 Message text uses the transcript scale. Status stays beside the author. Revise, Fork from here and Copy appear below the applicable message.
 
 Tool results use bordered disclosures with the actual tool label. Unfinished tools show their recorded name without an inferred path or result.
+
+The retained-output control reveals the full record in place. It leaves the browser address unchanged and appears only when the retained record holds more text than the preview.
 
 The mobile activity strip repeats the server's active reply status. It opens Current work without a command. Historical windows and settled replies omit the strip.
 
@@ -454,7 +453,7 @@ Forms above 256 KiB retain a standalone representation at the same canonical URL
 
 ### History and resources
 
-Resource catalogues and their forms use the shared catalogue layout. Their 18-pixel titles sit in a full-width header, with explanatory text beneath them. The content uses the same background and inset as Settings. Thin rules separate records, and the header stays above the content scroll area.
+Resource catalogues and their forms use the shared catalogue layout. Their 24-pixel titles sit in a full-width header, with explanatory text beneath them. The content uses the same background and inset as Settings. Thin rules separate records, and the header stays above the content scroll area.
 
 Decision entries link to conversations and exact gate pages. The decision list contains no approval form.
 

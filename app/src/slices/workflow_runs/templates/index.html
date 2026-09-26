@@ -1,17 +1,12 @@
-<main
-  data-section="runs"
-  class="workspace-library mx-auto flex w-full max-w-4xl flex-1 flex-col gap-8 px-5 py-8 sm:px-8"
->
-  <div class="page-intro">
-    <div>
-      <h1>Runs</h1>
-      <p>
-        The newest fifty runs link to their conversations, decisions and
-        evidence.
-      </p>
-    </div>
-  </div>
-
+{% extends "layout/catalogue.html" %}
+{% block section %}runs{% endblock %}
+{% block heading %}Runs{% endblock %}
+{% block description %}
+  <p>
+    The newest fifty runs link to their conversations, decisions and evidence.
+  </p>
+{% endblock %}
+{% block catalogue_content %}
   {% if !directories.is_empty() || !filter.is_empty() %}
     <form
       method="get"
@@ -126,4 +121,4 @@
       {% endfor %}
     </ul>
   {% endif %}
-</main>
+{% endblock %}

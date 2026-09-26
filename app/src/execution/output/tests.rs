@@ -41,8 +41,8 @@ fn model_access_is_refused_for_a_hidden_record_without_an_explicit_reference() {
     let scope = OutputScope::conversation(conversation);
     // The local view still serves the retained output.
     store
-        .page(&retained.reference, &scope, first_page())
-        .expect("local page");
+        .full(&retained.reference, &scope)
+        .expect("local output");
     // The model path refuses it even with the exact reference.
     assert_eq!(
         store.model_page(&retained.reference, &scope, first_page()),
@@ -65,7 +65,7 @@ fn retained_output_round_trips_with_a_bounded_page_and_offset() {
 
     let scope = OutputScope::conversation(conversation);
     let first = store
-        .page(
+        .model_page(
             &retained.reference,
             &scope,
             parse_request(Some(1), Some(5)).expect("first"),
@@ -78,7 +78,7 @@ fn retained_output_round_trips_with_a_bounded_page_and_offset() {
     assert_eq!(first.next, Some(6));
 
     let second = store
-        .page(
+        .model_page(
             &retained.reference,
             &scope,
             parse_request(first.next, Some(5)).expect("second"),
@@ -98,7 +98,7 @@ fn another_conversation_cannot_read_output() {
         .expect("store");
     let other = conversation();
     assert_eq!(
-        store.page(
+        store.model_page(
             &retained.reference,
             &OutputScope::conversation(other),
             first_page()
@@ -106,7 +106,7 @@ fn another_conversation_cannot_read_output() {
         Err(OutputError::Forbidden)
     );
     assert_eq!(
-        store.page(
+        store.model_page(
             &retained.reference,
             &OutputScope::conversation(owner),
             first_page()
@@ -132,7 +132,7 @@ fn malformed_offsets_are_rejected() {
         .expect("store");
     let scope = OutputScope::conversation(conversation);
     assert_eq!(
-        store.page(
+        store.model_page(
             &retained.reference,
             &scope,
             parse_request(Some(9), None).expect("past end")
@@ -140,7 +140,7 @@ fn malformed_offsets_are_rejected() {
         Err(OutputError::Cursor)
     );
     assert_eq!(
-        store.page("not-a-reference", &scope, first_page()),
+        store.model_page("not-a-reference", &scope, first_page()),
         Err(OutputError::Missing)
     );
 }
@@ -167,7 +167,7 @@ fn redaction_happens_before_storage() {
         .store(&key(conversation, "call-1"), &command)
         .expect("store");
     let page = store
-        .page(
+        .model_page(
             &retained.reference,
             &OutputScope::conversation(conversation),
             first_page(),
@@ -202,7 +202,7 @@ fn pages_preserve_unicode_and_stream_order() {
     let retained = store.store(&key(owner, "call"), &command).expect("store");
     let scope = OutputScope::conversation(owner);
     let first = store
-        .page(
+        .model_page(
             &retained.reference,
             &scope,
             parse_request(Some(1), Some(1)).expect("first"),
@@ -211,7 +211,7 @@ fn pages_preserve_unicode_and_stream_order() {
     assert_eq!(first.next, Some(2));
     assert_eq!(first.chunks[0].text, "é\n");
     let second = store
-        .page(
+        .model_page(
             &retained.reference,
             &scope,
             parse_request(first.next, Some(2)).expect("second"),

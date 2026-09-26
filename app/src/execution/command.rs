@@ -30,6 +30,20 @@ pub(crate) struct CommandChunk {
     pub(crate) text: String,
 }
 
+/// Merge adjacent chunks from the same stream. Capture reads split one stream
+/// into several chunks, and a display must not repeat its heading for each.
+pub(crate) fn merge_adjacent_streams(chunks: &[CommandChunk]) -> Vec<CommandChunk> {
+    let mut merged: Vec<CommandChunk> = Vec::with_capacity(chunks.len());
+    for chunk in chunks {
+        if let Some(last) = merged.last_mut().filter(|last| last.stream == chunk.stream) {
+            last.text.push_str(&chunk.text);
+        } else {
+            merged.push(chunk.clone());
+        }
+    }
+    merged
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum CommandTermination {

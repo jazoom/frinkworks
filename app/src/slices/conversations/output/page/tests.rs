@@ -1,25 +1,15 @@
-use askama::Template;
-
-use super::OutputView;
+use crate::execution::command::{CommandChunk, CommandStream};
 
 #[test]
-fn output_page_escapes_untrusted_stream_text() {
-    let view = OutputView {
-        heading: "Command output".to_owned(),
-        reference: "a".repeat(32),
-        back_href: "/conversations/abc".to_owned(),
-        error: String::new(),
-        chunks: vec![super::OutputChunkView {
-            stream: "stderr",
-            stderr: true,
+fn output_body_escapes_untrusted_stream_text() {
+    let html = super::body_html(
+        String::new(),
+        &[CommandChunk {
+            stream: CommandStream::Stderr,
             text: "<script>alert(1)</script>".to_owned(),
         }],
-        next_offset: Some("10".to_owned()),
-        next_href: "/conversations/abc/output/ref?offset=10".to_owned(),
-        truncated: false,
-        line_truncated: false,
-    };
-    let html = view.render().expect("output page");
+        false,
+    );
     assert!(!html.contains("<script>"));
     assert!(html.contains("&#60;script&#62;alert(1)&#60;/script&#62;"));
 }
