@@ -179,20 +179,10 @@ fn complete_host(
     result: &mut Search,
 ) {
     let root_path = &grant.host_path;
-    let Ok(root_directory) =
-        cap_std::fs::Dir::open_ambient_dir(root_path, cap_std::ambient_authority())
-    else {
+    let Ok(root_directory) = grant.open_directory() else {
         result.unavailable += 1;
         return;
     };
-    use cap_std::fs::MetadataExt;
-    let identity_matches = root_directory.dir_metadata().is_ok_and(|metadata| {
-        metadata.dev() == grant.identity.device && metadata.ino() == grant.identity.inode
-    });
-    if !identity_matches || grant.revalidate().is_err() {
-        result.unavailable += 1;
-        return;
-    }
     let mut current = root_directory;
     let mut current_path = root_path.clone();
     for component in directory.trim_end_matches('/').split('/') {
@@ -289,20 +279,10 @@ fn traverse(
     result: &mut Search,
 ) {
     let root_path = &grant.host_path;
-    let Ok(root_directory) =
-        cap_std::fs::Dir::open_ambient_dir(root_path, cap_std::ambient_authority())
-    else {
+    let Ok(root_directory) = grant.open_directory() else {
         result.unavailable += 1;
         return;
     };
-    use cap_std::fs::MetadataExt;
-    let identity_matches = root_directory.dir_metadata().is_ok_and(|metadata| {
-        metadata.dev() == grant.identity.device && metadata.ino() == grant.identity.inode
-    });
-    if !identity_matches || grant.revalidate().is_err() {
-        result.unavailable += 1;
-        return;
-    }
     let mut stack = vec![(root_directory, String::new(), 0usize)];
     while let Some((directory, relative, depth)) = stack.pop() {
         if depth > MAXIMUM_FILE_DEPTH {

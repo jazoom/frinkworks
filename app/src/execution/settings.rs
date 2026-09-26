@@ -81,20 +81,12 @@ pub(crate) struct ExecutionSettings {
 pub(crate) struct DirectoryGrant {
     pub(crate) id: DirectoryGrantId,
     pub(crate) host_path: PathBuf,
-    pub(crate) identity: CanonicalDirectoryIdentity,
     pub(crate) alias: String,
     pub(crate) access: DirectoryAccess,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct DirectoryGrantId([u8; 16]);
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct CanonicalDirectoryIdentity {
-    pub(crate) device: u64,
-    pub(crate) inode: u64,
-}
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -150,7 +142,6 @@ pub(crate) struct ExecutionSettingsFile {
 pub(super) struct DirectoryGrantFile {
     id: String,
     host_path: PathBuf,
-    identity: CanonicalDirectoryIdentity,
     alias: String,
     access: DirectoryAccess,
 }
@@ -160,7 +151,6 @@ pub(super) struct DirectoryGrantFile {
 struct DirectoryGrantForm {
     id: String,
     host_path: PathBuf,
-    identity: CanonicalDirectoryIdentity,
     alias: String,
     access: String,
 }
@@ -180,7 +170,7 @@ impl ExecutionSettings {
                 if let Some(existing) = combined
                     .directories
                     .iter_mut()
-                    .find(|existing| existing.identity == grant.identity)
+                    .find(|existing| existing.host_path == grant.host_path)
                 {
                     if existing.access != grant.access {
                         if existing.access == DirectoryAccess::Read {
@@ -321,7 +311,6 @@ impl From<&DirectoryGrant> for DirectoryGrantFile {
         Self {
             id: grant.id.as_hex(),
             host_path: grant.host_path.clone(),
-            identity: grant.identity,
             alias: grant.alias.clone(),
             access: grant.access,
         }
@@ -333,7 +322,6 @@ impl DirectoryGrantFile {
         Some(DirectoryGrant {
             id: DirectoryGrantId::parse(&self.id)?,
             host_path: self.host_path,
-            identity: self.identity,
             alias: self.alias,
             access: self.access,
         })
@@ -349,11 +337,7 @@ impl DirectoryGrant {
             return Err(DirectoryGrantError::Full);
         }
         let host_path = canonical_directory(selected)?;
-        let identity = directory_identity(&host_path)?;
-        if existing
-            .iter()
-            .any(|grant| grant.host_path == host_path || grant.identity == identity)
-        {
+        if existing.iter().any(|grant| grant.host_path == host_path) {
             return Err(DirectoryGrantError::Duplicate);
         }
         if existing
@@ -366,18 +350,26 @@ impl DirectoryGrant {
         Ok(Self {
             id: DirectoryGrantId::generate()?,
             host_path,
-            identity,
             alias,
             access: DirectoryAccess::Read,
         })
     }
 
+    // Approval follows this canonical location, including a replacement directory at the same path.
     pub(crate) fn revalidate(&self) -> Result<(), DirectoryGrantError> {
         let canonical = canonical_directory(&self.host_path)?;
-        if canonical != self.host_path || directory_identity(&canonical)? != self.identity {
+        if canonical != self.host_path {
             return Err(DirectoryGrantError::Unavailable);
         }
         Ok(())
+    }
+
+    pub(crate) fn open_directory(&self) -> Result<cap_std::fs::Dir, DirectoryGrantError> {
+        self.revalidate()?;
+        let directory = open_directory_without_links(&self.host_path)
+            .map_err(|_| DirectoryGrantError::Unavailable)?;
+        self.revalidate()?;
+        Ok(directory)
     }
 
     pub(crate) fn is_available(&self) -> bool {
@@ -397,7 +389,6 @@ impl DirectoryGrant {
         serde_json::to_string(&DirectoryGrantForm {
             id: self.id.as_hex(),
             host_path: self.host_path.clone(),
-            identity: self.identity,
             alias: self.alias.clone(),
             access: self.access.as_str().to_owned(),
         })
@@ -412,7 +403,6 @@ impl DirectoryGrant {
         let grant = Self {
             id: DirectoryGrantId::parse(&form.id)?,
             host_path: form.host_path,
-            identity: form.identity,
             alias: form.alias,
             access: DirectoryAccess::parse(&form.access)?,
         };
@@ -444,7 +434,9 @@ impl DirectoryGrantError {
         match self {
             Self::Random => "Frinkworks could not create a directory grant. Try again.",
             Self::Path => "Choose an absolute directory path.",
-            Self::Unavailable => "That directory is unavailable or changed at the saved path.",
+            Self::Unavailable => {
+                "That directory is unavailable or no longer resolves to its saved path."
+            }
             Self::Duplicate => "That directory already has access.",
             Self::Overlap => "Directory grants cannot overlap.",
             Self::Full => "This conversation has the maximum of eight directories.",
@@ -466,7 +458,6 @@ pub(crate) fn validate_directories(
                 previous.id == grant.id
                     || previous.alias == grant.alias
                     || previous.host_path == grant.host_path
-                    || previous.identity == grant.identity
             })
         {
             return Err(DirectoryGrantError::Invalid);
@@ -479,6 +470,29 @@ pub(crate) fn validate_directories(
         }
     }
     Ok(())
+}
+
+fn open_directory_without_links(path: &Path) -> std::io::Result<cap_std::fs::Dir> {
+    if !path.is_absolute() {
+        return Err(std::io::ErrorKind::InvalidInput.into());
+    }
+    let root = path
+        .ancestors()
+        .last()
+        .ok_or(std::io::ErrorKind::InvalidInput)?;
+    let relative = path
+        .strip_prefix(root)
+        .map_err(|_| std::io::ErrorKind::InvalidInput)?;
+    let mut directory = cap_primitives::fs::open_ambient_dir(root, cap_std::ambient_authority())?;
+    // Each open uses the retained parent handle and rejects links in that component.
+    // Separate canonical-path checks cannot prevent a transient symbolic-link redirect.
+    for component in relative.components() {
+        let std::path::Component::Normal(name) = component else {
+            return Err(std::io::ErrorKind::InvalidInput.into());
+        };
+        directory = cap_primitives::fs::open_dir_nofollow(&directory, Path::new(name))?;
+    }
+    Ok(cap_std::fs::Dir::from_std_file(directory))
 }
 
 fn canonical_directory(path: &Path) -> Result<PathBuf, DirectoryGrantError> {
@@ -497,21 +511,6 @@ fn valid_stored_path(path: &Path) -> bool {
     path.is_absolute()
         && raw.len() <= crate::agents::MAXIMUM_PATH_BYTES
         && !raw.chars().any(char::is_control)
-}
-
-#[cfg(unix)]
-fn directory_identity(path: &Path) -> Result<CanonicalDirectoryIdentity, DirectoryGrantError> {
-    use std::os::unix::fs::MetadataExt;
-    let metadata = std::fs::metadata(path).map_err(|_| DirectoryGrantError::Unavailable)?;
-    Ok(CanonicalDirectoryIdentity {
-        device: metadata.dev(),
-        inode: metadata.ino(),
-    })
-}
-
-#[cfg(not(unix))]
-fn directory_identity(_path: &Path) -> Result<CanonicalDirectoryIdentity, DirectoryGrantError> {
-    Err(DirectoryGrantError::Unavailable)
 }
 
 fn available_alias(path: &Path, existing: &[DirectoryGrant]) -> String {

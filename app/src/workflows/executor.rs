@@ -900,7 +900,7 @@ async fn run_agent_step(
                     return StepOutcome::Failed {
                         category: FailureCategory::Authority,
                         error: Some(
-                            "A phase directory changed identity before dispatch.".to_owned(),
+                            "A phase directory is unavailable at its saved path.".to_owned(),
                         ),
                     };
                 }
@@ -1667,7 +1667,7 @@ fn confirm_run_authority(state: &AppState, job: &WorkflowJob) -> Result<(), Stri
             .ok_or_else(|| "The conversation settings are unavailable.".to_owned())?;
         let pinned_authority =
             crate::execution::ProjectFreeAuthority::from_settings(authority.revision, &settings)
-                .map_err(|_| "A pinned directory changed identity before dispatch.".to_owned())?;
+                .map_err(|_| "A pinned directory is unavailable at its saved path.".to_owned())?;
         if pinned_authority != *authority {
             return Err("The pinned directory authority changed before dispatch.".to_owned());
         }

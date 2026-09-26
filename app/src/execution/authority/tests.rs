@@ -88,7 +88,7 @@ fn frinkworks_data_classification_covers_root_descendants_and_ancestors() {
 }
 
 #[test]
-fn replacement_at_the_same_path_invalidates_authority() {
+fn replacement_at_the_same_path_preserves_authority() {
     let parent = tempfile::tempdir().unwrap();
     let root = parent.path().join("root");
     std::fs::create_dir(&root).unwrap();
@@ -99,7 +99,7 @@ fn replacement_at_the_same_path_invalidates_authority() {
 
     assert_eq!(
         ProjectFreeAuthority::from_settings(2, &configured),
-        Err(crate::execution::DirectoryGrantError::Unavailable)
+        ProjectFreeAuthority::from_snapshot(2, &configured)
     );
 }
 

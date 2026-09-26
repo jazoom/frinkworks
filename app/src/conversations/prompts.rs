@@ -222,25 +222,15 @@ fn read_project_root(
     templates: &mut Vec<PromptTemplate>,
     unavailable: &mut usize,
 ) {
-    use cap_std::fs::MetadataExt;
     let prompts_path = host.join(PROJECT_PROMPTS_DIRECTORY);
     // An authorised parent must not expose private data through its prompt directory.
     if prompts_path.starts_with(data_root) || data_root.starts_with(&prompts_path) {
         return;
     }
-    let Ok(directory) = cap_std::fs::Dir::open_ambient_dir(host, cap_std::ambient_authority())
-    else {
+    let Ok(directory) = grant.open_directory() else {
         *unavailable += 1;
         return;
     };
-    if grant.revalidate().is_err()
-        || !directory.dir_metadata().is_ok_and(|metadata| {
-            metadata.dev() == grant.identity.device && metadata.ino() == grant.identity.inode
-        })
-    {
-        *unavailable += 1;
-        return;
-    }
     let Some(directory) = open_preview_directory(&directory, ".agents")
         .and_then(|directory| open_preview_directory(&directory, "prompts"))
     else {

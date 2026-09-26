@@ -360,7 +360,7 @@ fn directory_paths_retain_trailing_spaces_without_retargeting() {
 }
 
 #[test]
-fn unavailable_directory_keeps_identity_and_duplicate_roots_fail() {
+fn unavailable_directory_keeps_path_and_duplicate_roots_fail() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("source");
     std::fs::create_dir(&path).unwrap();
@@ -375,8 +375,8 @@ fn unavailable_directory_keeps_identity_and_duplicate_roots_fail() {
     assert_eq!(f.settings(Some(&original)).unwrap(), original.settings);
     std::fs::create_dir(&path).unwrap();
     assert_eq!(
-        f.settings(Some(&original)).unwrap().directories[0].identity,
-        original.settings.directories[0].identity
+        f.settings(Some(&original)).unwrap().directories[0],
+        original.settings.directories[0]
     );
     f.direct_write = f.read_only.clone();
     assert!(f.settings(Some(&original)).is_err());

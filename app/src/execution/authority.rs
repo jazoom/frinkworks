@@ -22,7 +22,7 @@ impl ProjectFreeAuthority {
         Ok(authority)
     }
 
-    // Historical evidence uses saved identities. Dispatch must use from_settings to inspect the host.
+    // Historical evidence uses saved paths. Dispatch must use from_settings to inspect the host.
     pub(crate) fn from_snapshot(
         revision: u32,
         settings: &super::ExecutionSettings,
@@ -61,7 +61,7 @@ impl ProjectFreeAuthority {
     }
 
     /// Build preview authority from saved grants without a model selection.
-    /// This revalidates every root identity and never starts a sandbox. A host
+    /// This revalidates every root path and never starts a sandbox. A host
     /// preview keeps host paths; a sandbox preview keeps grant aliases.
     pub(crate) fn from_preview_grants(
         revision: u32,

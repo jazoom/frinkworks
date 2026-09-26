@@ -82,7 +82,7 @@ struct HistoryQuery {
 }
 
 fn known_history_directory(state: &AppState, filter: &str) -> bool {
-    if filter.len() != 33 {
+    if filter.len() > crate::agents::MAXIMUM_PATH_BYTES {
         return false;
     }
     state.workflow_runs.all_summaries().iter().any(|summary| {

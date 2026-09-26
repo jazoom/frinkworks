@@ -226,7 +226,7 @@ async fn missing_run_capability_is_rejected() {
 }
 
 #[tokio::test]
-async fn named_directory_write_settles_with_output_without_tree_capture() {
+async fn path_approval_allows_a_command_after_directory_replacement() {
     let (state, session) = state_and_session();
     let directory = tempfile::tempdir().expect("directory");
     let settings = settings(vec![ToolId::Run], Some(directory.path()));
@@ -245,6 +245,9 @@ async fn named_directory_write_settles_with_output_without_tree_capture() {
         .sessions
         .begin_conversation_job(&session, record.id)
         .expect("job");
+    let previous = tempfile::tempdir().expect("previous directory");
+    std::fs::rename(directory.path(), previous.path().join("original")).unwrap();
+    std::fs::create_dir(directory.path()).unwrap();
     let command = "printf written > marker.txt".to_owned();
     let started = state
         .conversations

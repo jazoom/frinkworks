@@ -955,7 +955,7 @@ fn continuation_authority(
                 && !run.model_phases().any(|phase| {
                     phase.settings.as_ref().is_some_and(|phase_settings| {
                         phase_settings.directories.iter().any(|root| {
-                            root.identity == grant.identity && root.access == grant.access
+                            root.host_path == grant.host_path && root.access == grant.access
                         }) && state.access_consent.authorised_launch(
                             run.id,
                             continuation.session_id,

@@ -387,7 +387,7 @@ async fn queued_skill_keeps_its_frozen_expansion_after_a_source_edit() {
 }
 
 #[tokio::test]
-async fn project_skill_preview_rejects_links_replaced_roots_and_private_data() {
+async fn project_skill_preview_rejects_links_and_private_data_but_accepts_path_replacement() {
     let state = test_state();
     let root = project_fixture();
     let (record, grant) = conversation(&state, root.path());
@@ -421,6 +421,14 @@ async fn project_skill_preview_rejects_links_replaced_roots_and_private_data() {
         &root.path().join(".agents"),
     );
     assert!(skills.is_empty());
+    let mut unrelated = roots[0].clone();
+    unrelated.host_path = Some(root.path().join("unapproved"));
+    let (skills, _) = crate::execution::resources::preview_project_skills(
+        &[unrelated],
+        std::slice::from_ref(&grant),
+        state.local_data.root(),
+    );
+    assert!(skills.is_empty());
     let original = root.path().join("original");
     let displaced = root.path().with_extension("displaced");
     std::fs::rename(root.path(), &displaced).expect("move root");
@@ -428,7 +436,7 @@ async fn project_skill_preview_rejects_links_replaced_roots_and_private_data() {
     std::fs::rename(&displaced, &original).expect("retain original");
     std::fs::rename(original.join(".agents"), root.path().join(".agents"))
         .expect("replacement skill");
-    assert!(catalogue().offers.is_empty());
+    assert_eq!(catalogue().offers.len(), 1);
 }
 
 #[tokio::test]

@@ -528,7 +528,7 @@ async fn catalogue(
     }
     let trimmed = query.q.trim();
     let valid_directory = query.directory.is_empty()
-        || (query.directory.len() == 33
+        || (query.directory.len() <= crate::agents::MAXIMUM_PATH_BYTES
             && state
                 .conversations
                 .metadata()

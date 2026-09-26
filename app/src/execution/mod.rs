@@ -34,9 +34,9 @@ pub(crate) use resources::{
     InstructionSource, ResourceKind, ResourceSource, SkillAdvertisement, discover_skills,
 };
 pub(crate) use settings::{
-    CanonicalDirectoryIdentity, DirectoryAccess, DirectoryGrant, DirectoryGrantError,
-    DirectoryGrantId, ExecutionSettings, ExecutionSettingsFile, HostApprovalPolicy,
-    MAXIMUM_DIRECTORY_GRANTS, ToolLocation, validate_directories,
+    DirectoryAccess, DirectoryGrant, DirectoryGrantError, DirectoryGrantId, ExecutionSettings,
+    ExecutionSettingsFile, HostApprovalPolicy, MAXIMUM_DIRECTORY_GRANTS, ToolLocation,
+    validate_directories,
 };
 
 pub(crate) const GUEST_WORKSPACE: &str = "/workspace";

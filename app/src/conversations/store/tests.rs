@@ -203,7 +203,7 @@ fn restart_preserves_explicit_saves_with_or_without_a_manual_title() {
 }
 
 #[test]
-fn restart_preserves_directory_identity_and_guest_alias() {
+fn restart_preserves_directory_path_and_guest_alias() {
     let dir = tempfile::tempdir().unwrap();
     let granted = tempfile::tempdir().unwrap();
     let grant = crate::execution::DirectoryGrant::from_selected(granted.path(), &[]).unwrap();
@@ -1097,10 +1097,12 @@ fn corrupted_stored_metadata_fails_closed_on_load() {
 }
 
 #[test]
-fn restart_preserves_directory_approvals_until_settings_change() {
+fn restart_preserves_path_approval_after_replacement_until_settings_change() {
     let dir = tempfile::tempdir().unwrap();
     let granted = tempfile::tempdir().unwrap();
-    let grant = crate::execution::DirectoryGrant::from_selected(granted.path(), &[]).unwrap();
+    let path = granted.path().join("source");
+    std::fs::create_dir(&path).unwrap();
+    let grant = crate::execution::DirectoryGrant::from_selected(&path, &[]).unwrap();
     let settings = crate::execution::ExecutionSettings::new(
         ModelSelection::new(ProviderKind::Xai, "model".to_owned(), None).unwrap(),
         String::new(),
@@ -1124,8 +1126,16 @@ fn restart_preserves_directory_approvals_until_settings_change() {
         .unwrap();
     drop(store);
 
+    std::fs::rename(&path, granted.path().join("original")).unwrap();
+    std::fs::create_dir(&path).unwrap();
     let reopened = ConversationStore::open(dir.path().to_path_buf()).unwrap();
     assert!(reopened.directory_approved(&record.id, &settings, &grant));
+    assert_eq!(grant.revalidate(), Ok(()));
+    let replacement = crate::execution::DirectoryGrant::from_selected(&path, &[]).unwrap();
+    assert_ne!(grant.id, replacement.id);
+    let mut refreshed = settings.clone();
+    refreshed.directories = vec![replacement.clone()];
+    assert!(reopened.directory_approved(&record.id, &refreshed, &replacement));
 
     let mut changed_grant = grant.clone();
     changed_grant.access = crate::execution::DirectoryAccess::Write;

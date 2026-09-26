@@ -141,10 +141,6 @@ fn a_fork_preserves_settings_without_copying_consent() {
     let grant = crate::execution::DirectoryGrant {
         id: crate::execution::DirectoryGrantId::generate().expect("grant"),
         host_path: std::path::PathBuf::from("/tmp/example"),
-        identity: crate::execution::CanonicalDirectoryIdentity {
-            device: 1,
-            inode: 2,
-        },
         alias: "example".to_owned(),
         access: crate::execution::DirectoryAccess::Write,
     };

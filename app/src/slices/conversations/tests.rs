@@ -556,7 +556,7 @@ pub(super) fn awaiting_gate(state: &AppState) {
 }
 
 #[tokio::test]
-async fn directory_history_matches_identity_without_granting_access() {
+async fn directory_history_matches_path_without_granting_access() {
     let state = test_state();
     let token = connected(&state);
     let root = tempfile::tempdir().unwrap();
@@ -614,9 +614,9 @@ async fn directory_history_matches_identity_without_granting_access() {
     std::fs::rename(&first, root.path().join("old-code")).unwrap();
     std::fs::create_dir(&first).unwrap();
     let replacement = crate::execution::DirectoryGrant::from_selected(&first, &[]).unwrap();
-    assert_ne!(key, super::page::history_directory_key(&replacement));
+    assert_eq!(key, super::page::history_directory_key(&replacement));
     let body = text(app(&state).oneshot(document(&path, &token)).await.unwrap()).await;
-    assert!(body.contains("Unavailable"));
+    assert!(!body.contains("Unavailable"));
     assert!(body.contains("Copied history"));
     for query in [
         "directory=invalid",
@@ -665,9 +665,8 @@ async fn directory_history_matches_identity_without_granting_access() {
             String::new(),
             "",
         );
-        assert_eq!(view.conversations.len(), 2);
-        assert_eq!(view.directories.len(), 1);
-        assert_eq!(view.directories[0].name, moved_path.display().to_string());
+        assert_eq!(view.conversations.len(), 1);
+        assert_eq!(view.directories.len(), 2);
     }
 
     let mut replacement_record = records[0].clone();
@@ -691,11 +690,11 @@ async fn directory_history_matches_identity_without_granting_access() {
         String::new(),
         "",
     );
-    assert_eq!(view.conversations.len(), 2);
+    assert_eq!(view.conversations.len(), 3);
     assert!(
         view.conversations
             .iter()
-            .all(|record| record.title != "Replacement history")
+            .any(|record| record.title == "Replacement history")
     );
 }
 

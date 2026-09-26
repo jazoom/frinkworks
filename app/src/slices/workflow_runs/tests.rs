@@ -777,7 +777,6 @@ async fn history_filter_applies_before_limit_newest_first() {
         "oldest match stays available through the filtered view"
     );
     std::fs::rename(&first, root.path().join("old-first")).expect("rename");
-    std::fs::create_dir(&first).expect("recreate");
     let unavailable = super::page::RunIndexView::filtered(&state, &first_key, "");
     assert_eq!(unavailable.runs.len(), 2);
     assert!(
@@ -786,5 +785,16 @@ async fn history_filter_applies_before_limit_newest_first() {
             .iter()
             .any(|option| option.id == first_key && option.name.contains("Unavailable")),
         "moved directories keep an unavailable label"
+    );
+    std::fs::create_dir(&first).expect("recreate");
+    let replacement = crate::execution::DirectoryGrant::from_selected(&first, &[]).unwrap();
+    assert_eq!(super::page::run_directory_key(&replacement), first_key);
+    let available = super::page::RunIndexView::filtered(&state, &first_key, "");
+    assert_eq!(available.runs.len(), 2);
+    assert!(
+        available
+            .directories
+            .iter()
+            .any(|option| { option.id == first_key && !option.name.contains("Unavailable") })
     );
 }

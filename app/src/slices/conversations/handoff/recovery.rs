@@ -154,7 +154,7 @@ pub(super) fn attach(
         .directory_settings()
         .ok_or("The pinned settings are unavailable.")?;
     let private = crate::execution::ProjectFreeAuthority::from_settings(record.revision, &settings)
-        .map_err(|_| "A pinned directory changed identity.")?;
+        .map_err(|_| "A pinned directory is unavailable at its saved path.")?;
     let policy = private.policy.clone();
     let connection = run
         .model_phases()

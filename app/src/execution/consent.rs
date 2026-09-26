@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{conversations::ConversationId, sessions::SessionId};
 
-use super::{CanonicalDirectoryIdentity, DirectoryGrant};
+use super::DirectoryGrant;
 
 const TOKEN_BYTES: usize = 32;
 const MAXIMUM_RUNTIME_RECORDS: usize = 1_024;
@@ -17,7 +17,6 @@ const MAXIMUM_RUNTIME_RECORDS: usize = 1_024;
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct GrantBinding {
     root: PathBuf,
-    identity: CanonicalDirectoryIdentity,
     access: super::DirectoryAccess,
 }
 
@@ -551,7 +550,6 @@ impl From<&DirectoryGrant> for GrantBinding {
     fn from(grant: &DirectoryGrant) -> Self {
         Self {
             root: grant.host_path.clone(),
-            identity: grant.identity,
             access: grant.access,
         }
     }
@@ -565,12 +563,8 @@ fn access_digest(directories: &[DirectoryGrant]) -> [u8; 32] {
     let mut digest = Sha256::new();
     digest.update(b"frinkworks-access-consent-v1\0");
     for grant in directories {
-        digest.update(grant.id.as_hex());
-        digest.update([0]);
         digest.update(grant.host_path.as_os_str().as_encoded_bytes());
         digest.update([0]);
-        digest.update(grant.identity.device.to_le_bytes());
-        digest.update(grant.identity.inode.to_le_bytes());
         digest.update(grant.alias.as_bytes());
         digest.update([0]);
         digest.update(grant.access.as_str());

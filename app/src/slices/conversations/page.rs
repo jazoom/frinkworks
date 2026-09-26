@@ -230,10 +230,7 @@ pub(super) fn history_grants(
 }
 
 pub(super) fn history_directory_key(grant: &crate::execution::DirectoryGrant) -> String {
-    format!(
-        "{:016x}-{:016x}",
-        grant.identity.device, grant.identity.inode
-    )
+    grant.host_path.to_string_lossy().into_owned()
 }
 
 pub(super) struct MessageView {

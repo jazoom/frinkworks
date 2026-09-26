@@ -130,7 +130,7 @@ pub(crate) fn additional_access(
         || resolved.host_approval != defaults.host_approval
         || resolved.directories.iter().any(|grant| {
             defaults.directories.iter().all(|existing| {
-                existing.identity != grant.identity
+                existing.host_path != grant.host_path
                     || (grant.access != crate::execution::DirectoryAccess::Read
                         && existing.access != grant.access)
             })

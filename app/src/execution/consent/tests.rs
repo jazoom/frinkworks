@@ -205,7 +205,7 @@ fn automatic_host_consent_does_not_reuse_ask_each_time_approval() {
 }
 
 #[test]
-fn consent_rejects_another_session_strategy_or_root_identity() {
+fn consent_binds_session_access_and_path_but_not_native_identity() {
     let parent = tempfile::tempdir().unwrap();
     let first = parent.path().join("first");
     std::fs::create_dir(&first).unwrap();
@@ -231,9 +231,19 @@ fn consent_rejects_another_session_strategy_or_root_identity() {
             .is_err()
     );
 
+    let mut changed = grant.clone();
+    changed.host_path = parent.path().join("other");
+    assert!(
+        store
+            .approve_draft(&request, owner, "draft", &[changed.clone()], &changed)
+            .is_err()
+    );
+
     std::fs::rename(&first, parent.path().join("old")).unwrap();
     std::fs::create_dir(&first).unwrap();
     let replacement = crate::execution::DirectoryGrant::from_selected(&first, &[]).unwrap();
+    assert_ne!(grant.id, replacement.id);
+    assert_eq!(grant.revalidate(), Ok(()));
     assert!(
         store
             .approve_draft(
@@ -243,6 +253,6 @@ fn consent_rejects_another_session_strategy_or_root_identity() {
                 std::slice::from_ref(&replacement),
                 &replacement
             )
-            .is_err()
+            .is_ok()
     );
 }

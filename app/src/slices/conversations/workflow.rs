@@ -377,7 +377,7 @@ pub(super) async fn launch(
             Err(_) => {
                 return error_view(
                     PatchStatus::UnprocessableEntity,
-                    "A directory is no longer available at its authorised identity.",
+                    "A directory is no longer available at its approved path.",
                 )
                 .await;
             }
@@ -983,7 +983,7 @@ fn resolve_directory_phase_settings(
             .iter()
             .any(|grant| grant.revalidate().is_err())
         {
-            return Err("A phase directory is unavailable at its saved identity.");
+            return Err("A phase directory is unavailable at its saved path.");
         }
         if crate::execution::validate_directories(&resolved.directories).is_err() {
             return Err("Choose existing, distinct directories without overlapping roots.");
@@ -991,7 +991,7 @@ fn resolve_directory_phase_settings(
         for grant in &mut resolved.directories {
             if let Some(existing) = identities
                 .iter()
-                .find(|existing| existing.identity == grant.identity)
+                .find(|existing| existing.host_path == grant.host_path)
             {
                 grant.id = existing.id;
                 grant.alias.clone_from(&existing.alias);

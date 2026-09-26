@@ -202,8 +202,6 @@ pub(crate) struct AppliedPreset {
 pub(crate) struct DirectoryApproval {
     pub(crate) settings_digest: [u8; 32],
     pub(crate) root: PathBuf,
-    pub(crate) device: u64,
-    pub(crate) inode: u64,
     pub(crate) access: crate::execution::DirectoryAccess,
 }
 
@@ -215,8 +213,6 @@ impl DirectoryApproval {
         Self {
             settings_digest: crate::execution::settings_digest(settings),
             root: grant.host_path.clone(),
-            device: grant.identity.device,
-            inode: grant.identity.inode,
             access: grant.access,
         }
     }
@@ -228,8 +224,6 @@ impl DirectoryApproval {
     ) -> bool {
         self.settings_digest == crate::execution::settings_digest(settings)
             && self.root == grant.host_path
-            && self.device == grant.identity.device
-            && self.inode == grant.identity.inode
             && self.access == grant.access
     }
 }
@@ -467,8 +461,6 @@ struct ConversationModelFile {
 struct DirectoryGrantFile {
     id: String,
     host_path: PathBuf,
-    device: u64,
-    inode: u64,
     alias: String,
     access: crate::execution::DirectoryAccess,
 }
@@ -478,8 +470,6 @@ struct DirectoryGrantFile {
 struct DirectoryApprovalFile {
     settings_digest: String,
     host_path: PathBuf,
-    device: u64,
-    inode: u64,
     access: crate::execution::DirectoryAccess,
 }
 
@@ -2607,8 +2597,6 @@ fn directory_approvals_from_file(
             settings_digest: crate::hex::decode(&file.settings_digest)
                 .ok_or(ConversationError::Corrupt)?,
             root: file.host_path,
-            device: file.device,
-            inode: file.inode,
             access: file.access,
         };
         if approvals.contains(&approval) {
@@ -2641,10 +2629,6 @@ fn model_from_file(
             Some(crate::execution::DirectoryGrant {
                 id: crate::execution::DirectoryGrantId::parse(&grant.id)?,
                 host_path: grant.host_path,
-                identity: crate::execution::CanonicalDirectoryIdentity {
-                    device: grant.device,
-                    inode: grant.inode,
-                },
                 alias: grant.alias,
                 access: grant.access,
             })
@@ -2704,8 +2688,6 @@ fn model_to_file(model: &ConversationModelConfiguration) -> ConversationModelFil
             .map(|grant| DirectoryGrantFile {
                 id: grant.id.as_hex(),
                 host_path: grant.host_path.clone(),
-                device: grant.identity.device,
-                inode: grant.identity.inode,
                 alias: grant.alias.clone(),
                 access: grant.access,
             })
@@ -2893,8 +2875,6 @@ fn metadata_to_file(record: &ConversationRecord) -> MetadataFile {
             .map(|approval| DirectoryApprovalFile {
                 settings_digest: crate::hex::encode(&approval.settings_digest),
                 host_path: approval.root.clone(),
-                device: approval.device,
-                inode: approval.inode,
                 access: approval.access,
             })
             .collect(),

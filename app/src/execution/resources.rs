@@ -673,7 +673,10 @@ pub(crate) fn preview_project_skills(
     for root in roots {
         match &root.host_path {
             Some(path) => {
-                if let Some(grant) = grants.iter().find(|grant| grant.alias == root.scope) {
+                if let Some(grant) = grants
+                    .iter()
+                    .find(|grant| grant.alias == root.scope && grant.host_path == *path)
+                {
                     read_preview_root(root, path, grant, data_root, &mut skills);
                 }
             }
@@ -693,22 +696,13 @@ fn read_preview_root(
     data_root: &Path,
     skills: &mut Vec<PreviewSkill>,
 ) {
-    use cap_std::fs::MetadataExt;
     let skill_path = host.join(".agents/skills");
     if skill_path.starts_with(data_root) || data_root.starts_with(&skill_path) {
         return;
     }
-    let Ok(directory) = cap_std::fs::Dir::open_ambient_dir(host, cap_std::ambient_authority())
-    else {
+    let Ok(directory) = grant.open_directory() else {
         return;
     };
-    if grant.revalidate().is_err()
-        || !directory.dir_metadata().is_ok_and(|metadata| {
-            metadata.dev() == grant.identity.device && metadata.ino() == grant.identity.inode
-        })
-    {
-        return;
-    }
     let Some(directory) = open_preview_directory(&directory, ".agents")
         .and_then(|directory| open_preview_directory(&directory, "skills"))
     else {

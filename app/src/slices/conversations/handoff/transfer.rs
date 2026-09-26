@@ -93,7 +93,7 @@ pub(in crate::slices::conversations) fn validate_pinned(
                 .map_err(|_| "Connect each pinned provider before continuation.")?;
         }
         if let Some(settings) = &phase.settings {
-            crate::execution::ProjectFreeAuthority::from_settings(1, settings).map_err(|_| "A pinned directory changed identity. The workflow remains with its current owner.")?;
+            crate::execution::ProjectFreeAuthority::from_settings(1, settings).map_err(|_| "A pinned directory is unavailable at its saved path. The workflow remains with its current owner.")?;
         }
     }
     Ok(())

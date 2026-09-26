@@ -89,7 +89,7 @@ async fn picker_commands_are_patch_only_and_revision_bound() {
 }
 
 #[tokio::test]
-async fn direct_write_needs_destination_consent() {
+async fn direct_write_needs_path_consent_after_directory_replacement() {
     directory_consent_case(crate::execution::DirectoryAccess::Write).await;
 }
 
@@ -98,8 +98,10 @@ async fn directory_consent_case(access: crate::execution::DirectoryAccess) {
     let token = connected(&state);
     let record = conversation(&state);
     let first = tempfile::tempdir().unwrap();
+    let first_path = first.path().join("source");
+    std::fs::create_dir(&first_path).unwrap();
     let second = tempfile::tempdir().unwrap();
-    let first_grant = crate::execution::DirectoryGrant::from_selected(first.path(), &[]).unwrap();
+    let first_grant = crate::execution::DirectoryGrant::from_selected(&first_path, &[]).unwrap();
     let first_id = first_grant.id;
     let current = state
         .conversations
@@ -150,6 +152,8 @@ async fn directory_consent_case(access: crate::execution::DirectoryAccess) {
         form_value(&hidden_value(&body, "consent_request")),
         form_value(&hidden_value(&body, "pending_directory")),
     );
+    std::fs::rename(&first_path, first.path().join("original")).unwrap();
+    std::fs::create_dir(&first_path).unwrap();
     let approved = app(&state)
         .oneshot(command(
             &format!("/conversations/{}/directories/consent", record.id),

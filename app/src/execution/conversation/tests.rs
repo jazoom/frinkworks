@@ -180,16 +180,18 @@ fn private_workspace_has_no_host_backed_writable_alias() {
     assert_eq!(spec.workdir, crate::execution::GUEST_WORKSPACE);
 }
 
+#[cfg(unix)]
 #[test]
-fn changed_directory_identity_cannot_mint_authority() {
+fn redirected_directory_cannot_mint_authority() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("project");
     std::fs::create_dir(&path).unwrap();
     let mut settings = settings();
     settings.directories =
         vec![crate::execution::DirectoryGrant::from_selected(&path, &[]).unwrap()];
-    std::fs::rename(&path, root.path().join("old")).unwrap();
-    std::fs::create_dir(&path).unwrap();
+    let original = root.path().join("old");
+    std::fs::rename(&path, &original).unwrap();
+    std::os::unix::fs::symlink(&original, &path).unwrap();
     assert!(ProjectFreeAuthority::from_settings(1, &settings).is_err());
 }
 

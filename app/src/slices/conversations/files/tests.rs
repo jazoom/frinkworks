@@ -309,7 +309,7 @@ fn live_search_bounds_work_even_without_matches() {
 }
 
 #[tokio::test]
-async fn replaced_root_does_not_reuse_its_grant() {
+async fn replacement_at_the_approved_path_supplies_files() {
     let state = test_state();
     let token = connected(&state);
     let base = tempfile::tempdir().expect("base");
@@ -326,7 +326,13 @@ async fn replaced_root_does_not_reuse_its_grant() {
         ))
         .await
         .expect("lookup");
-    assert!(suggestions(&text(response).await).is_empty());
+    assert_eq!(response.status(), StatusCode::OK);
+    let suggestions = suggestions(&text(response).await);
+    assert_eq!(suggestions.len(), 1);
+    assert_eq!(
+        suggestions[0]["path"],
+        root.join("secret.txt").display().to_string()
+    );
 }
 
 #[tokio::test]

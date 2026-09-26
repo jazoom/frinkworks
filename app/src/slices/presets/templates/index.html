@@ -316,8 +316,8 @@
         <fieldset class="space-y-4">
           <legend class="font-semibold">Requested directories</legend>
           <p class="text-quiet text-sm">
-            One absolute path per line. Existing unavailable roots retain their
-            identity. New paths must exist.
+            Each line contains one absolute path. Saved paths remain listed
+            while unavailable. New paths must exist.
           </p>
           {% for directory in directories %}
             <p class="text-quiet text-sm break-all">{{ directory }}</p>

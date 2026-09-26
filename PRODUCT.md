@@ -79,6 +79,10 @@ The authority boundaries are:
 
 Conversation directories have exactly two modes: **Read** and **Write**. Read is the default.
 
+Directory approval binds to the canonical absolute path, not a device or inode number. Approval covers a replacement directory or filesystem at that path. A missing path blocks access until the directory returns. A symbolic link that redirects the saved path requires a new directory selection.
+
+Native identity checks apply only within a live directory operation. Defaults and presets contain requested paths and access modes, not approval.
+
 Read permits shell commands in Microsandbox with read-only mounts. Write mounts the original directories read-write. Changes take effect immediately.
 
 Authorised tools can access ignored files. Frinkworks applies no implicit file exclusions and performs no full-tree hashing, copying or capture.

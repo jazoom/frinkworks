@@ -224,7 +224,7 @@ impl RunIndexView {
         }
         // An empty filter can use the truncated summaries. Any run beyond the
         // newest fifty cannot enter the newest fifty combined rows. A directory
-        // filter must start from every stored identity before the bound.
+        // filter must start from every stored path before the bound.
         let run_summaries = if filter.is_empty() {
             state.workflow_runs.summaries()
         } else {
@@ -272,10 +272,7 @@ pub(super) fn run_grants(
 }
 
 pub(super) fn run_directory_key(grant: &crate::execution::DirectoryGrant) -> String {
-    format!(
-        "{:016x}-{:016x}",
-        grant.identity.device, grant.identity.inode
-    )
+    grant.host_path.to_string_lossy().into_owned()
 }
 
 fn conversation_presentation(

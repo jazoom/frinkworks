@@ -459,7 +459,7 @@ Decision entries link to conversations and exact gate pages. The decision list c
 
 The conversation catalogue pairs its directory filter with a title search. The query trims and matches titles without case sensitivity. Both filters stay in the canonical address and native form navigation. Access grants stay unchanged.
 
-Run history filters by stored canonical directory identity. The filter applies before the fifty-record bound with newest matches first. Unavailable directories keep their labels. Run history stays run-centred.
+Run history filters by stored canonical directory path. The filter applies before the fifty-record bound with newest matches first. Unavailable directories keep their labels. Run history stays run-centred.
 
 Run details retain the owning conversation. Evidence pages retain their canonical run links.
 
