@@ -82,7 +82,8 @@ impl CommandResult {
 
     pub(crate) fn retain(mut self, retained: super::output::RetainedOutput) -> Self {
         self.retained = Some(retained);
-        self
+        // Retention precedes the preview bound, so persistence never duplicates full capture.
+        self.bounded(super::output::OUTPUT_PREVIEW_BYTES).0
     }
 
     pub(crate) fn retained_reference(&self) -> Option<&str> {
@@ -95,7 +96,7 @@ impl CommandResult {
     pub(crate) fn into_storage_limit(mut self) -> Self {
         self.termination = CommandTermination::StorageFailure;
         self.retained = None;
-        self
+        self.bounded(super::output::OUTPUT_PREVIEW_BYTES).0
     }
 
     pub(crate) fn exit_code(&self) -> Option<i32> {
@@ -142,36 +143,26 @@ impl CommandResult {
         text
     }
 
-    fn outcome_text(&self) -> Option<String> {
-        match self.termination {
-            CommandTermination::Exited(0) => None,
-            CommandTermination::Exited(code) => {
-                Some(format!("The command exited with code {code}."))
-            }
-            CommandTermination::ResourceLimit => {
-                Some("The command exceeded the output resource limit.".to_owned())
-            }
-            CommandTermination::StorageFailure => {
-                Some("Frinkworks could not store command output.".to_owned())
-            }
-            CommandTermination::Cancelled => Some("The command was cancelled.".to_owned()),
-            CommandTermination::TimedOut => Some("The command exceeded the time limit.".to_owned()),
-            CommandTermination::NotDispatched => Some("The command did not start.".to_owned()),
-            CommandTermination::Unknown => Some("The command result is unknown.".to_owned()),
-        }
-    }
-
-    /// Text for the model tool result. The exit line stays outside captured output.
+    /// The outcome and retrieval reference stay outside captured output and its preview bound.
     pub(crate) fn report(&self) -> String {
         let mut output = self.combined();
-        if let Some(outcome) = self.outcome_text() {
-            append_line(&mut output, &outcome);
-        }
         if output.is_empty() {
-            "(no output)".to_owned()
-        } else {
-            output
+            output.push_str("(no output)");
         }
+        append_line(
+            &mut output,
+            &format!("Command outcome: {}.", self.status_text()),
+        );
+        if let Some(retained) = &self.retained {
+            append_line(
+                &mut output,
+                &format!(
+                    "Retained output reference: {}. read_output accepts this reference with offset 1. Retained bytes: {}. Storage truncated: {}.",
+                    retained.reference, retained.bytes, retained.truncated,
+                ),
+            );
+        }
+        output
     }
 
     pub(crate) fn is_bounded(&self) -> bool {
@@ -320,16 +311,9 @@ impl CommandFailure {
 
     /// Text for the model tool result. Partial output precedes the failure reason.
     pub(crate) fn report(&self) -> String {
-        let mut output = self.result.combined();
-        if let Some(outcome) = self.result.outcome_text() {
-            append_line(&mut output, &outcome);
-        }
+        let mut output = self.result.report();
         append_line(&mut output, self.message);
-        if output.is_empty() {
-            self.message.to_owned()
-        } else {
-            output
-        }
+        output
     }
 }
 
@@ -503,10 +487,10 @@ impl<'a> CommandCapture<'a> {
         } else {
             termination
         };
-        CommandResult {
-            chunks,
-            termination,
-            retained: self.retained.clone(),
+        let result = CommandResult::new(chunks, termination);
+        match &self.retained {
+            Some(retained) => result.retain(retained.clone()),
+            None => result,
         }
     }
 

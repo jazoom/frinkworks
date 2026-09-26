@@ -522,12 +522,15 @@ pub(crate) async fn invoke(
             ToolFailureKind::Rejected,
             None,
         ),
-        Err(ToolFailure::Command { label, failure }) => ToolTrace::fail(
-            label,
-            failure.report(),
-            ToolFailureKind::from_termination(failure.result.termination),
-            Some(failure.result),
-        ),
+        Err(ToolFailure::Command { label, mut failure }) => {
+            failure.result = retain_command(context, call_id, failure.result);
+            ToolTrace::fail(
+                label,
+                failure.report(),
+                ToolFailureKind::from_termination(failure.result.termination),
+                Some(failure.result),
+            )
+        }
     }
 }
 
@@ -884,10 +887,23 @@ async fn dispatch(
             let label = format!("run `{command}`");
             record_host_evidence(host, &request, "dispatching", "", None)
                 .map_err(ToolFailure::Persistence)?;
-            let result = capture(
-                context,
-                call_id,
+            let sandbox = context
+                .sandbox
+                .ok_or(ToolFailure::Authority("That tool is not available."))?;
+            let key = crate::execution::OutputKey {
+                scope: host_output_scope(host, &request),
+                job: context.job.id(),
+                tool_call: redact(call_id, context.secret),
+                model_hidden: false,
+            };
+            let result = crate::execution::command::capture_sandbox_command(
+                sandbox,
                 GuestExec::shell(command).in_dir(context.policy.primary_guest()),
+                context.job,
+                context.secret,
+                SANDBOX_COMMAND_TIMEOUT,
+                &key.tool_call,
+                Some((&host.state.outputs, &key)),
             )
             .await;
             let output = match &result {
@@ -1028,11 +1044,9 @@ async fn dispatch_host_command(
         &reporter,
     )
     .await;
-    let scope = host_output_scope(host, request);
     match result {
         Ok(command) => {
             let command = command.redacted(host.secret);
-            let command = retain_command(host.state, scope, job.id(), call_id, command);
             let output = command.report();
             if record_host_evidence(host, request, "finished", &output, Some(&command)).is_err() {
                 let mut command = command;
@@ -1054,7 +1068,6 @@ async fn dispatch_host_command(
         }
         Err(mut failure) => {
             failure.result = failure.result.redacted(host.secret);
-            failure.result = retain_command(host.state, scope, job.id(), call_id, failure.result);
             let output = failure.report();
             if let Err(message) =
                 record_host_evidence(host, request, "failed", &output, Some(&failure.result))
@@ -1084,23 +1097,25 @@ fn host_output_scope(
     }
 }
 
-pub(crate) fn retain_command(
-    state: &crate::state::AppState,
-    scope: OutputScope,
-    job: crate::sessions::JobId,
-    tool_call: &str,
+fn retain_command(
+    context: &AgentToolContext<'_>,
+    call_id: &str,
     command: CommandResult,
 ) -> CommandResult {
     if command.chunks.is_empty() || command.retained.is_some() {
         return command;
     }
+    let command = command.redacted(context.secret);
+    let (Some(outputs), Some(scope)) = (context.outputs, &context.output_scope) else {
+        return command.bounded(crate::execution::OUTPUT_PREVIEW_BYTES).0;
+    };
     let key = crate::execution::OutputKey {
-        scope,
-        job,
-        tool_call: tool_call.to_owned(),
+        scope: scope.clone(),
+        job: context.job.id(),
+        tool_call: redact(call_id, context.secret),
         model_hidden: false,
     };
-    match state.outputs.store(&key, &command) {
+    match outputs.store(&key, &command) {
         Ok(retained) => command.retain(retained),
         Err(_) => command.into_storage_limit(),
     }
@@ -1687,19 +1702,7 @@ async fn capture(
         return Err(command_not_dispatched("That tool is not available."));
     };
     let visible_call_id = redact(call_id, context.secret);
-    let key = match (context.outputs, &context.output_scope) {
-        (Some(_), Some(scope)) => Some(crate::execution::OutputKey {
-            scope: scope.clone(),
-            job: context.job.id(),
-            tool_call: visible_call_id.clone(),
-            model_hidden: false,
-        }),
-        _ => None,
-    };
-    let retained = match (context.outputs, key.as_ref()) {
-        (Some(store), Some(key)) => Some((store, key)),
-        _ => None,
-    };
+    // File tools consume raw capture before their own page bounds, not a command preview.
     crate::execution::command::capture_sandbox_command(
         sandbox,
         request,
@@ -1707,7 +1710,7 @@ async fn capture(
         context.secret,
         SANDBOX_COMMAND_TIMEOUT,
         &visible_call_id,
-        retained,
+        None,
     )
     .await
 }

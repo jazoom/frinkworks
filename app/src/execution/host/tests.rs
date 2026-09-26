@@ -35,7 +35,7 @@ async fn host_output_is_bounded_even_when_both_pipes_produce_output() {
     assert_eq!(result.termination, CommandTermination::ResourceLimit);
     let (bounded, _) = result.bounded(crate::tools::MAXIMUM_TOOL_BYTES);
     assert!(bounded.is_bounded());
-    assert!(result.report().contains("resource limit"));
+    assert!(result.report().contains("Output limit reached"));
 }
 
 #[tokio::test]
@@ -62,7 +62,7 @@ async fn workflow_commands_require_success_without_output_limit_termination() {
     )
     .await
     .unwrap();
-    assert_eq!(result.report(), "diagnostic");
+    assert_eq!(result.combined(), "diagnostic");
 }
 
 #[tokio::test]
@@ -189,7 +189,7 @@ async fn subprocess_environment_contains_only_allowed_variables() {
     let result = run_shell("printenv", directory.path(), &job(), COMMAND_TIMEOUT)
         .await
         .unwrap();
-    let output = result.report();
+    let output = result.combined();
     let allowed = [
         "PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TERM", "TMPDIR", "PWD", "SHLVL", "_",
     ];
@@ -237,7 +237,7 @@ async fn a_silent_non_zero_exit_reports_the_code_and_output_state() {
         .await
         .unwrap();
     assert_eq!(result.exit_code(), Some(9));
-    assert_eq!(result.report(), "The command exited with code 9.");
+    assert!(result.report().contains("Command outcome: Exit code 9."));
     assert!(result.is_error());
     assert_eq!(result.status_text(), "Exit code 9");
 }

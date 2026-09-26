@@ -259,6 +259,10 @@ A direct command needs the selected location, the Run capability and valid conse
 
 The application persists the pending command entry before it starts a process. The entry records the context inclusion, the command text, the actual directory, the output reference and the termination. A restart marks an unsettled command as interrupted. Captured process output survives a restart before a review decision. The application never replays the command.
 
+Command capture retains up to 256 KiB of output. Capture stops the process if output exceeds this limit. Direct commands and model Run calls return an 8 KiB preview with the outcome and retained reference. The model receives this preview and can read further pages through `read_output`. The transcript uses the same preview and expands the retained output in place. Preview truncation does not mark retained storage as truncated.
+
+Model response text has a separate 64 KiB limit per reply phase. Model thinking text has its own 64 KiB cap. Tool results count towards neither limit. A full display budget truncates tool previews without failure of the model request. File reads retain their existing page limits.
+
 An included `!` entry becomes delimited command evidence in the model projection. An excluded `!!` entry is absent from ordinary context, compaction, titles, workflow context and generated handoff prompts. The `read_output` tool refuses an excluded record even with the exact reference. Local output views remain available.
 
 A command records process output and termination, not file state. Host execution changes files directly under the process user's authority.

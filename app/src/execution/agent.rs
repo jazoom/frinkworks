@@ -60,6 +60,8 @@ const MAXIMUM_THINKING_PROGRESS_BYTES: usize = 192;
 pub(super) const MAXIMUM_MODEL_REPLY_BYTES: usize = 64 * 1024;
 pub(super) const MAXIMUM_THINKING_BYTES: usize = 64 * 1024;
 const MAXIMUM_VISIBLE_TOOL_BYTES: usize = 64 * 1024;
+// Bound pending calls before dispatch budgets apply, independently of display output.
+const MAXIMUM_TOOL_CALLS_PER_RESPONSE: usize = 64;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum AgentOutcome {
@@ -468,6 +470,14 @@ pub(crate) async fn run_agent_action(
                         name,
                         arguments,
                     }) => {
+                        if calls.len() >= MAXIMUM_TOOL_CALLS_PER_RESPONSE {
+                            return AgentActionEnd {
+                                outcome: AgentOutcome::ProviderFailure,
+                                error: Some(ProviderError::ReplyTooLong.message().to_owned()),
+                                reply,
+                                budget: None,
+                            };
+                        }
                         let tail = response_redactor.finish_boundary();
                         text.push_str(&tail);
                         append_model_piece(&mut reply, &tail, &mut model_reply_bytes);
@@ -493,14 +503,10 @@ pub(crate) async fn run_agent_action(
                         }
                         let visible_id = tools::redact(&id, secret);
                         let visible_name = tools::redact(&name, secret);
-                        visible_tool_bytes += visible_id.len() + visible_name.len();
-                        if visible_id.len() > 512
-                            || visible_name.len() > 512
-                            || visible_tool_bytes > MAXIMUM_VISIBLE_TOOL_BYTES
-                        {
+                        if visible_id.len() > 512 || visible_name.len() > 512 {
                             return AgentActionEnd {
                                 outcome: AgentOutcome::ProviderFailure,
-                                error: Some(ProviderError::ReplyTooLong.message().to_owned()),
+                                error: Some(ProviderError::Refused.message().to_owned()),
                                 reply,
                                 budget: None,
                             };
@@ -961,33 +967,8 @@ pub(crate) async fn run_agent_action(
 
             let label = tools::redact(&trace.label, secret);
             let command = trace.command.map(|command| command.redacted(secret));
-            let command = command.map(|command| match &spec.output_scope {
-                Some(scope) => tools::retain_command(state, scope.clone(), job.id(), &id, command),
-                None => command,
-            });
-            let mut failure = trace.failure;
-            if command.as_ref().is_some_and(|command| {
-                command.termination == crate::execution::CommandTermination::StorageFailure
-            }) {
-                failure = Some(tools::ToolFailureKind::Persistence);
-            }
-            let footer = command.as_ref().map(|command| {
-                let mut footer = format!("\nCommand outcome: {}.", command.status_text());
-                if let Some(retained) = &command.retained {
-                    footer.push_str(&format!(
-                        "\nRetained output reference: {}. Read with read_output, offset 1. Retained bytes: {}. Storage truncated: {}.",
-                        retained.reference, retained.bytes, retained.truncated,
-                    ));
-                }
-                footer
-            }).unwrap_or_default();
-            let output = format!(
-                "{}{footer}",
-                bound_visible_text(
-                    &output,
-                    crate::tools::MAXIMUM_TOOL_BYTES.saturating_sub(footer.len()),
-                )
-            );
+            let failure = trace.failure;
+            let output = bound_visible_text(&output, crate::tools::MAXIMUM_TOOL_BYTES);
             if let Some(evidence) = &spec.evidence {
                 evidence.tool(
                     &ToolOutput {
@@ -1023,12 +1004,9 @@ pub(crate) async fn run_agent_action(
             if let Err(error) = persist_output(state, spec.conversation, &job, &reply, true) {
                 return store_failure(&reply, error);
             }
-            if let Some(visible) =
-                visible_tool_output(label, &output, command, &mut visible_tool_bytes)
-            {
-                job.finish_tool(visible_id, visible);
-                output_visible = true;
-            }
+            let visible = visible_tool_output(label, &output, command, &mut visible_tool_bytes);
+            job.finish_tool(visible_id, visible);
+            output_visible = true;
             extra.push(Message::tool_result(id, name, output.clone()));
             if job.cancel_requested() {
                 record_not_dispatched(
@@ -1351,13 +1329,10 @@ fn visible_tool_output(
     output: &str,
     command: Option<crate::execution::CommandResult>,
     visible_tool_bytes: &mut usize,
-) -> Option<ToolOutput> {
+) -> ToolOutput {
     let mut label = label.replace('\0', "\u{fffd}");
     let output = output.replace('\0', "\u{fffd}");
     let remaining = MAXIMUM_VISIBLE_TOOL_BYTES.saturating_sub(*visible_tool_bytes);
-    if remaining <= label.len() && command.is_none() {
-        return None;
-    }
     truncate_utf8(&mut label, remaining);
     *visible_tool_bytes += label.len();
     // Keep structured output before its duplicate plain-text projection.
@@ -1376,12 +1351,12 @@ fn visible_tool_output(
     let output_limit = MAXIMUM_VISIBLE_TOOL_BYTES.saturating_sub(*visible_tool_bytes);
     let visible = bound_visible_text(&output, output_limit);
     *visible_tool_bytes += visible.len();
-    Some(ToolOutput {
+    ToolOutput {
         resource: None,
         label,
         output: visible,
         command,
-    })
+    }
 }
 
 fn bound_visible_text(output: &str, output_limit: usize) -> String {
@@ -1497,16 +1472,10 @@ pub(crate) fn bound_reply(reply: &AssistantReply) -> AssistantReply {
     if bounded.activity.is_empty() {
         truncate_utf8(&mut bounded.thinking, MAXIMUM_THINKING_BYTES);
         let mut tool_bytes = 0usize;
-        bounded.tools.retain_mut(|tool| {
+        for tool in &mut bounded.tools {
             let command = tool.command.take();
-            let Some(visible) =
-                visible_tool_output(tool.label.clone(), &tool.output, command, &mut tool_bytes)
-            else {
-                return false;
-            };
-            *tool = visible;
-            true
-        });
+            *tool = visible_tool_output(tool.label.clone(), &tool.output, command, &mut tool_bytes);
+        }
         return bounded;
     }
 
@@ -1565,10 +1534,9 @@ pub(crate) fn bound_reply(reply: &AssistantReply) -> AssistantReply {
                     output,
                     command,
                 } = tool;
-                if let Some(tool) = visible_tool_output(label, &output, command, &mut tool_bytes) {
-                    bounded.tools.push(tool.clone());
-                    activities.push(AssistantActivity::Tool(tool));
-                }
+                let tool = visible_tool_output(label, &output, command, &mut tool_bytes);
+                bounded.tools.push(tool.clone());
+                activities.push(AssistantActivity::Tool(tool));
             }
         }
     }
@@ -2338,14 +2306,13 @@ fn record_not_dispatched(
         });
         reply.finish_tool(&visible_id, output.clone());
         extra.push(Message::tool_result(id, name, output.output.clone()));
-        if let Some(visible) = visible_tool_output(
+        let visible = visible_tool_output(
             output.label.clone(),
             &output.output,
             output.command.clone(),
             visible_tool_bytes,
-        ) {
-            job.finish_tool(visible_id, visible);
-        }
+        );
+        job.finish_tool(visible_id, visible);
     }
 }
 

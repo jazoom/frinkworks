@@ -56,6 +56,53 @@ fn interleaved_streams_hide_credentials_and_interrupted_prefixes() {
 }
 
 #[test]
+fn retained_capture_bounds_the_preview_without_changing_storage_truncation() {
+    use crate::execution::output::{
+        MAXIMUM_RETAINED_BYTES, OUTPUT_PREVIEW_BYTES, OutputKey, OutputScope, OutputStore,
+    };
+    for overflow in [false, true] {
+        let store = OutputStore::ephemeral();
+        let scope =
+            OutputScope::conversation(crate::conversations::ConversationId::generate().unwrap());
+        let key = OutputKey {
+            scope: scope.clone(),
+            job: crate::sessions::JobId::generate().unwrap(),
+            tool_call: "call".to_owned(),
+            model_hidden: false,
+        };
+        let text = "界".repeat(if overflow {
+            MAXIMUM_RETAINED_BYTES
+        } else {
+            30_000
+        });
+        let mut capture = CommandCapture::with_output(None, &store, &key).unwrap();
+        assert_eq!(
+            capture
+                .push(CommandStream::Stdout, text.as_bytes())
+                .overflow,
+            overflow
+        );
+        let result = capture.into_result(CommandTermination::Exited(0));
+        let preview = result.combined();
+        assert!(preview.len() <= OUTPUT_PREVIEW_BYTES);
+        assert!(preview.len() + "界".len() > OUTPUT_PREVIEW_BYTES);
+        let retained = result.retained.as_ref().unwrap();
+        assert_eq!(retained.truncated, overflow);
+        let (full, truncated) = store.full(&retained.reference, &scope).unwrap();
+        let full: String = full.iter().map(|chunk| chunk.text.as_str()).collect();
+        assert_eq!(full.len(), retained.bytes);
+        assert_eq!(truncated, overflow);
+        assert!(full.starts_with(&preview));
+        assert!(text.starts_with(&full));
+        assert!(full.len() > crate::tools::MAXIMUM_TOOL_BYTES);
+        let report = result.report();
+        assert!(report.contains(&retained.reference));
+        assert!(report.contains(&format!("Storage truncated: {overflow}")));
+        assert!(report.len() < crate::tools::MAXIMUM_TOOL_BYTES);
+    }
+}
+
+#[test]
 fn partial_output_survives_restart_and_storage_failure_retains_its_reference() {
     use crate::execution::output::{OutputKey, OutputScope, OutputStore};
 

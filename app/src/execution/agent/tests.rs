@@ -44,8 +44,7 @@ fn a_large_tool_result_does_not_consume_the_model_reply_limit() {
         &"x".repeat(crate::tools::MAXIMUM_TOOL_BYTES),
         None,
         &mut visible_tool_bytes,
-    )
-    .expect("visible tool output");
+    );
 
     let mut reply = AssistantReply::default();
     let mut model_reply_bytes = 0;
@@ -75,8 +74,7 @@ fn command_status_survives_an_exhausted_display_budget() {
             CommandTermination::Cancelled,
         )),
         &mut bytes,
-    )
-    .expect("retain the outcome even without output space");
+    );
     assert_eq!(bytes, super::MAXIMUM_VISIBLE_TOOL_BYTES);
     let mut reply = AssistantReply::default();
     reply.push_tool(tool);
@@ -608,6 +606,67 @@ async fn truncated_tool_arguments_do_not_dispatch() {
 }
 
 #[tokio::test]
+async fn oversized_tool_batches_stop_before_publication_or_dispatch() {
+    use crate::providers::{
+        AssistantActivity, ChatBackend, ChatTurn, CompletionReason, ModelEvent, ProviderConnection,
+        ProviderError, ProviderKind,
+    };
+    let mut state = crate::tests::test_state(crate::config::RuntimeConfig::development());
+    let maximum = super::MAXIMUM_TOOL_CALLS_PER_RESPONSE;
+    let mut events: Vec<_> = (0..=maximum)
+        .map(|index| {
+            Ok(ModelEvent::ToolCall {
+                id: format!("call-{index}"),
+                name: "read".to_owned(),
+                arguments: serde_json::json!({"path": "main.rs"}),
+            })
+        })
+        .collect();
+    events.push(Ok(ModelEvent::Complete {
+        reason: CompletionReason::ToolCalls,
+    }));
+    state.chat = std::sync::Arc::new(ChatBackend::Scripted(
+        crate::tests::ScriptedBackend::events(events),
+    ));
+    let connection = ProviderConnection::with_key(ProviderKind::Xai, "test-key", "grok-4.6");
+    let (record, job) = conversation_job(&state);
+    let ended = super::run_agent_action(
+        &state,
+        read_spec(connection, record.id, record.revision),
+        vec![ChatTurn::user("Read the files".to_owned())],
+        job.clone(),
+    )
+    .await;
+    assert_eq!(ended.outcome, super::AgentOutcome::ProviderFailure);
+    assert_eq!(
+        ended.error.as_deref(),
+        Some(ProviderError::ReplyTooLong.message())
+    );
+    let ids: Vec<_> = ended
+        .reply
+        .activity
+        .iter()
+        .filter_map(|activity| match activity {
+            AssistantActivity::ToolCall { id, .. } => Some(id.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ids.len(), maximum);
+    assert!(!ids.contains(&format!("call-{maximum}").as_str()));
+    assert_eq!(tool_finished_count(&job), 0);
+    assert_eq!(
+        job.events_after(0)
+            .iter()
+            .filter(|event| matches!(
+                event.kind,
+                crate::sessions::JobEventKind::ToolStarted { .. }
+            ))
+            .count(),
+        maximum,
+    );
+}
+
+#[tokio::test]
 async fn unsafe_batches_do_not_dispatch_any_call() {
     use crate::config::RuntimeConfig;
     use crate::providers::{
@@ -704,6 +763,81 @@ fn tool_finished_count(job: &Job) -> usize {
         .iter()
         .filter(|event| matches!(event.kind, JobEventKind::ToolFinished { .. }))
         .count()
+}
+
+#[tokio::test]
+async fn display_exhaustion_preserves_later_tool_calls_and_full_model_pages() {
+    use crate::execution::{CommandResult, CommandTermination, OutputKey, OutputScope};
+    use crate::providers::{
+        ChatBackend, ChatTurn, CompletionReason, ModelEvent, ProviderConnection, ProviderKind,
+    };
+    let mut state = crate::tests::test_state(crate::config::RuntimeConfig::development());
+    let (record, job) = conversation_job(&state);
+    let scope = OutputScope::conversation(record.id);
+    let retained = state
+        .outputs
+        .store(
+            &OutputKey {
+                scope: scope.clone(),
+                job: job.id(),
+                tool_call: "source".to_owned(),
+                model_hidden: false,
+            },
+            &CommandResult::new(
+                vec![crate::execution::command::CommandChunk {
+                    stream: crate::execution::CommandStream::Stdout,
+                    text: format!("{}\ntail\n", "x".repeat(60_000)),
+                }],
+                CommandTermination::Exited(0),
+            ),
+        )
+        .unwrap();
+    let mut rounds: Vec<_> = [1, 1, 2].into_iter().enumerate().map(|(index, offset)| vec![
+        Ok(ModelEvent::ToolCall {
+            id: format!("call-{index}"),
+            name: "read_output".to_owned(),
+            arguments: serde_json::json!({"reference": retained.reference, "offset": offset, "limit": 1}),
+        }),
+        Ok(ModelEvent::Complete { reason: CompletionReason::ToolCalls }),
+    ]).collect();
+    rounds.push(vec![
+        Ok(ModelEvent::Text("Done.".to_owned())),
+        Ok(ModelEvent::Complete {
+            reason: CompletionReason::Stop,
+        }),
+    ]);
+    let backend = crate::tests::ScriptedBackend::rounds(rounds);
+    state.chat = std::sync::Arc::new(ChatBackend::Scripted(backend.clone()));
+    let mut spec = read_spec(
+        ProviderConnection::with_key(ProviderKind::Xai, "test-key", "grok-4.6"),
+        record.id,
+        record.revision,
+    );
+    spec.output_scope = Some(scope);
+    let ended = super::run_agent_action(
+        &state,
+        spec,
+        vec![ChatTurn::user("Read the output".to_owned())],
+        job.clone(),
+    )
+    .await;
+    assert_eq!(
+        ended.outcome,
+        super::AgentOutcome::Completed,
+        "{:?}",
+        ended.error
+    );
+    assert_eq!(tool_finished_count(&job), 3);
+    let history = backend.last_history();
+    let results: Vec<_> = history
+        .iter()
+        .flat_map(|turn| &turn.calls)
+        .filter_map(|call| call.result.as_ref())
+        .collect();
+    assert_eq!(results.len(), 3);
+    assert!(results[0].output.contains(&"x".repeat(60_000)));
+    assert!(results[1].output.contains(&"x".repeat(60_000)));
+    assert!(results[2].output.contains("tail"));
 }
 
 #[tokio::test]
@@ -878,7 +1012,7 @@ async fn rate_limit_before_and_after_a_tool_runs_the_call_once() {
             Ok(ModelEvent::ToolCall {
                 id: "call-1".to_owned(),
                 name: "run".to_owned(),
-                arguments: serde_json::json!({"command": "printf x >> effects", "explanation": "Record one effect"}),
+                arguments: serde_json::json!({"command": "printf x >> effects; seq 1 20000", "explanation": "Record one effect"}),
             }),
             Ok(ModelEvent::Complete {
                 reason: CompletionReason::ToolCalls,
@@ -1008,6 +1142,28 @@ async fn rate_limit_before_and_after_a_tool_runs_the_call_once() {
     );
     assert_eq!(backend.turn_count(), 4);
     assert_eq!(ended.reply.text, "Done.");
+    let result = &ended.reply.tools[0];
+    let command = result.command.as_ref().unwrap();
+    let retained = command.retained.as_ref().unwrap();
+    assert_eq!(
+        command.combined().len(),
+        crate::execution::OUTPUT_PREVIEW_BYTES
+    );
+    assert!(result.output.contains(&retained.reference));
+    assert!(result.output.contains("Storage truncated: false"));
+    assert!(result.output.len() < crate::tools::MAXIMUM_TOOL_BYTES);
+    let (full, truncated) = state
+        .outputs
+        .full(
+            &retained.reference,
+            &crate::execution::OutputScope::conversation(record.id),
+        )
+        .unwrap();
+    assert!(!truncated);
+    let full: String = full.iter().map(|chunk| chunk.text.as_str()).collect();
+    assert_eq!(full.len(), retained.bytes);
+    assert!(full.len() > crate::tools::MAXIMUM_TOOL_BYTES);
+    assert!(full.ends_with("20000\n"));
 }
 
 #[tokio::test]

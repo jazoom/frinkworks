@@ -296,6 +296,95 @@ async fn named_directory_write_settles_with_output_without_tree_capture() {
 }
 
 #[tokio::test]
+async fn large_direct_output_settles_with_a_preview_and_scoped_retention() {
+    for included in [true, false] {
+        let (state, session) = state_and_session();
+        let directory = tempfile::tempdir().unwrap();
+        let settings = settings(vec![ToolId::Run], Some(directory.path()));
+        let record = state
+            .conversations
+            .create_saved(
+                ConversationId::generate().unwrap(),
+                None,
+                Some(model(settings.clone())),
+                vec![],
+            )
+            .unwrap();
+        approve_host(&state, session, record.id, &settings);
+        let job = state
+            .sessions
+            .begin_conversation_job(&session, record.id)
+            .unwrap();
+        let command = "seq 1 20000".to_owned();
+        let started = state
+            .conversations
+            .begin_command(
+                &record.id,
+                record.revision,
+                None,
+                job.id(),
+                command.clone(),
+                included,
+                directory.path().to_string_lossy().into_owned(),
+            )
+            .unwrap();
+        let message = started.messages.last().unwrap().id;
+        super::run(
+            state.clone(),
+            run_for(
+                &state,
+                session,
+                started,
+                job,
+                message,
+                command,
+                included,
+                directory.path().to_path_buf(),
+            ),
+        )
+        .await;
+        let settled = state.conversations.get(&record.id).unwrap();
+        assert!(settled.active_job.is_none());
+        let entry = settled.messages.last().unwrap();
+        assert_eq!(entry.status, MessageStatus::Complete);
+        let output = entry.command.as_ref().unwrap().output.as_ref().unwrap();
+        assert!(output.is_success());
+        assert_eq!(
+            output.combined().len(),
+            crate::execution::OUTPUT_PREVIEW_BYTES
+        );
+        let retained = output.retained.as_ref().unwrap();
+        let scope = crate::execution::OutputScope::conversation(record.id);
+        let (full, truncated) = state.outputs.full(&retained.reference, &scope).unwrap();
+        assert!(!truncated);
+        let expected: String = (1..=20000).map(|number| format!("{number}\n")).collect();
+        assert_eq!(
+            full.iter()
+                .map(|chunk| chunk.text.as_str())
+                .collect::<String>(),
+            expected
+        );
+        assert_eq!(retained.bytes, expected.len());
+        let turns = crate::conversations::history::project(&settled.messages, None).unwrap();
+        if included {
+            assert_eq!(turns.len(), 1);
+            assert!(turns[0].text.contains(&retained.reference));
+            assert!(turns[0].text.contains("read_output"));
+            assert!(turns[0].text.contains("Storage truncated: false"));
+            assert!(!turns[0].text.contains("\n19999\n20000\n"));
+        } else {
+            assert!(turns.is_empty());
+        }
+        let page = state.outputs.model_page(
+            &retained.reference,
+            &scope,
+            crate::tools::read::parse_request(None, None).unwrap(),
+        );
+        assert_eq!(page.is_ok(), included);
+    }
+}
+
+#[tokio::test]
 async fn cancellation_settles_the_transcript_and_releases_ownership_without_reversal() {
     for dispatched in [false, true] {
         let (state, session) = state_and_session();
