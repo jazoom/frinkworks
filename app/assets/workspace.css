@@ -578,6 +578,13 @@ body:has(.workspace-catalogue) .app-frame {
 .workspace-transcript-controls > * {
     flex-shrink: 0;
 }
+.chat-thinking-toggle .toggle-primary:checked {
+    --input-color: color-mix(
+        in srgb,
+        var(--color-primary) 45%,
+        var(--color-base-content)
+    );
+}
 .workspace-toolbar .chat-thinking-toggle {
     flex-direction: row-reverse;
     min-height: 44px;
@@ -821,6 +828,7 @@ body:has(.workspace-catalogue) .app-frame {
     padding-top: 0;
 }
 #transcript .chat-message-actions .btn {
+    width: 44px;
     min-height: 44px;
     padding: 6px 10px;
     font-size: 14px;

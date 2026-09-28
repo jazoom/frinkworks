@@ -63,30 +63,43 @@
     <footer class="chat-message-actions mt-2 flex flex-wrap items-center gap-2">
       {% if message.revisable %}
         <a
-          class="btn btn-ghost btn-sm"
+          class="btn btn-ghost btn-sm btn-square"
+          aria-label="Revise"
+          title="Revise"
           href="{{ message.revise_href }}"
           data-graft
           data-revise-prompt
-          >Revise</a
         >
+          <svg class="workspace-icon" aria-hidden="true">
+            <use href="/static/images/workspace-icons.svg#pencil" />
+          </svg>
+        </a>
       {% endif %}
       {% if message.forkable %}
         <a
-          class="btn btn-ghost btn-sm"
+          class="btn btn-ghost btn-sm btn-square"
+          aria-label="Fork from here"
+          title="Fork from here"
           href="{{ message.fork_href }}"
           data-graft
-          >Fork from here</a
         >
+          <svg class="workspace-icon" aria-hidden="true">
+            <use href="/static/images/workspace-icons.svg#fork" />
+          </svg>
+        </a>
       {% endif %}
       {% if let Some(copy) = message.copy %}
         <div class="flex items-center gap-2" data-response-copy>
           <button
             type="button"
-            class="btn btn-ghost btn-sm"
+            class="btn btn-ghost btn-sm btn-square"
+            title="Copy response"
             data-copy-response="{{ message.id }}"
             aria-label="Copy response"
           >
-            Copy
+            <svg class="workspace-icon" aria-hidden="true">
+              <use href="/static/images/workspace-icons.svg#copy" />
+            </svg>
           </button>
           <span
             class="text-quiet text-xs"

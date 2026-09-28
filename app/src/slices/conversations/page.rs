@@ -2148,7 +2148,7 @@ pub(super) fn message_view_in(
         is_command: command_entry,
         role_label: match message.role {
             MessageRole::User => "You",
-            MessageRole::Assistant => "Frinkworks",
+            MessageRole::Assistant => "Frink",
             MessageRole::Command => "Command",
         }
         .to_owned(),
@@ -2349,7 +2349,7 @@ pub(super) fn response_view(
         id,
         user: false,
         is_command: false,
-        role_label: "Frinkworks".to_owned(),
+        role_label: "Frink".to_owned(),
         excluded: false,
         command: None,
         copy,

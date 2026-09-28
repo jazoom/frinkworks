@@ -1342,7 +1342,7 @@
         min-height: 2rem;
         align-items: center;
         gap: 0.65rem;
-        color: var(--frinkworks-quiet-ink);
+        color: var(--frinkworks-ink);
         font-size: 0.75rem;
         font-weight: 400;
         cursor: pointer;
@@ -1441,12 +1441,16 @@
     .chat-thinking {
         margin-bottom: 1rem;
         padding: 0.8rem 1rem;
-        border: 1px solid var(--frinkworks-info-border);
-        background: var(--frinkworks-info-wash);
+        border: 1px solid var(--frinkworks-rule);
+        background: var(--frinkworks-paper-green);
+    }
+
+    .chat-thinking .chat-content-heading,
+    .chat-thinking .chat-prose {
+        color: var(--frinkworks-ink);
     }
 
     .chat-thinking .chat-prose {
-        color: var(--frinkworks-quiet-ink);
         font-size: 0.875rem;
     }
 
@@ -1471,10 +1475,6 @@
         [data-thinking-content]
         .chat-prose {
         display: none;
-    }
-
-    .chat-transcript:not([data-show-thinking="true"]) [data-thinking-content] {
-        padding-block: 0.55rem;
     }
 
     .chat-transcript:not([data-show-thinking="true"])
