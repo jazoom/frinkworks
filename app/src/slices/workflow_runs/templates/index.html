@@ -53,11 +53,8 @@
     {% if filter.is_empty() && error == "" %}
       <section class="page-empty">
         <h2 class="text-lg font-semibold">No runs yet</h2>
-        <p class="text-quiet max-w-[60ch]">
-          Open a conversation and run your first workflow.
-        </p>
-        <a href="/conversations" data-graft class="btn btn-primary btn-sm"
-          >Open conversations</a
+        <a href="/conversations/new" data-graft class="btn btn-primary btn-sm"
+          >New conversation</a
         >
       </section>
     {% else %}

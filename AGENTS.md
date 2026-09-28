@@ -16,6 +16,10 @@ There are no user accounts. A local vault stores provider API keys until the use
 - Hypergraft lives in the sibling `../hypergraft` project. Read `../hypergraft/README.md` and treat `../hypergraft/protocol-v1.json` as the canonical protocol fixture.
 - The CSP for HTML responses is `script-src 'nonce-…' 'self'` with no `unsafe-inline` or `unsafe-eval`. Put client-side logic in `app/assets/main.ts`.
 - Use DaisyUI primitives for controls. Use Tailwind utilities in Askama templates for layout.
+- Use Lucide icons through `app/public/images/workspace-icons.svg` and the shared `.workspace-icon` class.
+- To add an icon, extend the list in `scripts/build-icon-sprite.mjs`.
+- Run `node scripts/build-icon-sprite.mjs` to regenerate the sprite. Asset builds also run the generator.
+- Do not edit the generated sprite or `app/public/images/lucide-LICENSE.txt` directly.
 - Use vertical slice architecture. Feature code belongs in the relevant slice. Reserve `src/shared_templates/` for shared layouts.
 - For ordinary navigation, render a real `href` plus `data-graft`.
 - The application requires JavaScript.

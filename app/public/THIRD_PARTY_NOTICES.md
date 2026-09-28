@@ -1,5 +1,10 @@
 # Third-party notices
 
+## Lucide icons
+
+`images/workspace-icons.svg` contains selected icons from `lucide-static`.
+The complete Lucide and Feather licences are in `images/lucide-LICENSE.txt`.
+
 ## models.dev catalogue and provider logos
 
 MIT License

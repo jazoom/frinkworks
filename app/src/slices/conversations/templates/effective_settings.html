@@ -52,10 +52,16 @@
       Add a directory
     </button>
   </div>
-  <span class="ml-auto flex items-center gap-2">
+  <button
+    type="button"
+    class="btn btn-ghost btn-sm ml-auto h-auto gap-2"
+    popovertarget="conversation-settings"
+    popovertargetaction="show"
+    data-settings-section="conversation-execution-heading"
+  >
     <svg class="workspace-icon" aria-hidden="true">
       <use href="/static/images/workspace-icons.svg#cube" />
     </svg>
     {% if location_host %}{{ host_summary }}{% else %}Sandbox{% endif %}
-  </span>
+  </button>
 </div>

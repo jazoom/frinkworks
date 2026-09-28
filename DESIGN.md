@@ -162,7 +162,11 @@ Both symbol variants use identical geometry. Every straight section, including t
 
 `app/public/images/wordmark.svg` supplies the outlined wordmark. It matches the symbol’s main stroke colour and retains the accessible name Frinkworks. Its width is 170 pixels in the sidebar and 162 pixels on the connection page. The mobile header uses 148 pixels, or 136 pixels below a viewport width of 361 pixels. The symbol dimensions remain unchanged.
 
-Workspace icons use the shared stroke geometry in `app/public/images/workspace-icons.svg`.
+Interface icons use Lucide through the generated sprite at `app/public/images/workspace-icons.svg`. The shared `.workspace-icon` class sets a stroke width of 2. Icons inherit the surrounding text colour.
+
+`scripts/build-icon-sprite.mjs` selects SVGs from the pinned `lucide-static` package. Vite runs the generator for development and production asset builds. The browser loads no icon library.
+
+Decorative icons use `aria-hidden="true"`. Icon-only buttons carry an accessible name through `aria-label`. The Frinkworks logo and wordmark remain custom assets.
 
 ## Components
 
