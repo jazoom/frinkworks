@@ -16,7 +16,7 @@ mod output;
 mod questions;
 mod queue;
 
-pub(crate) mod recent;
+mod status;
 mod title;
 mod tool_approval;
 pub(super) use title::live_router;
@@ -524,7 +524,7 @@ async fn catalogue(
     Query(query): Query<CatalogueQuery>,
 ) -> AppResult<Response> {
     if query.index && graft == GraftRequest::Patch {
-        return recent::response(&state);
+        return status::response(&state);
     }
     let trimmed = query.q.trim();
     let valid_directory = query.directory.is_empty()

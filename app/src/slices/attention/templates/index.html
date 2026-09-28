@@ -9,13 +9,13 @@
   {% endif %}
 {% endblock %}
 {% block page_content %}
-  <p class="page-description">
-    The work waits safely. Each decision leads back to its conversation.
-  </p>
   {% if decisions.is_empty() %}
     <div class="page-empty">
       <h2>Nothing needs a decision</h2>
-      <p>Your conversations remain available in the sidebar.</p>
+      <p>
+        Your saved conversations remain on the
+        <a href="/conversations" data-graft class="link">Conversations page</a>.
+      </p>
       <a href="/conversations/new" data-graft class="btn btn-primary btn-sm"
         >Start a conversation</a
       >

@@ -64,7 +64,7 @@ test("an ancestor command patch restarts observation after the unsafe guard rele
                 targetIds: [target],
             },
         });
-    patch("recent-conversations");
+    patch("attention-count");
     vi.advanceTimersByTime(0);
     expect(submissions.count).toBe(1);
     patch("conversation-detail");

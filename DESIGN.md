@@ -94,7 +94,7 @@ The five themes retain distinct palettes:
 
 Diff additions and removals retain their explicit markers. Colour supplements those markers and never replaces them.
 
-Leftorium uses darker status text on selected recent records. Provider introductions use the same cover text tokens as the index.
+Provider introductions use the same cover text tokens as the index.
 
 Error panels use a pale error surface and readable recovery links. Action colours change together during theme changes.
 
@@ -154,7 +154,7 @@ Host consent uses a native modal above Setup with a dimmed backdrop. Its content
 
 ## Shapes
 
-Controls retain DaisyUI primitives. Workspace controls use seven-pixel corners. Recent records use five-pixel corners. User messages retain three-pixel corners. The composer uses nine-pixel corners.
+Controls retain DaisyUI primitives. Workspace controls use seven-pixel corners. Navigation links use five-pixel corners. User messages retain three-pixel corners. The composer uses nine-pixel corners.
 
 The Frinkworks symbol uses a lime accent on a transparent canvas. `app/public/images/logo.svg` uses olive-grey ink for light backgrounds. `app/public/images/logo-dark.svg` uses off-white for dark backgrounds. The sidebar and mobile header select the symbol for their cover colour. Other symbols follow the page theme. The favicon follows the system colour preference.
 
@@ -172,9 +172,9 @@ A delayed accent bar identifies page requests, including streamed GET responses.
 
 A failed navigation keeps the current page and offers Retry navigation or Dismiss. An uncertain command result takes precedence and requires a reload.
 
-Connection feedback reports disconnected or stopped WebSocket updates. The conversation list and attention count update on store changes without routine status text.
+Connection feedback reports disconnected or stopped WebSocket updates. The attention count updates on store changes without routine status text.
 
-Each connection receives a fresh snapshot. Idle lists require no periodic refresh.
+Each connection receives a fresh snapshot. Idle connections require no periodic refresh.
 
 Reply output uses separate streamed requests. Successful reply checkpoints do not refresh the conversation list.
 
@@ -182,19 +182,26 @@ Back and Forward restore the catalogue content position after a fresh response. 
 
 ### Navigation
 
-New conversation remains prominent. The index contains up to twelve server-derived recent conversations with real titles and status. The recent list fills the space between the primary navigation and the resource group, and shows only whole rows that fit. Resources stay pinned, and a short viewport scrolls the index itself.
+New conversation remains prominent. The index contains navigation only, with primary destinations above Resources. Providers and Settings occupy the bottom group. Short viewports scroll the navigation as one region.
 
-The search field has a visible boundary. Recent rows pair a conversation icon with a title and status dot. Resource links have a Resources heading.
+The Conversations page owns history and title search. It lists the most recently updated conversations first, with directory filters and pagination. The sidebar contains no recent list or search field.
 
-The sidebar search filters those recent titles live as plain text. The catalogue link beside it stays the native fallback. The filter survives live replacement of recent records.
-
-Needs your attention carries the positive server decision count. The live projection refreshes the count with the recent list. Recent records show state dots. Untouched saved records read Draft. Responsive idle records read Ready. Review, completion and cancellation transitions stay live.
+Needs your attention carries the positive server decision count. Its live projection updates only that badge. History records show state dots. Untouched saved records read Draft. Responsive idle records read Ready.
 
 Conversation pages carry their own header with the mobile menu trigger. The separate location bar stays for catalogue pages that need navigation and execution status.
 
 Needs your attention lists real unresolved decisions with owning context links. An optional conversation identifier selects the return destination only: valid context shows Back to conversation, while any other value omits the return link. Refresh and decision pages preserve valid context, and every decision stays visible. History connects conversations to runs and evidence.
 
-The sidebar resource group links directly to Workflows, Presets, Environments, Agents and Skills. Providers and Settings stay separate below the group.
+The sidebar resource group links directly to its catalogues:
+
+- Environments.
+- Workflows.
+- Presets.
+- Agents.
+- Skills.
+- Prompts.
+
+Providers and Settings stay separate below the group.
 
 The sidebar has no local status footer. Catalogue headers omit generic return links to conversations.
 

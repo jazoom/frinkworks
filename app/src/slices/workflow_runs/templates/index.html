@@ -1,11 +1,6 @@
 {% extends "layout/catalogue.html" %}
 {% block section %}runs{% endblock %}
 {% block heading %}Runs{% endblock %}
-{% block description %}
-  <p>
-    The newest fifty runs link to their conversations, decisions and evidence.
-  </p>
-{% endblock %}
 {% block catalogue_content %}
   {% if !directories.is_empty() || !filter.is_empty() %}
     <form
@@ -56,9 +51,9 @@
 
   {% if runs.is_empty() %}
     {% if filter.is_empty() && error == "" %}
-      <section class="file-section space-y-3">
+      <section class="page-empty">
         <h2 class="text-lg font-semibold">No runs yet</h2>
-        <p class="text-quiet">
+        <p class="text-quiet max-w-[60ch]">
           Open a conversation and run your first workflow.
         </p>
         <a href="/conversations" data-graft class="btn btn-primary btn-sm"
@@ -66,9 +61,9 @@
         >
       </section>
     {% else %}
-      <section class="file-section space-y-3">
+      <section class="page-empty">
         <h2 class="text-lg font-semibold">No runs match this filter</h2>
-        <p class="text-quiet">
+        <p class="text-quiet max-w-[60ch]">
           No retained run used the selected directory. The newest fifty runs
           remain available.
         </p>

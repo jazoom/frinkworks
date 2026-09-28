@@ -11,28 +11,11 @@ use hypergraft::{
 use crate::{error::AppResult, sessions::SessionId, state::AppState};
 
 #[derive(Template)]
-#[template(path = "conversations/templates/recent.html")]
-pub(crate) struct RecentConversations {
-    conversations: Vec<RecentConversation>,
-}
-
-/// Positive attention badge beside the navigation entry. An empty badge
-/// renders no digits. The live projection refreshes it with the list.
-#[derive(Template)]
 #[template(source = "{% if count > 0 %}{{ count }}{% endif %}", ext = "html")]
-pub(crate) struct AttentionCount {
+struct AttentionCount {
     count: usize,
 }
 
-struct RecentConversation {
-    href: String,
-    title: String,
-    status: &'static str,
-    dot: &'static str,
-}
-
-/// State dot for a recent status. Attention states use the primary dot,
-/// active work uses the progress dot and settled records stay quiet.
 pub(crate) fn status_dot(status: &str) -> &'static str {
     match status {
         "Needs your review" | "Needs command approval" | "Needs recovery" | "Paused" => "attention",
@@ -127,37 +110,13 @@ fn idle_status(last: Option<crate::conversations::MessageStatus>) -> &'static st
     }
 }
 
-impl RecentConversations {
-    pub(crate) fn new(state: &AppState) -> Self {
-        let mut records = state.conversations.metadata();
-        records.sort_by_key(|record| std::cmp::Reverse(record.updated_at_ms));
-        let conversations = records
-            .into_iter()
-            .take(12)
-            .map(|record| {
-                let status = conversation_status(state, &record);
-                let dot = status_dot(status);
-                RecentConversation {
-                    href: format!("/conversations/{}", record.id.as_hex()),
-                    title: record.title,
-                    status,
-                    dot,
-                }
-            })
-            .collect();
-        Self { conversations }
-    }
-}
-
 fn patches(state: &AppState) -> Result<PatchSet, hypergraft::PatchBuildError> {
-    PatchSet::new()
-        .with_children("recent-conversations", &RecentConversations::new(state))?
-        .with_children(
-            "attention-count",
-            &AttentionCount {
-                count: crate::slices::attention::page::AttentionPage::count(state),
-            },
-        )
+    PatchSet::new().with_children(
+        "attention-count",
+        &AttentionCount {
+            count: crate::slices::attention::page::AttentionPage::count(state),
+        },
+    )
 }
 
 pub(super) fn response(state: &AppState) -> AppResult<axum::response::Response> {
@@ -173,7 +132,6 @@ pub(super) async fn live(
             state.conversations.changes.subscribe(),
             state.workflow_runs.changes.subscribe(),
             state.host_approvals.changes.subscribe(),
-            state.sessions.job_changes.subscribe(),
         ]
         .into_iter()
         .map(|receiver| Box::pin(hypergraft::live::broadcast_invalidations(receiver))),

@@ -363,40 +363,7 @@ function mountSidebar(matches: boolean, body: string) {
     return { root, skip, island, controller };
 }
 
-const sidebarBody = `<form id="recent-filter-form" method="get" action="/conversations" data-graft><label for="recent-filter-input">Find a conversation<input id="recent-filter-input" type="search" autocomplete="off" /></label><a href="/conversations" data-graft>All conversations</a></form><div id="recent-conversations"><ul class="recent-list"><li><a href="/conversations/one" data-graft data-recent-conversation><strong>Quarterly planning</strong><span class="recent-meta">Ready</span></a></li><li><a href="/conversations/two" data-graft data-recent-conversation><strong>&lt;script&gt;alert(1)&lt;/script&gt;</strong><span class="recent-meta">Draft</span></a></li></ul></div><section id="conversation-detail"><section id="transcript"></section><aside id="conversation-work" data-work-active="false" hidden></aside></section>`;
-
-test("sidebar search filters recent titles as plain text and survives replacement", () => {
-    const { root, island, controller } = mountSidebar(false, sidebarBody);
-    const input = root.querySelector<HTMLInputElement>("#recent-filter-input")!;
-    input.value = "<script>alert(1)";
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    const links = Array.from(
-        root.querySelectorAll<HTMLElement>("[data-recent-conversation]"),
-    );
-    expect(links[0].closest("li")?.hasAttribute("hidden")).toBe(true);
-    expect(links[1].closest("li")?.hasAttribute("hidden")).toBe(false);
-    expect(root.querySelector("script")).toBeNull();
-    input.value = "no such title";
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    expect(root.querySelector("[data-recent-no-match]")?.textContent).toBe(
-        "No conversations match.",
-    );
-    // A live replacement rebuilds the list. The filter stays applied.
-    root.querySelector("#recent-conversations")!.innerHTML =
-        `<ul class="recent-list"><li><a href="/conversations/one" data-graft data-recent-conversation><strong>Quarterly planning</strong><span class="recent-meta">Ready</span></a></li></ul>`;
-    island.reconcile?.(
-        {} as Parameters<NonNullable<typeof island.reconcile>>[0],
-    );
-    const replaced = root.querySelector<HTMLElement>(
-        "[data-recent-conversation]",
-    )!;
-    expect(replaced.closest("li")?.hasAttribute("hidden")).toBe(true);
-    expect(root.querySelector("[data-recent-no-match]")?.textContent).toBe(
-        "No conversations match.",
-    );
-    island.destroy?.();
-    controller.abort();
-});
+const sidebarBody = `<section id="conversation-detail"><section id="transcript"></section><aside id="conversation-work" data-work-active="false" hidden></aside></section>`;
 
 test("skip link targets the transcript and the open mobile companion", () => {
     const { root, skip, island, controller } = mountSidebar(false, sidebarBody);
@@ -426,35 +393,10 @@ test("skip link targets the transcript and the open mobile companion", () => {
 test("skip link keeps the main content destination on catalogue pages", () => {
     const { skip, island, controller } = mountSidebar(
         false,
-        `<div id="recent-conversations"><ul class="recent-list"></ul></div>`,
+        `<main id="chat-main"></main>`,
     );
     expect(skip.textContent).toBe("Skip to main content");
     expect(skip.getAttribute("href")).toBe("#chat-main");
-    island.destroy?.();
-    controller.abort();
-});
-
-test("the recent list hides whole rows that do not fit", () => {
-    const items = ["one", "two", "three", "four"]
-        .map(
-            (name) =>
-                `<li><a href="/conversations/${name}" data-graft data-recent-conversation><strong>${name}</strong></a></li>`,
-        )
-        .join("");
-    const { root, island, controller } = mountSidebar(
-        false,
-        `<div id="recent-conversations"><ul class="recent-list">${items}</ul></div>`,
-    );
-    const list = root.querySelector<HTMLElement>(".recent-list")!;
-    const visible = () =>
-        Array.from(list.children).filter(
-            (item) => !(item as HTMLElement).hidden,
-        ).length;
-    Object.defineProperty(list, "clientHeight", { get: () => 88 });
-    Object.defineProperty(list, "scrollHeight", { get: () => visible() * 44 });
-    window.dispatchEvent(new Event("resize"));
-    const rows = Array.from(list.children) as HTMLElement[];
-    expect(rows.map((row) => row.hidden)).toEqual([false, false, true, true]);
     island.destroy?.();
     controller.abort();
 });

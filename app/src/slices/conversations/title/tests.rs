@@ -10,7 +10,7 @@ async fn local_read_projections_do_not_require_a_provider() {
         .expect("conversation");
     assert!(!state.vault.has_providers());
     assert!(
-        super::super::recent::live(State(state.clone()))
+        super::super::status::live(State(state.clone()))
             .await
             .is_ok()
     );

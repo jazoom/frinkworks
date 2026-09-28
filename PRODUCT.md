@@ -16,6 +16,8 @@ Ordinary work needs no workflow selection. Plans and checklists can appear as or
 
 The transcript and composer form the main work surface. An optional companion presents workflow setup, progress or required decisions.
 
+The sidebar contains navigation, not recent conversations or search. The Conversations page owns history and title search, with the most recently updated conversations first.
+
 A new-conversation page is an unsaved draft. Navigation and invalid submissions create no conversation record.
 
 The first valid message creates the conversation. Its canonical address replaces the draft address.

@@ -41,8 +41,8 @@ pub(super) fn response(record: &ConversationRecord) -> AppResult<axum::response:
 
 pub(in crate::slices) fn live_router() -> LiveRouter<AppState> {
     LiveRouter::new()
-        .route("/conversations", super::recent::live)
-        .expect("unique recent projection")
+        .route("/conversations", super::status::live)
+        .expect("unique attention count projection")
         .route("/conversations/{conversation_id}", live)
         .expect("unique title projection")
 }

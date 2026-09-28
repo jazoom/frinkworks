@@ -83,16 +83,6 @@ export function initWorkspace(
         root.querySelectorAll("[data-work-toggle]").forEach((toggle) => {
             toggle.setAttribute("aria-expanded", String(workOpen));
         });
-        root.querySelectorAll<HTMLAnchorElement>(
-            "[data-recent-conversation]",
-        ).forEach((link) => {
-            const owner = root.querySelector<HTMLElement>(
-                "[data-conversation-url]",
-            )?.dataset.conversationUrl;
-            if (link.pathname === (owner || location.pathname))
-                link.setAttribute("aria-current", "page");
-            else link.removeAttribute("aria-current");
-        });
         const section = root.querySelector<HTMLElement>(
             "#chat-main > [data-section]",
         )?.dataset.section;
@@ -107,7 +97,6 @@ export function initWorkspace(
                 link.setAttribute("aria-current", "page");
             else link.removeAttribute("aria-current");
         });
-        applyRecentFilter();
         syncAttentionLink();
         syncSkipLink();
         syncExpandControls();
@@ -118,68 +107,6 @@ export function initWorkspace(
         root.querySelectorAll<HTMLElement>(".app-file").forEach((page) => {
             page.inert = menuOpen;
         });
-    }
-
-    function recentFilterQuery(): string {
-        return (
-            root
-                .querySelector<HTMLInputElement>("#recent-filter-input")
-                ?.value.trim()
-                .toLowerCase() ?? ""
-        );
-    }
-
-    // The sidebar input filters the bounded recent list without navigation.
-    // Untrusted titles stay inert because matching reads text, never markup.
-    // Desktop also keeps whole rows that fit the unclipped list area. The
-    // measured height is natural on mobile, so every match stays reachable
-    // through the scrolling menu.
-    function applyRecentFilter() {
-        const query = recentFilterQuery();
-        const container = root.querySelector<HTMLElement>(
-            "#recent-conversations",
-        );
-        if (!container) return;
-        const links = Array.from(
-            container.querySelectorAll<HTMLElement>(
-                "[data-recent-conversation]",
-            ),
-        );
-        const matching: HTMLElement[] = [];
-        let visible = 0;
-        for (const link of links) {
-            const title =
-                link.querySelector("strong")?.textContent?.toLowerCase() ??
-                link.textContent?.toLowerCase() ??
-                "";
-            const match = query === "" || title.includes(query);
-            const item = link.closest<HTMLElement>("li");
-            if (item) item.hidden = !match;
-            if (match) visible += 1;
-            if (match && item) matching.push(item);
-        }
-        // Reveal every match before measuring. Hiding the trailing rows then
-        // shrinks the list until no partial row remains. The list owns the
-        // overflow, so it has the measured content height.
-        const list =
-            container.querySelector<HTMLElement>(".recent-list") ?? container;
-        for (const item of matching) item.hidden = false;
-        while (matching.length > 0 && list.scrollHeight > list.clientHeight) {
-            matching.pop()!.hidden = true;
-        }
-        let notice = container.querySelector<HTMLElement>(
-            "[data-recent-no-match]",
-        );
-        if (query !== "" && visible === 0 && links.length > 0) {
-            if (!notice) {
-                notice = document.createElement("p");
-                notice.className = "recent-empty";
-                notice.dataset.recentNoMatch = "";
-                notice.textContent = "No conversations match.";
-                container.append(notice);
-            }
-            notice.hidden = false;
-        } else if (notice) notice.hidden = true;
     }
 
     // The sidebar keeps native catalogue fallbacks.
@@ -472,20 +399,6 @@ export function initWorkspace(
         },
         { capture: true, signal },
     );
-    root.addEventListener(
-        "input",
-        (event) => {
-            if (
-                event.target instanceof HTMLInputElement &&
-                event.target.id === "recent-filter-input"
-            )
-                applyRecentFilter();
-        },
-        { signal },
-    );
-    window.addEventListener("resize", () => applyRecentFilter(), {
-        signal,
-    });
     mobile.addEventListener(
         "change",
         () => {

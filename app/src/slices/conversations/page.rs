@@ -137,13 +137,13 @@ impl CatalogueView {
         let conversations: Vec<_> = ordered
             .into_iter()
             .map(|record| {
-                let status = super::recent::conversation_status(state, record);
+                let status = super::status::conversation_status(state, record);
                 ConversationListItem {
                     href: format!("/conversations/{}", record.id.as_hex()),
                     title: record.title.clone(),
                     status,
-                    dot: super::recent::status_dot(status),
-                    meta: super::recent::conversation_meta(state, record),
+                    dot: super::status::status_dot(status),
+                    meta: super::status::conversation_meta(state, record),
                 }
             })
             .collect();

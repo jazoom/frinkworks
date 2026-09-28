@@ -34,28 +34,7 @@
           <use href="/static/images/workspace-icons.svg#plus" /></svg
         >New conversation</a
       >
-      <form
-        id="recent-filter-form"
-        method="get"
-        action="/conversations"
-        data-graft
-        class="workspace-search"
-        role="search"
-      >
-        <label class="workspace-search-field" for="recent-filter-input">
-          <svg class="workspace-icon" aria-hidden="true">
-            <use href="/static/images/workspace-icons.svg#search" /></svg
-          ><span>Search conversations</span>
-          <input
-            id="recent-filter-input"
-            name="q"
-            type="search"
-            placeholder="Search conversations"
-            autocomplete="off"
-          />
-        </label>
-      </form>
-      <nav class="workspace-navigation" aria-label="Primary navigation">
+      <nav class="workspace-navigation mt-4" aria-label="Primary navigation">
         <a href="/attention" data-graft data-attention-link
           ><svg class="workspace-icon" aria-hidden="true">
             <use href="/static/images/workspace-icons.svg#bell" /></svg
@@ -76,9 +55,8 @@
             <use href="/static/images/workspace-icons.svg#play" /></svg
           >Runs</a
         >
-        <div id="recent-conversations">{{ recent|safe }}</div>
         <form
-          id="recent-conversations-projection"
+          id="attention-count-projection"
           method="get"
           action="/conversations"
           data-graft
@@ -87,7 +65,7 @@
         >
           <input type="hidden" name="index" value="true" />
         </form>
-        <div class="workspace-resources">
+        <div class="workspace-resources mt-6 mb-4">
           <p class="workspace-resources-heading">Resources</p>
           <a href="/environments" data-graft
             ><svg class="workspace-icon" aria-hidden="true">
@@ -120,7 +98,7 @@
             >Prompts</a
           >
         </div>
-        <div class="workspace-local">
+        <div class="workspace-local mt-auto">
           <a href="/connect" data-graft data-nav="providers"
             ><svg class="workspace-icon" aria-hidden="true">
               <use href="/static/images/workspace-icons.svg#plug" /></svg
