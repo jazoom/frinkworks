@@ -113,6 +113,7 @@ struct PendingHostCommand {
 
 #[derive(Default)]
 pub(crate) struct HostApprovalStore {
+    pub(crate) changes: crate::changes::Changes,
     pending: Mutex<HashMap<String, Arc<PendingHostCommand>>>,
     inflight: Mutex<HashMap<String, Arc<PendingHostCommand>>>,
     consumed: Mutex<HashSet<String>>,
@@ -148,6 +149,7 @@ impl HostApprovalStore {
         }
         map.insert(token.clone(), pending.clone());
         inflight.insert(token.clone(), pending);
+        self.changes.notify();
         Ok(token)
     }
 
@@ -189,6 +191,7 @@ impl HostApprovalStore {
         drop(consumed);
         *lock(&pending.decision) = Some(decision);
         pending.notify.notify_one();
+        self.changes.notify();
         Ok(())
     }
 
@@ -229,6 +232,7 @@ impl HostApprovalStore {
             if pending.request.job == job {
                 pending.invalidated.store(true, Ordering::Release);
                 pending.notify.notify_one();
+                self.changes.notify();
                 false
             } else {
                 true
@@ -243,6 +247,7 @@ impl HostApprovalStore {
             if pending.request.conversation == conversation {
                 pending.invalidated.store(true, Ordering::Release);
                 pending.notify.notify_one();
+                self.changes.notify();
                 false
             } else {
                 true
@@ -259,6 +264,7 @@ impl HostApprovalStore {
             } else {
                 pending.invalidated.store(true, Ordering::Release);
                 pending.notify.notify_one();
+                self.changes.notify();
                 false
             }
         };

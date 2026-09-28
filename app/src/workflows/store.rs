@@ -22,6 +22,7 @@ pub(crate) struct RunSummary {
 pub(crate) struct WorkflowRunStore {
     dir: Option<PathBuf>,
     inner: Mutex<BTreeMap<RunId, WorkflowRun>>,
+    pub(crate) changes: crate::changes::Changes,
     #[cfg(test)]
     fail_next_mutation: Mutex<bool>,
 }
@@ -60,6 +61,7 @@ impl WorkflowRunStore {
         Ok(Self {
             dir: Some(dir),
             inner: Mutex::new(runs),
+            changes: crate::changes::Changes::default(),
             #[cfg(test)]
             fail_next_mutation: Mutex::new(false),
         })
@@ -72,6 +74,7 @@ impl WorkflowRunStore {
         }
         persist(self.dir.as_deref(), &run)?;
         runs.insert(run.id, run.clone());
+        self.changes.notify();
         Ok(run)
     }
 
@@ -105,7 +108,9 @@ impl WorkflowRunStore {
 
     pub(crate) fn interrupt_active(&self) -> Result<(), StoreError> {
         let mut runs = self.lock();
-        interrupt_active(&mut runs, self.dir.as_deref())
+        let result = interrupt_active(&mut runs, self.dir.as_deref());
+        self.changes.notify();
+        result
     }
 
     pub(crate) fn pending_cleanup_attempts(&self) -> Vec<(RunId, super::id::AttemptId)> {
@@ -175,6 +180,7 @@ impl WorkflowRunStore {
             persist(self.dir.as_deref(), &next)?;
         }
         runs.insert(*id, next.clone());
+        self.changes.notify();
         Ok(next)
     }
 

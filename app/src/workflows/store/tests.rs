@@ -5,6 +5,7 @@ impl super::WorkflowRunStore {
         Self {
             dir: None,
             inner: Mutex::new(BTreeMap::new()),
+            changes: crate::changes::Changes::default(),
             fail_next_mutation: Mutex::new(false),
         }
     }

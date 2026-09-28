@@ -21,6 +21,7 @@ use crate::sessions::JobSnapshot;
 mod tests;
 
 pub(crate) struct SessionStore {
+    pub(crate) job_changes: crate::changes::Changes,
     sessions: Mutex<HashMap<SessionId, StoredSession>>,
     conversation_jobs: Mutex<HashMap<ConversationId, ConversationJob>>,
     clock: Clock,
@@ -101,6 +102,7 @@ pub(crate) enum BeginTurnError {
 impl SessionStore {
     pub(crate) fn new() -> Self {
         Self {
+            job_changes: crate::changes::Changes::default(),
             sessions: Mutex::new(HashMap::new()),
             conversation_jobs: Mutex::new(HashMap::new()),
             clock: Clock::real(),
@@ -256,7 +258,7 @@ impl SessionStore {
         {
             return Err(BeginTurnError::Conflict);
         }
-        let job = Job::for_conversation(job_id, conversation_id);
+        let job = Job::for_conversation(job_id, conversation_id, self.job_changes.clone());
         jobs.insert(
             conversation_id,
             ConversationJob {
@@ -264,6 +266,7 @@ impl SessionStore {
                 session: *id,
             },
         );
+        self.job_changes.notify();
         Ok(job)
     }
 
@@ -312,6 +315,7 @@ impl SessionStore {
             return false;
         }
         jobs.remove(&conversation_id);
+        self.job_changes.notify();
         true
     }
 

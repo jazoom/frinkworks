@@ -2,6 +2,7 @@
 
 mod agents;
 mod assets;
+mod changes;
 mod config;
 mod conversations;
 mod environments;

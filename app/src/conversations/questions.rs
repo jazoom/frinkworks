@@ -178,15 +178,19 @@ struct PendingWait {
     invalidated: AtomicBool,
 }
 
-#[derive(Default)]
 pub(crate) struct QuestionWaiters {
+    changes: crate::changes::Changes,
     pending: Mutex<HashMap<(ConversationId, JobId), Arc<PendingWait>>>,
     inflight: Mutex<HashMap<(ConversationId, JobId), Arc<PendingWait>>>,
 }
 
 impl QuestionWaiters {
-    pub(crate) fn new() -> Self {
-        Self::default()
+    pub(crate) fn new(changes: crate::changes::Changes) -> Self {
+        Self {
+            changes,
+            pending: Mutex::default(),
+            inflight: Mutex::default(),
+        }
     }
 
     pub(crate) fn submit(&self, question: PendingQuestion) -> Result<(), QuestionError> {
@@ -213,6 +217,7 @@ impl QuestionWaiters {
         }
         pending.insert(key, wait.clone());
         inflight.insert(key, wait);
+        self.changes.notify();
         Ok(())
     }
 
@@ -274,6 +279,7 @@ impl QuestionWaiters {
         drop(stored);
         wait.notify.notify_one();
         pending.remove(&key);
+        self.changes.notify();
         Ok(())
     }
 
@@ -318,6 +324,7 @@ impl QuestionWaiters {
             if wait.question.job == job {
                 wait.invalidated.store(true, Ordering::Release);
                 wait.notify.notify_one();
+                self.changes.notify();
                 false
             } else {
                 true
@@ -332,6 +339,7 @@ impl QuestionWaiters {
             if wait.question.conversation == conversation {
                 wait.invalidated.store(true, Ordering::Release);
                 wait.notify.notify_one();
+                self.changes.notify();
                 false
             } else {
                 true
@@ -348,6 +356,7 @@ impl QuestionWaiters {
             } else {
                 wait.invalidated.store(true, Ordering::Release);
                 wait.notify.notify_one();
+                self.changes.notify();
                 false
             }
         };

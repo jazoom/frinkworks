@@ -146,6 +146,7 @@ pub(crate) struct JobSnapshot {
 }
 
 pub(crate) struct Job {
+    status_changes: crate::changes::Changes,
     id: JobId,
     owner: JobOwner,
     inner: Mutex<JobInner>,
@@ -170,14 +171,15 @@ struct JobInner {
 }
 
 impl Job {
-    pub(crate) fn for_conversation(id: JobId, conversation: ConversationId) -> Arc<Self> {
-        Self::with_owner(id, JobOwner::Conversation(conversation))
-    }
-
-    fn with_owner(id: JobId, owner: JobOwner) -> Arc<Self> {
+    pub(crate) fn for_conversation(
+        id: JobId,
+        conversation: ConversationId,
+        status_changes: crate::changes::Changes,
+    ) -> Arc<Self> {
         Arc::new(Self {
+            status_changes,
             id,
-            owner,
+            owner: JobOwner::Conversation(conversation),
             inner: Mutex::new(JobInner {
                 status: JobStatus::Running,
                 events: Vec::new(),
@@ -226,6 +228,7 @@ impl Job {
             return None;
         }
         inner.status = status;
+        self.status_changes.notify();
         inner.latest_seq += 1;
         let seq = inner.latest_seq;
         inner.events.push(JobEvent {
@@ -246,6 +249,7 @@ impl Job {
             return false;
         }
         inner.status = JobStatus::Running;
+        self.status_changes.notify();
         inner.error = None;
         drop(inner);
         self.notify.notify_waiters();
@@ -500,6 +504,7 @@ impl Job {
             return None;
         }
         inner.status = status;
+        self.status_changes.notify();
         inner.retry = None;
         inner.compacting = false;
         inner.error = error.map(str::to_owned);

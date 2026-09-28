@@ -167,15 +167,18 @@ pub(super) fn response(state: &AppState) -> AppResult<axum::response::Response> 
 pub(super) async fn live(
     State(state): State<AppState>,
 ) -> Result<LiveProjection<SessionId>, LiveReject> {
-    // Execution and title stores have separate clocks. The bounded projection reads both.
-    let ticks = futures_util::stream::unfold(
-        tokio::time::interval(std::time::Duration::from_secs(2)),
-        |mut interval| async move {
-            interval.tick().await;
-            Some(((), interval))
-        },
+    // Subscribe before Hypergraft reads the initial snapshot so concurrent changes stay visible.
+    let changes = futures_util::stream::select_all(
+        [
+            state.conversations.changes.subscribe(),
+            state.workflow_runs.changes.subscribe(),
+            state.host_approvals.changes.subscribe(),
+            state.sessions.job_changes.subscribe(),
+        ]
+        .into_iter()
+        .map(|receiver| Box::pin(hypergraft::live::broadcast_invalidations(receiver))),
     );
-    Ok(LiveProjection::new(ticks, move |_| {
+    Ok(LiveProjection::new(changes, move |_| {
         let state = state.clone();
         async move { patches(&state).map_err(|_| ProjectionError::Retire) }
     }))

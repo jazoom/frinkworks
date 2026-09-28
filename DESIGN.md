@@ -172,9 +172,11 @@ A delayed accent bar identifies page requests, including streamed GET responses.
 
 A failed navigation keeps the current page and offers Retry navigation or Dismiss. An uncertain command result takes precedence and requires a reload.
 
-Connection feedback reports disconnected or stopped WebSocket updates. The conversation list shows receipt time only after its projection updates both the list and attention count.
+Connection feedback reports disconnected or stopped WebSocket updates. The conversation list and attention count update on store changes without routine status text.
 
-That timestamp does not describe reply output or execution completeness. Reply output uses separate streamed requests.
+Each connection receives a fresh snapshot. Idle lists require no periodic refresh.
+
+Reply output uses separate streamed requests. Successful reply checkpoints do not refresh the conversation list.
 
 Back and Forward restore the catalogue content position after a fresh response. The transcript retains its own auto-scroll behaviour. Intent prefetch stays disabled.
 

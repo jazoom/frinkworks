@@ -103,7 +103,11 @@ impl super::Job {
     }
 
     pub(crate) fn new(id: JobId, _run_id: RunId, _assistant_index: usize) -> Arc<Self> {
-        Self::for_conversation(id, ConversationId::generate().expect("conversation id"))
+        Self::for_conversation(
+            id,
+            ConversationId::generate().expect("conversation id"),
+            Default::default(),
+        )
     }
     pub(crate) fn events_after(&self, cursor: u64) -> Vec<JobEvent> {
         self.lock()

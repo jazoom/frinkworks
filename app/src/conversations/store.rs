@@ -318,6 +318,7 @@ pub(crate) struct ConversationStore {
     // A commit I/O failure can leave the outcome unknown. Block new work until restart.
     uncertain: Mutex<std::collections::BTreeSet<ConversationId>>,
     title_updates: tokio::sync::broadcast::Sender<()>,
+    pub(crate) changes: crate::changes::Changes,
     questions: QuestionWaiters,
 }
 
@@ -569,6 +570,7 @@ fn attachment_to_file(reference: &crate::conversations::AttachmentRef) -> Attach
 
 impl ConversationStore {
     pub(crate) fn open(dir: PathBuf) -> Result<Self, ConversationError> {
+        let changes = crate::changes::Changes::default();
         let database = Database::open(&dir)?;
         let attachments = super::attachments::AttachmentStore::open(dir.join("attachments"))
             .map_err(ConversationError::Image)?;
@@ -577,7 +579,8 @@ impl ConversationStore {
             attachments,
             uncertain: Mutex::new(std::collections::BTreeSet::new()),
             title_updates: tokio::sync::broadcast::channel(16).0,
-            questions: QuestionWaiters::new(),
+            questions: QuestionWaiters::new(changes.clone()),
+            changes,
         };
         store.clear_staging()?;
         store.interrupt_requests()?;
@@ -1436,7 +1439,10 @@ impl ConversationStore {
     ) -> Result<(), ConversationError> {
         let mut database = self.database();
         self.require_durable(id)?;
-        self.commit_result(*id, database.checkpoint_output(id, request, reply))
+        // Reply chunks use the transcript stream. Only uncertain checkpoints invalidate store projections.
+        database
+            .checkpoint_output(id, request, reply)
+            .or_else(|error| self.commit_result(*id, Err(error)))
     }
 
     pub(crate) fn settle_message(
@@ -2270,6 +2276,10 @@ impl ConversationStore {
         id: ConversationId,
         result: Result<T, ConversationError>,
     ) -> Result<T, ConversationError> {
+        // Subscribers read current truth after the database lock releases, including uncertain commits.
+        if result.is_ok() || matches!(&result, Err(ConversationError::Unsettled)) {
+            self.changes.notify();
+        }
         if matches!(&result, Err(ConversationError::Unsettled)) {
             self.uncertain
                 .lock()

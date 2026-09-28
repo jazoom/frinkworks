@@ -178,6 +178,7 @@ fn tool_job() -> std::sync::Arc<Job> {
     Job::for_conversation(
         JobId::generate().expect("job id"),
         ConversationId::generate().expect("conversation"),
+        Default::default(),
     )
 }
 

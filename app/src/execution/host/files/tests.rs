@@ -43,6 +43,7 @@ async fn cancelled_file_commands_do_not_dispatch() {
     let job = Job::for_conversation(
         crate::sessions::JobId::generate().unwrap(),
         crate::conversations::ConversationId::generate().unwrap(),
+        Default::default(),
     );
     job.request_cancel();
     let cancelled = capture(

@@ -34,6 +34,7 @@ fn job() -> Arc<Job> {
     Job::for_conversation(
         crate::sessions::JobId::generate().expect("job"),
         ConversationId::generate().expect("conversation"),
+        Default::default(),
     )
 }
 

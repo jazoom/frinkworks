@@ -139,7 +139,7 @@ fn question_and_option_bounds_are_enforced() {
 
 #[test]
 fn stale_and_duplicate_answers_are_rejected() {
-    let waiters = QuestionWaiters::new();
+    let waiters = QuestionWaiters::new(Default::default());
     let question = PendingQuestion {
         conversation: conversation(),
         job: job_id(),
@@ -149,7 +149,7 @@ fn stale_and_duplicate_answers_are_rejected() {
         options: Vec::new(),
         allow_free_text: true,
     };
-    let job = Job::for_conversation(question.job, question.conversation);
+    let job = Job::for_conversation(question.job, question.conversation, Default::default());
     job.set_awaiting_question();
     waiters.submit(question.clone()).expect("submit");
     assert_eq!(
@@ -208,8 +208,8 @@ fn stale_and_duplicate_answers_are_rejected() {
 
 #[tokio::test]
 async fn job_stop_does_not_complete_the_question() {
-    let waiters = QuestionWaiters::new();
-    let job = Job::for_conversation(job_id(), conversation());
+    let waiters = QuestionWaiters::new(Default::default());
+    let job = Job::for_conversation(job_id(), conversation(), Default::default());
     let question = PendingQuestion {
         conversation: conversation(),
         job: job.id(),
