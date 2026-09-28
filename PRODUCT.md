@@ -218,6 +218,8 @@ The implementation status and evidence boundary are in `docs/conversation-system
 
 The product name and wordmark are Frinkworks. The symbol assets are `app/public/images/logo.svg` and `app/public/images/logo-dark.svg`. The outlined wordmark is `app/public/images/wordmark.svg`.
 
+The wordmark uses Bree Serif Regular with optical spacing. The interface retains IBM Plex.
+
 Interface copy uses Australian English and sentence case.
 
 The repository contains no customer evidence, testimonials or launch claims.

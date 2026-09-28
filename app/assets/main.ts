@@ -1643,8 +1643,9 @@ function readRevisionTarget(): RevisionTarget | null {
 
 function revisionBanner(target: RevisionTarget): HTMLElement {
     const banner = document.createElement("div");
+    banner.id = "composer-revision";
     banner.className =
-        "col-span-2 flex flex-wrap items-center justify-between gap-2 rounded-box border border-base-300 bg-base-200 px-3 py-2";
+        "flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-t-box border-b border-primary/40 bg-primary/10 px-4 py-3";
     banner.dataset.revisionState = "";
     banner.dataset.revisionSource = target.source;
     banner.dataset.revisionParent = target.parent;
@@ -1652,10 +1653,17 @@ function revisionBanner(target: RevisionTarget): HTMLElement {
     banner.dataset.revisionRevision = target.revision;
     banner.dataset.revisionText = target.text;
     banner.setAttribute("role", "status");
-    const text = document.createElement("p");
-    text.className = "text-sm";
-    text.textContent =
-        "Revising an earlier prompt. Send creates a new branch. The original prompt and its descendants stay in the tree.";
+    const text = document.createElement("div");
+    text.id = "composer-revision-instructions";
+    text.className = "min-w-0 flex-1 basis-60 space-y-1";
+    const instruction = document.createElement("p");
+    instruction.className = "font-semibold";
+    instruction.textContent = "Edit your earlier prompt below.";
+    const consequence = document.createElement("p");
+    consequence.className = "text-sm";
+    consequence.textContent =
+        "Send creates a new branch. The original branch stays in the tree.";
+    text.append(instruction, consequence);
     const cancel = document.createElement("a");
     cancel.className = "btn btn-ghost btn-xs min-h-11";
     cancel.setAttribute("href", target.cancelHref);
@@ -1732,9 +1740,56 @@ function reconcileRevision() {
     }
     const message =
         form.querySelector<HTMLTextAreaElement>("#composer-message");
-    if (initialise && message && message.value === "") {
-        message.value = revisionTarget.text;
-        message.dispatchEvent(new Event("input", { bubbles: true }));
+    message?.setAttribute("aria-describedby", "composer-revision-instructions");
+    if (initialise && message) {
+        if (message.value === "") {
+            message.value = revisionTarget.text;
+            message.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+        // Hypergraft focuses the navigation target after its location event.
+        // Only a new revision moves focus, not an unrelated patch.
+        queueMicrotask(() => {
+            if (!message.isConnected || message.disabled) return;
+            if (message.closest("[inert]")) {
+                document
+                    .querySelector<HTMLButtonElement>(
+                        "#conversation-detail[data-work-open] [data-work-close]",
+                    )
+                    ?.click();
+            }
+            message.setSelectionRange(
+                message.value.length,
+                message.value.length,
+            );
+            message.focus({ preventScroll: true });
+            form.scrollIntoView({ block: "nearest", behavior: "instant" });
+            const surface = form.closest(".workspace-composer-surface");
+            if (
+                surface &&
+                !matchMedia("(prefers-reduced-motion: reduce)").matches
+            ) {
+                for (const animation of surface.getAnimations()) {
+                    if (animation.id === "composer-revision-cue")
+                        animation.cancel();
+                }
+                surface.animate(
+                    {
+                        outlineColor: "var(--frinkworks-focus)",
+                        outlineStyle: "solid",
+                        outlineWidth: ["2px", "3px", "2px"],
+                        outlineOffset: ["2px", "7px", "2px"],
+                        backgroundColor: [
+                            "var(--color-base-100)",
+                            "color-mix(in oklab, var(--frinkworks-focus) 12%, var(--color-base-100))",
+                            "var(--color-base-100)",
+                        ],
+                        offset: [0, 0.25, 1],
+                        easing: "cubic-bezier(0.16, 1, 0.3, 1)",
+                    },
+                    { id: "composer-revision-cue", duration: 700 },
+                );
+            }
+        });
     }
 }
 

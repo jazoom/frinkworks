@@ -942,7 +942,8 @@
               {% endif %}
               {% if let Some(revision) = self.revision %}
                 <div
-                  class="rounded-box border-base-300 bg-base-200 col-span-2 flex flex-wrap items-center justify-between gap-2 border px-3 py-2"
+                  id="composer-revision"
+                  class="border-primary/40 bg-primary/10 rounded-t-box flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b px-4 py-3"
                   data-revision-state
                   data-revision-source="{{ revision.source }}"
                   data-revision-parent="{{ revision.parent }}"
@@ -951,10 +952,16 @@
                   data-revision-text="{{ revision.text }}"
                   role="status"
                 >
-                  <p class="text-sm">
-                    Revising an earlier prompt. Send creates a new branch. The
-                    original prompt and its descendants stay in the tree.
-                  </p>
+                  <div
+                    id="composer-revision-instructions"
+                    class="min-w-0 flex-1 basis-60 space-y-1"
+                  >
+                    <p class="font-semibold">Edit your earlier prompt below.</p>
+                    <p class="text-sm">
+                      Send creates a new branch. The original branch stays in
+                      the tree.
+                    </p>
+                  </div>
                   <a
                     class="btn btn-ghost btn-xs min-h-11"
                     href="{{ self.cancel_revision_href() }}"
@@ -975,6 +982,7 @@
                 placeholder="{{ self.composer_placeholder() }}"
                 rows="2"
                 maxlength="32768"
+                {% if self.revision.is_some() %}aria-describedby="composer-revision-instructions"{% endif %}
                 {% if self.composer_disabled() %}disabled{% endif %}
               >
 {{ self.draft_message() }}</textarea>

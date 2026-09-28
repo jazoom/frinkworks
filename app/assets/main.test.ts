@@ -730,7 +730,7 @@ test("copy uses the source bound to the clicked response and reports success", a
     ).toBe("");
 });
 
-test("patches keep the frozen revision without restoring deleted text or a successful Send", () => {
+test("patches keep the frozen revision without restoring deleted text or a successful Send", async () => {
     document.body.innerHTML = `<section id="conversation-detail">
         <form id="conversation-composer">
             <div data-revision-state
@@ -757,12 +757,20 @@ test("patches keep the frozen revision without restoring deleted text or a succe
             });
     };
     settle(["conversation-detail"]);
+    await Promise.resolve();
+    const message =
+        document.querySelector<HTMLTextAreaElement>("#composer-message")!;
+    expect(document.activeElement).toBe(message);
+    expect(message.selectionStart).toBe(message.value.length);
+    message.blur();
     document.querySelector("[data-revision-state]")!.remove();
     document.querySelector<HTMLInputElement>('input[name="revision"]')!.value =
         "6";
     document.querySelector<HTMLTextAreaElement>("#composer-message")!.value =
         "";
     settle(["conversation-detail"]);
+    await Promise.resolve();
+    expect(document.activeElement).not.toBe(message);
     const form = document.querySelector<HTMLFormElement>(
         "#conversation-composer",
     )!;

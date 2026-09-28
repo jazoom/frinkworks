@@ -983,7 +983,7 @@
         color: light-dark(#565c4e, #f5f2eb);
         display: block;
         flex: none;
-        width: 170px;
+        width: 171px;
         height: auto;
     }
 
@@ -1471,16 +1471,42 @@
         margin: 0;
     }
 
-    .chat-transcript:not([data-show-thinking="true"])
-        [data-thinking-content]
-        .chat-prose {
-        display: none;
+    .chat-thinking .chat-content-heading {
+        margin-bottom: 0;
     }
 
-    .chat-transcript:not([data-show-thinking="true"])
-        [data-thinking-content]
-        .chat-content-heading {
-        margin-bottom: 0;
+    .chat-thinking-body {
+        grid-template-rows: 1fr;
+    }
+
+    .chat-transcript:not([data-show-thinking="true"]) .chat-thinking-body {
+        grid-template-rows: 0fr;
+        opacity: 0;
+        visibility: hidden;
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+        .chat-thinking-body {
+            transition:
+                grid-template-rows 240ms cubic-bezier(0.16, 1, 0.3, 1),
+                opacity 240ms ease-out,
+                visibility 240ms;
+        }
+
+        .chat-transcript:not([data-show-thinking="true"]) .chat-thinking-body {
+            transition-duration: 180ms;
+        }
+
+        .chat-tool-record,
+        .chat-tool-record::details-content {
+            transition-duration: 180ms;
+            transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .chat-tool-record[open],
+        .chat-tool-record[open]::details-content {
+            transition-duration: 240ms;
+        }
     }
 
     .chat-response + .chat-tools,
@@ -2218,6 +2244,12 @@
         animation-duration: 0.01ms !important;
         animation-iteration-count: 1 !important;
         transition-duration: 0.01ms !important;
+    }
+
+    .chat-thinking-body,
+    .chat-tool-record,
+    .chat-tool-record::details-content {
+        transition-property: none;
     }
 }
 

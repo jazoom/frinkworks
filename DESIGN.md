@@ -100,7 +100,13 @@ Error panels use a pale error surface and readable recovery links. Action colour
 
 ## Typography
 
-IBM Plex Sans carries the interface. IBM Plex Mono identifies paths and code. The wordmark uses vector outlines from `logo.png`, with the source letter shapes and spacing. The application loads no additional font for the wordmark.
+IBM Plex Sans carries the interface. IBM Plex Mono identifies paths and code. The wordmark uses Bree Serif Regular outlines with optical spacing. The application loads no additional font for the wordmark.
+
+The wordmark retains the letter shapes from [Bree Serif](https://github.com/google/fonts/tree/main/ofl/breeserif), under the SIL Open Font License 1.1. Optical spacing adjusts the source kerning:
+
+- `Fr`: −0.010 em.
+- `ri`: +0.003 em.
+- `kw`: +0.006 em.
 
 Conversation text has a maximum measure of 70 characters. Result headings identify the next decision.
 
@@ -124,7 +130,7 @@ The transcript and companion content scroll independently. The composer stays ou
 
 The index leaves the page below 1021 pixels. A branded mobile bar supplies Menu on conversation pages. Menu provides the same navigation destinations.
 
-The composer and message records reach a maximum width of 1110 pixels. Message prose retains its 70-character measure.
+The composer and message records reach a maximum width of 1110 pixels. They share the same outer gutters. Message prose retains its 70-character measure.
 
 Composer controls share one desktop row and wrap on narrower screens. Mobile message bodies use the full transcript width below their author labels.
 
@@ -156,11 +162,21 @@ Host consent uses a native modal above Setup with a dimmed backdrop. Its content
 
 Controls retain DaisyUI primitives. Workspace controls use seven-pixel corners. Navigation links use five-pixel corners. User messages retain three-pixel corners. The composer uses nine-pixel corners.
 
-The Frinkworks symbol uses a lime accent on a transparent canvas. `app/public/images/logo.svg` uses olive-grey ink for light backgrounds. `app/public/images/logo-dark.svg` uses off-white for dark backgrounds. The sidebar and mobile header select the symbol for their cover colour. Other symbols follow the page theme. The favicon follows the system colour preference.
+The Frinkworks symbol depicts Frink inside a pale circular badge. His skin is warm yellow (`#f2cc69`), with dark olive outlines (`#293218`) and a green bow tie (`#b3d153`). The circle, lenses and coat use off-white (`#fff8e7`).
 
-Both symbol variants use identical geometry. Every straight section, including the lime bar, has a perpendicular width of 48 units. The vertical gap is 24 units on the 288-unit canvas.
+`app/public/images/logo.svg` uses a stronger olive rim for light backgrounds, including conversation avatars. `app/public/images/logo-dark.svg` retains the fine rim for dark backgrounds. The sidebar and mobile header select the variant for their cover colour. Other placements follow the page theme.
 
-`app/public/images/wordmark.svg` supplies the outlined wordmark. It matches the symbol’s main stroke colour and retains the accessible name Frinkworks. Its width is 170 pixels in the sidebar and 162 pixels on the connection page. The mobile header uses 148 pixels, or 136 pixels below a viewport width of 361 pixels. The symbol dimensions remain unchanged.
+Both variants retain the same character artwork and palette. Both use a square `0 0 1200 1200` viewBox and the same outer badge dimensions. The area outside the circle remains transparent.
+
+The favicon crops the approved Frink artwork from the glasses through the mouth and tooth. A pale rounded square separates the olive outline from dark backgrounds. The crop excludes the tall forehead and body.
+
+`app/public/images/favicon.svg` uses the `515 424 390 390` viewBox and retains the original character paths and transforms. The same asset serves light and dark backgrounds.
+
+`app/public/images/wordmark.svg` supplies the Bree Serif wordmark and retains the accessible name Frinkworks. It uses olive-grey on light backgrounds and off-white on dark backgrounds.
+
+The sidebar pairs its 171-pixel wordmark with a 15-pixel logo gap. The connection page retains a 162-pixel wordmark. The mobile header uses 148 pixels, or 138 pixels below a viewport width of 361 pixels. Logo boxes retain their existing dimensions.
+
+The wordmark retains the shared `0 0 970 154` viewBox. A uniform transform centres the approved outlines without a change to their proportions.
 
 Interface icons use Lucide through the generated sprite at `app/public/images/workspace-icons.svg`. The shared `.workspace-icon` class sets a stroke width of 2. Icons inherit the surrounding text colour.
 
@@ -229,7 +245,13 @@ The paperclip uses a continuous diagonal stroke. The help icon uses a centred qu
 
 User messages use a tinted, ruled surface. Assistant messages identify Frinkworks with its mark.
 
-Avatars sit beside desktop author labels and message bodies. Mobile avatars sit beside the labels, above full-width content.
+Model thoughts use muted 14-pixel text and a left rule without a filled background. Their width follows the content, up to 70 characters.
+
+Thought text expands and fades over 240 milliseconds, then collapses over 180 milliseconds. The thought heading remains visible. Tool disclosures use the same timing. Reduced motion removes the expansion and collapse transitions.
+
+Avatars sit beside desktop author labels and message bodies. Desktop circles measure 56 pixels. The Frink badge fills the avatar without a second background circle.
+
+Mobile avatars sit beside the labels, above full-width content. Mobile circles and Frink badges retain their 32-pixel size.
 
 Message text uses the transcript scale. Status stays beside the author. Revise, Fork from here and Copy appear below the applicable message.
 

@@ -24,12 +24,16 @@
             ></span>
           {% endif %}
         </div>
-        <div class="chat-prose">
-          {% if block.html.is_empty() %}
-            <p>The provider did not supply thought text.</p>
-          {% else %}
-            {{ block.html|safe }}
-          {% endif %}
+        <div class="chat-thinking-body grid">
+          <div class="min-h-0 overflow-hidden">
+            <div class="chat-prose pt-2">
+              {% if block.html.is_empty() %}
+                <p>The provider did not supply thought text.</p>
+              {% else %}
+                {{ block.html|safe }}
+              {% endif %}
+            </div>
+          </div>
         </div>
       </section>
     {% else if block.kind == "tool" %}
