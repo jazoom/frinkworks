@@ -341,11 +341,7 @@ fn resource_text_stays_below_explicit_and_server_instructions() {
     };
     let instructions = [
         InstructionSource::new("project", "/project/AGENTS.md", "project rule".to_owned()),
-        InstructionSource::new(
-            "second",
-            "/access/second/AGENTS.md",
-            "second rule".to_owned(),
-        ),
+        InstructionSource::new("second", "/mnt/second/AGENTS.md", "second rule".to_owned()),
     ];
     let skills = [SkillAdvertisement {
         source: ResourceSource::new(

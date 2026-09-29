@@ -1362,32 +1362,20 @@
                 {% if consent_request != "" %}
                   <div
                     id="conversation-directory-consent"
-                    class="alert alert-warning items-start"
+                    class="{% if consent_sensitive %}alert alert-warning
+                    items-start{% else %}border-base-300 rounded-box border p-4{% endif %}"
                     role="alert"
                     tabindex="-1"
                   >
                     <div class="min-w-0 space-y-3">
                       <div class="space-y-1">
-                        <h3 class="font-semibold">
-                          {% if consent_direct %}
-                            Approve Write access
-                          {% else %}
-                            Approve sensitive directory access
-                          {% endif %}
-                        </h3>
-                        <p class="text-sm break-words">
-                          The requested
-                          {% if consent_direct %}
-                            Write
-                          {% else %}
-                            Read
-                          {% endif %}
-                          directory is
-                          <code class="break-all">{{ consent_path }}</code>.
-                        </p>
-                        <p class="text-sm">
-                          Approval applies to this path, including any directory
-                          or filesystem that later replaces it.
+                        {% if consent_sensitive %}
+                          <h3 class="font-semibold">
+                            Sensitive directory access
+                          </h3>
+                        {% endif %}
+                        <p class="text-sm break-all">
+                          <code>{{ consent_path }}</code>
                         </p>
                         {% if consent_sensitive %}
                           <p class="text-sm">
@@ -1399,20 +1387,10 @@
                             model. Network off does not prevent this disclosure.
                           </p>
                         {% endif %}
-                        {% if consent_direct %}
+                        {% if consent_direct && consent_sensitive %}
                           <p class="text-sm">
-                            Tools can immediately change or delete host files in
-                            this directory.
-                          </p>
-                          {% if consent_sensitive %}
-                            <p class="text-sm">
-                              Write access can alter or corrupt live
-                              configuration, permissions and execution evidence.
-                            </p>
-                          {% endif %}
-                          <p class="text-sm">
-                            Cancellation and environment changes do not undo
-                            these host changes.
+                            Write access can alter or corrupt live
+                            configuration, permissions and execution evidence.
                           </p>
                         {% endif %}
                       </div>
@@ -1421,7 +1399,7 @@
                           form="conversation-composer"
                           formaction="/conversations/new/directories/consent"
                           formmethod="post"
-                          class="btn btn-warning min-h-11"
+                          class="btn {% if consent_sensitive %}btn-warning{% else %}btn-primary{% endif %} min-h-11"
                           type="submit"
                         >
                           Approve
@@ -1458,7 +1436,7 @@
                             value="{% if consent_existing %}true{% else %}false{% endif %}"
                           />
                           <button
-                            class="btn btn-warning min-h-11"
+                            class="btn {% if consent_sensitive %}btn-warning{% else %}btn-primary{% endif %} min-h-11"
                             type="submit"
                           >
                             Approve

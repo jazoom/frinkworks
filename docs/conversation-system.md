@@ -104,7 +104,9 @@ Both directory modes use live mounts. The application creates no directory copy,
 
 Authorised access includes ignored files. Tool output bounds and bounded file previews do not restrict the files that a shell command can access.
 
-A sandbox receives private writable scratch space at `/workspace`, including when no directory mounts exist. Duplicate or overlapping guest mounts fail before execution.
+A sandbox receives private writable scratch space at `/scratch`, even with no directory mounts. Scratch files disappear when the sandbox is removed.
+
+Authorised host directories use live mounts at `/mnt/<alias>`. The interface labels these paths **Sandbox path**. Duplicate or overlapping sandbox mounts fail before execution.
 
 Host tools require explicit host consent. Host execution cannot enforce Read and rejects Read grants. Work locations do not confine host commands.
 

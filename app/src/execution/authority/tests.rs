@@ -17,13 +17,27 @@ fn settings() -> crate::execution::ExecutionSettings {
 }
 
 #[test]
-fn empty_host_grants_resolve_only_the_private_workspace() {
+fn empty_host_grants_resolve_only_the_private_scratch_directory() {
     let authority = ProjectFreeAuthority::from_settings(7, &settings()).unwrap();
 
     assert!(authority.policy.grants().is_empty());
-    assert_eq!(authority.policy.primary_guest(), "/workspace");
-    assert!(authority.policy.resolve("notes.txt").is_ok());
-    assert!(authority.policy.resolve("/project/secret").is_err());
+    assert_eq!(authority.policy.primary_guest(), "/scratch");
+    assert_eq!(
+        authority.policy.resolve("notes.txt").unwrap(),
+        (
+            "/scratch/notes.txt".to_owned(),
+            crate::agents::AccessMode::ReadWrite
+        )
+    );
+    for path in [
+        "/scratch-other/secret",
+        "/mnt/unknown",
+        "/workspace/secret",
+        "/project/secret",
+        "../secret",
+    ] {
+        assert!(authority.policy.resolve(path).is_err(), "{path}");
+    }
     assert_eq!(authority.network, NetworkAccess::Public);
 }
 
@@ -41,8 +55,29 @@ fn equal_basenames_receive_stable_distinct_aliases() {
 
     assert_eq!(first.alias, "src");
     assert_eq!(second.alias, "src-2");
-    assert_eq!(first.guest_path(), "/access/src");
-    assert_eq!(second.guest_path(), "/access/src-2");
+    assert_eq!(first.guest_path(), "/mnt/src");
+    assert_eq!(second.guest_path(), "/mnt/src-2");
+}
+
+#[test]
+fn private_scratch_remains_writable_with_a_read_only_mount() {
+    let root = tempfile::tempdir().unwrap();
+    let grant = crate::execution::DirectoryGrant::from_selected(root.path(), &[]).unwrap();
+    let path = grant.guest_path();
+    let configured = settings().with_directories(vec![grant]).unwrap();
+    let authority = ProjectFreeAuthority::from_settings(1, &configured).unwrap();
+
+    assert_eq!(authority.policy.primary_guest(), path);
+    assert_eq!(
+        authority.policy.resolve(&path).unwrap().1,
+        crate::agents::AccessMode::ReadOnly
+    );
+    assert_eq!(
+        authority.policy.resolve("/scratch/probe").unwrap().1,
+        crate::agents::AccessMode::ReadWrite
+    );
+    assert_eq!(authority.policy.writable_roots(), vec!["/scratch"]);
+    assert!(authority.policy.resolve("/mnt/unknown").is_err());
 }
 
 #[cfg(unix)]

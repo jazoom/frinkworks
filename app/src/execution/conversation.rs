@@ -571,7 +571,7 @@ pub(crate) fn sandbox_spec(
             .grants()
             .first()
             .map(|grant| grant.guest_path.clone())
-            .unwrap_or_else(|| crate::execution::GUEST_WORKSPACE.to_owned()),
+            .unwrap_or_else(|| crate::execution::GUEST_SCRATCH.to_owned()),
         mounts,
         network,
     })
@@ -595,7 +595,7 @@ fn host_policy_text(settings: &ExecutionSettings) -> String {
         "Each shell command waits for user approval bound to this conversation, job and settings revision."
     };
     format!(
-        "Tools run on this computer as the Frinkworks process user. {approval} Approval does not inspect script internals. Command output is sent to the hosted model. Sandbox guest paths such as /access/<alias> and /workspace from earlier turns are not host paths and grant no authority."
+        "Tools run on this computer as the Frinkworks process user. {approval} Approval does not inspect script internals. Command output is sent to the hosted model. Sandbox paths such as /mnt/<alias> and /scratch from earlier turns are not host paths and grant no authority."
     )
 }
 

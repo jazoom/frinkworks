@@ -73,7 +73,7 @@ pub(in crate::slices::conversations) fn command_directory(
                 .directories
                 .first()
                 .map(|grant| grant.guest_path())
-                .unwrap_or_else(|| crate::execution::GUEST_WORKSPACE.to_owned());
+                .unwrap_or_else(|| crate::execution::GUEST_SCRATCH.to_owned());
             Ok((PathBuf::from(alias.clone()), alias))
         }
     }

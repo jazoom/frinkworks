@@ -301,7 +301,7 @@ fn unavailable_roots_do_not_supply_prompt_bodies() {
     let data_root = tempfile::tempdir().expect("data");
     let root = EffectiveRoot {
         scope: "project".to_owned(),
-        model_path: "/access/project".to_owned(),
+        model_path: "/mnt/project".to_owned(),
         host_path: None,
     };
     let (templates, unavailable) = discover_project(&[root], &[], data_root.path());

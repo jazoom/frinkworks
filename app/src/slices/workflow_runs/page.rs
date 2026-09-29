@@ -997,7 +997,7 @@ fn pinned_environments(
 }
 
 fn project_presentation() -> (String, String) {
-    (String::new(), "Private workspace".to_owned())
+    (String::new(), "Private scratch".to_owned())
 }
 
 fn catalogue_presentation(run: &WorkflowRun, catalogue: &WorkflowCatalogue) -> (String, String) {

@@ -39,7 +39,7 @@ pub(crate) use settings::{
     validate_directories,
 };
 
-pub(crate) const GUEST_WORKSPACE: &str = "/workspace";
+pub(crate) const GUEST_SCRATCH: &str = "/scratch";
 /// The read-only guest mount of the Frinkworks global skills directory.
 pub(crate) const GUEST_GLOBAL_SKILLS: &str = "/.agents/skills";
 

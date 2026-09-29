@@ -17,13 +17,13 @@
     </div>
   </div>
   <dl class="mt-4 space-y-2 text-sm">
-    <div class="grid grid-cols-[5rem_minmax(0,1fr)] gap-3">
+    <div class="grid grid-cols-[6rem_minmax(0,1fr)] gap-3">
       <dt class="text-quiet">Host path</dt>
       <dd class="font-mono text-xs break-all">{{ directory.host_path }}</dd>
     </div>
     {% if !location_host %}
-      <div class="grid grid-cols-[5rem_minmax(0,1fr)] gap-3">
-        <dt class="text-quiet">Guest path</dt>
+      <div class="grid grid-cols-[6rem_minmax(0,1fr)] gap-3">
+        <dt class="text-quiet">Sandbox path</dt>
         <dd class="font-mono text-xs break-all">{{ directory.guest_path }}</dd>
       </div>
     {% endif %}
@@ -69,11 +69,6 @@
         >
       </label>
     </fieldset>
-  {% endif %}
-  {% if directory.direct_write %}
-    <p class="directory-card-warning">
-      Writes reach this directory immediately. Frinkworks provides no rollback.
-    </p>
   {% endif %}
 
   <div class="border-base-300 mt-4 border-t pt-4 text-sm">

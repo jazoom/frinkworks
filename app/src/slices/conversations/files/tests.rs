@@ -111,7 +111,7 @@ async fn sandbox_lookup_returns_scoped_alias_paths_without_contents() {
     assert_eq!(suggestions.len(), 1);
     assert_eq!(
         suggestions[0]["path"],
-        format!("/access/{}/src/main.rs", grant.alias)
+        format!("/mnt/{}/src/main.rs", grant.alias)
     );
     assert_eq!(suggestions[0]["scope"], grant.alias);
     assert!(!body.contains("fn main"));
@@ -241,7 +241,7 @@ async fn draft_lookup_labels_each_submitted_grant_with_its_scope() {
     assert!(suggestions.iter().all(|suggestion| {
         let scope = suggestion["scope"].as_str().expect("scope");
         let path = suggestion["path"].as_str().expect("path");
-        path.starts_with(&format!("/access/{scope}/"))
+        path.starts_with(&format!("/mnt/{scope}/"))
     }));
 }
 
@@ -345,7 +345,7 @@ async fn prefix_completion_returns_files_and_directories_with_separators() {
     std::fs::write(root.path().join("src/nested/my file.rs"), b"").expect("spaced file");
     std::fs::write(root.path().join("src/nested/myother.rs"), b"").expect("other file");
     let (record, grant) = conversation_with_grant(&state, root.path(), ToolLocation::Sandbox);
-    let base = format!("/access/{}", grant.alias);
+    let base = format!("/mnt/{}", grant.alias);
     for (query, expected) in [
         ("src/ma", vec![format!("{base}/src/main.rs")]),
         ("src/MA", vec![format!("{base}/src/main.rs")]),
@@ -395,9 +395,9 @@ async fn completion_rejects_parent_traversal_and_foreign_roots() {
     for query in [
         "../",
         "src/../../etc",
-        "/access/parent/../other",
+        "/mnt/parent/../other",
         "src//",
-        &format!("/access/{}//", grant.alias),
+        &format!("/mnt/{}//", grant.alias),
     ] {
         let response = app(&state)
             .oneshot(json_request(
@@ -418,7 +418,7 @@ async fn completion_rejects_parent_traversal_and_foreign_roots() {
     }
 
     // A string prefix that changes the root identity must not match the grant.
-    let foreign = format!("/access/{}-other/src/", grant.alias);
+    let foreign = format!("/mnt/{}-other/src/", grant.alias);
     let response = app(&state)
         .oneshot(json_request(
             &format!(
@@ -505,7 +505,7 @@ fn live_completion_returns_directories_and_rejects_parent() {
     let grant = crate::execution::DirectoryGrant::from_selected(directory.path(), &[]).unwrap();
     let root = EffectiveRoot {
         scope: grant.alias.clone(),
-        model_path: "/access/project".into(),
+        model_path: "/mnt/project".into(),
         host_path: Some(grant.host_path.clone()),
     };
     let grants = [grant];
@@ -513,23 +513,23 @@ fn live_completion_returns_directories_and_rejects_parent() {
     let result = super::page::complete(std::slice::from_ref(&root), "src/ne", data, &grants)
         .expect("complete");
     assert_eq!(result.suggestions.len(), 1);
-    assert_eq!(result.suggestions[0].path, "/access/project/src/nested/");
+    assert_eq!(result.suggestions[0].path, "/mnt/project/src/nested/");
     assert!(result.suggestions[0].directory);
 
     let result = super::page::complete(
         std::slice::from_ref(&root),
-        "/access/project/src/ma",
+        "/mnt/project/src/ma",
         data,
         &grants,
     )
     .expect("complete");
     assert_eq!(result.suggestions.len(), 1);
-    assert_eq!(result.suggestions[0].path, "/access/project/src/main.rs");
+    assert_eq!(result.suggestions[0].path, "/mnt/project/src/main.rs");
     assert!(!result.suggestions[0].directory);
 
     let result = super::page::complete(
         std::slice::from_ref(&root),
-        "/access/project-other/src/ma",
+        "/mnt/project-other/src/ma",
         data,
         &grants,
     )

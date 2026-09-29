@@ -1090,7 +1090,7 @@ function suggestionResponse(path: string): Response {
 
 test("at-sign lookup quotes a path with spaces at the caret", async () => {
     const fetchMock = vi.fn(async () =>
-        suggestionResponse("/access/project/src/my file.rs"),
+        suggestionResponse("/mnt/project/src/my file.rs"),
     );
     vi.stubGlobal("fetch", fetchMock);
     fileLookupMarkup();
@@ -1105,7 +1105,7 @@ test("at-sign lookup quotes a path with spaces at the caret", async () => {
             cancelable: true,
         }),
     );
-    expect(field.value).toBe('see "/access/project/src/my file.rs" ');
+    expect(field.value).toBe('see "/mnt/project/src/my file.rs" ');
     expect(
         document.querySelector<HTMLElement>("[data-file-suggestions]")!.hidden,
     ).toBe(true);
@@ -1127,7 +1127,7 @@ test("lookup discards a response after draft scope changes", async () => {
     document.querySelector<HTMLInputElement>(
         'input[name="draft_nonce"]',
     )!.value = "b".repeat(64);
-    complete(suggestionResponse("/access/old/secret.rs"));
+    complete(suggestionResponse("/mnt/old/secret.rs"));
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(
         document.querySelector<HTMLElement>("[data-file-suggestions]")!.hidden,
@@ -1136,7 +1136,7 @@ test("lookup discards a response after draft scope changes", async () => {
 
 test("escape cancels a pending lookup before dispatch", async () => {
     const fetchMock = vi.fn(async () =>
-        suggestionResponse("/access/project/main.rs"),
+        suggestionResponse("/mnt/project/main.rs"),
     );
     vi.stubGlobal("fetch", fetchMock);
     fileLookupMarkup();
@@ -1154,7 +1154,7 @@ test("escape cancels a pending lookup before dispatch", async () => {
 test("escape closes suggestions without changing the draft", async () => {
     vi.stubGlobal(
         "fetch",
-        vi.fn(async () => suggestionResponse("/access/project/src/main.rs")),
+        vi.fn(async () => suggestionResponse("/mnt/project/src/main.rs")),
     );
     fileLookupMarkup();
     await new Promise((resolve) => setTimeout(resolve, 200));
@@ -1217,7 +1217,7 @@ test("tab completes only the token at the caret", async () => {
     vi.stubGlobal(
         "fetch",
         vi.fn(async () =>
-            completionResponse("/access/project/src/main.rs", false),
+            completionResponse("/mnt/project/src/main.rs", false),
         ),
     );
     const field = composerMarkup(
@@ -1227,35 +1227,35 @@ test("tab completes only the token at the caret", async () => {
     await settle();
     const event = press(field, "Tab");
     expect(event.defaultPrevented).toBe(true);
-    expect(field.value).toBe("before /access/project/src/main.rs  after");
+    expect(field.value).toBe("before /mnt/project/src/main.rs  after");
 });
 
 test("completion replaces a quoted token without touching its suffix", async () => {
     vi.stubGlobal(
         "fetch",
         vi.fn(async () =>
-            completionResponse("/access/project/src/main.rs", false),
+            completionResponse("/mnt/project/src/main.rs", false),
         ),
     );
-    const value = 'see @"/access/project/src/main old file" tail';
+    const value = 'see @"/mnt/project/src/main old file" tail';
     const caret = value.indexOf("main") + 2;
     const field = composerMarkup(value, caret);
     await settle();
     const event = press(field, "Tab");
     expect(event.defaultPrevented).toBe(true);
-    expect(field.value).toBe("see /access/project/src/main.rs  tail");
+    expect(field.value).toBe("see /mnt/project/src/main.rs  tail");
     const url = new URL(
         vi.mocked(fetch).mock.calls[0][0] as string,
         "http://localhost",
     );
-    expect(url.searchParams.get("q")).toBe("/access/project/src/ma");
+    expect(url.searchParams.get("q")).toBe("/mnt/project/src/ma");
     expect(url.searchParams.get("mode")).toBe("complete");
 });
 
 test("an unclosed path quote does not consume the next line", async () => {
     vi.stubGlobal(
         "fetch",
-        vi.fn(async () => completionResponse("/access/project/my dir/", true)),
+        vi.fn(async () => completionResponse("/mnt/project/my dir/", true)),
     );
     const field = composerMarkup(
         'open @"my dir\nkeep this line',
@@ -1263,20 +1263,20 @@ test("an unclosed path quote does not consume the next line", async () => {
     );
     await settle();
     press(field, "Tab");
-    expect(field.value).toBe('open @"/access/project/my dir/"\nkeep this line');
+    expect(field.value).toBe('open @"/mnt/project/my dir/"\nkeep this line');
     await settle();
 });
 
 test("tab completes a directory and keeps the caret inside the quotes", async () => {
     vi.stubGlobal(
         "fetch",
-        vi.fn(async () => completionResponse("/access/project/my dir/", true)),
+        vi.fn(async () => completionResponse("/mnt/project/my dir/", true)),
     );
     const value = 'open @"my ';
     const field = composerMarkup(value, value.length);
     await settle();
     press(field, "Tab");
-    const insert = '"/access/project/my dir/"';
+    const insert = '"/mnt/project/my dir/"';
     expect(field.value).toBe(`open @${insert}`);
     expect(field.selectionStart).toBe("open ".length + insert.length);
     await settle();
@@ -1286,7 +1286,7 @@ test("shift+tab keeps ordinary focus traversal", async () => {
     vi.stubGlobal(
         "fetch",
         vi.fn(async () =>
-            completionResponse("/access/project/src/main.rs", false),
+            completionResponse("/mnt/project/src/main.rs", false),
         ),
     );
     const field = composerMarkup("see @src/ma", "see @src/ma".length);

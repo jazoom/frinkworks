@@ -158,7 +158,7 @@ fn packet_integrity_rejects_modified_instruction_text() {
         &store,
         ProjectInstructions::Present(vec![InstructionSource::new(
             "root",
-            "/access/root/AGENTS.md",
+            "/mnt/root/AGENTS.md",
             "Use Rust".into(),
         )]),
         &[],

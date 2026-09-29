@@ -88,9 +88,9 @@ async fn real_workflow_commands_enforce_mounts_and_approval_without_capture() {
             ProviderConnection::with_key(ProviderKind::Xai, "validation-secret", "grok-4.6");
         state.vault.put(connection.clone()).unwrap();
         let command = if access == DirectoryAccess::Read {
-            "set -eu; cat ignored; test $(wc -c < large) -eq 134217728; if printf bad > original; then exit 41; fi; if touch created; then exit 42; fi; if rm original; then exit 43; fi; printf scratch > /workspace/probe; cat /workspace/probe; printf 'validation-%s' secret"
+            "set -eu; cat ignored; test $(wc -c < large) -eq 134217728; if printf bad > original; then exit 41; fi; if touch created; then exit 42; fi; if rm original; then exit 43; fi; printf scratch > /scratch/probe; cat /scratch/probe; printf 'validation-%s' secret"
         } else {
-            "set -eu; printf changed > original; printf created > created; rm ignored; printf scratch > /workspace/probe; printf 'validation-%s' secret"
+            "set -eu; printf changed > original; printf created > created; rm ignored; printf scratch > /scratch/probe; printf 'validation-%s' secret"
         };
         let backend = crate::tests::ScriptedBackend::rounds(vec![
             vec![
@@ -345,12 +345,12 @@ async fn real_workflow_commands_enforce_mounts_and_approval_without_capture() {
             .attempt_handle(RunId::generate().unwrap(), AttemptId::generate().unwrap());
         let mount = crate::sandbox::MountSpec {
             host: root.path().to_path_buf(),
-            guest: "/access/duplicate".into(),
+            guest: "/mnt/duplicate".into(),
             read_only: true,
         };
         let duplicate = crate::sandbox::SandboxSpec {
             mounts: vec![mount.clone(), mount],
-            workdir: "/workspace".into(),
+            workdir: "/scratch".into(),
             network: crate::agents::NetworkAccess::None,
         };
         assert!(matches!(
@@ -416,7 +416,7 @@ fn live_mounts_intersect_permissions_without_copy_or_scratch_bind() {
         assert!(
             spec.mounts
                 .iter()
-                .all(|mount| mount.guest != crate::execution::GUEST_WORKSPACE)
+                .all(|mount| mount.guest != crate::execution::GUEST_SCRATCH)
         );
     }
 }

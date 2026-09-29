@@ -382,7 +382,7 @@ impl DirectoryGrant {
     }
 
     pub(crate) fn guest_path(&self) -> String {
-        format!("/access/{}", self.alias)
+        format!("{}/{}", crate::agents::GUEST_MOUNT_ROOT, self.alias)
     }
 
     pub(crate) fn form_value(&self) -> String {

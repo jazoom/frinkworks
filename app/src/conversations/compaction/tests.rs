@@ -69,7 +69,7 @@ fn command(included: bool) -> ConversationMessage {
         input: None,
         command: Some(CommandEntry {
             included,
-            directory: "/workspace".to_owned(),
+            directory: "/scratch".to_owned(),
             output: Some(CommandResult::new(
                 vec![CommandChunk {
                     stream: CommandStream::Stdout,

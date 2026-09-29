@@ -61,11 +61,11 @@ fn primary_grant_is_mounted_at_project() {
         "/project/src/main.rs"
     );
     assert_eq!(
-        policy.resolve("/access/docs/readme").expect("docs").0,
-        "/access/docs/readme"
+        policy.resolve("/mnt/docs/readme").expect("docs").0,
+        "/mnt/docs/readme"
     );
     assert_eq!(
-        policy.resolve("/access/docs/readme").expect("docs").1,
+        policy.resolve("/mnt/docs/readme").expect("docs").1,
         AccessMode::ReadOnly
     );
 }
@@ -119,11 +119,11 @@ fn a_selected_non_primary_grant_is_mounted_at_project() {
     assert_eq!(policy.primary_guest(), "/project");
     assert_eq!(policy.primary_access(), AccessMode::ReadWrite);
     assert_eq!(
-        policy.resolve("/access/docs/readme").expect("docs").0,
-        "/access/docs/readme"
+        policy.resolve("/mnt/docs/readme").expect("docs").0,
+        "/mnt/docs/readme"
     );
     assert_eq!(
-        policy.resolve("/access/docs/readme").expect("docs").1,
+        policy.resolve("/mnt/docs/readme").expect("docs").1,
         AccessMode::ReadOnly
     );
 }

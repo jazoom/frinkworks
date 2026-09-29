@@ -52,7 +52,7 @@ fn command_message(included: bool, termination: CommandTermination) -> Conversat
         input: None,
         command: Some(CommandEntry {
             included,
-            directory: "/workspace".to_owned(),
+            directory: "/scratch".to_owned(),
             output: Some(output),
         }),
         attachments: Vec::new(),
@@ -85,7 +85,7 @@ fn included_command_projects_as_delimited_evidence() {
         );
         assert!(turns[0].text.contains("echo sentinel"));
         assert!(turns[0].text.contains("command output sentinel"));
-        assert!(turns[0].text.contains("/workspace"));
+        assert!(turns[0].text.contains("/scratch"));
     }
 }
 

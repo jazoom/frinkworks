@@ -2018,16 +2018,6 @@ body:has(.workspace-catalogue) .app-frame {
     flex-direction: column;
     gap: 16px;
 }
-.directory-card-warning {
-    margin-top: 10px;
-    padding: 8px 10px;
-    border: 1px solid var(--color-warning);
-    border-radius: 3px;
-    background: color-mix(in srgb, var(--color-warning) 16%, transparent);
-    color: var(--color-base-content);
-    font-size: 12px;
-    line-height: 1.45;
-}
 .workflow-progress li[aria-current="step"] {
     color: var(--color-base-content);
     font-weight: 600;

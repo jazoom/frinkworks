@@ -62,8 +62,8 @@ fn guest_path_accepts_each_grant() {
         ("/project/src/main.rs".to_owned(), AccessMode::ReadWrite)
     );
     assert_eq!(
-        policy.resolve("/access/docs/readme").expect("docs").0,
-        "/access/docs/readme"
+        policy.resolve("/mnt/docs/readme").expect("docs").0,
+        "/mnt/docs/readme"
     );
 }
 
@@ -92,7 +92,7 @@ fn guest_path_rejects_escape_and_control() {
 fn write_paths_are_read_only_outside_writable_grants() {
     let policy = policy();
     assert_eq!(
-        policy.resolve("/access/docs/readme").expect("docs").1,
+        policy.resolve("/mnt/docs/readme").expect("docs").1,
         AccessMode::ReadOnly
     );
     assert!(
@@ -231,7 +231,7 @@ async fn read_only_write_is_an_authority_failure() {
         &context,
         "call-1",
         "write",
-        &serde_json::json!({"path": "/access/docs/readme", "contents": "x"}),
+        &serde_json::json!({"path": "/mnt/docs/readme", "contents": "x"}),
     )
     .await;
     assert_eq!(trace.failure, Some(ToolFailureKind::Authority));
@@ -286,7 +286,7 @@ async fn edit_escape_and_read_only_are_authority_failures() {
         "call-1",
         "edit",
         &serde_json::json!({
-            "path": "/access/docs/readme",
+            "path": "/mnt/docs/readme",
             "edits": [{"search": "a", "replace": "b"}]
         }),
     )

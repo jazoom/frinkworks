@@ -1773,7 +1773,7 @@ fn execution_access_lines(
         return vec![if requested == crate::execution::ToolLocation::Host {
             "No work locations. Commands start in Frinkworks's current directory. These paths do not confine host access.".to_owned()
         } else {
-            "No host directory access. Tools use private scratch storage at /workspace.".to_owned()
+            "No host directory access. Tools use private scratch storage at /scratch.".to_owned()
         }];
     }
     replacement

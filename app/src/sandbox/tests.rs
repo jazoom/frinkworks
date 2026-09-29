@@ -171,16 +171,11 @@ fn private_scratch_accepts_no_binds_and_rejects_shadow_mounts() {
     let root = tempfile::tempdir().unwrap();
     let mut spec = SandboxSpec {
         mounts: Vec::new(),
-        workdir: "/workspace".into(),
+        workdir: "/scratch".into(),
         network: NetworkAccess::None,
     };
     super::confirm_mounts(&spec).unwrap();
-    for guest in [
-        "/",
-        "/workspace",
-        "/workspace/project",
-        "/access/../workspace",
-    ] {
+    for guest in ["/", "/scratch", "/scratch/project", "/mnt/../scratch"] {
         spec.mounts = vec![MountSpec {
             guest: guest.into(),
             host: root.path().to_owned(),
@@ -189,7 +184,7 @@ fn private_scratch_accepts_no_binds_and_rejects_shadow_mounts() {
         assert!(super::confirm_mounts(&spec).is_err(), "{guest}");
     }
     spec.mounts = vec![MountSpec {
-        guest: "/access/project".into(),
+        guest: "/mnt/project".into(),
         host: root.path().to_owned(),
         read_only: true,
     }];
@@ -227,7 +222,7 @@ async fn start_from_snapshot_supports_private_scratch_without_binds() {
     let sandbox = GuestSandbox::scripted();
     let spec = SandboxSpec {
         mounts: Vec::new(),
-        workdir: "/workspace".to_owned(),
+        workdir: "/scratch".to_owned(),
         network: NetworkAccess::None,
     };
     sandbox

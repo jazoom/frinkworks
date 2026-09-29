@@ -574,7 +574,7 @@ pub(crate) fn authorised_source_text(
             .map(|grant| format!("- {}: work location", grant.host_path.display()))
             .collect::<Vec<_>>();
         format!(
-            "Tools run on this computer. Work locations are conveniences, not confinement:\n{}\nSandbox guest paths such as /access/<alias> and /workspace from earlier turns grant no host authority. File import still uses an explicit read-only sandbox.",
+            "Tools run on this computer. Work locations are conveniences, not confinement:\n{}\nSandbox paths such as /mnt/<alias> and /scratch from earlier turns grant no host authority. File import still uses an explicit read-only sandbox.",
             if directories.is_empty() {
                 "None. Commands start in Frinkworks's current directory.".to_owned()
             } else {
@@ -596,7 +596,7 @@ pub(crate) fn authorised_source_text(
             })
             .collect::<Vec<_>>();
         format!(
-            "Private scratch: /workspace. Only the listed tools are available. Authorised directories:\n{}",
+            "Private scratch: /scratch (read-write). Files disappear when the sandbox is removed. Only the listed tools are available. Authorised directories:\n{}",
             if directories.is_empty() {
                 "None".to_owned()
             } else {

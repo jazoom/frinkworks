@@ -992,7 +992,7 @@ async fn network_tool_reply_uses_private_workspace_without_catalogue_identity() 
     assert!(state.workflow_runs.summaries().is_empty());
     assert!(!state.conversation_runtime.unsettled(conversation.id));
     let preamble = backend.last_preamble().unwrap_or_default();
-    assert!(preamble.contains("/workspace"));
+    assert!(preamble.contains("/scratch"));
     assert!(!preamble.contains("# Role"));
     let settled = state.conversations.get(&conversation.id).unwrap();
     assert_eq!(

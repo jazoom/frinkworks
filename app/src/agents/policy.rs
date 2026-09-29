@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use super::record::{AccessMode, AgentError, GUEST_PROJECT, NetworkAccess, canonical_directory};
 use super::tool_id::ToolId;
-use crate::execution::GUEST_WORKSPACE;
+use crate::execution::GUEST_SCRATCH;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PolicyGrant {
@@ -131,7 +131,7 @@ impl DirectoryPolicy {
             .find(|grant| grant.alias == self.primary_alias)
             .map(|grant| grant.guest_path.as_str())
             .unwrap_or(if self.grants.is_empty() {
-                GUEST_WORKSPACE
+                GUEST_SCRATCH
             } else {
                 GUEST_PROJECT
             })
@@ -176,15 +176,14 @@ impl DirectoryPolicy {
             return Ok((normalised, AccessMode::ReadWrite));
         }
         if self.private_workspace
-            && (normalised == GUEST_WORKSPACE
-                || normalised.starts_with(&format!("{GUEST_WORKSPACE}/")))
+            && (normalised == GUEST_SCRATCH || normalised.starts_with(&format!("{GUEST_SCRATCH}/")))
         {
             return Ok((normalised, AccessMode::ReadWrite));
         }
         self.grant_for(&normalised)
             .map(|grant| (normalised, grant.access))
             .ok_or(if self.grants.is_empty() {
-                "Stay inside the private workspace."
+                "Stay inside the private scratch directory."
             } else {
                 "Stay inside a granted directory."
             })
@@ -196,7 +195,7 @@ impl DirectoryPolicy {
         }
         let mut roots = self
             .private_workspace
-            .then(|| GUEST_WORKSPACE.to_owned())
+            .then(|| GUEST_SCRATCH.to_owned())
             .into_iter()
             .collect::<Vec<_>>();
         roots.extend(self.grants.iter().map(|grant| grant.guest_path.clone()));
@@ -224,7 +223,7 @@ impl DirectoryPolicy {
         }
         let mut roots = self
             .private_workspace
-            .then(|| GUEST_WORKSPACE.to_owned())
+            .then(|| GUEST_SCRATCH.to_owned())
             .into_iter()
             .collect::<Vec<_>>();
         roots.extend(

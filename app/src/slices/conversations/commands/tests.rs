@@ -268,7 +268,7 @@ async fn project_skill_uses_the_grant_alias_without_a_host_path() {
     assert!(source.ends_with("/SKILL.md"), "{body}");
     assert_eq!(
         value["preview"]["base"].as_str().expect("base"),
-        format!("/access/{}/.agents/skills/probe", grant.alias)
+        format!("/mnt/{}/.agents/skills/probe", grant.alias)
     );
     assert!(
         !source.contains(&root.path().display().to_string()),
@@ -412,7 +412,7 @@ async fn project_skill_preview_rejects_links_and_private_data_but_accepts_path_r
     std::fs::copy(outside.path(), &file).expect("restore");
     let roots = [crate::execution::resources::EffectiveRoot {
         scope: grant.alias.clone(),
-        model_path: "/access/project".to_owned(),
+        model_path: "/mnt/project".to_owned(),
         host_path: Some(root.path().to_path_buf()),
     }];
     let (skills, _) = crate::execution::resources::preview_project_skills(

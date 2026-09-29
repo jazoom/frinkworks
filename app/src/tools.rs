@@ -63,7 +63,7 @@ impl ToolId {
                 "An absolute host path or a path relative to the selected work location. Defaults to the work location."
             }
             ToolLocation::Sandbox => {
-                "Path inside a granted guest directory. Defaults to the first authorised directory or /workspace."
+                "Path inside an authorised sandbox directory or /scratch. Defaults to the first authorised directory or /scratch."
             }
         };
         match self {

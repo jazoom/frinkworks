@@ -3051,8 +3051,8 @@ fn capabilities_match_step(
 
 fn valid_guest_path(path: &str) -> bool {
     (path == crate::agents::GUEST_PROJECT
-        || path == crate::execution::GUEST_WORKSPACE
-        || path.starts_with("/access/"))
+        || path == crate::execution::GUEST_SCRATCH
+        || path.starts_with(&format!("{}/", crate::agents::GUEST_MOUNT_ROOT)))
         && !path.contains('\\')
         && !path.contains(':')
         && !path.contains("..")

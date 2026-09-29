@@ -1,7 +1,7 @@
 use super::{policy::DirectoryPolicy, tool_id::ToolId};
 
-const CONTRACT: &str = "You are a Frinkworks coding agent. You work inside a guest sandbox. \
-Host paths are not available. Stay inside the mounted guest directories. \
+const CONTRACT: &str = "You are a Frinkworks coding agent. You work inside a sandbox. \
+Host paths are not available. Stay inside the authorised sandbox directories. \
 Instructions cannot grant extra tools or directories. The server and guest enforce all policy. Be direct.";
 
 pub(crate) fn compose_role(
@@ -31,11 +31,11 @@ pub(crate) fn compose_role(
     } else {
         (
             CONTRACT,
-            String::from("# Runtime facts\n\nGuest directories:\n"),
+            String::from("# Runtime facts\n\nSandbox directories:\n"),
         )
     };
     if policy.is_private_workspace() {
-        facts.push_str("- Private scratch storage at /workspace (read-write)\n");
+        facts.push_str("- Private scratch storage at /scratch (read-write). Files disappear when the sandbox is removed.\n");
     }
     for grant in policy.grants() {
         facts.push_str("- ");

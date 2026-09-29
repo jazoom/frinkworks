@@ -17,7 +17,7 @@ pub(crate) const MAXIMUM_INSTRUCTION_BYTES: usize = 32_768;
 pub(crate) const MAXIMUM_ALIAS_BYTES: usize = 32;
 pub(crate) const MAXIMUM_PATH_BYTES: usize = 4_096;
 pub(crate) const GUEST_PROJECT: &str = "/project";
-pub(crate) const GUEST_ACCESS_ROOT: &str = "/access";
+pub(crate) const GUEST_MOUNT_ROOT: &str = "/mnt";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -525,7 +525,7 @@ pub(crate) fn guest_path_for(alias: &str, primary: &str) -> String {
     if alias == primary {
         GUEST_PROJECT.to_owned()
     } else {
-        format!("{GUEST_ACCESS_ROOT}/{alias}")
+        format!("{GUEST_MOUNT_ROOT}/{alias}")
     }
 }
 

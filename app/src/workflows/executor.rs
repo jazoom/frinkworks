@@ -1063,7 +1063,7 @@ async fn run_agent_step(
         } else {
             composed.push_str("Each shell command waits for user approval bound to this run. ");
         }
-        composed.push_str("Approval does not inspect script internals. Command output is sent to the hosted model. Sandbox guest paths such as /access/<alias> and /workspace from earlier turns are not host paths and grant no authority.");
+        composed.push_str("Approval does not inspect script internals. Command output is sent to the hosted model. Sandbox paths such as /mnt/<alias> and /scratch from earlier turns are not host paths and grant no authority.");
     }
     let request_tools = crate::tools::definitions_for_step(
         &action.authority.tools,
@@ -1361,7 +1361,7 @@ async fn run_system_exec(
             .find(|record| record.id == attempt)
             .and_then(|record| record.capabilities.primary())
             .map(|directory| directory.guest_path.as_str())
-            .unwrap_or(crate::execution::GUEST_WORKSPACE);
+            .unwrap_or(crate::execution::GUEST_SCRATCH);
         let connection = work.active_connection();
         let secret = match connection.auth {
             crate::providers::AuthMethod::ApiKey => Some(connection.api_key.expose()),
@@ -1555,7 +1555,7 @@ fn project_free_attempt_spec(
 ) -> Result<crate::sandbox::SandboxSpec, &'static str> {
     let mut mounts = Vec::new();
     for directory in &capabilities.directories {
-        if directory.guest_path == crate::execution::GUEST_WORKSPACE {
+        if directory.guest_path == crate::execution::GUEST_SCRATCH {
             continue;
         }
         let grant = authority
@@ -1583,7 +1583,7 @@ fn project_free_attempt_spec(
             .directories
             .first()
             .map(|directory| directory.guest_path.clone())
-            .unwrap_or_else(|| crate::execution::GUEST_WORKSPACE.to_owned()),
+            .unwrap_or_else(|| crate::execution::GUEST_SCRATCH.to_owned()),
         network: capabilities.sandbox_network(),
     })
 }

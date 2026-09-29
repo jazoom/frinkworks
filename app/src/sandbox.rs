@@ -621,7 +621,7 @@ pub(crate) fn confirm_host_write_access(
 }
 
 fn confirm_mounts(spec: &SandboxSpec) -> Result<(), SandboxError> {
-    let mut destinations = vec![Path::new(crate::execution::GUEST_WORKSPACE)];
+    let mut destinations = vec![Path::new(crate::execution::GUEST_SCRATCH)];
     for mount in &spec.mounts {
         let guest = Path::new(&mount.guest);
         if !guest.is_absolute()
@@ -690,7 +690,7 @@ async fn create_detached(
         .workdir(&spec.workdir)
         .network(|network| network.policy(access::network_policy(&spec.network)))
         .detached(true)
-        .volume(crate::execution::GUEST_WORKSPACE, |volume| volume.tmpfs());
+        .volume(crate::execution::GUEST_SCRATCH, |volume| volume.tmpfs());
     for mount in &spec.mounts {
         let guest = mount.guest.clone();
         let host_path = mount.host.clone();

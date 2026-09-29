@@ -684,7 +684,7 @@ async fn sandbox_command_uses_live_mounts_without_a_workflow_run() {
             job.id(),
             command.clone(),
             true,
-            "/workspace".to_owned(),
+            "/scratch".to_owned(),
         )
         .expect("begin command");
     let message = started.messages.last().expect("entry").id;
@@ -698,7 +698,7 @@ async fn sandbox_command_uses_live_mounts_without_a_workflow_run() {
             message,
             command,
             true,
-            std::path::PathBuf::from("/workspace"),
+            std::path::PathBuf::from("/scratch"),
         ),
     )
     .await;
@@ -754,7 +754,7 @@ async fn sandbox_command_rejects_a_revoked_run_capability() {
         crate::conversations::MessageId::generate().expect("message"),
         "echo hi".to_owned(),
         true,
-        std::path::PathBuf::from("/workspace"),
+        std::path::PathBuf::from("/scratch"),
     );
     let settings = run.record.model.as_ref().expect("model").settings.clone();
     assert_eq!(

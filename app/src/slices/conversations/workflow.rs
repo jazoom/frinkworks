@@ -691,7 +691,7 @@ async fn launch_readiness(
         format!(
             "{} · Tools: {} · Sandbox network: {}",
             if directories.is_empty() {
-                "Private scratch at /workspace"
+                "Private scratch at /scratch"
             } else {
                 &directories
             },

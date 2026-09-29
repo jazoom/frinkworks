@@ -177,7 +177,7 @@ fn private_workspace_has_no_host_backed_writable_alias() {
     let authority = ProjectFreeAuthority::from_settings(1, &settings()).unwrap();
     let spec = sandbox_spec(root.path(), &authority, NetworkAccess::None).unwrap();
     assert!(spec.mounts.is_empty());
-    assert_eq!(spec.workdir, crate::execution::GUEST_WORKSPACE);
+    assert_eq!(spec.workdir, crate::execution::GUEST_SCRATCH);
 }
 
 #[cfg(unix)]
