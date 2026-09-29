@@ -3402,7 +3402,12 @@ function enableSupervisedDevelopment() {
                 }
             } finally {
                 if (!lifetime.signal.aborted && !reloading)
-                    timer = window.setTimeout(poll, 1500);
+                    timer = window.setTimeout(
+                        poll,
+                        ["checking", "building", "restarting"].includes(phase)
+                            ? 100
+                            : 500,
+                    );
             }
         };
         window.addEventListener(

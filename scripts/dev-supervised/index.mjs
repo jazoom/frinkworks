@@ -81,62 +81,73 @@ async function stop(child) {
     }
 }
 
+async function buildAssets(directory) {
+    const assets = launch(
+        "pnpm",
+        [
+            "vite",
+            "build",
+            "app",
+            "--mode",
+            "supervised",
+            "--outDir",
+            path.join(directory, "assets"),
+        ],
+        { VITE_SUPERVISED_REVISION: path.basename(directory) },
+    );
+    assets.stdout.on("data", output);
+    if ((await assets.done) !== 0)
+        throw new Error(
+            "The asset build failed. The current server stays available.",
+        );
+}
+
+async function buildRust(directory) {
+    const rust = launch("cargo", [
+        "build",
+        "-p",
+        "frinkworks",
+        "--bin",
+        "frinkworks",
+        "--features",
+        "dev",
+        "--message-format=json-render-diagnostics",
+    ]);
+    let executable;
+    const lines = createInterface({ input: rust.stdout });
+    lines.on("line", (line) => {
+        let message;
+        try {
+            message = JSON.parse(line);
+        } catch {
+            output(`${line}\n`);
+            return;
+        }
+        if (
+            message.reason === "compiler-artifact" &&
+            message.target.name === "frinkworks" &&
+            message.executable
+        ) {
+            executable = message.executable;
+        }
+    });
+    if ((await rust.done) !== 0 || !executable)
+        throw new Error(
+            "The Rust build failed. The current server stays available.",
+        );
+    await copyFile(executable, path.join(directory, "frinkworks"));
+}
+
 async function build() {
     const directory = await mkdtemp(path.join(scratch, "build-"));
     try {
-        const assets = launch(
-            "pnpm",
-            [
-                "vite",
-                "build",
-                "app",
-                "--mode",
-                "supervised",
-                "--outDir",
-                path.join(directory, "assets"),
-            ],
-            {
-                VITE_SUPERVISED_REVISION: path.basename(directory),
-            },
-        );
-        assets.stdout.on("data", output);
-        if ((await assets.done) !== 0)
-            throw new Error(
-                "The asset build failed. The current server stays available.",
-            );
-        const rust = launch("cargo", [
-            "build",
-            "-p",
-            "frinkworks",
-            "--bin",
-            "frinkworks",
-            "--features",
-            "dev",
-            "--message-format=json-render-diagnostics",
+        // Both jobs must finish before cleanup or publication can touch their directory.
+        const results = await Promise.allSettled([
+            buildAssets(directory),
+            buildRust(directory),
         ]);
-        let executable;
-        const lines = createInterface({ input: rust.stdout });
-        lines.on("line", (line) => {
-            let message;
-            try {
-                message = JSON.parse(line);
-            } catch {
-                output(`${line}\n`);
-                return;
-            }
-            if (
-                message.reason === "compiler-artifact" &&
-                message.target.name === "frinkworks" &&
-                message.executable
-            ) {
-                executable = message.executable;
-            }
-        });
-        if ((await rust.done) !== 0 || !executable)
-            throw new Error(
-                "The Rust build failed. The current server stays available.",
-            );
-        await copyFile(executable, path.join(directory, "frinkworks"));
+        const failure = results.find((result) => result.status === "rejected");
+        if (failure) throw failure.reason;
         return directory;
     } catch (error) {
         await rm(directory, { recursive: true, force: true });

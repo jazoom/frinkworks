@@ -8,6 +8,8 @@ The supervisor owns the public loopback HTTP address. It forwards HTTP and WebSo
 
 Each explicit build gets a separate executable and asset directory under `.cache`. Ordinary asset builds do not change the active instance.
 
+Each explicit rebuild runs Vite and Cargo in parallel. Both builds must succeed before the supervisor replaces the active instance.
+
 ## Use supervised development
 
 1. Stop the ordinary development server.

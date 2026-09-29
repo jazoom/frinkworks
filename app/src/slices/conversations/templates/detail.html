@@ -1362,8 +1362,11 @@
                 {% if consent_request != "" %}
                   <div
                     id="conversation-directory-consent"
-                    class="{% if consent_sensitive %}alert alert-warning
-                    items-start{% else %}border-base-300 rounded-box border p-4{% endif %}"
+                    class="{% if consent_sensitive %}
+                      alert alert-warning items-start
+                    {% else %}
+                      border-base-300 rounded-box border p-4
+                    {% endif %}"
                     role="alert"
                     tabindex="-1"
                   >
