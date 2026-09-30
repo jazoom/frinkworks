@@ -1814,21 +1814,6 @@
         );
     }
 
-    .chat-latest-row {
-        position: absolute;
-        inset: auto 0 100%;
-        display: flex;
-        justify-content: center;
-        padding-bottom: 0.75rem;
-        pointer-events: none;
-    }
-
-    .chat-jump-latest.btn {
-        pointer-events: auto;
-        background: var(--frinkworks-paper);
-        box-shadow: 0 0.35rem 1rem var(--frinkworks-shadow-soft);
-    }
-
     .chat-jump-latest[hidden] {
         display: none;
     }
@@ -1962,12 +1947,6 @@
             var(--frinkworks-quiet-ink) 80%,
             var(--frinkworks-paper)
         );
-    }
-
-    .connect-first-use .connect-provider-choice {
-        height: auto;
-        border: 0;
-        border-radius: 0;
     }
 
     .connect-or {
@@ -2224,6 +2203,10 @@
     .btn:not(.btn-sm, .connect-provider-choice) {
         min-height: 2.75rem;
     }
+}
+
+:root [data-quiet-focus]:focus-visible {
+    outline: none;
 }
 
 @media (forced-colors: active) {

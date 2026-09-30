@@ -84,6 +84,16 @@ Do not write:
 - Production asset builds use `app/static-production`.
 - Use the `agent-browser` skill when the change can affect the browser.
 
+## Focus behaviour
+
+- Use `focusQuietly` in `app/assets/main.ts` for focus restoration after dismissal and non-interactive section destinations.
+- Keep visible focus for keyboard navigation, text entry and validation errors.
+- Use `scrollIntoView()` for scroll-only reveals instead of `.focus()`.
+- Do not reset focus suppression on window activation changes.
+- Do not add control-specific focus suppression or blanket `outline: none` rules.
+- Test Escape dismissal across window and tab changes.
+- Test Tab and Shift+Tab after focus restoration.
+
 ## Language conventions
 
 - **Australian English** — use Australian English spelling and grammar.

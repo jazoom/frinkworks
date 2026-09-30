@@ -406,6 +406,51 @@ fn request_identity_cannot_appear_in_two_messages() {
 }
 
 #[test]
+fn reported_cost_takes_precedence_without_tokens_prices_or_api_authentication() {
+    for micros in [0, 321] {
+        let mut usage = ModelUsage::new(ProviderKind::Openrouter, "test-model");
+        usage.reported_cost_micros = Some(micros);
+        let mut recorded = request(RequestId::generate().expect("request"), usage);
+        for auth in [AuthMethod::ApiKey, AuthMethod::Plan] {
+            recorded.auth = auth;
+            let cost = request_cost(&recorded);
+            assert_eq!(cost.known_micros, Some(micros));
+            assert!(!cost.incomplete);
+            assert!(!cost.estimated);
+        }
+        recorded.prices = None;
+        let encoded = serde_json::to_vec(&recorded).unwrap();
+        let restored: RequestUsage = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(request_cost(&restored).known_micros, Some(micros));
+    }
+}
+
+#[test]
+fn mixed_cost_totals_keep_estimates_and_unknown_requests_distinct() {
+    let mut reported = ModelUsage::new(ProviderKind::Openrouter, "test-model");
+    reported.reported_cost_micros = Some(321);
+    reported.input_tokens = Some(100);
+    reported.output_tokens = Some(10);
+    let reported = request(RequestId::generate().unwrap(), reported);
+    assert_eq!(request_cost(&reported).known_micros, Some(321));
+    let mut estimated = reported.clone();
+    estimated.id = RequestId::generate().unwrap();
+    estimated.usage.reported_cost_micros = None;
+    let total = total_cost(&[reported.clone(), estimated]);
+    assert_eq!(total.known_micros, Some(441));
+    assert!(total.estimated);
+    assert!(!total.incomplete);
+    let unknown = request(
+        RequestId::generate().unwrap(),
+        ModelUsage::new(ProviderKind::Openrouter, "test-model"),
+    );
+    let total = total_cost(&[reported, unknown]);
+    assert_eq!(total.known_micros, Some(321));
+    assert!(!total.estimated);
+    assert!(total.incomplete);
+}
+
+#[test]
 fn partial_usage_never_produces_a_complete_cost() {
     let mut usage = ModelUsage::new(ProviderKind::Xai, "grok-4");
     usage.input_tokens = Some(100);

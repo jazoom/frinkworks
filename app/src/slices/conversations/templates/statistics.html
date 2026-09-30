@@ -1,5 +1,5 @@
 <div
-  class="workspace-statistics flex flex-col gap-1"
+  class="workspace-statistics overflow-x-auto"
   role="group"
   aria-label="Conversation statistics"
 >
@@ -7,31 +7,52 @@
     A dash means unknown. The ≥ symbol marks an incomplete subtotal. The ≈
     symbol marks an estimate.
   </p>
-  {% if available %}
-    <dl class="flex flex-wrap gap-x-4 gap-y-1">
+  <dl class="flex items-center gap-3 whitespace-nowrap">
+    {% if available %}
       {% for metric in metrics %}
         <div
-          class="inline-flex gap-1 whitespace-nowrap"
-          title="{{ metric.note }}"
+          class="inline-flex items-center gap-1"
+          title="{{ metric.label }}: {{ metric.value }}. {{ metric.note }}"
         >
-          <dt>{{ metric.label }}</dt>
+          <dt>
+            <span class="sr-only">{{ metric.label }}</span>
+            <svg class="workspace-icon" aria-hidden="true">
+              <use
+                href="/static/images/workspace-icons.svg#{{ metric.icon }}"
+              ></use>
+            </svg>
+          </dt>
           <dd>{{ metric.value }}</dd>
         </div>
       {% endfor %}
-    </dl>
-  {% else %}
-    <p>Usage totals are unavailable.</p>
-  {% endif %}
-  <dl class="flex flex-wrap gap-x-4 gap-y-1">
-    <div class="inline-flex flex-wrap gap-1" title="{{ context_note }}">
-      <dt>Context</dt>
+    {% else %}
+      <div>
+        <dt class="sr-only">Usage totals</dt>
+        <dd>Unavailable</dd>
+      </div>
+    {% endif %}
+    <div
+      class="inline-flex items-center gap-1"
+      title="Context: {{ context }}. {{ context_note }}"
+    >
+      <dt>
+        <span class="sr-only">Context</span>
+        <svg class="workspace-icon" aria-hidden="true">
+          <use href="/static/images/workspace-icons.svg#context"></use>
+        </svg>
+      </dt>
       <dd>{{ context }}</dd>
     </div>
     <div
-      class="inline-flex gap-1 whitespace-nowrap"
-      title="Active work only. Questions and approvals pause both timers. Earlier unrecorded work is excluded."
+      class="inline-flex items-center gap-1"
+      title="{{ turn_label }}. Active work only. Questions and approvals pause both timers. Earlier unrecorded work is excluded."
     >
-      <dt>{{ turn_label }}</dt>
+      <dt>
+        <span class="sr-only">{{ turn_label }}</span>
+        <svg class="workspace-icon" aria-hidden="true">
+          <use href="/static/images/workspace-icons.svg#turn-time"></use>
+        </svg>
+      </dt>
       <dd>
         {% if time_available %}
           <span
@@ -47,10 +68,15 @@
       </dd>
     </div>
     <div
-      class="inline-flex gap-1 whitespace-nowrap"
-      title="Recorded active work across this conversation. User wait time and server downtime are excluded."
+      class="inline-flex items-center gap-1"
+      title="Total work. Recorded active work across this conversation. User wait time and server downtime are excluded."
     >
-      <dt>Total work</dt>
+      <dt>
+        <span class="sr-only">Total work</span>
+        <svg class="workspace-icon" aria-hidden="true">
+          <use href="/static/images/workspace-icons.svg#total-time"></use>
+        </svg>
+      </dt>
       <dd>
         {% if time_available %}
           <span

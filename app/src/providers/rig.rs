@@ -609,6 +609,7 @@ pub(super) fn reported_usage(
 ) -> Option<ModelEvent> {
     let usage = &final_response.usage;
     let raw = final_response.raw.get("usage");
+    let reported_cost_micros = reported_cost(final_response);
     let (input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens) =
         if let Some(raw) = raw {
             // Required wire counters also use zero in Rig's missing-usage sentinel.
@@ -640,7 +641,7 @@ pub(super) fn reported_usage(
                     .get("completion_tokens")
                     .is_some_and(|value| value.is_u64())
                 || details.is_some_and(serde_json::Value::is_object);
-            if !present {
+            if !present && reported_cost_micros.is_none() {
                 return None;
             }
             (input, output, cache_read, cache_write)
@@ -656,6 +657,7 @@ pub(super) fn reported_usage(
         && output_tokens.is_none()
         && cache_read_tokens.is_none()
         && cache_creation_tokens.is_none()
+        && reported_cost_micros.is_none()
     {
         return None;
     }
@@ -664,7 +666,22 @@ pub(super) fn reported_usage(
         output_tokens,
         cache_read_tokens,
         cache_creation_tokens,
+        reported_cost_micros,
     })
+}
+
+fn reported_cost(final_response: &rig_core::streaming::StreamFinal) -> Option<u64> {
+    if final_response.provider != "openrouter" {
+        return None;
+    }
+    let cost = final_response.raw.get("usage")?.get("cost")?.as_f64()?;
+    // Rig defaults absent OpenRouter costs to zero before it exposes the raw
+    // terminal. Only positive values prove that the provider reported a cost.
+    if !cost.is_finite() || cost <= 0.0 {
+        return None;
+    }
+    let micros = (cost * 1_000_000.0).round();
+    (micros < u64::MAX as f64).then_some(micros as u64)
 }
 
 pub(super) fn map_finish_reason(reason: Option<&FinishReason>) -> CompletionReason {

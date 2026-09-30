@@ -783,16 +783,6 @@
         >
           Drop images to attach them.
         </p>
-        <div class="chat-latest-row">
-          <button
-            type="button"
-            class="chat-jump-latest btn btn-outline btn-sm"
-            data-jump-latest
-            hidden
-          >
-            Jump to latest
-          </button>
-        </div>
         <div class="mx-auto w-full max-w-3xl">
           <div
             id="conversation-file-suggestions"
@@ -807,8 +797,23 @@
             hidden
           ></div>
           {% if self.saved().is_some() %}
-            <div id="conversation-statistics" class="mb-3">
-              {% if let Some(statistics) = statistics %}{{ statistics|safe }}{% endif %}
+            <div class="relative mb-4 min-h-4 pr-14">
+              <div id="conversation-statistics">
+                {% if let Some(statistics) = statistics %}{{ statistics|safe }}{% endif %}
+              </div>
+              <button
+                type="button"
+                class="chat-jump-latest btn btn-outline btn-square absolute -top-2.5 right-0 size-10 min-h-10 min-w-10"
+                data-jump-latest
+                aria-label="Jump to latest"
+                aria-controls="transcript"
+                title="Jump to latest"
+                hidden
+              >
+                <svg class="workspace-icon" aria-hidden="true">
+                  <use href="/static/images/workspace-icons.svg#jump-latest" />
+                </svg>
+              </button>
             </div>
           {% endif %}
           {% include "conversations/queue/templates/index.html" %}

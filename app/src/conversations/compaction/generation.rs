@@ -257,11 +257,13 @@ async fn generate_chunk(
                     output_tokens,
                     cache_read_tokens,
                     cache_creation_tokens,
+                    reported_cost_micros,
                 } => {
                     request.usage.input_tokens = input_tokens;
                     request.usage.output_tokens = output_tokens;
                     request.usage.cache_read_tokens = cache_read_tokens;
                     request.usage.cache_creation_tokens = cache_creation_tokens;
+                    request.usage.reported_cost_micros = reported_cost_micros;
                 }
                 ModelEvent::Complete { reason } => {
                     if completion.replace(reason).is_some() || reason != CompletionReason::Stop {

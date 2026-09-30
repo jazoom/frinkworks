@@ -11,9 +11,11 @@
     <h2 id="connected-providers-title" class="text-lg font-semibold">
       Connected providers
     </h2>
-    <ul class="record-list mt-3">
+    <ul class="mt-3 grid list-none gap-2 p-0">
       {% for provider in stored %}
-        <li class="record-row">
+        <li
+          class="connect-provider-record flex flex-wrap items-center justify-between gap-3 px-4 py-3"
+        >
           <span class="flex min-w-0 items-center gap-3">
             <span
               class="provider-logo provider-logo-{{ provider.value }} shrink-0"

@@ -13,6 +13,44 @@ import {
     listenForRequestSettled,
 } from "hypergraft/browser";
 
+function focusQuietly(
+    target: HTMLElement | null | undefined,
+    options?: FocusOptions,
+) {
+    if (!target) return;
+    target.setAttribute("data-quiet-focus", "");
+    target.focus(options);
+}
+
+// Window changes blur the active element without a new navigation intent.
+// Only a navigation key restores rings after programmatic focus.
+document.addEventListener(
+    "keydown",
+    (event) => {
+        if (
+            event.altKey ||
+            event.ctrlKey ||
+            event.metaKey ||
+            ![
+                "Tab",
+                "ArrowUp",
+                "ArrowDown",
+                "ArrowLeft",
+                "ArrowRight",
+                "Home",
+                "End",
+                "PageUp",
+                "PageDown",
+            ].includes(event.key)
+        )
+            return;
+        document.querySelectorAll("[data-quiet-focus]").forEach((target) => {
+            target.removeAttribute("data-quiet-focus");
+        });
+    },
+    true,
+);
+
 type ComposerModel = {
     id: string;
     favourite: boolean;
@@ -457,7 +495,7 @@ document.addEventListener("click", (event) => {
         )
             return;
         document.getElementById("conversation-thinking-options")?.hidePopover();
-        document.getElementById("conversation-thinking-toggle")?.focus();
+        focusQuietly(document.getElementById("conversation-thinking-toggle"));
         if (controls.thinking.value !== value) {
             controls.thinking.value = value;
             controls.thinking.dispatchEvent(
@@ -531,7 +569,7 @@ document.addEventListener("click", (event) => {
     );
     if (!selected) return;
     controls.panel.hidePopover();
-    controls.toggle.focus();
+    focusQuietly(controls.toggle);
     if (provider === controls.provider.value && model === controls.model.value)
         return;
     const thinking = controls.thinking.value;
@@ -603,7 +641,7 @@ document.addEventListener("keydown", (event) => {
             event.preventDefault();
             event.stopPropagation();
             thinkingPanel.hidePopover();
-            thinkingToggle?.focus();
+            focusQuietly(thinkingToggle);
             return;
         }
         const options = Array.from(
@@ -639,7 +677,7 @@ document.addEventListener("keydown", (event) => {
         event.preventDefault();
         event.stopPropagation();
         controls.panel.hidePopover();
-        controls.toggle.focus();
+        focusQuietly(controls.toggle);
         return;
     }
     const search = document.querySelector<HTMLInputElement>(
@@ -748,9 +786,9 @@ listenForRequestSettled((detail) => {
                 message.value = pending.message;
                 message.dispatchEvent(new Event("input", { bubbles: true }));
             }
-            document
-                .getElementById(pending.focus)
-                ?.focus({ preventScroll: true });
+            focusQuietly(document.getElementById(pending.focus), {
+                preventScroll: true,
+            });
         }
     }
 });
@@ -3235,43 +3273,78 @@ document.addEventListener("submit", (event) => {
     reconcileCommandPreview();
 });
 
-// Transcript snapshots contain previews, not the user's expanded records.
-// Keep inert DOM copies only while their output targets remain in this page.
-const expandedReplyDetails = new Set<string>();
+let openReplyDetails: HTMLElement | null = null;
+let replyDetailsScroll = 0;
 let replyDetailsLocation = location.pathname;
 
-function syncReplyDetails() {
-    document
-        .querySelectorAll<HTMLButtonElement>("[data-reply-details]")
-        .forEach((button) => {
-            const id = button.getAttribute("aria-controls");
-            const panel = id ? document.getElementById(id) : null;
-            if (!id || !panel) return;
-            const expanded = expandedReplyDetails.has(id);
-            button.setAttribute("aria-expanded", String(expanded));
-            panel.hidden = !expanded;
-        });
+function replyDetailsTrigger(id: string) {
+    return document.querySelector<HTMLButtonElement>(
+        `[data-reply-details][popovertarget="${CSS.escape(id)}"]`,
+    );
 }
 
-document.addEventListener("click", (event) => {
-    const button = (event.target as Element | null)?.closest<HTMLButtonElement>(
-        "[data-reply-details]",
+function syncReplyDetails() {
+    if (location.pathname !== replyDetailsLocation) {
+        if (openReplyDetails?.matches(":popover-open"))
+            openReplyDetails.hidePopover();
+        openReplyDetails = null;
+        replyDetailsLocation = location.pathname;
+    }
+    if (!openReplyDetails || openReplyDetails.isConnected) return;
+    const panel = document.getElementById(openReplyDetails.id);
+    const button = replyDetailsTrigger(openReplyDetails.id);
+    const scrollTop = replyDetailsScroll;
+    openReplyDetails = null;
+    if (!panel?.matches("[data-reply-details-panel]") || !button) return;
+    panel.showPopover({ source: button });
+    const scroll = panel.querySelector<HTMLElement>(
+        "[data-reply-details-scroll]",
     );
-    const id = button?.getAttribute("aria-controls");
-    if (!id) return;
-    if (expandedReplyDetails.has(id)) expandedReplyDetails.delete(id);
-    else expandedReplyDetails.add(id);
-    syncReplyDetails();
-});
+    if (scroll) scroll.scrollTop = scrollTop;
+}
+
+// A transcript patch can replace an open popover. Ignore detached close events
+// so that the replacement retains the same reply identity.
+document.addEventListener(
+    "beforetoggle",
+    (event) => {
+        const panel = event.target;
+        if (
+            !(panel instanceof HTMLElement) ||
+            !panel.isConnected ||
+            !panel.matches("[data-reply-details-panel]")
+        )
+            return;
+        if ((event as ToggleEvent).newState === "open") {
+            openReplyDetails = panel;
+            replyDetailsScroll = 0;
+        } else if (openReplyDetails === panel) {
+            openReplyDetails = null;
+            if (panel.contains(document.activeElement))
+                focusQuietly(replyDetailsTrigger(panel.id), {
+                    preventScroll: true,
+                });
+        }
+    },
+    true,
+);
+document.addEventListener(
+    "scroll",
+    (event) => {
+        const scroll = event.target;
+        if (
+            scroll instanceof HTMLElement &&
+            scroll.matches("[data-reply-details-scroll]") &&
+            scroll.closest("[data-reply-details-panel]") === openReplyDetails
+        )
+            replyDetailsScroll = scroll.scrollTop;
+    },
+    true,
+);
 listenForRequestSettled(syncReplyDetails);
 listenForLivePatches(syncReplyDetails);
 document.addEventListener("hypergraft:progress", syncReplyDetails);
-listenForLocationChanges(() => {
-    if (location.pathname !== replyDetailsLocation)
-        expandedReplyDetails.clear();
-    replyDetailsLocation = location.pathname;
-    syncReplyDetails();
-});
+listenForLocationChanges(syncReplyDetails);
 
 const workTimerAnchors = new WeakMap<
     HTMLElement,
@@ -3364,7 +3437,9 @@ function focusWorkflowSelection() {
         .closest(".workspace-catalogue")
         ?.querySelector(":scope > div");
     if (content) content.scrollTop = 0;
-    target.focus({ preventScroll: true });
+    if (target.id === "workflow-destination-heading")
+        focusQuietly(target, { preventScroll: true });
+    else target.focus({ preventScroll: true });
 }
 
 document
@@ -3405,7 +3480,7 @@ listenForRequestSettled((detail) => {
             document.querySelector<HTMLElement>(
                 "#conversation-command-decision",
             ) ?? document.querySelector<HTMLElement>("#transcript");
-        destination?.focus({ preventScroll: true });
+        focusQuietly(destination, { preventScroll: true });
     }
 });
 syncReplyStrip();

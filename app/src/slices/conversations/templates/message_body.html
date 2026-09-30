@@ -115,14 +115,15 @@
       {% if !message.details.is_empty() %}
         <button
           type="button"
-          class="btn btn-ghost btn-sm chat-details-toggle"
+          class="btn btn-ghost btn-sm btn-square"
           data-reply-details
-          aria-expanded="false"
-          aria-controls="{{ message.id }}-details"
+          popovertarget="{{ message.id }}-details"
+          aria-label="Reply details"
+          title="Reply details"
+          aria-haspopup="dialog"
         >
-          Details
           <svg class="workspace-icon" aria-hidden="true">
-            <use href="/static/images/workspace-icons.svg#down" />
+            <use href="/static/images/workspace-icons.svg#info" />
           </svg>
         </button>
       {% endif %}
@@ -131,10 +132,36 @@
   {% if !message.details.is_empty() %}
     <div
       id="{{ message.id }}-details"
-      class="chat-message-details text-quiet mt-2 text-sm"
-      hidden
+      class="chat-message-details bg-base-100 text-base-content rounded-box border-base-300 border p-5 text-sm shadow-lg"
+      popover
+      role="dialog"
+      aria-labelledby="{{ message.id }}-details-heading"
+      data-reply-details-panel
     >
-      {{ message.details|safe }}
+      <header class="mb-3 flex shrink-0 items-center justify-between gap-4">
+        <h2
+          id="{{ message.id }}-details-heading"
+          class="text-base font-semibold"
+        >
+          Reply details
+        </h2>
+        <button
+          type="button"
+          class="btn btn-ghost btn-sm btn-square"
+          popovertarget="{{ message.id }}-details"
+          popovertargetaction="hide"
+          aria-label="Close reply details"
+          title="Close reply details"
+          autofocus
+        >
+          <svg class="workspace-icon" aria-hidden="true">
+            <use href="/static/images/workspace-icons.svg#close" />
+          </svg>
+        </button>
+      </header>
+      <div class="min-h-0 overflow-y-auto" data-reply-details-scroll>
+        {{ message.details|safe }}
+      </div>
     </div>
   {% endif %}
 </div>

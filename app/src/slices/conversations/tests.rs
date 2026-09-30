@@ -200,7 +200,6 @@ async fn catalogue_uses_document_and_navigation_without_creating_a_conversation(
         .expect("document");
     assert_eq!(document_response.status(), StatusCode::OK);
     let document_body = text(document_response).await;
-    assert!(document_body.contains("Work history"));
     assert_eq!(document_body.matches("id=\"chat-main\"").count(), 1);
 
     let navigation_response = app(&state)

@@ -89,7 +89,9 @@ fn reported_usage_keeps_absent_counts_distinct_from_zero() {
             output_tokens,
             cache_read_tokens,
             cache_creation_tokens,
+            reported_cost_micros,
         }) => {
+            assert_eq!(reported_cost_micros, None);
             assert_eq!(input_tokens, None);
             assert_eq!(output_tokens, Some(12));
             assert_eq!(cache_read_tokens, None);
@@ -154,6 +156,54 @@ fn cached_input_is_a_subset_and_malformed_counts_stay_unknown() {
             input_tokens: None,
             cache_read_tokens: None,
             output_tokens: Some(2),
+            ..
+        })
+    ));
+}
+
+#[test]
+fn provider_cost_is_bounded_and_independent_of_token_reports() {
+    let mut terminal =
+        rig_core::streaming::StreamFinal::new("openrouter", rig_core::completion::Usage::new());
+    for (cost, expected) in [
+        (serde_json::json!(0.002794), Some(2794)),
+        (serde_json::json!(0.0000016), Some(2)),
+        (serde_json::json!(0.0000001), Some(0)),
+        (serde_json::json!(0), None),
+        (serde_json::json!(-1), None),
+        (serde_json::json!(1e30), None),
+        (serde_json::json!("0.1"), None),
+        (serde_json::Value::Null, None),
+    ] {
+        terminal.raw = serde_json::json!({"usage": {"cost": cost}});
+        let reported = match reported_usage(&terminal) {
+            Some(ModelEvent::Usage {
+                reported_cost_micros,
+                ..
+            }) => reported_cost_micros,
+            None => None,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(reported, expected, "{cost}");
+    }
+    terminal.raw = serde_json::json!({"usage": {"cost": 0.1}});
+    terminal.provider = "openai".to_owned();
+    assert!(reported_usage(&terminal).is_none());
+}
+
+#[test]
+fn rig_default_cost_does_not_become_a_reported_zero() {
+    let usage: rig_core::providers::openrouter::Usage = serde_json::from_value(
+        serde_json::json!({"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12}),
+    )
+    .unwrap();
+    let mut terminal = rig_core::streaming::StreamFinal::new("openrouter", (&usage).into());
+    terminal.raw = serde_json::json!({"usage": usage});
+    assert!(matches!(
+        reported_usage(&terminal),
+        Some(ModelEvent::Usage {
+            input_tokens: Some(10),
+            reported_cost_micros: None,
             ..
         })
     ));

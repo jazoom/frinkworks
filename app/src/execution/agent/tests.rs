@@ -1618,6 +1618,7 @@ async fn retry_keeps_separate_usage_records_including_unknown_values() {
                 output_tokens: Some(4),
                 cache_read_tokens: None,
                 cache_creation_tokens: None,
+                reported_cost_micros: Some(321),
             }),
             Ok(ModelEvent::Complete {
                 reason: CompletionReason::Stop,
@@ -1639,6 +1640,7 @@ async fn retry_keeps_separate_usage_records_including_unknown_values() {
     assert_eq!(ended.reply.usage[0].usage.input_tokens, Some(11));
     assert_eq!(ended.reply.usage[0].usage.output_tokens, Some(4));
     assert_eq!(ended.reply.usage[0].usage.cache_read_tokens, None);
+    assert_eq!(ended.reply.usage[0].usage.reported_cost_micros, Some(321));
     let stored = state.conversations.get(&record.id).expect("stored");
     let failed = stored
         .messages
@@ -1647,6 +1649,7 @@ async fn retry_keeps_separate_usage_records_including_unknown_values() {
         .expect("failed attempt");
     assert_eq!(failed.requests.len(), 1);
     assert!(!failed.requests[0].usage.has_tokens());
+    assert_eq!(failed.requests[0].usage.reported_cost_micros, None);
     assert_ne!(failed.requests[0].id, ended.reply.usage[0].id);
     assert_eq!(failed.requests[0].usage.model, "grok-4.6");
     assert_eq!(ended.reply.usage[0].usage.model, "grok-4.6");
@@ -1666,6 +1669,7 @@ async fn plan_authentication_does_not_snapshot_api_prices() {
             output_tokens: Some(2),
             cache_read_tokens: None,
             cache_creation_tokens: None,
+            reported_cost_micros: None,
         }),
         Ok(ModelEvent::Complete {
             reason: CompletionReason::Stop,

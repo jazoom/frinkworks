@@ -18,8 +18,13 @@ struct AttentionCount {
 
 pub(crate) fn status_dot(status: &str) -> &'static str {
     match status {
-        "Needs your review" | "Needs command approval" | "Needs recovery" | "Paused" => "attention",
+        "Needs your review"
+        | "Needs command approval"
+        | "Needs recovery"
+        | "Needs an answer"
+        | "Paused" => "attention",
         "In progress" | "Active" | "Awaiting decision" => "active",
+        "Response failed" | "Failed" => "error",
         _ => "quiet",
     }
 }
@@ -88,14 +93,10 @@ pub(crate) fn conversation_meta(
             || "No directory access".to_owned(),
             |grant| grant.host_path.display().to_string(),
         );
-    let process = state
-        .workflow_runs
-        .for_conversation(&record.id)
-        .into_iter()
-        .next()
-        .map(|run| run.pinned.definition.name().to_owned())
-        .unwrap_or_else(|| "No runs yet".to_owned());
-    format!("{directory} · {process}")
+    match state.workflow_runs.for_conversation(&record.id).first() {
+        Some(run) => format!("{directory} · {}", run.pinned.definition.name()),
+        None => directory,
+    }
 }
 
 /// Idle status for records without active work or runs. Saved records

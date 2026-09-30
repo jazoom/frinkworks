@@ -13,7 +13,7 @@ related_targets:
 
 The visitor mode is Operate. A first-time user chooses a provider before a connection method.
 
-The focused provider chooser has right-aligned method descriptions on wider screens.
+The focused provider chooser has right-aligned method descriptions on wider screens. Pale surfaces and gaps separate provider rows without horizontal rules.
 
 ## Layout and flow
 

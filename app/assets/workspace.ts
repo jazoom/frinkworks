@@ -83,17 +83,10 @@ export function initWorkspace(
         root.querySelectorAll("[data-work-toggle]").forEach((toggle) => {
             toggle.setAttribute("aria-expanded", String(workOpen));
         });
-        const section = root.querySelector<HTMLElement>(
-            "#chat-main > [data-section]",
-        )?.dataset.section;
         root.querySelectorAll<HTMLAnchorElement>(
             ".workspace-navigation > a, .workspace-resources a, .workspace-local a",
         ).forEach((link) => {
-            if (
-                section &&
-                (link.pathname === `/${section}` ||
-                    link.dataset.nav === section)
-            )
+            if (link.pathname === location.pathname)
                 link.setAttribute("aria-current", "page");
             else link.removeAttribute("aria-current");
         });

@@ -118,13 +118,13 @@
         aria-invalid="true" aria-describedby="connect-errors"
       {% endif %}{% endif %}
     >
-      <ul class="border-base-300 mt-6 border-t">
+      <ul class="mt-6 grid list-none gap-2 p-0">
         {% for provider in providers %}
-          <li class="border-base-300 border-b last:border-b-0">
+          <li>
             <a
               href="/connect?provider={{ provider.value }}"
               data-graft
-              class="btn btn-ghost connect-provider-choice flex min-h-[76px] w-full items-center gap-4 px-1 py-3.5 text-left min-[560px]:min-h-[70px]"
+              class="btn btn-ghost connect-provider-choice flex min-h-[76px] w-full items-center gap-4 px-4 py-3.5 text-left min-[560px]:min-h-[70px]"
             >
               <span
                 class="provider-logo provider-logo-{{ provider.value }} shrink-0"

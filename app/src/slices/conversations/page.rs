@@ -33,6 +33,8 @@ pub(super) struct ConversationListItem {
     pub(super) status: &'static str,
     pub(super) dot: &'static str,
     pub(super) meta: String,
+    pub(super) updated: String,
+    pub(super) updated_at: String,
 }
 
 #[derive(Clone)]
@@ -68,6 +70,7 @@ pub(super) struct PendingCodeGateView {
 #[template(path = "conversations/templates/index.html")]
 pub(super) struct CatalogueView {
     pub(super) conversations: Vec<ConversationListItem>,
+    pub(super) total: usize,
     pub(super) directories: Vec<HistoryDirectoryOption>,
     pub(super) filter: String,
     pub(super) query: String,
@@ -110,8 +113,9 @@ impl CatalogueView {
                     || history_grants(record).any(|grant| history_directory_key(grant) == filter))
                     && (needle.is_empty() || record.title.to_lowercase().contains(&needle))
             })
-            .filter(|record| cursor.is_none_or(|cursor| catalogue_after(record, cursor)))
             .collect();
+        let total = ordered.len();
+        ordered.retain(|record| cursor.is_none_or(|cursor| catalogue_after(record, cursor)));
         // Filters apply before the page bound so every match is reachable.
         ordered.sort_by(|left, right| {
             right
@@ -138,16 +142,20 @@ impl CatalogueView {
         } else {
             String::new()
         };
+        let now = time::OffsetDateTime::now_utc();
         let conversations: Vec<_> = ordered
             .into_iter()
             .map(|record| {
                 let status = super::status::conversation_status(state, record);
+                let (updated, updated_at) = catalogue_updated(record.updated_at_ms, now);
                 ConversationListItem {
                     href: format!("/conversations/{}", record.id.as_hex()),
                     title: record.title.clone(),
                     status,
                     dot: super::status::status_dot(status),
                     meta: super::status::conversation_meta(state, record),
+                    updated,
+                    updated_at,
                 }
             })
             .collect();
@@ -175,6 +183,7 @@ impl CatalogueView {
         directories.sort_by(|left, right| left.name.cmp(&right.name));
         Self {
             conversations,
+            total,
             directories,
             filter: filter.to_owned(),
             query: query.trim().to_owned(),
@@ -187,6 +196,36 @@ impl CatalogueView {
             paged: cursor.is_some(),
         }
     }
+}
+
+fn catalogue_updated(ms: u64, now: time::OffsetDateTime) -> (String, String) {
+    let timestamp = i64::try_from(ms / 1000)
+        .ok()
+        .and_then(|seconds| time::OffsetDateTime::from_unix_timestamp(seconds).ok());
+    let Some(timestamp) = timestamp else {
+        return ("Unknown".to_owned(), String::new());
+    };
+    let minutes = (now - timestamp).whole_minutes().max(0);
+    let label = match minutes {
+        0 => "Just now".to_owned(),
+        1..=59 => format!("{minutes} min ago"),
+        60..=119 => "1 hour ago".to_owned(),
+        120..=1439 => format!("{} hours ago", minutes / 60),
+        1440..=2879 => "1 day ago".to_owned(),
+        2880..=10079 => format!("{} days ago", minutes / 1440),
+        _ => format!(
+            "{} {} {}",
+            timestamp.day(),
+            timestamp.month(),
+            timestamp.year()
+        ),
+    };
+    (
+        label,
+        timestamp
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_default(),
+    )
 }
 
 fn catalogue_after(
@@ -2479,6 +2518,11 @@ struct MessageContent<'a> {
 #[template(path = "conversations/templates/message_details.html")]
 struct MessageDetails<'a> {
     usage: &'a UsagePanelView,
+    common_model: bool,
+    totals: [String; 4],
+    cache_write: bool,
+    costs: bool,
+    plan_cost: bool,
 }
 
 fn message_details(
@@ -2488,9 +2532,39 @@ fn message_details(
     let base = format!("/conversations/{conversation}/context/");
     usage_panel(requests, &base)
         .map(|usage| {
-            MessageDetails { usage: &usage }
-                .render()
-                .expect("message details template")
+            let mut totals = [Some(0u64); 4];
+            for request in requests {
+                for (total, value) in totals.iter_mut().zip(usage_tokens(&request.usage)) {
+                    *total = total
+                        .zip(value)
+                        .and_then(|(sum, value)| sum.checked_add(value));
+                }
+            }
+            MessageDetails {
+                common_model: usage
+                    .requests
+                    .iter()
+                    .all(|request| request.model == usage.requests[0].model),
+                totals: totals.map(token_count),
+                cache_write: requests.iter().any(|request| {
+                    request
+                        .usage
+                        .cache_creation_tokens
+                        .is_some_and(|value| value > 0)
+                }),
+                costs: requests.iter().any(|request| {
+                    crate::conversations::history::request_cost(request)
+                        .known_micros
+                        .is_some()
+                }),
+                plan_cost: requests.iter().any(|request| {
+                    request.auth == crate::providers::AuthMethod::Plan
+                        && request.usage.reported_cost_micros.is_none()
+                }),
+                usage: &usage,
+            }
+            .render()
+            .expect("message details template")
         })
         .unwrap_or_default()
 }
@@ -2504,6 +2578,8 @@ struct RequestUsageView {
     model: String,
     detail: String,
     cost: String,
+    tokens: [String; 4],
+    amount: String,
     context_href: String,
 }
 
@@ -2817,8 +2893,36 @@ fn request_usage_view(
         ),
         detail: token_detail(&request.usage),
         cost: request_cost_label(request),
+        tokens: usage_tokens(&request.usage).map(token_count),
+        amount: {
+            let cost = crate::conversations::history::request_cost(request);
+            cost.known_micros.map_or_else(
+                || "—".to_owned(),
+                |micros| {
+                    format!(
+                        "{}{}{}",
+                        if cost.estimated { "≈" } else { "" },
+                        format_usd(micros),
+                        if cost.incomplete { "+" } else { "" }
+                    )
+                },
+            )
+        },
         context_href: format!("{context_base}{}", request.id.as_hex()),
     }
+}
+
+fn usage_tokens(usage: &crate::providers::ModelUsage) -> [Option<u64>; 4] {
+    [
+        usage.input_tokens,
+        usage.output_tokens,
+        usage.cache_read_tokens,
+        usage.cache_creation_tokens,
+    ]
+}
+
+fn token_count(value: Option<u64>) -> String {
+    value.map(format_count).unwrap_or_else(|| "—".to_owned())
 }
 
 fn token_detail(usage: &crate::providers::ModelUsage) -> String {
@@ -2843,7 +2947,9 @@ fn token_detail(usage: &crate::providers::ModelUsage) -> String {
 }
 
 fn request_cost_label(request: &crate::conversations::RequestUsage) -> String {
-    if request.auth == crate::providers::AuthMethod::Plan {
+    if request.auth == crate::providers::AuthMethod::Plan
+        && request.usage.reported_cost_micros.is_none()
+    {
         return "Cost unknown for plan authentication".to_owned();
     }
     cost_label(&crate::conversations::history::request_cost(request))
@@ -2853,13 +2959,15 @@ fn cost_label(coverage: &crate::conversations::history::CostCoverage) -> String 
     match (coverage.known_micros, coverage.incomplete) {
         (None, false) => String::new(),
         (None, true) => "Cost unknown".to_owned(),
-        (Some(micros), false) => format!("Estimated cost {}", format_usd(micros)),
-        (Some(micros), true) => {
-            format!(
-                "Known subtotal {} (estimate, incomplete)",
-                format_usd(micros)
-            )
+        (Some(micros), false) if !coverage.estimated => {
+            format!("Reported cost {}", format_usd(micros))
         }
+        (Some(micros), false) => format!("Estimated cost {}", format_usd(micros)),
+        (Some(micros), true) => format!(
+            "Known subtotal {}{} (incomplete)",
+            if coverage.estimated { "≈" } else { "" },
+            format_usd(micros)
+        ),
     }
 }
 

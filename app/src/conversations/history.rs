@@ -129,10 +129,11 @@ pub(crate) struct PriceProvenance {
     pub(crate) cache_write: Option<u64>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct CostCoverage {
     pub(crate) known_micros: Option<u64>,
     pub(crate) incomplete: bool,
+    pub(crate) estimated: bool,
 }
 
 /// Opaque blocks require the original provider and model. A provider change
@@ -296,8 +297,8 @@ impl PriceProvenance {
 impl CostCoverage {
     fn unknown() -> Self {
         Self {
-            known_micros: None,
             incomplete: true,
+            ..Self::default()
         }
     }
 }
@@ -309,6 +310,12 @@ pub(crate) fn token_cost_micros(price: u64, tokens: u64) -> Option<u64> {
 }
 
 pub(crate) fn request_cost(request: &RequestUsage) -> CostCoverage {
+    if let Some(micros) = request.usage.reported_cost_micros {
+        return CostCoverage {
+            known_micros: Some(micros),
+            ..CostCoverage::default()
+        };
+    }
     if request.auth != AuthMethod::ApiKey {
         return CostCoverage::unknown();
     }
@@ -345,39 +352,28 @@ pub(crate) fn request_cost(request: &RequestUsage) -> CostCoverage {
         Err(()) => incomplete = true,
     }
     if !any {
-        return CostCoverage {
-            known_micros: None,
-            incomplete: true,
-        };
+        return CostCoverage::unknown();
     }
     CostCoverage {
         known_micros: Some(cost),
         incomplete,
+        estimated: true,
     }
 }
 
 pub(crate) fn total_cost(requests: &[RequestUsage]) -> CostCoverage {
-    if requests.is_empty() {
-        return CostCoverage {
-            known_micros: None,
-            incomplete: false,
-        };
-    }
+    let mut estimated = false;
     let mut known = 0u64;
     let mut any = false;
     let mut incomplete = false;
     for request in requests {
         let part = request_cost(request);
         incomplete |= part.incomplete;
+        estimated |= part.estimated;
         if let Some(value) = part.known_micros {
             known = match known.checked_add(value) {
                 Some(total) => total,
-                None => {
-                    return CostCoverage {
-                        known_micros: None,
-                        incomplete: true,
-                    };
-                }
+                None => return CostCoverage::unknown(),
             };
             any = true;
         }
@@ -385,6 +381,7 @@ pub(crate) fn total_cost(requests: &[RequestUsage]) -> CostCoverage {
     CostCoverage {
         known_micros: any.then_some(known),
         incomplete,
+        estimated,
     }
 }
 

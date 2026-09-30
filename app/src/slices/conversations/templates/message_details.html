@@ -1,21 +1,95 @@
-<div class="flex flex-col gap-4" role="group" aria-label="Reply details">
-  {% for request in usage.requests %}
-    <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1">
-      <dt>Model</dt>
-      <dd class="break-words">{{ request.model }}</dd>
-      <dt>Tokens</dt>
-      <dd>{{ request.detail }}</dd>
-      <dt>Cost</dt>
-      <dd>{{ request.cost }}</dd>
-      <dt class="sr-only">Request</dt>
-      <dd class="col-start-2">
-        <a class="link link-hover" href="{{ request.context_href }}" data-graft
-          >View request context</a
-        >
-      </dd>
-    </dl>
-  {% endfor %}
-  {% if usage.requests.len() > 1 && !usage.subtotal.is_empty() %}
-    <p>{{ usage.subtotal }}</p>
+{% if common_model %}
+  <p class="mb-1 font-semibold break-words">{{ usage.requests[0].model }}</p>
+{% endif %}
+<p class="text-quiet mb-4">
+  {{ usage.requests.len() }}
+  {% if usage.requests.len() == 1 %}request{% else %}requests{% endif %}
+</p>
+<div
+  class="overflow-x-auto"
+  tabindex="0"
+  role="region"
+  aria-label="Tokens by request"
+>
+  <table class="table-sm reply-usage-table table tabular-nums">
+    <caption class="sr-only">
+      Token counts and context for each request
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Request</th>
+        {% if !common_model %}<th scope="col">Model</th>{% endif %}
+        <th scope="col" class="text-right">Input</th>
+        <th scope="col" class="text-right">Output</th>
+        <th scope="col" class="text-right">Cache read</th>
+        {% if cache_write %}
+          <th scope="col" class="text-right">Cache write</th>
+        {% endif %}
+        {% if costs %}
+          <th scope="col" class="text-right">Cost (USD)</th>
+        {% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for request in usage.requests %}
+        <tr>
+          <th scope="row">
+            <a
+              class="link link-hover inline-flex min-h-11 items-center gap-2"
+              href="{{ request.context_href }}"
+              data-graft
+              aria-label="View context for request {{ loop.index }}"
+              title="View request context"
+            >
+              {{ loop.index }}
+              <svg class="workspace-icon" aria-hidden="true">
+                <use href="/static/images/workspace-icons.svg#file" />
+              </svg>
+            </a>
+          </th>
+          {% if !common_model %}
+            <td class="min-w-40 break-words">{{ request.model }}</td>
+          {% endif %}
+          <td class="text-right">{{ request.tokens[0] }}</td>
+          <td class="text-right">{{ request.tokens[1] }}</td>
+          <td class="text-right">{{ request.tokens[2] }}</td>
+          {% if cache_write %}
+            <td class="text-right">{{ request.tokens[3] }}</td>
+          {% endif %}
+          {% if costs %}
+            <td class="text-right" title="{{ request.cost }}">
+              {{ request.amount }}
+            </td>
+          {% endif %}
+        </tr>
+      {% endfor %}
+    </tbody>
+    {% if usage.requests.len() > 1 %}
+      <tfoot>
+        <tr>
+          <th scope="row">Total</th>
+          {% if !common_model %}<td></td>{% endif %}
+          <td class="text-right">{{ totals[0] }}</td>
+          <td class="text-right">{{ totals[1] }}</td>
+          <td class="text-right">{{ totals[2] }}</td>
+          {% if cache_write %}
+            <td class="text-right">{{ totals[3] }}</td>
+          {% endif %}
+          {% if costs %}<td></td>{% endif %}
+        </tr>
+      </tfoot>
+    {% endif %}
+  </table>
+</div>
+<div class="text-quiet mt-4 space-y-2 text-xs">
+  {% if costs || !plan_cost %}
+    <p>{{ usage.subtotal }}{% if costs %}(USD){% endif %}</p>
   {% endif %}
+  {% if plan_cost %}<p>Cost unknown for plan authentication</p>{% endif %}
+  <p>
+    Cache reads are part of input. A dash means that a complete count is
+    unavailable.{% if costs %}
+      ≈ marks a catalogue estimate. + marks an incomplete subtotal.
+    {% endif %}
+  </p>
 </div>

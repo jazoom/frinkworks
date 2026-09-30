@@ -26,6 +26,7 @@ pub(in crate::slices::conversations) struct StatisticsView {
 
 struct Metric {
     label: &'static str,
+    icon: &'static str,
     value: String,
     note: &'static str,
 }
@@ -50,30 +51,35 @@ impl StatisticsView {
         });
         let mut metrics = Vec::new();
         if let Ok(totals) = &totals {
-            for (label, value, note) in [
+            for (label, icon, value, note) in [
                 (
                     "Input tokens",
+                    "tokens-input",
                     totals.input,
                     "Cumulative input across recorded requests. Cached input is included.",
                 ),
                 (
                     "Output tokens",
+                    "tokens-output",
                     totals.output,
                     "Cumulative output across recorded requests.",
                 ),
                 (
                     "Cache read",
+                    "database",
                     totals.cache_read,
                     "Cached input tokens. These tokens are a subset of input.",
                 ),
                 (
                     "Total tokens",
+                    "tokens-total",
                     totals.tokens,
                     "Input plus output across recorded requests, including summaries and other branches. This is not context occupancy.",
                 ),
             ] {
                 metrics.push(Metric {
                     label,
+                    icon,
                     value: count(value, totals.requests),
                     note,
                 });
@@ -87,25 +93,39 @@ impl StatisticsView {
             } else {
                 "—".to_owned()
             };
-            metrics.push(Metric { label: "Cache hit", value: hit_rate,
+            metrics.push(Metric { label: "Cache hit", icon: "cache-hit", value: hit_rate,
                 note: "Total cached read tokens divided by total input tokens. Unknown reports leave the percentage unavailable." });
             metrics.push(Metric {
+                icon: "cost",
                 label: if totals.cost.incomplete {
                     "Known cost"
-                } else {
+                } else if totals.cost.estimated {
                     "Est. cost"
+                } else {
+                    "Cost"
                 },
-                value: totals.cost.known_micros.map(format_usd).unwrap_or_else(|| {
+                value: totals.cost.known_micros.map(|micros| {
+                    format!(
+                        "{}{}{}",
+                        if totals.cost.incomplete { "≥" } else { "" },
+                        if totals.cost.estimated { "≈" } else { "" },
+                        format_usd(micros)
+                    )
+                }).unwrap_or_else(|| {
                     if totals.requests == 0 {
                         "$0.00".to_owned()
                     } else {
                         "—".to_owned()
                     }
                 }),
-                note: if totals.cost.incomplete {
-                    "Incomplete estimate in USD. Some requests have unknown usage or prices."
+                note: if totals.requests == 0 {
+                    "No recorded requests."
+                } else if totals.cost.incomplete {
+                    "Incomplete cost in USD. Some requests have no reported cost or estimate."
+                } else if totals.cost.estimated {
+                    "Cost in USD. Includes catalogue estimates when the provider reports no usable cost."
                 } else {
-                    "Estimated cost in USD, from recorded catalogue prices. This is not an invoice."
+                    "Provider-reported cost in USD."
                 },
             });
         }

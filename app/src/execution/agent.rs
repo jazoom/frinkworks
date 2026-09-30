@@ -541,6 +541,7 @@ pub(crate) async fn run_agent_action(
                         output_tokens,
                         cache_read_tokens,
                         cache_creation_tokens,
+                        reported_cost_micros,
                     }) => {
                         if let Some(request) = reply.usage.last_mut() {
                             if !request.usage.has_tokens() {
@@ -548,6 +549,9 @@ pub(crate) async fn run_agent_action(
                                 request.usage.output_tokens = output_tokens;
                                 request.usage.cache_read_tokens = cache_read_tokens;
                                 request.usage.cache_creation_tokens = cache_creation_tokens;
+                            }
+                            if request.usage.reported_cost_micros.is_none() {
+                                request.usage.reported_cost_micros = reported_cost_micros;
                             }
                             if !request.usage.valid() {
                                 return AgentActionEnd {

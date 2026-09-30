@@ -158,6 +158,7 @@ async fn a_failed_final_chunk_retains_completed_requests() {
                 output_tokens: Some(10_000),
                 cache_read_tokens: None,
                 cache_creation_tokens: None,
+                reported_cost_micros: Some(987),
             }),
         ],
     ]);
@@ -192,6 +193,7 @@ async fn a_failed_final_chunk_retains_completed_requests() {
     let persisted = persisted.borrow();
     let failed = persisted.last().expect("failed request usage");
     assert_eq!(failed.usage.input_tokens, Some(123));
+    assert_eq!(failed.usage.reported_cost_micros, Some(987));
     assert_eq!(failed.usage.output_tokens, Some(10_000));
 }
 

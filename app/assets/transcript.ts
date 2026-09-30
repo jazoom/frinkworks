@@ -24,13 +24,6 @@ export function leftoverPx(input: {
     return input.scrollHeight - input.scrollY - input.viewportHeight;
 }
 
-export function isPinned(
-    leftover: number,
-    threshold = PIN_THRESHOLD_PX,
-): boolean {
-    return leftover <= threshold;
-}
-
 export function revealBatchSize(backlog: number): number {
     if (backlog <= 0) {
         return 0;
@@ -86,6 +79,7 @@ function renderCount(state: StreamState, count: number): void {
 
 export function initTranscript(root: HTMLElement): () => void {
     let pinned = true;
+    let lastScrollTop = root.scrollTop;
     let frame: number | null = null;
     let destroyed = false;
     const streams = new Map<string, StreamState>();
@@ -103,26 +97,38 @@ export function initTranscript(root: HTMLElement): () => void {
         });
     const updateJump = () => {
         if (jump) {
-            jump.hidden =
-                !root.querySelector(".chat-turn") || isPinned(measure());
+            jump.hidden = !root.querySelector(".chat-turn") || pinned;
         }
     };
 
+    const trackScroll = () => {
+        // Even a small upward scroll releases the tail before the next stream frame.
+        if (measure() <= 1) {
+            pinned = true;
+        } else if (root.scrollTop < lastScrollTop) {
+            pinned = false;
+        }
+        lastScrollTop = root.scrollTop;
+    };
+
     const onScroll = () => {
-        pinned = isPinned(measure());
+        trackScroll();
         updateJump();
     };
 
     const stick = () => {
+        trackScroll();
         if (pinned && root.querySelector(".chat-turn")) {
             // Scroll the transcript, not its ancestors or the composer.
             root.scrollTop = root.scrollHeight;
+            lastScrollTop = root.scrollTop;
         }
         updateJump();
     };
 
     const jumpToLatest = () => {
         pinned = true;
+        lastScrollTop = root.scrollTop;
         stick();
         root.focus({ preventScroll: true });
     };

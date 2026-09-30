@@ -300,6 +300,8 @@ pub(crate) struct ModelUsage {
     pub(crate) cache_read_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) cache_creation_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) reported_cost_micros: Option<u64>,
 }
 
 impl ModelUsage {
@@ -311,6 +313,7 @@ impl ModelUsage {
             output_tokens: None,
             cache_read_tokens: None,
             cache_creation_tokens: None,
+            reported_cost_micros: None,
         }
     }
 
@@ -784,6 +787,7 @@ pub(crate) enum ModelEvent {
         output_tokens: Option<u64>,
         cache_read_tokens: Option<u64>,
         cache_creation_tokens: Option<u64>,
+        reported_cost_micros: Option<u64>,
     },
     Complete {
         reason: CompletionReason,

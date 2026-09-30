@@ -577,11 +577,11 @@ fn command_output_escapes_untrusted_stream_text() {
 }
 
 #[test]
-fn usage_panel_labels_unknown_cost_instead_of_a_zero_total() {
+fn usage_panel_escapes_model_input_and_keeps_unknown_cost_distinct_from_zero() {
     use crate::conversations::{PriceProvenance, RequestId, RequestUsage};
     use crate::providers::{AuthMethod, ModelUsage, ProviderKind};
     let conversation = crate::conversations::ConversationId::generate().expect("conversation");
-    let mut known = ModelUsage::new(ProviderKind::Xai, "grok-4");
+    let mut known = ModelUsage::new(ProviderKind::Xai, "<script>alert(1)</script>");
     known.input_tokens = Some(1_000_000);
     let known_request = RequestUsage {
         id: RequestId::generate().expect("request"),
@@ -618,11 +618,13 @@ fn usage_panel_labels_unknown_cost_instead_of_a_zero_total() {
         advertised: Vec::new(),
     };
     let html = message_details(&conversation, &[known_request, unknown, plan]);
-    assert!(html.contains("Estimated cost $1.00") || html.contains("Known subtotal $1.00"));
+    assert!(html.contains("Known subtotal ≈$1.00 (incomplete)"));
     assert!(html.contains("Cost unknown"));
     assert!(html.contains("Cost unknown for plan authentication"));
     assert!(!html.contains("$0.00"));
     assert!(html.contains("incomplete"));
+    assert!(html.contains("alert(1)"));
+    assert!(!html.contains("<script>"));
 }
 
 #[test]

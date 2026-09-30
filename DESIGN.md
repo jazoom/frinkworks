@@ -186,6 +186,14 @@ Decorative icons use `aria-hidden="true"`. Icon-only buttons carry an accessible
 
 ## Components
 
+### Focus behaviour
+
+Keyboard navigation retains visible focus. Programmatic focus restoration and non-interactive section destinations use `focusQuietly` in `app/assets/main.ts`.
+
+Window and tab changes do not reset that state. The next navigation key restores the normal focus indication.
+
+Text fields and validation errors retain their focus indication. A scroll-only reveal does not move focus.
+
 ### Transport feedback
 
 A delayed accent bar identifies page requests, including streamed GET responses. It describes transport, not execution progress.
@@ -257,7 +265,9 @@ Mobile avatars sit beside the labels, above full-width content. Mobile circles a
 
 Message text uses the transcript scale. Status stays beside the author. Revise, Fork from here and Copy appear below the applicable message.
 
-Details sits beside the reply actions. It hides the model, token counts and estimated cost until the user opens it.
+An information icon beside the reply actions opens Reply details in a non-modal popover. It leaves the transcript layout unchanged.
+
+The popover shows a shared model once and aligns request token counts in a table with totals. Each request links to its recorded context. Missing counts stay distinct from zero. Plan cost information appears once. Escape, Close and an outside click dismiss the popover.
 
 A neutral summary above the composer shows recorded conversation totals, cache hit percentage and active-work timers. Context occupancy stays separate from cumulative token usage. Missing provider reports stay unknown or show an incomplete subtotal.
 
@@ -525,7 +535,13 @@ Resource catalogues and their forms use the shared catalogue layout. Their 24-pi
 
 Decision entries link to conversations and exact gate pages. The decision list contains no approval form.
 
-The conversation catalogue pairs its directory filter with a title search. The query trims and matches titles without case sensitivity. Both filters stay in the canonical address and native form navigation. Access grants stay unchanged.
+The Conversations catalogue pairs its directory filter with a title search. Controls use 44-pixel heights and seven-pixel corners. Mobile layouts place the directory filter and submit control beneath the search.
+
+The conversation list has a maximum width of 768 pixels. Pale surfaces and eight-pixel gaps separate records without horizontal rules. Records use seven-pixel corners, 16-pixel titles and 14-pixel directory context.
+
+Status dots align at the right edge, after their labels. Each record shows its update time. Exact UTC timestamps remain available through native time tooltips. Records omit the workflow label when no run exists.
+
+The result count includes every match, not only the current page. The query trims and matches titles without case sensitivity. Both filters stay in the canonical address and native form navigation. Access grants stay unchanged.
 
 Run history filters by stored canonical directory path. The filter applies before the fifty-record bound with newest matches first. Unavailable directories keep their labels. Run history stays run-centred.
 
@@ -538,6 +554,8 @@ Catalogue pages retain ruled records and inline editors. Workflow pages retain p
 First-time provider connection starts with a focused provider chooser in a compact branded form.
 
 The provider choice precedes the connection form. Method descriptions align right on wider screens and sit below provider names on narrow screens.
+
+Provider choices and connected providers use pale rows with seven-pixel corners and eight-pixel gaps. Horizontal rules do not separate these rows.
 
 Provider links use `/connect?provider=…`. Change provider returns to the chooser. API-only forms omit the redundant introductory sentence.
 

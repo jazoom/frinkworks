@@ -20,6 +20,7 @@ impl TokenTotal {
     }
 }
 
+#[derive(Default)]
 pub(crate) struct UsageTotals {
     pub(crate) requests: usize,
     pub(crate) input: TokenTotal,
@@ -27,22 +28,6 @@ pub(crate) struct UsageTotals {
     pub(crate) cache_read: TokenTotal,
     pub(crate) tokens: TokenTotal,
     pub(crate) cost: CostCoverage,
-}
-
-impl Default for UsageTotals {
-    fn default() -> Self {
-        Self {
-            requests: 0,
-            input: TokenTotal::default(),
-            output: TokenTotal::default(),
-            cache_read: TokenTotal::default(),
-            tokens: TokenTotal::default(),
-            cost: CostCoverage {
-                known_micros: None,
-                incomplete: false,
-            },
-        }
-    }
 }
 
 impl UsageTotals {
@@ -61,6 +46,7 @@ impl UsageTotals {
         self.tokens.add(usage.output_tokens);
         let part = request_cost(request);
         self.cost.incomplete |= part.incomplete;
+        self.cost.estimated |= part.estimated;
         if let Some(value) = part.known_micros {
             if let Some(total) = self.cost.known_micros.unwrap_or(0).checked_add(value) {
                 self.cost.known_micros = Some(total);
