@@ -1124,7 +1124,7 @@ async fn preview_phase_access(
                 }
             ));
             if grant.access == crate::execution::DirectoryAccess::Write {
-                view.phase_summaries.push("Write changes the original files immediately. Plan acceptance does not approve files. Failure and cancellation leave file changes intact.".to_owned());
+                view.phase_summaries.push("Plan acceptance does not approve files. Failure and cancellation leave file changes intact.".to_owned());
             }
             if crate::execution::authority::sensitive_directory(
                 &grant.host_path,

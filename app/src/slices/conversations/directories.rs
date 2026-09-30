@@ -245,6 +245,7 @@ pub(super) async fn approve_new(
 pub(super) async fn update_new(
     State(state): State<AppState>,
     session: RequiredSession,
+    _graft: PatchGraft,
     Path(grant_id): Path<String>,
     Form(mut form): Form<super::new::NewForm>,
 ) -> AppResult<Response> {
@@ -833,6 +834,16 @@ pub(super) async fn update_saved(
             DirectoryGrantError::Invalid.message(),
         );
     };
+    if record.active_job.is_some() {
+        return render_saved(
+            &state,
+            session.0,
+            graft,
+            &record,
+            PatchStatus::Conflict,
+            ConversationError::Active.message(),
+        );
+    }
     grant.access = access;
     let mut settings = record
         .model

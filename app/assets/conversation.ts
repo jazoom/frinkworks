@@ -30,7 +30,6 @@ export function initConversation(
         "environment",
         "location",
         "host_approval",
-        "directory_access",
         "network",
         "network_domains",
         "preset",
@@ -39,7 +38,6 @@ export function initConversation(
         "environment",
         "location",
         "host_approval",
-        "directory_access",
         "network",
         "network_domains",
     ];
@@ -489,17 +487,19 @@ export function initConversation(
                     ordinaryFailure = "";
                 }
             }
+            const settingsRevisionChanged =
+                context.cause === "patch" &&
+                (["conversation-model-form", "command-directory-form"].includes(
+                    context.detail.form.id,
+                ) ||
+                    context.detail.form.id.startsWith(
+                        "directory-access-form-",
+                    ) ||
+                    context.detail.url.endsWith("/directories/consent"));
             if (unsavedSettings) {
                 const form = modelForm();
                 for (const [name, saved] of unsavedSettings) {
-                    if (
-                        name === "revision" &&
-                        context.cause === "patch" &&
-                        [
-                            "conversation-model-form",
-                            "command-directory-form",
-                        ].includes(context.detail.form.id)
-                    )
+                    if (name === "revision" && settingsRevisionChanged)
                         continue;
                     if (form) applyField(form, name, saved);
                 }
@@ -507,32 +507,7 @@ export function initConversation(
                 const model = unsavedSettings.get("model");
                 if (label && draftSettings && model)
                     label.textContent = model.value;
-                if (
-                    context.cause === "patch" &&
-                    [
-                        "conversation-model-form",
-                        "command-directory-form",
-                    ].includes(context.detail.form.id)
-                )
-                    retainSettings();
-            }
-            const access = root.querySelector<HTMLInputElement>(
-                "#execution-directory-access",
-            )?.value;
-            if (access) {
-                try {
-                    const values = new Map<string, string>(JSON.parse(access));
-                    root.querySelectorAll<HTMLInputElement>(
-                        "[data-execution-directory]",
-                    ).forEach((radio) => {
-                        const value = values.get(
-                            radio.dataset.executionDirectory ?? "",
-                        );
-                        if (value) radio.checked = radio.value === value;
-                    });
-                } catch {
-                    // The server rejects malformed strategy values. The editor keeps its current rows.
-                }
+                if (settingsRevisionChanged) retainSettings();
             }
             draftSettings = !!root.querySelector(
                 '[data-conversation-state="new"]',

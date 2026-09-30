@@ -829,12 +829,13 @@ async fn first_message_waits_for_the_host_path_permit_before_it_stores_grants() 
 }
 
 #[tokio::test]
-async fn first_message_persists_an_independent_directory_grant() {
+async fn first_message_persists_write_permission_without_additional_consent() {
     let state = test_state();
     ready_starter_environment(&state).await;
     let token = connected(&state);
     let directory = tempfile::tempdir().unwrap();
-    let grant = crate::execution::DirectoryGrant::from_selected(directory.path(), &[]).unwrap();
+    let mut grant = crate::execution::DirectoryGrant::from_selected(directory.path(), &[]).unwrap();
+    grant.access = crate::execution::DirectoryAccess::Write;
     let effort = state
         .models_dev
         .effective_effort(ProviderKind::Xai, "grok-4.6", None)

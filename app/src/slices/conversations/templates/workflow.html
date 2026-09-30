@@ -236,9 +236,8 @@
                     <strong>Approval stops</strong>
                     <p>{{ workflow.approvals }}</p>
                     <p>
-                      Write access changes original files immediately. Plan
-                      acceptance does not approve or capture files. Failure or
-                      cancellation does not undo those effects.
+                      Plan acceptance does not approve or capture files. Failure
+                      or cancellation does not undo file changes.
                     </p>
                   </div>
                   {% if !access_preview.is_empty() %}

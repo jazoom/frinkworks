@@ -422,7 +422,7 @@ async fn generation_redacts_secrets_and_cannot_execute_tools_or_create_records()
 }
 
 #[tokio::test]
-async fn edited_prompt_opens_an_unsent_draft_without_consent_or_history() {
+async fn edited_prompt_opens_an_unsent_draft_with_directory_permissions_without_history() {
     let state = test_state();
     let token = connected(&state);
     let record = source(&state);
@@ -434,14 +434,6 @@ async fn edited_prompt_opens_an_unsent_draft_without_consent_or_history() {
     let record = state
         .conversations
         .update_execution_settings(&record.id, record.revision, settings.clone())
-        .unwrap();
-    let record = state
-        .conversations
-        .record_directory_approval(
-            &record.id,
-            record.revision,
-            crate::conversations::DirectoryApproval::for_grant(&settings, &grant),
-        )
         .unwrap();
     let response = app(&state)
         .oneshot(command(
@@ -459,7 +451,7 @@ async fn edited_prompt_opens_an_unsent_draft_without_consent_or_history() {
     let body = text(response).await;
     assert!(body.contains("location=\"/conversations/new\""));
     assert!(body.contains("My edited prompt. Keep the active filters."));
-    assert!(body.contains("Pending approval"));
+    assert!(!body.contains("Pending approval"));
     assert!(!body.contains("A secret appeared in the context"));
     assert_eq!(state.conversations.get(&record.id), Some(record));
     assert_eq!(state.conversations.list().len(), 1);

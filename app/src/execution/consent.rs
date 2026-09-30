@@ -181,8 +181,8 @@ impl AccessConsentStore {
             .any(|reference| self.approved(reference).as_ref() == Some(&expected))
     }
 
-    /// Read-only preview consent for one draft root. The full settings digest
-    /// binds write consent; an idle preview only needs the approved grant for
+    /// Read-only preview consent for one sensitive draft root. The full settings digest
+    /// binds execution consent. An idle preview only needs the approved grant for
     /// the session and draft nonce. It never grants dispatch authority.
     pub(crate) fn authorised_draft_preview(
         &self,

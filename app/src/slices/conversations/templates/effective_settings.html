@@ -28,7 +28,7 @@
             class="directory-access-label {% if directory.available && !directory.pending_approval && !location_host %}directory-access-approved{% endif %} break-all"
             >{{ directory.name }} ·
             {% if location_host %}Work location{% else %}{{ directory.access_label }}{% endif %}{% if !directory.available %}
-              · Unavailable
+              · Cannot access directory
             {% else if directory.pending_approval %}
               · Pending approval
             {% endif %}</span

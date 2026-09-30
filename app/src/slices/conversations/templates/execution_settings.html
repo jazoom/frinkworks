@@ -169,7 +169,7 @@
       <p class="font-semibold">Unrestricted host access</p>
       <p class="mt-1">
         Tools run as the Frinkworks process user. Work locations do not confine
-        access. File changes take effect immediately.
+        access.
       </p>
       <p class="mt-2">Sandbox network settings do not restrict host tools.</p>
     </div>
@@ -229,8 +229,18 @@
     aria-labelledby="execution-current-heading"
   >
     <h4 id="execution-current-heading" class="font-semibold">
-      {% if self.is_new() %}Draft configuration{% else %}Current configuration{% endif %}
+      {% if self.is_new() %}
+        Selected execution settings
+      {% else %}
+        Current configuration
+      {% endif %}
     </h4>
+    {% if self.is_new() %}
+      <p class="text-quiet text-sm">
+        Your first valid message creates the conversation with these settings.
+        Required access approvals remain separate.
+      </p>
+    {% endif %}
     <dl
       class="execution-summary grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm"
     >

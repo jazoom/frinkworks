@@ -367,38 +367,94 @@ test("requested execution changes block consent for the old configuration withou
     expect(submit).not.toHaveBeenCalled();
 });
 
-test("directory radios stage saved access without a consent or execution command", () => {
+test("saved directory radios submit only the selected access command", () => {
     document.body.insertAdjacentHTML(
         "beforeend",
         `
-        <form id="conversation-settings-form"><input id="execution-directory-access" name="directory_access"></form>
-        <input type="radio" name="access-one" data-execution-directory="one" value="read" checked>
-        <input type="radio" name="access-one" data-execution-directory="one" value="write">
-        <input type="radio" name="access-two" data-execution-directory="two" value="read" checked>`,
+        <form id="directory-access-form-one" action="/conversations/example/directories/one/access">
+            <input name="revision" value="3">
+            <button id="directory-access-one" type="submit" name="access" hidden></button>
+        </form>
+        <input type="radio" name="access-one" data-directory-access="directory-access-one" value="read" checked>
+        <input type="radio" name="access-one" data-directory-access="directory-access-one" value="write">`,
     );
     const form = document.querySelector<HTMLFormElement>(
-        "#conversation-settings-form",
+        "#directory-access-form-one",
     )!;
-    const submit = vi.spyOn(form, "requestSubmit");
-    const radio = document.querySelector<HTMLInputElement>(
-        '[data-execution-directory][value="write"]',
-    )!;
-    radio.checked = true;
-    radio.dispatchEvent(new Event("change", { bubbles: true }));
-    expect(new FormData(form).get("directory_access")).toBe(
-        JSON.stringify([
-            ["one", "write"],
-            ["two", "read"],
-        ]),
+    const submit = vi.spyOn(form, "requestSubmit").mockImplementation(() => {});
+    const message = vi.spyOn(
+        document.querySelector<HTMLFormElement>("#conversation-composer")!,
+        "requestSubmit",
     );
-    expect(submit).not.toHaveBeenCalled();
+    const button = document.querySelector<HTMLButtonElement>(
+        "#directory-access-one",
+    )!;
+    for (const access of ["write", "read"]) {
+        const radio = document.querySelector<HTMLInputElement>(
+            `[data-directory-access][value="${access}"]`,
+        )!;
+        radio.checked = true;
+        radio.dispatchEvent(new Event("change", { bubbles: true }));
+        expect(button.value).toBe(access);
+        expect(submit).toHaveBeenLastCalledWith(button);
+    }
+    expect(submit).toHaveBeenCalledTimes(2);
+    expect(message).not.toHaveBeenCalled();
 });
+
+test.each([200, 409, "uncertain"] as const)(
+    "directory permissions stay locked until a known result (%s)",
+    async (outcome) => {
+        document.body.insertAdjacentHTML(
+            "beforeend",
+            `<fieldset class="directory-access-options">
+                <input type="radio" name="access-one" data-directory-access="directory-access-one" value="read" checked>
+                <input type="radio" name="access-one" data-directory-access="directory-access-one" value="write">
+                <input type="radio" name="access-active" data-directory-access="directory-access-active" disabled>
+            </fieldset>`,
+        );
+        const form = document.querySelector<HTMLFormElement>(
+            "#conversation-composer",
+        )!;
+        const fieldset = document.querySelector<HTMLFieldSetElement>(
+            ".directory-access-options",
+        )!;
+        form.dispatchEvent(
+            new Event("submit", { bubbles: true, cancelable: true }),
+        );
+        vi.mocked(commandBlockReason).mockReturnValue("pending-command");
+        await Promise.resolve();
+        expect(fieldset.disabled).toBe(true);
+
+        vi.mocked(commandBlockReason).mockReturnValue(
+            outcome === "uncertain" ? "uncertain-command" : undefined,
+        );
+        for (const listener of settled)
+            listener({
+                requestKind: "patch",
+                form,
+                url: "/conversations/example/directories/one/access",
+                ...(outcome === "uncertain"
+                    ? { outcome: "uncertain-unsafe-result" as const }
+                    : {
+                          outcome: "applied-patch" as const,
+                          status: outcome,
+                          targetIds: ["conversation-detail"],
+                      }),
+            });
+        expect(fieldset.disabled).toBe(outcome === "uncertain");
+        expect(
+            fieldset.querySelector<HTMLInputElement>('[name="access-active"]')!
+                .disabled,
+        ).toBe(true);
+    },
+);
 
 test("draft directory radios use the access command rather than the message command", () => {
     document.body.insertAdjacentHTML(
         "beforeend",
         `
-        <input type="radio" data-draft-directory-access="directory-access-one" value="write">
+        <input type="radio" data-directory-access="directory-access-one" value="write">
         <button id="directory-access-one" form="conversation-composer" formaction="/conversations/new/directories/one/access" type="submit" name="action" hidden></button>`,
     );
     const form = document.querySelector<HTMLFormElement>(
@@ -406,7 +462,7 @@ test("draft directory radios use the access command rather than the message comm
     )!;
     const submit = vi.spyOn(form, "requestSubmit").mockImplementation(() => {});
     const radio = document.querySelector<HTMLInputElement>(
-        "[data-draft-directory-access]",
+        "[data-directory-access]",
     )!;
     radio.checked = true;
     radio.dispatchEvent(new Event("change", { bubbles: true }));

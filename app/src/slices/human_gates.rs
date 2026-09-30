@@ -243,17 +243,6 @@ async fn discard_and_switch(
             "conversation-settings",
         );
     };
-    if let Err(error) = crate::slices::conversations::settings::replacement_directory_access(
-        &current_settings.settings,
-        &form.directory_access,
-    ) {
-        return command_error_target(
-            graft,
-            PatchStatus::UnprocessableEntity,
-            error,
-            "conversation-settings",
-        );
-    }
     let network = match crate::slices::conversations::settings::replacement_network(
         &current_settings.settings.network,
         &form.network,
@@ -370,21 +359,9 @@ async fn discard_and_switch(
             "conversation-settings",
         );
     };
-    let replacement = match crate::slices::conversations::settings::replacement_directory_access(
-        &model.settings,
-        &form.directory_access,
-    ) {
-        Ok(settings) => settings,
-        Err(error) => {
-            return command_error_target(
-                graft,
-                PatchStatus::Conflict,
-                error,
-                "conversation-settings",
-            );
-        }
-    };
-    let mut settings = replacement
+    let mut settings = model
+        .settings
+        .clone()
         .with_location(location)
         .with_host_approval(host_approval);
     settings.environment = form.environment;

@@ -232,7 +232,7 @@ fn implementer() -> RoleDefinition {
     role(
         "implementer",
         "Implementer",
-        "Complete the requested change in the authorised directories. Writes take effect immediately. Use prior review feedback when supplied.",
+        "Complete the requested change in the authorised directories. Use prior review feedback when supplied.",
     )
 }
 

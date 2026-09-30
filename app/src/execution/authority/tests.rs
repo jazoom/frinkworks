@@ -123,6 +123,91 @@ fn frinkworks_data_classification_covers_root_descendants_and_ancestors() {
 }
 
 #[test]
+fn home_classification_protects_credentials_without_protecting_all_home_subdirectories() {
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().canonicalize().unwrap();
+    assert_eq!(
+        super::classify_sensitive_home_directory(&home.join(".config"), &home),
+        Some(super::SensitiveDirectory::Credentials)
+    );
+
+    for relative in super::SENSITIVE_HOME_DIRECTORIES {
+        let directory = home.join(relative);
+        std::fs::create_dir_all(directory.join("child")).unwrap();
+        for path in [directory.clone(), directory.join("child")] {
+            assert_eq!(
+                super::classify_sensitive_home_directory(&path, &home),
+                Some(super::SensitiveDirectory::Credentials),
+                "{}",
+                path.display()
+            );
+        }
+        assert_eq!(
+            super::classify_sensitive_home_directory(
+                &home.join(format!("{relative}-backup")),
+                &home
+            ),
+            None
+        );
+    }
+    for (path, expected) in [
+        (home.clone(), Some(super::SensitiveDirectory::Home)),
+        (
+            home.parent().unwrap().to_path_buf(),
+            Some(super::SensitiveDirectory::Home),
+        ),
+        (home.join("project"), None),
+        (
+            home.join(".config/project"),
+            Some(super::SensitiveDirectory::Credentials),
+        ),
+    ] {
+        assert_eq!(
+            super::classify_sensitive_home_directory(&path, &home),
+            expected,
+            "{}",
+            path.display()
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn credential_symbolic_links_protect_canonical_targets_descendants_and_ancestors() {
+    for relative in super::SENSITIVE_HOME_DIRECTORIES {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        let directory = home.join(relative);
+        let target = root.path().join("outside/keys");
+        std::fs::create_dir_all(directory.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(target.join("child")).unwrap();
+        std::os::unix::fs::symlink(&target, &directory).unwrap();
+        let home = home.canonicalize().unwrap();
+
+        for selected in [
+            directory,
+            target.clone(),
+            target.join("child"),
+            target.parent().unwrap().to_path_buf(),
+        ] {
+            let grant = crate::execution::DirectoryGrant::from_selected(&selected, &[]).unwrap();
+            assert_eq!(
+                super::classify_sensitive_home_directory(&grant.host_path, &home),
+                Some(super::SensitiveDirectory::Credentials)
+            );
+        }
+        assert_eq!(
+            super::classify_sensitive_home_directory(&root.path().join("outside-backup"), &home),
+            None
+        );
+        assert_eq!(
+            super::classify_sensitive_home_directory(&home.join("project"), &home),
+            None
+        );
+    }
+}
+
+#[test]
 fn replacement_at_the_same_path_preserves_authority() {
     let parent = tempfile::tempdir().unwrap();
     let root = parent.path().join("root");

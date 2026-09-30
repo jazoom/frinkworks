@@ -377,8 +377,7 @@ impl DirectoryGrant {
     }
 
     pub(crate) fn requires_access_consent(&self, data_root: &Path) -> bool {
-        self.access == DirectoryAccess::Write
-            || crate::execution::authority::sensitive_directory(&self.host_path, data_root)
+        crate::execution::authority::sensitive_directory(&self.host_path, data_root)
     }
 
     pub(crate) fn guest_path(&self) -> String {

@@ -89,149 +89,138 @@ async fn picker_commands_are_patch_only_and_revision_bound() {
 }
 
 #[tokio::test]
-async fn direct_write_needs_path_consent_after_directory_replacement() {
-    directory_consent_case(crate::execution::DirectoryAccess::Write).await;
-}
+async fn saved_access_selection_applies_permissions_and_rejects_native_stale_and_active_commands() {
+    use crate::execution::{DirectoryAccess, DirectoryGrant};
 
-async fn directory_consent_case(access: crate::execution::DirectoryAccess) {
     let state = test_state();
     let token = connected(&state);
     let record = conversation(&state);
-    let first = tempfile::tempdir().unwrap();
-    let first_path = first.path().join("source");
-    std::fs::create_dir(&first_path).unwrap();
-    let second = tempfile::tempdir().unwrap();
-    let first_grant = crate::execution::DirectoryGrant::from_selected(&first_path, &[]).unwrap();
-    let first_id = first_grant.id;
-    let current = state
+    let directory = tempfile::tempdir().unwrap();
+    let grant = DirectoryGrant::from_selected(directory.path(), &[]).unwrap();
+    let mut current = state
         .conversations
-        .add_directory(&record.id, 1, first_grant)
+        .add_directory(&record.id, record.revision, grant.clone())
         .unwrap();
-    let second_grant = crate::execution::DirectoryGrant::from_selected(
-        second.path(),
-        &current.model.as_ref().unwrap().settings.directories,
-    )
-    .unwrap();
-    let second_id = second_grant.id;
-    let current = state
-        .conversations
-        .add_directory(&record.id, current.revision, second_grant)
-        .unwrap();
-
-    let access_path = format!(
+    let path = format!(
         "/conversations/{}/directories/{}/access",
         record.id,
-        first_id.as_hex()
+        grant.id.as_hex()
     );
-    let preview = app(&state)
-        .oneshot(command(
-            &access_path,
-            &token,
-            &format!("revision={}&access={}", current.revision, access.as_str()),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(preview.status(), StatusCode::OK);
-    let body = text(preview).await;
-    assert!(!hidden_value(&body, "consent_request").is_empty());
+    let mut native = command(
+        &path,
+        &token,
+        &format!("revision={}&access=write", current.revision),
+    );
+    native.headers_mut().remove("graft-request");
     assert_eq!(
-        state
-            .conversations
-            .get(&record.id)
-            .unwrap()
-            .model
-            .unwrap()
-            .settings
-            .directories[0]
-            .access,
-        crate::execution::DirectoryAccess::Read
+        app(&state).oneshot(native).await.unwrap().status(),
+        StatusCode::BAD_REQUEST
     );
-    let consent_body = format!(
-        "revision={}&consent_request={}&pending_directory={}&existing=true",
-        current.revision,
-        form_value(&hidden_value(&body, "consent_request")),
-        form_value(&hidden_value(&body, "pending_directory")),
-    );
-    std::fs::rename(&first_path, first.path().join("original")).unwrap();
-    std::fs::create_dir(&first_path).unwrap();
-    let approved = app(&state)
-        .oneshot(command(
-            &format!("/conversations/{}/directories/consent", record.id),
-            &token,
-            &consent_body,
-        ))
-        .await
-        .unwrap();
-    let approved_status = approved.status();
-    let approved_body = text(approved).await;
-    assert_eq!(approved_status, StatusCode::OK, "{approved_body}");
-    let updated = state.conversations.get(&record.id).unwrap();
-    assert_eq!(
-        updated.model.as_ref().unwrap().settings.directories[0].access,
-        access
-    );
+    assert_eq!(state.conversations.get(&record.id), Some(current.clone()));
 
-    let second_response = app(&state)
-        .oneshot(command(
-            &format!(
-                "/conversations/{}/directories/{}/access",
-                record.id,
-                second_id.as_hex()
-            ),
-            &token,
-            &format!("revision={}&access={}", updated.revision, access.as_str()),
-        ))
-        .await
+    for access in [DirectoryAccess::Write, DirectoryAccess::Read] {
+        let response = app(&state)
+            .oneshot(command(
+                &path,
+                &token,
+                &format!("revision={}&access={}", current.revision, access.as_str()),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            !text(response)
+                .await
+                .contains("id=\"conversation-directory-consent\"")
+        );
+        let updated = state.conversations.get(&record.id).unwrap();
+        assert_eq!(
+            updated.model.as_ref().unwrap().settings.directories[0].access,
+            access
+        );
+        assert_eq!(
+            app(&state)
+                .oneshot(command(
+                    &path,
+                    &token,
+                    &format!("revision={}&access=write", current.revision)
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::CONFLICT
+        );
+        assert_eq!(state.conversations.get(&record.id), Some(updated.clone()));
+        current = updated;
+    }
+    let job = state
+        .sessions
+        .begin_conversation_job(&session_id(&token), record.id)
         .unwrap();
-    assert_eq!(second_response.status(), StatusCode::OK);
-    let second_body = text(second_response).await;
-    assert!(!hidden_value(&second_body, "consent_request").is_empty());
+    let active = state
+        .conversations
+        .begin_message_with_model(
+            &record.id,
+            current.revision,
+            current.model.clone(),
+            job.id(),
+            "Work".to_owned(),
+        )
+        .unwrap();
     assert_eq!(
-        state
-            .conversations
-            .get(&record.id)
+        app(&state)
+            .oneshot(command(
+                &path,
+                &token,
+                &format!("revision={}&access=write", active.revision)
+            ))
+            .await
             .unwrap()
-            .model
-            .unwrap()
-            .settings
-            .directories[1]
-            .access,
-        crate::execution::DirectoryAccess::Read
+            .status(),
+        StatusCode::CONFLICT
     );
+    assert_eq!(state.conversations.get(&record.id), Some(active));
 }
 
 #[tokio::test]
-async fn non_sensitive_read_access_needs_no_consent() {
+async fn ordinary_draft_access_applies_without_consent_and_rejects_native_commands() {
+    use crate::execution::{DirectoryAccess, DirectoryGrant};
+
     let state = test_state();
     let token = connected(&state);
     let directory = tempfile::tempdir().unwrap();
-    let grant = crate::execution::DirectoryGrant::from_selected(directory.path(), &[]).unwrap();
+    let grant = DirectoryGrant::from_selected(directory.path(), &[]).unwrap();
     let path = format!(
         "/conversations/new/directories/{}/access",
         grant.id.as_hex()
     );
-    let preview = app(&state)
-        .oneshot(command(
-            &path,
-            &token,
-            &format!(
-                "action=read&directory_0={}",
-                form_value(&grant.form_value())
-            ),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(preview.status(), StatusCode::OK);
-    let body = text(preview).await;
-    assert!(hidden_value(&body, "consent_request").is_empty());
-    assert!(hidden_value(&body, "pending_directory").is_empty());
-    let updated =
-        crate::execution::DirectoryGrant::parse_form(&hidden_value(&body, "directory_0")).unwrap();
-    assert_eq!(updated.access, crate::execution::DirectoryAccess::Read);
+    for access in [DirectoryAccess::Read, DirectoryAccess::Write] {
+        let fields = format!(
+            "action={}&directory_0={}",
+            access.as_str(),
+            form_value(&grant.form_value())
+        );
+        let mut native = command(&path, &token, &fields);
+        native.headers_mut().remove("graft-request");
+        assert_eq!(
+            app(&state).oneshot(native).await.unwrap().status(),
+            StatusCode::BAD_REQUEST
+        );
+        let response = app(&state)
+            .oneshot(command(&path, &token, &fields))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = text(response).await;
+        assert!(hidden_value(&body, "consent_request").is_empty());
+        assert!(hidden_value(&body, "pending_directory").is_empty());
+        let updated = DirectoryGrant::parse_form(&hidden_value(&body, "directory_0")).unwrap();
+        assert_eq!(updated.access, access);
+    }
 }
 
 #[tokio::test]
-async fn draft_read_only_replaces_stale_write_consent_without_bypassing_sensitive_consent() {
+async fn draft_access_changes_require_consent_only_for_sensitive_directories() {
     use crate::execution::{DirectoryAccess, DirectoryGrant};
 
     for sensitive in [false, true] {
@@ -264,10 +253,7 @@ async fn draft_read_only_replaces_stale_write_consent_without_bypassing_sensitiv
             assert_eq!(preview.status(), StatusCode::OK);
             let preview = text(preview).await;
             let previous_request = hidden_value(&preview, "consent_request");
-            assert_eq!(
-                !previous_request.is_empty(),
-                sensitive || access == DirectoryAccess::Write
-            );
+            assert_eq!(!previous_request.is_empty(), sensitive);
             let fields = [
                 "draft_nonce",
                 "directory_0",
@@ -302,6 +288,184 @@ async fn draft_read_only_replaces_stale_write_consent_without_bypassing_sensitiv
                 assert_eq!(hidden_value(&body, "consent_existing"), "false");
             }
             assert!(state.conversations.list().is_empty());
+        }
+    }
+}
+
+#[tokio::test]
+async fn credential_picker_and_access_require_consent_for_read_and_write() {
+    use crate::execution::{DirectoryAccess, DirectoryGrant};
+
+    const DIRECTORIES: [&str; 11] = [
+        ".ssh",
+        ".gnupg",
+        ".aws",
+        ".azure",
+        ".kube",
+        ".config",
+        ".password-store",
+        ".config/gcloud",
+        ".config/gh",
+        ".config/rclone",
+        ".config/sops/age",
+    ];
+    const CHILD_HOME: &str = "FRINKWORKS_TEST_CREDENTIAL_CONSENT_HOME";
+    let Some(home) = std::env::var_os(CHILD_HOME) else {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        for relative in DIRECTORIES {
+            std::fs::create_dir_all(home.join(relative)).unwrap();
+        }
+        let name = concat!(
+            module_path!(),
+            "::credential_picker_and_access_require_consent_for_read_and_write"
+        );
+        // HOME belongs to the child process. Parallel tests never use the fixture or the user's credential directories.
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", name.split_once("::").unwrap().1])
+            .env("HOME", &home)
+            .env(CHILD_HOME, &home)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    };
+    assert_eq!(std::env::var_os("HOME"), Some(home.clone()));
+    let home = std::path::PathBuf::from(home);
+    let state = test_state();
+    let token = connected(&state);
+    let session = session_id(&token);
+
+    for relative in DIRECTORIES {
+        let directory = home.join(relative);
+        for saved in [false, true] {
+            let record = saved.then(|| conversation(&state));
+            state.directory_picker.queue(Some(directory.clone()));
+            let path = record.as_ref().map_or_else(
+                || "/conversations/new/directories/pick".to_owned(),
+                |record| format!("/conversations/{}/directories/pick", record.id),
+            );
+            let response = app(&state)
+                .oneshot(command(&path, &token, "revision=1"))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = text(response).await;
+            assert!(body.contains("id=\"conversation-directory-consent\""));
+            assert!(!hidden_value(&body, "consent_request").is_empty());
+            let pending =
+                DirectoryGrant::parse_form(&hidden_value(&body, "pending_directory")).unwrap();
+            assert_eq!(pending.host_path, directory.canonicalize().unwrap());
+            assert_eq!(pending.access, DirectoryAccess::Read);
+            if let Some(record) = record {
+                assert!(
+                    state
+                        .conversations
+                        .get(&record.id)
+                        .unwrap()
+                        .model
+                        .unwrap()
+                        .settings
+                        .directories
+                        .is_empty()
+                );
+            } else {
+                assert!(!body.contains("name=\"directory_0\""));
+            }
+        }
+
+        for access in [DirectoryAccess::Read, DirectoryAccess::Write] {
+            let mut grant = DirectoryGrant::from_selected(&directory, &[]).unwrap();
+            grant.access = access;
+            assert!(grant.requires_access_consent(state.local_data.root()));
+            let path = format!(
+                "/conversations/new/directories/{}/access",
+                grant.id.as_hex()
+            );
+            let response = app(&state)
+                .oneshot(command(
+                    &path,
+                    &token,
+                    &format!(
+                        "action={}&directory_0={}",
+                        access.as_str(),
+                        form_value(&grant.form_value())
+                    ),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            assert!(
+                text(response)
+                    .await
+                    .contains("id=\"conversation-directory-consent\"")
+            );
+
+            let record = conversation(&state);
+            let mut settings = record.model.as_ref().unwrap().settings.clone();
+            settings.tools.clear();
+            settings.directories = vec![grant.clone()];
+            let record = state
+                .conversations
+                .update_execution_settings(&record.id, record.revision, settings)
+                .unwrap();
+            assert!(matches!(
+                super::super::preflight_execution(
+                    &state,
+                    session,
+                    Some(record.id),
+                    record.model.as_ref().unwrap()
+                )
+                .await,
+                Err(super::super::StartMessageError::User(
+                    hypergraft::PatchStatus::UnprocessableEntity,
+                    _
+                ))
+            ));
+            let path = format!(
+                "/conversations/{}/directories/{}/access",
+                record.id,
+                grant.id.as_hex()
+            );
+            let response = app(&state)
+                .oneshot(command(
+                    &path,
+                    &token,
+                    &format!("revision={}&access={}", record.revision, access.as_str()),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = text(response).await;
+            assert!(body.contains("id=\"conversation-directory-consent\""));
+            let approval = format!(
+                "revision={}&existing=true&consent_request={}&pending_directory={}",
+                record.revision,
+                form_value(&hidden_value(&body, "consent_request")),
+                form_value(&hidden_value(&body, "pending_directory")),
+            );
+            let path = format!("/conversations/{}/directories/consent", record.id);
+            let response = app(&state)
+                .oneshot(command(&path, &token, &approval))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let approved = state.conversations.get(&record.id).unwrap();
+            assert!(
+                super::super::preflight_execution(
+                    &state,
+                    session,
+                    Some(approved.id),
+                    approved.model.as_ref().unwrap()
+                )
+                .await
+                .is_ok()
+            );
         }
     }
 }

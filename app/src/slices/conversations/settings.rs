@@ -46,7 +46,6 @@ pub(super) struct SettingsForm {
     pub(super) environment: String,
     pub(super) network: String,
     pub(super) network_domains: String,
-    pub(super) directory_access: String,
 }
 
 #[derive(Clone)]
@@ -54,7 +53,6 @@ struct RequestedExecutionMode {
     location: crate::execution::ToolLocation,
     host_approval: crate::execution::HostApprovalPolicy,
     environment: crate::environments::EnvironmentId,
-    directory_access: String,
     network: NetworkAccess,
 }
 
@@ -68,8 +66,6 @@ pub(super) struct EnvironmentSwitchForm {
     pub(super) host_approval: String,
     #[serde(default)]
     pub(super) job: String,
-    #[serde(default)]
-    pub(super) directory_access: String,
     #[serde(default)]
     pub(super) confirm: bool,
     #[serde(default)]
@@ -247,8 +243,7 @@ pub(super) async fn save_defaults(
         .set_conversation_defaults(model.settings.clone())
         .map_err(|error| AppError::new("store conversation defaults", error))?;
     let mut view = detail_view(&state, session.0, &record, &record.title, "").open_settings();
-    view.notice =
-        "Future conversations will use these saved settings. Access approval remains separate.";
+    view.notice = "Future conversations will use these settings and directory permissions. Sensitive directories and host access need separate consent.";
     render_detail_command(graft, PatchStatus::Ok, view)
 }
 
@@ -284,10 +279,9 @@ pub(super) async fn update(
             .as_ref()
             .map(|model| model.settings.directories.clone())
             .unwrap_or_default();
-        let settings = settings
+        settings
             .with_directories(directories)
-            .ok_or("The saved directory grants are not valid.")?;
-        replacement_directory_access(&settings, &form.directory_access)
+            .ok_or("The saved directory grants are not valid.")
     }) {
         Ok(settings) => settings,
         Err(error) => {
@@ -305,7 +299,6 @@ pub(super) async fn update(
             model.settings.location != settings.location
                 || model.settings.host_approval != settings.host_approval
                 || model.settings.environment != settings.environment
-                || model.settings.directories != settings.directories
                 || model.settings.network != settings.network
         })
     {
@@ -335,7 +328,6 @@ pub(super) async fn update(
                 settings.host_approval
             },
             environment: settings.environment,
-            directory_access: form.directory_access.clone(),
             network: settings.network.clone(),
         };
         if execution_mode_changed(&current.settings, &requested) {
@@ -377,8 +369,7 @@ pub(super) async fn update(
         );
     }
     let access_changed = record.model.as_ref().is_some_and(|model| {
-        model.settings.directories != settings.directories
-            || model.settings.tools != settings.tools
+        model.settings.tools != settings.tools
             || model.settings.network != settings.network
             || model.settings.environment != settings.environment
             || model.settings.location != settings.location
@@ -593,7 +584,6 @@ fn execution_mode_from_form(
         location,
         host_approval,
         environment,
-        directory_access,
         ..
     } = form;
     let location = if location.trim().is_empty() {
@@ -615,12 +605,10 @@ fn execution_mode_from_form(
     } else {
         super::selected_environment(state, environment)?
     };
-    replacement_directory_access(current, directory_access)?;
     Ok(RequestedExecutionMode {
         location,
         host_approval,
         environment,
-        directory_access: directory_access.to_owned(),
         network: replacement_network(&current.network, &form.network, &form.network_domains)?,
     })
 }
@@ -633,8 +621,6 @@ fn execution_mode_changed(
         || current.host_approval != requested.host_approval
         || current.environment != requested.environment
         || current.network != requested.network
-        || replacement_directory_access(current, &requested.directory_access)
-            .is_ok_and(|settings| settings.directories != current.directories)
 }
 
 pub(crate) fn replacement_network(
@@ -649,35 +635,6 @@ pub(crate) fn replacement_network(
         .map_err(|_| "Choose valid network access. Restricted access needs 1 to 32 domains.")
 }
 
-pub(crate) fn replacement_directory_access(
-    current: &ExecutionSettings,
-    submitted: &str,
-) -> Result<ExecutionSettings, &'static str> {
-    let mut settings = current.clone();
-    if submitted.is_empty() {
-        return Ok(settings);
-    }
-    if submitted.len() > 4096 {
-        return Err("Choose valid directory strategies.");
-    }
-    let values: Vec<(String, String)> =
-        serde_json::from_str(submitted).map_err(|_| "Choose valid directory strategies.")?;
-    let mut seen = std::collections::HashSet::new();
-    for (id, access) in values {
-        if !seen.insert(id.clone()) {
-            return Err("Choose each directory once.");
-        }
-        let grant = settings
-            .directories
-            .iter_mut()
-            .find(|grant| grant.id.as_hex() == id)
-            .ok_or("Choose an existing directory.")?;
-        grant.access = crate::execution::DirectoryAccess::parse(&access)
-            .ok_or("Choose valid directory strategies.")?;
-    }
-    Ok(settings)
-}
-
 fn render_switch_preview(
     state: &AppState,
     session: crate::sessions::SessionId,
@@ -688,8 +645,8 @@ fn render_switch_preview(
 ) -> AppResult<Response> {
     let view = detail_view(state, session, record, &record.title, "");
     let gate = view.saved().and_then(|saved| saved.pending_gate.clone());
-    let mut replacement = replacement_directory_access(current, &requested.directory_access)
-        .expect("validated directory strategies")
+    let mut replacement = current
+        .clone()
         .with_location(requested.location)
         .with_host_approval(requested.host_approval);
     replacement.environment = requested.environment;
@@ -697,13 +654,7 @@ fn render_switch_preview(
     render_detail_command(
         graft,
         PatchStatus::Ok,
-        view.with_execution_switch(
-            state,
-            current,
-            &replacement,
-            &requested.directory_access,
-            gate.as_ref(),
-        ),
+        view.with_execution_switch(state, current, &replacement, gate.as_ref()),
     )
 }
 
@@ -743,12 +694,9 @@ async fn save_execution_mode(
             .open_settings(),
         );
     };
-    let replacement =
-        match replacement_directory_access(&current.settings, &requested.directory_access) {
-            Ok(settings) => settings,
-            Err(error) => return switch_error(state, session, graft, record, error),
-        };
-    let mut settings = replacement
+    let mut settings = current
+        .settings
+        .clone()
         .with_location(requested.location)
         .with_host_approval(requested.host_approval);
     settings.environment = requested.environment;
@@ -805,7 +753,7 @@ pub(super) async fn save_preset(
         view.preset_name = form.name.clone();
         view.preset_save_open = status != PatchStatus::Ok;
         if status == PatchStatus::Ok {
-            view.notice = "Preset saved. It is an independent copy without access approval or runtime consent.";
+            view.notice = "Preset saved with directory permissions. Sensitive directories and host access need separate consent.";
         }
         render_detail_command(graft, status, view)
     };
@@ -1012,8 +960,7 @@ pub(super) async fn save_draft_preset(
     view.preset_name = name;
     view.preset_save_open = status != PatchStatus::Ok;
     if status == PatchStatus::Ok {
-        view.notice =
-            "Preset saved. It is an independent copy without access approval or runtime consent.";
+        view.notice = "Preset saved with directory permissions. Sensitive directories and host access need separate consent.";
     }
     super::render_detail(&state, session.0, GraftRequest::Patch, status, view)
 }
@@ -1085,7 +1032,7 @@ pub(super) async fn apply_draft_preset(
     form.consent_existing.clear();
     let mut view =
         super::page::ConversationDetailView::from_new(&state, session.0, form, "").open_settings();
-    view.notice = "Preset applied. Access approval and runtime consent remain separate.";
+    view.notice = "Preset applied with directory permissions. Sensitive directories and host access need separate consent.";
     super::render_detail(
         &state,
         session.0,

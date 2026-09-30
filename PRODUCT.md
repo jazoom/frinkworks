@@ -22,11 +22,11 @@ A new-conversation page is an unsaved draft. Navigation and invalid submissions 
 
 The first valid message creates the conversation. Its canonical address replaces the draft address.
 
-New with same settings copies requested settings into an independent draft. It copies no transcript, approvals, reservations or runtime consent.
+New with same settings copies settings and ordinary directory permissions into an independent draft. It copies no transcript, sensitive-directory consent, reservations or host consent.
 
 Conversation settings stay local. Use saved settings as future defaults explicitly stores an independent settings snapshot.
 
-New drafts copy those requested defaults without authority. Ordinary setup controls apply when they change. Execution review, consent and preset replacement stay behind their own confirmations.
+New drafts copy those defaults with ordinary directory permissions. Ordinary setup controls apply when they change. Execution review, sensitive-directory consent, host consent and preset replacement retain explicit decisions.
 
 Saved network changes require execution review with the other execution settings. Host consent authorises the exact configuration after that review.
 
@@ -34,7 +34,7 @@ Preset replacement shows current and replacement values before explicit confirma
 
 A named preset stores an independent snapshot. Saved conversations supply stored settings only. Unreviewed execution changes and unsaved edits stay excluded.
 
-Drafts supply their current settings without a conversation record. Presets contain no directory approval or runtime consent.
+Drafts supply their current settings without a conversation record. Presets include ordinary directory permissions but no sensitive-directory consent or host consent.
 
 Preview and save retain uncommitted setup edits. Successful replacement supersedes those edits but retains the unsent message. Rejected replacement retains the edits.
 
@@ -70,20 +70,34 @@ The application has no task-loop execution mode, task-list input, saved-plan inp
 
 ## Authority and file changes
 
-Requested settings and runtime authority remain separate.
+Directory settings grant ordinary directory permissions. Sensitive-directory consent and host consent remain separate.
+
+Sensitive paths include the Frinkworks data directory and its descendants and ancestors. The server process's home directory and its ancestors also require consent.
+
+These directories under `$HOME` require separate consent:
+
+- `.ssh`
+- `.gnupg`
+- `.aws`
+- `.azure`
+- `.kube`
+- `.config`
+- `.password-store`
+
+Credential protection covers each listed directory and its canonical symbolic-link target. Protection also covers their descendants and ancestors. The `.config` rule covers all of its subdirectories, not only `gcloud`. Other credential locations are not automatically classified as sensitive.
 
 The authority boundaries are:
 
-- Directory access approval.
+- Sensitive-directory consent.
 - Runtime consent for the selected execution location.
 - Approval for an individual shell command.
 - Plan review.
 
-Conversation directories have exactly two modes: **Read** and **Write**. Read is the default.
+Conversation directories have exactly two modes: **Read** and **Write**. Read is the default. Selection applies the mode immediately for ordinary directories. Write requires no additional approval. Active work blocks access changes.
 
-Directory approval binds to the canonical absolute path, not a device or inode number. Approval covers a replacement directory or filesystem at that path. A missing path blocks access until the directory returns. A symbolic link that redirects the saved path requires a new directory selection.
+Directory permissions bind to the canonical absolute path, not a device or inode number. Permissions cover a replacement directory or filesystem at that path. A missing path blocks access until the directory returns. A symbolic link that redirects the saved path requires a new directory selection.
 
-Native identity checks apply only within a live directory operation. Defaults and presets contain requested paths and access modes, not approval.
+Native identity checks apply only within a live directory operation. Defaults and presets include paths and access modes that grant ordinary directory permissions. Sensitive directories and host access need separate consent.
 
 Read permits shell commands in Microsandbox with read-only mounts. Write mounts the original directories read-write. Changes take effect immediately.
 

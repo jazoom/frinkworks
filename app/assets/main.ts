@@ -970,13 +970,7 @@ function selectConversationSettingsSection(panel: HTMLElement, id: string) {
     const actions = panel.querySelector<HTMLElement>(
         "[data-execution-actions]",
     );
-    if (actions)
-        actions.hidden =
-            id !== "settings-execution" &&
-            !(
-                id === "settings-directories" &&
-                panel.querySelector("[data-execution-directory]")
-            );
+    if (actions) actions.hidden = id !== "settings-execution";
 }
 
 function revealConversationSetting(target: HTMLElement, focus = true) {
@@ -1075,7 +1069,6 @@ function syncExecutionConsent() {
                 "environment",
                 "network",
                 "network_domains",
-                "directory_access",
             ].includes(field.name)
         )
             return false;
@@ -1154,7 +1147,6 @@ document.addEventListener("click", (event) => {
         "location",
         "host_approval",
         "environment",
-        "directory_access",
         "network",
         "network_domains",
     ]) {
@@ -1175,11 +1167,6 @@ document.addEventListener("click", (event) => {
                 field.dispatchEvent(new Event("input", { bubbles: true }));
             });
     }
-    document
-        .querySelectorAll<HTMLInputElement>("[data-execution-directory]")
-        .forEach((field) => {
-            field.checked = field.defaultChecked;
-        });
     syncExecutionModeFields();
     syncNetworkDomains();
     syncExecutionReview();
@@ -1340,11 +1327,28 @@ listenForLocationChanges(() => {
     submittedPresetName = undefined;
 });
 
+function syncDirectoryAccess() {
+    const blocked = !!commandBlockReason();
+    document
+        .querySelectorAll<HTMLFieldSetElement>(
+            "fieldset.directory-access-options",
+        )
+        .forEach((fieldset) => {
+            fieldset.disabled = blocked;
+        });
+}
+
+listenForRequestSettled(syncDirectoryAccess);
+listenForLocationChanges(syncDirectoryAccess);
+listenForLivePatches(syncDirectoryAccess);
+
 let settingsScroll: number | undefined;
 let settingsSection: string | undefined;
 document.addEventListener(
     "submit",
     () => {
+        // Hypergraft reserves the command after this capture listener. Lock only after admission.
+        queueMicrotask(syncDirectoryAccess);
         const name = document.querySelector<HTMLInputElement>(
             "#conversation-preset-name",
         );
@@ -1483,10 +1487,10 @@ document.addEventListener("change", (event) => {
     if (
         field instanceof HTMLInputElement &&
         field.checked &&
-        field.matches("[data-draft-directory-access]")
+        field.matches("[data-directory-access]")
     ) {
         const submitter = document.getElementById(
-            field.dataset.draftDirectoryAccess ?? "",
+            field.dataset.directoryAccess ?? "",
         );
         if (submitter instanceof HTMLButtonElement && submitter.form) {
             submitter.value = field.value;
@@ -1544,26 +1548,6 @@ document.addEventListener("change", (event) => {
         syncExecutionModeFields();
     }
     if (
-        field instanceof HTMLInputElement &&
-        field.checked &&
-        field.matches("[data-execution-directory]")
-    ) {
-        const value = document.querySelector<HTMLInputElement>(
-            "#execution-directory-access",
-        );
-        if (value) {
-            value.value = JSON.stringify(
-                Array.from(
-                    document.querySelectorAll<HTMLInputElement>(
-                        "[data-execution-directory]:checked",
-                    ),
-                    (radio) => [radio.dataset.executionDirectory, radio.value],
-                ),
-            );
-            value.dispatchEvent(new Event("input", { bubbles: true }));
-        }
-    }
-    if (
         (event.target instanceof HTMLSelectElement &&
             (event.target.id === "conversation-environment" ||
                 event.target.matches("[data-network-select]") ||
@@ -1571,8 +1555,7 @@ document.addEventListener("change", (event) => {
         (event.target instanceof HTMLInputElement &&
             (event.target.name === "location" ||
                 event.target.name === "host_approval" ||
-                event.target.name === "network" ||
-                event.target.matches("[data-execution-directory]")))
+                event.target.name === "network"))
     ) {
         document
             .querySelector<HTMLElement>("[data-execution-switch]")

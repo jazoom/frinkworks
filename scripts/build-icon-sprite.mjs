@@ -38,6 +38,7 @@ const icons = {
     slash: "slash",
     star: "star",
     stop: "square",
+    trash: "trash-2",
     workflow: "workflow",
 };
 

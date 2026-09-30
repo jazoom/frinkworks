@@ -5,7 +5,10 @@
 {% endblock %}
 {% block heading %}Presets{% endblock %}
 {% block description %}
-  <p>A preset stores reusable settings, not permission to execute.</p>
+  <p>
+    A preset stores reusable settings and directory permissions. Sensitive
+    directories and host access need separate consent.
+  </p>
 {% endblock %}
 {% block actions %}
   <a href="/presets?new=1" data-graft class="btn btn-primary btn-sm"
@@ -339,10 +342,6 @@
             >
 {{ form.direct_write }}</textarea>
           </label>
-          <p class="text-quiet text-sm">
-            Write requests immediate changes to the original files. Each
-            conversation needs separate consent.
-          </p>
         </fieldset>
         <div class="flex flex-wrap gap-3">
           <button

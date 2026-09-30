@@ -300,8 +300,8 @@
               id="conversation-copy-description"
               class="text-quiet mb-3 text-sm"
             >
-              Copies settings only. Starts with an empty history and requires
-              fresh access approval.
+              Copies settings and directory permissions with an empty history.
+              Sensitive directories and host access need separate consent.
             </p>
             {% if can_compact %}
               <form
@@ -1311,20 +1311,6 @@
                     </button>
                   {% endif %}
                 </div>
-                {% for directory in directories %}
-                  {% if directory.sensitive %}
-                    <div class="alert alert-warning items-start">
-                      <p class="text-sm break-words">
-                        Access to sensitive directories can expose private
-                        records. Frinkworks stores its data at
-                        <code class="break-all">{{ data_root }}</code>. Tool
-                        output can disclose credentials and private
-                        conversations to the model even with Network off.
-                        {% if directory.pending_approval %}Approval is pending.{% endif %}
-                      </p>
-                    </div>
-                  {% endif %}
-                {% endfor %}
                 {% if directories.is_empty() %}
                   <div
                     class="directory-empty border-base-300 flex flex-col items-start gap-3 rounded-lg border p-5"
@@ -1382,18 +1368,19 @@
                         </p>
                         {% if consent_sensitive %}
                           <p class="text-sm">
-                            Frinkworks stores provider credentials and private
-                            conversations at
+                            Sensitive directories can contain SSH keys,
+                            credentials and private records. Frinkworks stores
+                            its data at
                             <code class="break-all">{{ data_root }}</code>. Tool
-                            output can expose provider credentials, private
-                            conversations and other sensitive records to the
-                            model. Network off does not prevent this disclosure.
+                            output can expose these records to the model. Read
+                            access and Network off do not prevent this
+                            disclosure.
                           </p>
                         {% endif %}
                         {% if consent_direct && consent_sensitive %}
                           <p class="text-sm">
-                            Write access can alter or corrupt live
-                            configuration, permissions and execution evidence.
+                            Write access can alter or delete SSH keys,
+                            credentials, configuration and private records.
                           </p>
                         {% endif %}
                       </div>
@@ -1474,15 +1461,6 @@
               {% if directories.is_empty() %}hidden{% endif %}
             >
               {% if let Some(saved) = self.saved() %}
-                {% if !directories.is_empty() %}
-                  <input
-                    type="hidden"
-                    name="directory_access"
-                    value=""
-                    form="conversation-settings-form"
-                    id="execution-directory-access"
-                  />
-                {% endif %}
                 <button
                   id="conversation-execution-preview"
                   form="conversation-settings-form"
@@ -1611,11 +1589,6 @@
                             name="job"
                             value="{{ change.job_id }}"
                           />
-                          <input
-                            type="hidden"
-                            name="directory_access"
-                            value="{{ change.directory_access }}"
-                          />
                           <button class="btn btn-warning" type="submit">
                             Stop task and switch
                           </button>
@@ -1695,11 +1668,6 @@
                               name="surface"
                               value="conversation"
                             />
-                            <input
-                              type="hidden"
-                              name="directory_access"
-                              value="{{ change.directory_access }}"
-                            />
                             <button class="btn btn-warning" type="submit">
                               Discard changes and switch
                             </button>
@@ -1739,11 +1707,6 @@
                             type="hidden"
                             name="environment"
                             value="{{ change.requested_environment }}"
-                          />
-                          <input
-                            type="hidden"
-                            name="directory_access"
-                            value="{{ change.directory_access }}"
                           />
                           <input
                             type="hidden"
@@ -1799,8 +1762,9 @@
               </button>
             </form>
             <p id="conversation-defaults-help" class="text-quiet text-xs">
-              This stores this conversation's current settings for later
-              conversations. Access approval remains separate.
+              This stores the current settings and directory permissions for
+              later conversations. Sensitive directories and host access need
+              separate consent.
             </p>
           </div>
         {% endif %}

@@ -9,7 +9,7 @@ use crate::{
 use super::super::tests::{app, command, connected, document, test_state, text};
 
 #[tokio::test]
-async fn future_defaults_require_an_explicit_revision_bound_command_without_access_approval() {
+async fn future_defaults_require_a_revision_bound_command_and_copy_directory_permissions() {
     let state = test_state();
     let token = connected(&state);
     let record = state
@@ -37,14 +37,6 @@ async fn future_defaults_require_an_explicit_revision_bound_command_without_acce
     let record = state
         .conversations
         .update_execution_settings(&record.id, record.revision, settings.clone())
-        .unwrap();
-    let record = state
-        .conversations
-        .record_directory_approval(
-            &record.id,
-            record.revision,
-            crate::conversations::DirectoryApproval::for_grant(&settings, &grant),
-        )
         .unwrap();
     let path = format!("/conversations/{}/settings/defaults", record.id);
     let fields = format!("revision={}", record.revision);
@@ -84,7 +76,8 @@ async fn future_defaults_require_an_explicit_revision_bound_command_without_acce
     )
     .await;
     assert!(body.contains("Use concise explanations."));
-    assert!(body.contains("Pending approval"));
+    assert!(!body.contains("Pending approval"));
+    assert!(!grant.requires_access_consent(state.local_data.root()));
     assert_eq!(state.conversations.list().len(), 1);
     let mut replacement = settings.clone();
     replacement.instructions = "Local exception.".to_owned();
@@ -652,7 +645,7 @@ async fn draft_preset_replacement_retains_its_reference_without_creating_a_conve
 }
 
 #[tokio::test]
-async fn preset_application_uses_the_preview_snapshot_and_requires_fresh_access_approval() {
+async fn preset_application_uses_the_preview_snapshot_and_copies_directory_permissions() {
     let state = test_state();
     let token = connected(&state);
     let record = state.conversations.create("Saved".to_owned()).unwrap();
@@ -686,20 +679,6 @@ async fn preset_application_uses_the_preview_snapshot_and_requires_fresh_access_
         )
         .unwrap();
     let owner = super::super::tests::session_id(&token);
-    let grant = &settings.directories[0];
-    let request = state
-        .access_consent
-        .request_conversation(owner, record.id, &settings, grant)
-        .unwrap();
-    state
-        .access_consent
-        .approve_conversation(&request, owner, record.id, &settings, grant)
-        .unwrap();
-    assert!(
-        state
-            .access_consent
-            .authorised_conversation(owner, record.id, &settings, grant)
-    );
     let preview = state
         .presets
         .preview(
@@ -735,13 +714,19 @@ async fn preset_application_uses_the_preview_snapshot_and_requires_fresh_access_
     assert_eq!(response.status(), StatusCode::OK);
     let body = text(response).await;
     assert!(body.contains("Selected environment unavailable"));
-    assert!(body.contains("Pending approval"));
+    assert!(!body.contains("Pending approval"));
     let applied = state.conversations.get(&record.id).unwrap();
     assert_eq!(applied.model.as_ref().unwrap().settings, settings);
-    assert!(
-        !state
-            .access_consent
-            .authorised_conversation(owner, record.id, &settings, grant)
+    assert!(!settings.directories[0].requires_access_consent(state.local_data.root()));
+    let authority =
+        crate::execution::ProjectFreeAuthority::from_settings(applied.revision, &settings).unwrap();
+    assert_eq!(
+        authority
+            .policy
+            .resolve(&settings.directories[0].guest_path())
+            .unwrap()
+            .1,
+        crate::agents::AccessMode::ReadWrite
     );
     assert_eq!(
         applied
@@ -961,7 +946,7 @@ async fn host_approval_policy_needs_fresh_consent_and_does_not_settle_pending_co
 }
 
 #[tokio::test]
-async fn strategy_switch_binds_existing_roots_and_waits_for_cancelled_commands() {
+async fn execution_switch_preserves_directory_permissions_and_waits_for_cancelled_commands() {
     let mut state = test_state();
     let home = tempfile::tempdir().unwrap();
     let data = home.path().join("frinkworks-data");
@@ -970,8 +955,9 @@ async fn strategy_switch_binds_existing_roots_and_waits_for_cancelled_commands()
     let token = connected(&state);
     let session = super::super::tests::session_id(&token);
     super::super::tests::ready_starter_environment(&state).await;
-    let grant =
+    let mut grant =
         crate::execution::DirectoryGrant::from_selected(state.local_data.root(), &[]).unwrap();
+    grant.access = crate::execution::DirectoryAccess::Write;
     let settings = crate::execution::ExecutionSettings::new(
         ModelSelection::new(ProviderKind::Xai, "grok-4.6".to_owned(), None).unwrap(),
         String::new(),
@@ -984,7 +970,7 @@ async fn strategy_switch_binds_existing_roots_and_waits_for_cancelled_commands()
     .with_location(crate::execution::ToolLocation::Host);
     let record = state
         .conversations
-        .create("Strategy switch".to_owned())
+        .create("Execution switch".to_owned())
         .unwrap();
     let record = state
         .conversations
@@ -1020,12 +1006,9 @@ async fn strategy_switch_binds_existing_roots_and_waits_for_cancelled_commands()
     };
     let pending = state.host_approvals.submit(request).unwrap();
     let path = format!("/conversations/{}/settings/environment", record.id);
-    let access = serde_json::to_string(&vec![(grant.id.as_hex(), "write")]).unwrap();
     let fields = format!(
-        "revision={}&environment={}&location=sandbox&directory_access={}",
-        active.revision,
-        settings.environment,
-        url::form_urlencoded::byte_serialize(access.as_bytes()).collect::<String>()
+        "revision={}&environment={}&location=sandbox",
+        active.revision, settings.environment
     );
     let response = app(&state)
         .oneshot(command(&path, &token, &fields))
@@ -1039,32 +1022,6 @@ async fn strategy_switch_binds_existing_roots_and_waits_for_cancelled_commands()
             .pending_for(record.id, job.id())
             .is_some()
     );
-
-    for invalid in [
-        format!(
-            "[[\"{}\",\"direct-write\"],[\"{}\",\"read-only\"]]",
-            grant.id.as_hex(),
-            grant.id.as_hex()
-        ),
-        "[[\"unknown-root\",\"direct-write\"]]".to_owned(),
-        format!("[[\"{}\",\"unknown-strategy\"]]", grant.id.as_hex()),
-    ] {
-        let response = app(&state)
-            .oneshot(command(
-                &path,
-                &token,
-                &format!(
-                    "revision={}&environment={}&directory_access={}",
-                    active.revision,
-                    settings.environment,
-                    url::form_urlencoded::byte_serialize(invalid.as_bytes()).collect::<String>(),
-                ),
-            ))
-            .await
-            .unwrap();
-        assert!(!response.status().is_success());
-        assert!(!job.cancel_requested());
-    }
 
     let settling_state = state.clone();
     let settling_job = job.clone();
@@ -1117,10 +1074,7 @@ async fn strategy_switch_binds_existing_roots_and_waits_for_cancelled_commands()
         settings.network,
         NetworkAccess::Restricted(vec!["docs.rs".into()])
     );
-    assert_eq!(
-        settings.directories[0].access,
-        crate::execution::DirectoryAccess::Write
-    );
+    assert_eq!(settings.directories, vec![grant]);
     assert!(text(response).await.contains("Pending approval"));
     let response = app(&state)
         .oneshot(command(&stop_path, &token, &stop))

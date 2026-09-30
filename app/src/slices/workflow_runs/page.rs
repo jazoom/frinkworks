@@ -878,11 +878,9 @@ fn step_status(
 
 fn state_note(state: &crate::workflows::run::RunState) -> &'static str {
     match state {
-        crate::workflows::run::RunState::Ready { .. } => {
-            "The next step is queued. Write access changes the original files immediately."
-        }
+        crate::workflows::run::RunState::Ready { .. } => "The next step is queued.",
         crate::workflows::run::RunState::Active { .. } => {
-            "The current step uses the directory permissions. Write access changes the original files immediately."
+            "The current step uses the directory permissions."
         }
         crate::workflows::run::RunState::Paused { .. } => {
             "The execution budget paused this model phase. Continue resumes the same step. Approval phases stay later in the sequence."

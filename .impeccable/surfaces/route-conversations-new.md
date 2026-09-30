@@ -43,7 +43,7 @@ This bounded extension covers configured drafts and directory setup. Stage 1 rem
 
 The configured draft shows actual paths and access modes. Pending approval remains explicit. The heading makes no claim that an environment is ready.
 
-Directory records contain access radios with descriptions. Current access remains separate from requested changes. Saved changes retain the existing execution review.
+Directory records contain access radios with descriptions. Selection applies ordinary directory permissions immediately without an additional approval. Presets and defaults carry those permissions. Sensitive directories and host access need separate consent. Active work blocks access changes.
 
 The user requested a working command start-directory selector. Selection moves an existing directory first without changes to its identity or access mode.
 
@@ -81,7 +81,7 @@ Each setting labels two value columns within the approved companion width. The s
 
 The user chose stored settings for saved snapshots. Unreviewed execution changes and unsaved edits stay excluded. Drafts supply their current choices.
 
-Preview and save retain uncommitted edits. Successful replacement supersedes them but keeps the unsent message. Directory approval and runtime consent remain separate.
+Preview and save retain uncommitted edits. Successful replacement supersedes them but keeps the unsent message. Directory permissions carry across. Sensitive-directory consent and host consent remain separate.
 
 Short mobile screens retain the complete header above Setup. Preset actions remain available through the panel scroll area.
 

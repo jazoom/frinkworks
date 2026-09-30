@@ -33,10 +33,10 @@ impl ToolId {
                 "Read a file on this computer, up to the 8 MiB scan limit. Offset is a 1-based line. Returns the next offset when more content remains."
             }
             (Self::Edit, ToolLocation::Host) => {
-                "Apply exact-match replacements to one existing host file. Each search must occur once in the original file. Changes take effect immediately."
+                "Apply exact-match replacements to one existing host file. Each search must occur once in the original file."
             }
             (Self::Write, ToolLocation::Host) => {
-                "Write a host file. Creates parent directories. Use this for new files or complete replacements. Changes take effect immediately."
+                "Write a host file. Creates parent directories. Use this for new files or complete replacements."
             }
             (Self::List, _) => "List files in a granted directory.",
             (Self::Read, _) => {

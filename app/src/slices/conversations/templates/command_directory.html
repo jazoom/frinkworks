@@ -29,7 +29,10 @@
           {% if loop.first %}selected{% endif %}
           {% if !directory.available %}disabled{% endif %}
         >
-          {{ directory.name }}{% if !directory.available %}· Unavailable{% endif %}
+          {{ directory.name }}
+          {% if !directory.available %}
+            · Cannot access directory
+          {% endif %}
         </option>
       {% endif %}
     {% endfor %}

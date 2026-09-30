@@ -108,7 +108,7 @@ impl PhasePurpose {
             Self::ReadOnlyReview => {
                 "Assesses the current files for correctness, security and regressions."
             }
-            Self::ReviewAndFix => "Reviews the current files and fixes safe issues immediately.",
+            Self::ReviewAndFix => "Reviews the current files and fixes safe issues.",
             Self::Custom => "Runs the configured phase.",
         }
     }
@@ -124,9 +124,7 @@ impl PhasePurpose {
             Self::PlanCheckpoint => {
                 "Review the exact plan and accept it or request plan changes. This decision does not approve code."
             }
-            Self::Implementation => {
-                "Implement the task in the authorised directories. Write access changes the original files immediately."
-            }
+            Self::Implementation => "Implement the task in the authorised directories.",
             Self::ReadOnlyReview => {
                 "Review the current files. Do not change them. Submit a structured review."
             }

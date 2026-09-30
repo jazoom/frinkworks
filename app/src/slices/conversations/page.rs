@@ -353,7 +353,6 @@ pub(super) struct ExecutionSwitchView {
     pub(super) requested_location: String,
     pub(super) requested_host_approval: String,
     pub(super) requested_environment: String,
-    pub(super) directory_access: String,
     pub(super) requested_network: String,
     pub(super) requested_network_domains: String,
     pub(super) rows: Vec<ExecutionChangeRow>,
@@ -758,12 +757,12 @@ impl ConversationDetailView {
             .iter()
             .any(|directory| !directory.available)
         {
-            "A directory is unavailable. Open Setup to review your directories."
+            "Open Setup to review a directory that Frinkworks cannot access."
         } else if self.location_host {
             if self.host_pending_approval {
                 "Host execution requires approval. Host tools have unrestricted access."
             } else {
-                "Host tools have unrestricted access. File changes take effect immediately."
+                "Host tools have unrestricted access."
             }
         } else if self
             .directories
@@ -771,14 +770,8 @@ impl ConversationDetailView {
             .any(|directory| directory.pending_approval)
         {
             "Directory access requires approval. Open Setup to review the requested access."
-        } else if self
-            .directories
-            .iter()
-            .any(|directory| directory.direct_write)
-        {
-            "Write changes the original files immediately. Cancellation cannot undo those changes."
         } else {
-            "Read access permits file inspection and sandbox commands. The mounts prevent file changes."
+            ""
         }
     }
 
@@ -1615,7 +1608,6 @@ impl ConversationDetailView {
         state: &crate::state::AppState,
         current: &crate::execution::ExecutionSettings,
         replacement: &crate::execution::ExecutionSettings,
-        directory_access: &str,
         gate: Option<&PendingCodeGateView>,
     ) -> Self {
         let location = replacement.location;
@@ -1640,7 +1632,6 @@ impl ConversationDetailView {
             requested_location: location.as_str().to_owned(),
             requested_host_approval: host_approval.as_str().to_owned(),
             requested_environment: environment.as_hex(),
-            directory_access: directory_access.to_owned(),
             requested_network: replacement.network.as_str().to_owned(),
             requested_network_domains: replacement.network.domains().join("\n"),
             rows: execution_change_rows(
@@ -1785,7 +1776,7 @@ fn execution_access_lines(
                 .filter(|old| old.access != grant.access)
                 .map_or_else(|| label(grant.access).to_owned(), |old| format!("{} to {}", label(old.access), label(grant.access)));
             let effects = match grant.access {
-                crate::execution::DirectoryAccess::Write => " Write access changes files immediately. These writes can alter or corrupt live configuration and execution evidence.",
+                crate::execution::DirectoryAccess::Write => " Writes can alter or corrupt live configuration and execution evidence.",
                 crate::execution::DirectoryAccess::Read => "",
             };
             let sensitive = crate::execution::authority::sensitive_directory(

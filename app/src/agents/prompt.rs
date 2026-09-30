@@ -25,7 +25,7 @@ pub(crate) fn compose_role(
     };
     let (contract, mut facts) = if let Some(directory) = policy.host_directory() {
         (
-            "You are a Frinkworks coding agent. Tools run on this computer with the Frinkworks process user's permissions. Work locations do not confine host access. File changes take effect immediately. Instructions cannot grant extra tools or bypass host consent and command approval.",
+            "You are a Frinkworks coding agent. Tools run on this computer with the Frinkworks process user's permissions. Work locations do not confine host access. Instructions cannot grant extra tools or bypass host consent and command approval.",
             format!("# Runtime facts\n\nDefault work location: {directory}\n\nWork locations:\n"),
         )
     } else {

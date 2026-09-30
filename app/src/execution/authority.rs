@@ -98,10 +98,21 @@ impl ProjectFreeAuthority {
     }
 }
 
+const SENSITIVE_HOME_DIRECTORIES: [&str; 7] = [
+    ".ssh",
+    ".gnupg",
+    ".aws",
+    ".azure",
+    ".kube",
+    ".config",
+    ".password-store",
+];
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SensitiveDirectory {
     FrinkworksData,
     Home,
+    Credentials,
 }
 
 pub(crate) fn classify_sensitive_directory(
@@ -111,10 +122,23 @@ pub(crate) fn classify_sensitive_directory(
     if paths_overlap(path, data_root) {
         return Some(SensitiveDirectory::FrinkworksData);
     }
-    std::env::var_os("HOME")
-        .and_then(|home| std::fs::canonicalize(home).ok())
-        .filter(|home| path == home || home.starts_with(path))
-        .map(|_| SensitiveDirectory::Home)
+    let home = std::env::var_os("HOME").and_then(|home| std::fs::canonicalize(home).ok())?;
+    classify_sensitive_home_directory(path, &home)
+}
+
+fn classify_sensitive_home_directory(path: &Path, home: &Path) -> Option<SensitiveDirectory> {
+    if path == home || home.starts_with(path) {
+        return Some(SensitiveDirectory::Home);
+    }
+    SENSITIVE_HOME_DIRECTORIES
+        .iter()
+        .any(|relative| {
+            let root = home.join(relative);
+            // An ancestor grant also exposes credentials, including relocated symbolic-link targets.
+            paths_overlap(path, &root)
+                || std::fs::canonicalize(&root).is_ok_and(|target| paths_overlap(path, &target))
+        })
+        .then_some(SensitiveDirectory::Credentials)
 }
 
 pub(crate) fn sensitive_directory(path: &Path, data_root: &Path) -> bool {

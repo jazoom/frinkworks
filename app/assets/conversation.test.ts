@@ -30,7 +30,6 @@ describe.each(["new", "saved"])("%s conversation settings", (state) => {
                 <textarea name="network_domains"></textarea>
                 <input name="location" type="radio" value="sandbox" checked>
                 <input name="location" type="radio" value="host">
-                <input name="directory_access" value="">
             </form>
         </section>`;
         root = document.querySelector<HTMLElement>("#conversation-detail")!;
@@ -277,40 +276,41 @@ describe.each(["new", "saved"])("%s conversation settings", (state) => {
             expect(value("revision")).toBe("4");
         });
 
-        test("a command-directory response retains staged access but accepts the new revision", () => {
-            root.querySelector<HTMLInputElement>(
-                '[name="directory_access"]',
-            )!.id = "execution-directory-access";
-            root.insertAdjacentHTML(
-                "beforeend",
-                `
-                <input type="radio" name="access-one" data-execution-directory="one" value="read" checked>
-                <input type="radio" name="access-one" data-execution-directory="one" value="write">`,
-            );
+        test.each(["command-directory-form", "directory-access-form-one"])(
+            "%s retains unsaved execution fields and accepts the new revision",
+            (formId) => {
+                const original = root.innerHTML;
+                edit();
+                root.innerHTML = original;
+                root.querySelector<HTMLInputElement>(
+                    '[name="revision"]',
+                )!.value = "4";
+                reconcile(formId);
+                expect(value("network")).toBe("restricted");
+                expect(value("revision")).toBe("4");
+                root.innerHTML = original;
+                reconcile("conversation-rename");
+                expect(value("revision")).toBe("4");
+            },
+        );
+
+        test("sensitive directory consent retains requested settings and accepts the new revision", () => {
             const original = root.innerHTML;
-            const access = root.querySelector<HTMLInputElement>(
-                "#execution-directory-access",
-            )!;
-            access.value = JSON.stringify([["one", "write"]]);
-            access.dispatchEvent(new Event("input", { bubbles: true }));
+            edit();
+            root.innerHTML = original;
+            reconcile("directory-access-form-one");
             root.innerHTML = original;
             root.querySelector<HTMLInputElement>('[name="revision"]')!.value =
-                "4";
-            reconcile("command-directory-form");
-            expect(
-                root.querySelector<HTMLInputElement>(
-                    '[data-execution-directory][value="write"]',
-                )!.checked,
-            ).toBe(true);
-            expect(
-                root.querySelector<HTMLInputElement>(
-                    '[data-execution-directory][value="write"]',
-                )!.defaultChecked,
-            ).toBe(false);
-            expect(value("revision")).toBe("4");
+                "5";
+            reconcile("", 200, "/conversations/example/directories/consent");
+            expect(value("instructions")).toBe("Keep my draft");
+            expect(value("tool_read")).toBe("read");
+            expect(value("network")).toBe("restricted");
+            expect(value("network_domains")).toBe("example.com");
+            expect(value("revision")).toBe("5");
             root.innerHTML = original;
             reconcile("conversation-rename");
-            expect(value("revision")).toBe("4");
+            expect(value("revision")).toBe("5");
         });
 
         test("ordinary saved fields submit without dirty execution values", () => {

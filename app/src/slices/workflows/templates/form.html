@@ -650,9 +650,9 @@
                         >
 {{ step.settings_direct }}</textarea>
                         <span class="text-quiet text-xs"
-                          >One path per line. Host changes occur immediately and
-                          remain after failure or cancellation. Each run needs
-                          destination consent.</span
+                          >One path per line. Host changes remain after failure
+                          or cancellation. Each run needs destination
+                          consent.</span
                         >
                       </label>
                     </div>
@@ -895,8 +895,7 @@
                   </select>
                   <p class="text-quiet text-xs">
                     Read phases cannot change files. Write phases use each
-                    directory's permissions and change original files
-                    immediately.
+                    directory's permissions.
                   </p>
                   {% if step.directory_access_error != "" %}
                     <p class="text-error text-sm">

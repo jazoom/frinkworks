@@ -1629,22 +1629,21 @@ body:has(.workspace-catalogue) .app-frame {
     font-size: 16px;
     font-weight: 400;
 }
-.app-frame :is(.directory-add, .directory-remove):hover {
+.app-frame .directory-add:hover {
     background: transparent;
     text-decoration: none;
 }
-.app-frame .directory-remove {
+.app-frame .btn.directory-remove {
+    width: 44px;
+    height: 44px;
     min-height: 44px;
-    padding-inline: 0;
-    color: var(--color-error);
-    font-size: 14px;
-    font-weight: 400;
-}
-.directory-availability {
+    padding: 0;
     color: var(--workspace-muted);
 }
-.directory-availability .status {
-    border-radius: 50%;
+.app-frame .directory-remove:hover:not(:disabled) {
+    background: var(--color-base-200);
+    color: var(--color-error);
+    text-decoration: none;
 }
 .directory-card .workspace-icon {
     width: 22px;

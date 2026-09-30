@@ -32,7 +32,7 @@
             >
               {% if location_host %}Work location{% else %}{{ directory.access_label }}{% endif %}
               {% if !directory.available %}
-                · Unavailable
+                · Cannot access directory
               {% else if directory.pending_approval && !location_host %}
                 · Pending approval
               {% endif %}
@@ -81,5 +81,7 @@
       {% endif %}
     </div>
   </section>
-  <p class="text-quiet mt-5 text-base">{{ self.draft_access_note() }}</p>
+  {% if !self.draft_access_note().is_empty() %}
+    <p class="text-quiet mt-5 text-base">{{ self.draft_access_note() }}</p>
+  {% endif %}
 </div>

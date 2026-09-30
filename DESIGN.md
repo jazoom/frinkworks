@@ -358,7 +358,7 @@ Replacement hides the list and shows current and preset values. Each setting lab
 
 A tint and Changed identify different values. Long values wrap. Instruction text retains a bounded scroll region with keyboard focus.
 
-Cancel returns to the list without a command. Apply replacement remains explicit. Its explanation separates settings from directory approval and runtime consent.
+Cancel returns to the list without a command. Apply replacement remains explicit. Its explanation states that directory permissions carry across. Sensitive directories and host access need separate consent.
 
 The save panel contains a name field and a settings summary. A separate disclosure contains the instructions. Back to presets retains the name.
 
@@ -370,13 +370,13 @@ Preset controls retain the larger workspace scale and theme accent. Narrow scree
 
 Directories opens with a Directory access heading and Add a directory. Empty conversations explain the absence of directory access.
 
-Each directory has a bordered record with labelled paths and radio controls. The record separates requested access from current access and retains explicit approval actions.
+Each directory has a bordered record with labelled paths and radio controls. Selection applies Read or Write immediately for ordinary directories. Sensitive directories retain explicit consent actions.
 
 The command start-directory selector moves the chosen directory first. It retains each access mode and requires fresh consent where applicable.
 
 Unavailable directories remain visible but cannot become a new command location. Active work disables the selector.
 
-Saved access changes retain Review changes and the existing execution review. A radio selection alone grants no authority.
+Saved access changes use a directory command when the user selects a radio. Ordinary directories need no execution review or additional approval. Active work disables access changes.
 
 Configured drafts show the actual directory paths and access states. The summary names the execution location and network setting without a readiness claim.
 
@@ -410,7 +410,7 @@ Host and sandbox modes expose the same tool selections. Host consent covers file
 
 Ordinary setup controls apply when they change. There is no Save, Done, Keep draft or Cancel action. Close hides Setup. The application requires JavaScript.
 
-Save as future defaults is a separate explicit action in the companion footer. Its explanation distinguishes stored conversation settings from access approval.
+Save as future defaults is a separate explicit action in the companion footer. Its explanation includes directory permissions. Sensitive directories and host access need separate consent.
 
 Execution uses labelled radio choices for the location and command policy. Ask each time and Automatic (YOLO) remain visible for both locations.
 

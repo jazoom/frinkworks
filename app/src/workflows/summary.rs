@@ -34,9 +34,7 @@ impl ProcessPhase {
                     .to_owned(),
                 match access {
                     StepAccess::Read => "Read mounts prevent changes to the original files.",
-                    StepAccess::Write => {
-                        "Writes change original files immediately within the directory permissions."
-                    }
+                    StepAccess::Write => "Writes use the directory permissions.",
                 },
                 "Each attempt receives the brief and declared artefacts. Earlier worker transcripts stay excluded.",
             ),
@@ -80,9 +78,8 @@ impl ProcessPhase {
 
     pub(crate) fn annotate_direct(&mut self, paths: &str) {
         if !paths.is_empty() {
-            self.effects = format!(
-                "Write access changes original files immediately: {paths}. Failure or cancellation does not undo writes."
-            );
+            self.effects =
+                format!("Write access: {paths}. Failure or cancellation does not undo writes.");
         }
     }
 

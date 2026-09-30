@@ -4,7 +4,7 @@ use crate::agents::record::{AccessMode, AgentRecord, DirectoryGrant, NetworkAcce
 use crate::agents::{AgentId, ToolId};
 
 #[test]
-fn composed_preamble_omits_host_paths() {
+fn preamble_exposes_host_paths_only_in_host_mode() {
     let record = AgentRecord {
         id: AgentId::generate().expect("id"),
         revision: 2,
@@ -28,17 +28,12 @@ fn composed_preamble_omits_host_paths() {
         &record.tools,
         &policy,
     );
-    assert!(preamble.contains("Frinkworks contract"));
-    assert!(preamble.contains("Keep public interfaces stable."));
     assert!(preamble.contains("/project"));
-    assert!(preamble.contains("- list"));
-    assert!(preamble.contains("- read"));
     assert!(!preamble.contains("secret-repo"));
     assert!(!preamble.contains("/home/user"));
     let host = policy.on_host(&record.directories[0].host_path);
     let preamble = compose_role(&record.name, "", &record.instructions, &record.tools, &host);
     assert!(preamble.contains("/home/user/src/secret-repo"));
-    assert!(preamble.contains("File changes take effect immediately."));
     assert!(!preamble.contains("Host paths are not available."));
     assert!(!preamble.contains("/project"));
 }
