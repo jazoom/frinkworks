@@ -143,12 +143,7 @@ impl PresetForm {
             self.location.trim()
         })
         .ok_or("Choose where tools run.")?;
-        let host_approval =
-            crate::execution::HostApprovalPolicy::parse(if self.host_approval.trim().is_empty() {
-                "ask-each-time"
-            } else {
-                self.host_approval.trim()
-            })
+        let host_approval = crate::execution::HostApprovalPolicy::parse(self.host_approval.trim())
             .ok_or("Choose a command approval policy.")?;
         let network = NetworkAccess::parse_form(&self.network, &self.network_domains)
             .map_err(|_| "Enter valid network access and domains.")?;

@@ -152,12 +152,7 @@ fn validate(
         form.location.trim()
     })
     .ok_or("Choose where tools run.")?;
-    let host_approval =
-        crate::execution::HostApprovalPolicy::parse(if form.host_approval.trim().is_empty() {
-            "ask-each-time"
-        } else {
-            form.host_approval.trim()
-        })
+    let host_approval = crate::execution::HostApprovalPolicy::parse(form.host_approval.trim())
         .ok_or("Choose a command approval policy.")?;
     ExecutionSettings::new(
         selection,

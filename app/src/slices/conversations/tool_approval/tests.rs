@@ -67,6 +67,7 @@ fn pending_command(
             "Inspect the directory.".to_owned(),
         )
         .unwrap();
+    job.push_response("I will inspect the directory.".to_owned());
     job.start_tool(
         "call-run".to_owned(),
         "run".to_owned(),
@@ -108,28 +109,39 @@ async fn command_approval_discloses_the_request_location_without_granting_author
         let state = test_state();
         let token = connected(&state);
         let (record, job, request) = pending_command(&state, &token, location);
-        let path = format!("/conversations/{}?work=true", record.id);
-        let response = app(&state).oneshot(document(&path, &token)).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-        let body = text(response).await;
-        let approval = body
-            .split("id=\"conversation-host-command\"")
-            .nth(1)
-            .unwrap()
-            .split("</section>")
-            .next()
-            .unwrap();
-        assert_eq!(
-            approval.contains("Unrestricted host access"),
-            location == ToolLocation::Host
-        );
-        assert_eq!(
-            approval.contains("Sandbox access"),
-            location == ToolLocation::Sandbox
-        );
-        assert!(approval.contains(&request.directory.display().to_string()));
-        assert_eq!(body.matches("id=\"conversation-stop\"").count(), 1);
-        assert!(body.contains("Awaiting command approval"));
+        let path = format!("/conversations/{}", record.id);
+        for response in [
+            app(&state).oneshot(document(&path, &token)).await.unwrap(),
+            super::super::job::observe_response(
+                state.clone(),
+                record.id,
+                session_id(&token),
+                job.clone(),
+                0,
+                false,
+            ),
+        ] {
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = text(response).await;
+            let transcript = body.find("id=\"transcript\"").unwrap();
+            let approval_start = body.find("id=\"conversation-host-command\"").unwrap();
+            let companion = body.find("id=\"conversation-work\"").unwrap();
+            assert!(transcript < approval_start && approval_start < companion);
+            let approval = body[approval_start..].split("</section>").next().unwrap();
+            assert_eq!(
+                approval.contains("Unrestricted host access"),
+                location == ToolLocation::Host
+            );
+            assert_eq!(
+                approval.contains("Sandbox access"),
+                location == ToolLocation::Sandbox
+            );
+            assert!(approval.contains(&request.directory.display().to_string()));
+            assert!(approval.contains(&request.token));
+            assert_eq!(body.matches("id=\"conversation-stop\"").count(), 1);
+            assert_eq!(body.matches("id=\"conversation-host-command\"").count(), 1);
+            assert!(body.contains("Awaiting command approval"));
+        }
         assert_eq!(
             state.host_approvals.pending_for(record.id, job.id()),
             Some(request)
@@ -145,6 +157,51 @@ async fn command_approval_discloses_the_request_location_without_granting_author
                 .unwrap()
                 .directory_approvals
                 .is_empty()
+        );
+    }
+}
+
+#[tokio::test]
+async fn decisions_replace_the_bound_approval_form_without_a_second_command() {
+    for (action, label) in [
+        ("approve", "Command approved"),
+        ("reject", "Command rejected"),
+    ] {
+        let state = test_state();
+        let token = connected(&state);
+        let (record, job, request) = pending_command(&state, &token, ToolLocation::Sandbox);
+        let path = format!("/conversations/{}/host-command/{action}", record.id);
+        let fields = format!(
+            "revision={}&job={}&request={}&command=%22printf+hi%22",
+            request.execution_revision,
+            job.id(),
+            request.token,
+        );
+        let response = app(&state)
+            .oneshot(command(&path, &token, &fields))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = text(response).await;
+        assert!(body.contains("id=\"conversation-command-decision\""));
+        assert!(body.contains(label));
+        assert!(!body.contains("id=\"conversation-host-command\""));
+        assert!(
+            state
+                .host_approvals
+                .pending_for(record.id, job.id())
+                .is_none()
+        );
+
+        let duplicate = app(&state)
+            .oneshot(command(&path, &token, &fields))
+            .await
+            .unwrap();
+        assert_eq!(duplicate.status(), StatusCode::CONFLICT);
+        assert!(
+            !text(duplicate)
+                .await
+                .contains("id=\"conversation-command-decision\"")
         );
     }
 }

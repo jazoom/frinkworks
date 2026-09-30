@@ -184,7 +184,8 @@ fn host_consent_is_destination_bound_and_not_copied() {
         crate::tests::test_environment_id(),
     )
     .unwrap()
-    .with_location(crate::execution::ToolLocation::Host);
+    .with_location(crate::execution::ToolLocation::Host)
+    .with_host_approval(crate::execution::HostApprovalPolicy::AskEachTime);
     let store = consent_store();
     let owner = session();
     let request = store.request_host_draft(owner, "draft", &settings).unwrap();
@@ -225,7 +226,8 @@ fn automatic_host_consent_does_not_reuse_ask_each_time_approval() {
         crate::tests::test_environment_id(),
     )
     .unwrap()
-    .with_location(crate::execution::ToolLocation::Host);
+    .with_location(crate::execution::ToolLocation::Host)
+    .with_host_approval(crate::execution::HostApprovalPolicy::AskEachTime);
     let automatic = settings
         .clone()
         .with_host_approval(crate::execution::HostApprovalPolicy::Automatic);

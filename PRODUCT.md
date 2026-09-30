@@ -123,11 +123,13 @@ Host execution requires explicit consent. Host tools run as the Frinkworks proce
 
 A direct `!command` or `!!command` runs in the selected location without a provider connection. Sandbox commands require a ready environment.
 
-**Ask each time** is the default command policy in both locations. **Automatic (YOLO)** omits individual command decisions but never increases directory permissions.
+**Automatic (YOLO)** is the default command policy in both locations. It omits individual command decisions but never increases directory permissions. **Ask each time** remains available for individual command approval.
 
 Setup and presets expose both command policies. An explicit action saves requested settings as future defaults. Saved defaults contain no runtime consent.
 
 Command approval covers the submitted command, not script internals. Direct commands, model Run calls and repository-status workflow commands use the same approval gate.
+
+Approval requests appear at the conversation end, beside their context. The user approves or rejects the exact command inline. Approval never requires a sidebar.
 
 Evidence records requests, arguments, timestamps and results. Output is bounded and redacted. Evidence is not a filesystem audit or permission to replay a command.
 

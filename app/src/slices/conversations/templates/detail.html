@@ -141,7 +141,7 @@
                 >Tree</a
               >
             {% endif %}
-            {% if self.work_non_idle() || context.is_some() || summary_usage.is_some() %}
+            {% if pending_host_command.is_none() && (self.work_non_idle() || context.is_some() || summary_usage.is_some()) %}
               {% if !companion_html.is_empty() %}
                 {% if let Some(saved) = self.saved() %}
                   <a
@@ -234,11 +234,6 @@
               <svg class="workspace-icon" aria-hidden="true">
                 <use href="/static/images/workspace-icons.svg#attention" /></svg
               ><span class="flex-1">{{ self.attention_label() }}</span>
-              {% if pending_host_command.is_some() %}
-                <span class="btn btn-warning btn-sm shrink-0"
-                  >Review command</span
-                >
-              {% endif %}
             </button>
           {% else if let Some(saved) = self.saved() %}
             <a
@@ -253,11 +248,6 @@
               <svg class="workspace-icon" aria-hidden="true">
                 <use href="/static/images/workspace-icons.svg#attention" /></svg
               ><span class="flex-1">{{ self.attention_label() }}</span>
-              {% if pending_host_command.is_some() %}
-                <span class="btn btn-warning btn-sm shrink-0"
-                  >Review command</span
-                >
-              {% endif %}
             </a>
           {% endif %}
         {% endif %}
@@ -580,6 +570,7 @@
         {% endif %}
 
         {% for message in messages %}{% include "conversations/templates/message_article.html" %}{% endfor %}
+        {% include "conversations/templates/command_approval.html" %}
       </section>
       {% if let Some(saved) = self.saved() %}
         <div id="conversation-observe" hidden>

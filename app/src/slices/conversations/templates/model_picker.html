@@ -1,4 +1,8 @@
-<div id="conversation-model-controls" class="contents">
+<div
+  id="conversation-model-controls"
+  class="contents"
+  {% if pending_host_command.is_some() %}hidden{% endif %}
+>
   <input
     form="{{ self.selection_form() }}"
     id="conversation-provider"

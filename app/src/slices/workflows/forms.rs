@@ -2451,15 +2451,11 @@ fn parse_override_settings(step: &StepDraft, errors: &mut StepErrors) -> Option<
         None
     } else {
         Some(
-            crate::execution::HostApprovalPolicy::parse(if step.host_approval.trim().is_empty() {
-                crate::execution::HostApprovalPolicy::AskEachTime.as_str()
-            } else {
-                step.host_approval.trim()
-            })
-            .ok_or_else(|| {
-                errors.settings = "Choose Ask each time or Automatic (YOLO).";
-            })
-            .ok()?,
+            crate::execution::HostApprovalPolicy::parse(step.host_approval.trim())
+                .ok_or_else(|| {
+                    errors.settings = "Choose Ask each time or Automatic (YOLO).";
+                })
+                .ok()?,
         )
     };
     let settings = SettingsOverrides {

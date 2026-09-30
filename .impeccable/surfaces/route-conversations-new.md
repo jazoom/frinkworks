@@ -105,6 +105,10 @@ Ordinary replies and retries use server-authored status. Workflow progress shows
 
 The companion retains eligible Stop controls outside its scroll area. Questions and execution pauses expose the existing controls through attention strips.
 
+Command approval stays at the transcript end, after the agent's output. Approve and Reject act on the exact request. No approval sidebar or attention strip appears.
+
+The request shows the command, purpose and actual execution location. A decision replaces the form with a collapsed acknowledgement until the command record supplies its result. Historical views link to the latest request.
+
 The desktop companion retains its 400-pixel width. Mobile fills the conversation area and excludes the hidden composer.
 
 Compact desktop composer controls scroll horizontally without overlap with the companion. Escape and responsive focus restoration remain available.

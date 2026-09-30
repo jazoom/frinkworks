@@ -73,6 +73,11 @@ impl PresetsPage {
         if form.network.is_empty() {
             form.network = "none".to_owned();
         }
+        if form.host_approval.trim().is_empty() {
+            form.host_approval = crate::execution::HostApprovalPolicy::default()
+                .as_str()
+                .to_owned();
+        }
         let providers = ProviderKind::ALL
             .into_iter()
             .map(|kind| OptionView {

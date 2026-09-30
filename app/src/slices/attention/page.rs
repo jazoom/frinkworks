@@ -105,7 +105,7 @@ fn decisions(state: &AppState) -> Vec<Decision> {
                     }
                 }
                 .to_owned(),
-                href: format!("/conversations/{}?work=true", record.id.as_hex()),
+                href: format!("/conversations/{}", record.id.as_hex()),
                 evidence: String::new(),
                 reason: "Needs command approval",
             });

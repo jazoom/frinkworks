@@ -347,6 +347,11 @@ pub(super) struct HostCommandView {
     pub(super) location_host: bool,
 }
 
+pub(super) struct CommandDecisionView {
+    pub(super) command: String,
+    pub(super) label: &'static str,
+}
+
 pub(super) struct PendingCommandView {
     pub(super) location: String,
     pub(super) cleanup: bool,
@@ -475,6 +480,7 @@ pub(super) struct ConversationDetailView {
     pub(super) host_pending_approval: bool,
     pub(super) host_consent_request: String,
     pub(super) pending_host_command: Option<HostCommandView>,
+    pub(super) command_decision: Option<CommandDecisionView>,
     /// A direct command that is still running. It reports the selected
     /// location and any unfinished sandbox cleanup.
     pub(super) pending_command: Option<PendingCommandView>,
@@ -570,12 +576,8 @@ impl ConversationDetailView {
         let host_identity = crate::execution::HostIdentity::current();
         let location_host = form.location == crate::execution::ToolLocation::Host.as_str();
         let host_approval_automatic =
-            crate::execution::HostApprovalPolicy::parse(if form.host_approval.trim().is_empty() {
-                "ask-each-time"
-            } else {
-                form.host_approval.trim()
-            })
-            .is_some_and(crate::execution::HostApprovalPolicy::automatic);
+            crate::execution::HostApprovalPolicy::parse(form.host_approval.trim())
+                .is_some_and(crate::execution::HostApprovalPolicy::automatic);
         let host_pending_approval = super::new::settings_snapshot(state, session, &form)
             .ok()
             .flatten()
@@ -728,6 +730,7 @@ impl ConversationDetailView {
             host_pending_approval,
             host_consent_request,
             pending_host_command: None,
+            command_decision: None,
             pending_command: None,
             pending_question: None,
             continuation: None,
@@ -828,11 +831,8 @@ impl ConversationDetailView {
     }
 
     fn needs_review(&self) -> bool {
-        self.saved().is_some_and(|saved| {
-            saved.pending_gate.is_some()
-                || self.pending_host_command.is_some()
-                || self.prepared_recovery.is_some()
-        })
+        self.saved()
+            .is_some_and(|saved| saved.pending_gate.is_some() || self.prepared_recovery.is_some())
     }
 
     fn needs_attention(&self) -> bool {
@@ -840,9 +840,7 @@ impl ConversationDetailView {
     }
 
     fn attention_label(&self) -> &'static str {
-        if self.pending_host_command.is_some() {
-            "Command approval required"
-        } else if self.pending_question.is_some() {
+        if self.pending_question.is_some() {
             "Needs your answer"
         } else if self.continuation.is_some() {
             "Execution paused"
@@ -1178,6 +1176,14 @@ impl ConversationDetailView {
             {
                 message.status = status;
                 message.streaming = false;
+                if message.is_command
+                    && let Some(entry) = record
+                        .messages
+                        .iter()
+                        .find(|entry| message_id(&record.id, entry) == message.id)
+                {
+                    message.html = command_entry_html(&record.id, &message.id, entry, false);
+                }
             }
         }
         if let Some(retry) = &retry {
@@ -1360,6 +1366,7 @@ impl ConversationDetailView {
             host_pending_approval: false,
             host_consent_request: String::new(),
             pending_host_command: None,
+            command_decision: None,
             pending_command: None,
             pending_question: None,
             continuation: record
@@ -1532,6 +1539,21 @@ impl ConversationDetailView {
         self
     }
 
+    pub(super) fn with_command_decision(
+        mut self,
+        command: String,
+        decision: crate::execution::HostCommandDecision,
+    ) -> Self {
+        self.command_decision = Some(CommandDecisionView {
+            command,
+            label: match decision {
+                crate::execution::HostCommandDecision::Approved => "Command approved",
+                crate::execution::HostCommandDecision::Rejected => "Command rejected",
+            },
+        });
+        self
+    }
+
     pub(super) fn with_pending_command(mut self, command: Option<PendingCommandView>) -> Self {
         self.pending_command = command;
         self
@@ -1645,14 +1667,9 @@ impl ConversationDetailView {
         if self.saved().is_none() {
             self.network_summary = network_summary_from_form(fields.network);
             self.location_host = fields.location == crate::execution::ToolLocation::Host.as_str();
-            self.host_approval_automatic = crate::execution::HostApprovalPolicy::parse(
-                if fields.host_approval.trim().is_empty() {
-                    "ask-each-time"
-                } else {
-                    fields.host_approval.trim()
-                },
-            )
-            .is_some_and(crate::execution::HostApprovalPolicy::automatic);
+            self.host_approval_automatic =
+                crate::execution::HostApprovalPolicy::parse(fields.host_approval.trim())
+                    .is_some_and(crate::execution::HostApprovalPolicy::automatic);
         }
         self.settings_open = true;
         self

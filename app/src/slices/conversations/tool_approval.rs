@@ -110,6 +110,8 @@ async fn decide(
     if job.cancel_requested() {
         state.host_approvals.invalidate_job(job_id);
     }
+    // JSON escapes preserve shell newlines across HTML form normalisation.
+    let command: String = serde_json::from_str(&form.command).unwrap_or_default();
     match state.host_approvals.decide(
         &crate::execution::HostCommandRequest {
             token: form.request,
@@ -122,8 +124,7 @@ async fn decide(
                 .map_or(crate::execution::ToolLocation::Sandbox, |request| {
                     request.location
                 }),
-            // JSON escapes preserve shell newlines across HTML form normalisation.
-            command: serde_json::from_str(&form.command).unwrap_or_default(),
+            command: command.clone(),
             directory: pending
                 .as_ref()
                 .map(|request| request.directory.clone())
@@ -143,7 +144,8 @@ async fn decide(
             render_detail_command(
                 graft,
                 PatchStatus::Ok,
-                detail_view(&state, session.0, &record, &record.title, ""),
+                detail_view(&state, session.0, &record, &record.title, "")
+                    .with_command_decision(command, decision),
             )
         }
         Err(crate::execution::ApprovalError::Duplicate) => render_detail_command(

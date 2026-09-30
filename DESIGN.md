@@ -285,6 +285,16 @@ The shortcut hint distinguishes Queue from Send. The submit label follows the la
 
 Pending decisions retain their existing queue and consent rules.
 
+Command approval appears at the transcript end, after the latest output and above the composer. It never opens or requires Current work.
+
+The inline request shows the exact command, purpose and execution location. Approve and Reject retain the bound request identity. The host warning names unrestricted access.
+
+A successful decision replaces the request with a collapsed acknowledgement. The next transcript refresh replaces that acknowledgement with the existing command record and its result.
+
+Historical views link to the latest request instead of approval controls. Stop remains beside the composer. Approval retains unsent text.
+
+Disabled model controls disappear during approval to preserve transcript space. A tall request starts at its heading when the reader follows the transcript end. Earlier transcript positions stay unchanged.
+
 Jump to latest appears when the reader leaves the transcript end. New output does not move the reader away from earlier messages.
 
 ### Conversation header
@@ -341,9 +351,7 @@ The companion retains its 400-pixel width. Markdown code blocks receive keyboard
 
 The idle companion reads Ready when you are with View activity and evidence and Continue the conversation.
 
-Command approval reads Run this command for both execution locations. It shows the exact command, work location and effective policy. The warning follows the command's execution location, not the conversation defaults.
-
-The Command approval required strip exposes Review command. The queue note explains that work waits for approval. Stop remains available beside Queue and in Current work during approval.
+Command approval has no companion controls or attention strip. A pending command hides the Current work trigger and closes an open Current work panel. The queue note explains that new messages wait.
 
 Evidence links show requests and bounded output. They start no command and make no current-file claim.
 

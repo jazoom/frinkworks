@@ -5,6 +5,7 @@ import "@fontsource/ibm-plex-mono/latin-400.css";
 import "@fontsource/ibm-plex-mono/latin-500.css";
 import "./input.css";
 import { startApp } from "./hypergraft-bootstrap";
+import { PIN_THRESHOLD_PX } from "./transcript";
 import {
     commandBlockReason,
     listenForLocationChanges,
@@ -2027,6 +2028,54 @@ function syncReplyStrip() {
     }
 }
 
+const inlineApprovalRequests = new WeakMap<HTMLElement, string>();
+function syncInlineCommandApproval() {
+    const approval = document.querySelector<HTMLElement>(
+        "#conversation-host-command, #conversation-command-decision",
+    );
+    if (!approval) return;
+    const detail = document.querySelector(
+        "#conversation-detail[data-work-open]",
+    );
+    if (
+        detail &&
+        approval.id === "conversation-host-command" &&
+        !detail.querySelector(
+            "#workflow-detail, #activity-detail, #tree-detail",
+        )
+    ) {
+        const focusInWork =
+            document.activeElement?.closest("#conversation-work");
+        detail.querySelector<HTMLButtonElement>("[data-work-close]")?.click();
+        if (focusInWork) approval.focus({ preventScroll: true });
+    }
+    const request =
+        approval.querySelector<HTMLInputElement>('input[name="request"]')
+            ?.value ?? "";
+    // A fresh transcript needs alignment even when its request stays unchanged.
+    const previousRequest = inlineApprovalRequests.get(approval);
+    inlineApprovalRequests.set(approval, request);
+    if (!request || request === previousRequest) return;
+    requestAnimationFrame(() => {
+        const transcript = approval.closest<HTMLElement>("#transcript");
+        if (!approval.isConnected || !transcript) return;
+        const remaining =
+            transcript.scrollHeight -
+            transcript.scrollTop -
+            transcript.clientHeight;
+        // A tall request starts at its command, not its approval buttons.
+        // Preserve the reader's position when the transcript does not follow its tail.
+        if (
+            remaining <= PIN_THRESHOLD_PX &&
+            approval.offsetHeight > transcript.clientHeight
+        ) {
+            transcript.scrollTop +=
+                approval.getBoundingClientRect().top -
+                transcript.getBoundingClientRect().top;
+        }
+    });
+}
+
 function syncComposerActions() {
     const form = document.querySelector<HTMLFormElement>(
         "#conversation-composer",
@@ -3262,6 +3311,25 @@ listenForRequestSettled(syncInstructionsFields);
 listenForLivePatches(syncInstructionsFields);
 reconcileRevision();
 syncImageCompatibility();
+syncInlineCommandApproval();
+listenForLivePatches(syncInlineCommandApproval);
+listenForLocationChanges(syncInlineCommandApproval);
+listenForRequestSettled((detail) => {
+    syncInlineCommandApproval();
+    if (
+        detail.outcome === "applied-patch" &&
+        detail.status === 200 &&
+        detail.form.hasAttribute("data-command-approval") &&
+        (document.activeElement === document.body ||
+            document.activeElement?.id === "conversation-detail")
+    ) {
+        const destination =
+            document.querySelector<HTMLElement>(
+                "#conversation-command-decision",
+            ) ?? document.querySelector<HTMLElement>("#transcript");
+        destination?.focus({ preventScroll: true });
+    }
+});
 syncReplyStrip();
 listenForLivePatches(syncReplyStrip);
 listenForLocationChanges(syncReplyStrip);

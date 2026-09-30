@@ -762,7 +762,8 @@ async fn host_approval_policy_needs_fresh_consent_and_does_not_settle_pending_co
         super::super::default_environment(&state).unwrap(),
     )
     .unwrap()
-    .with_location(crate::execution::ToolLocation::Host);
+    .with_location(crate::execution::ToolLocation::Host)
+    .with_host_approval(crate::execution::HostApprovalPolicy::AskEachTime);
     let record = state
         .conversations
         .create("Host policy".to_owned())

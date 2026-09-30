@@ -41,7 +41,8 @@ fn read_review_never_inherits_live_write_permissions() {
 
 #[test]
 fn additional_access_includes_yolo_and_host_expansion() {
-    let defaults = workflows::tests::settings();
+    let defaults = workflows::tests::settings()
+        .with_host_approval(crate::execution::HostApprovalPolicy::AskEachTime);
     let mut automatic = defaults.clone();
     automatic.host_approval = crate::execution::HostApprovalPolicy::Automatic;
     assert!(workflows::definition::additional_access(

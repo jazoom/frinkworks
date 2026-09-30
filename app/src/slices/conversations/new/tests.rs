@@ -949,7 +949,7 @@ async fn network_tool_reply_uses_private_workspace_without_catalogue_identity() 
             "/conversations/new",
             &token,
             &format!(
-                "action=send&provider=xai&model=grok-4.6&thinking={}&message=Check%20the%20site&tool_run=run&environment={}&network=restricted&network_domains=example.com",
+                "action=send&provider=xai&model=grok-4.6&thinking={}&message=Check%20the%20site&tool_run=run&host_approval=ask-each-time&environment={}&network=restricted&network_domains=example.com",
                 effort.as_str(),
                 environment.id
             ),
@@ -1100,7 +1100,7 @@ async fn host_first_message_runs_without_a_sandbox_runtime() {
         .effective_effort(ProviderKind::Xai, "grok-4.6", None)
         .unwrap();
     let fields = format!(
-        "action=send&provider=xai&model=grok-4.6&thinking={}&message=Hello&location=host&tool_run=run",
+        "action=send&provider=xai&model=grok-4.6&thinking={}&message=Hello&location=host&tool_run=run&host_approval=ask-each-time",
         effort.as_str()
     );
     let preview_settings = app(&state)
@@ -1286,7 +1286,7 @@ async fn copied_host_policy_requires_new_consent() {
 }
 
 #[tokio::test]
-async fn automatic_host_first_message_runs_without_command_approval() {
+async fn default_host_first_message_runs_without_command_approval() {
     let mut state = test_state();
     let directory = tempfile::tempdir().unwrap();
     let marker = directory.path().join("automatic-command");
@@ -1316,7 +1316,7 @@ async fn automatic_host_first_message_runs_without_command_approval() {
         .effective_effort(ProviderKind::Xai, "grok-4.6", None)
         .unwrap();
     let fields = format!(
-        "action=send&provider=xai&model=grok-4.6&thinking={}&message=Hello&location=host&tool_run=run&host_approval=automatic",
+        "action=send&provider=xai&model=grok-4.6&thinking={}&message=Hello&location=host&tool_run=run",
         effort.as_str()
     );
     let denied = app(&state)

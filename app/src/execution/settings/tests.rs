@@ -124,17 +124,34 @@ fn sandbox_and_host_locations_cannot_combine() {
             .location,
         super::ToolLocation::Host
     );
-    assert_eq!(host.host_approval, super::HostApprovalPolicy::AskEachTime);
-    let automatic = host
-        .clone()
-        .with_host_approval(super::HostApprovalPolicy::Automatic);
-    assert!(ExecutionSettings::combined([&host, &automatic]).is_none());
-    assert_eq!(
-        ExecutionSettings::from_file(automatic.to_file())
-            .unwrap()
-            .host_approval,
-        super::HostApprovalPolicy::Automatic
-    );
+    for settings in [sandbox, host] {
+        assert_eq!(settings.host_approval, super::HostApprovalPolicy::Automatic);
+        let reviewed = settings
+            .clone()
+            .with_host_approval(super::HostApprovalPolicy::AskEachTime);
+        assert!(ExecutionSettings::combined([&settings, &reviewed]).is_none());
+        for saved in [settings, reviewed] {
+            assert_eq!(
+                ExecutionSettings::from_file(saved.to_file()).unwrap(),
+                saved
+            );
+        }
+    }
+}
+
+#[test]
+fn command_approval_defaults_to_automatic_without_accepting_unknown_policies() {
+    for (value, expected) in [
+        ("", Some(super::HostApprovalPolicy::Automatic)),
+        ("automatic", Some(super::HostApprovalPolicy::Automatic)),
+        (
+            "ask-each-time",
+            Some(super::HostApprovalPolicy::AskEachTime),
+        ),
+        ("unknown", None),
+    ] {
+        assert_eq!(super::HostApprovalPolicy::parse(value), expected);
+    }
 }
 
 #[test]

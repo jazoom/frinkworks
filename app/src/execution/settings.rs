@@ -38,9 +38,10 @@ impl ToolLocation {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum HostApprovalPolicy {
     AskEachTime,
+    #[default]
     Automatic,
 }
 
@@ -54,7 +55,8 @@ impl HostApprovalPolicy {
 
     pub(crate) fn parse(value: &str) -> Option<Self> {
         match value {
-            "ask-each-time" | "" => Some(Self::AskEachTime),
+            "" => Some(Self::default()),
+            "ask-each-time" => Some(Self::AskEachTime),
             "automatic" => Some(Self::Automatic),
             _ => None,
         }
@@ -206,7 +208,7 @@ impl ExecutionSettings {
             network: NetworkAccess::None,
             directories: Vec::new(),
             location: ToolLocation::Sandbox,
-            host_approval: HostApprovalPolicy::AskEachTime,
+            host_approval: HostApprovalPolicy::default(),
         })
     }
 

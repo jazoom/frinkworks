@@ -644,11 +644,7 @@ fn step_row(
         settings_direct: step.settings_direct.clone(),
         location_host: step.location == crate::execution::ToolLocation::Host.as_str(),
         host_approval_automatic: crate::execution::HostApprovalPolicy::parse(
-            if step.host_approval.trim().is_empty() {
-                crate::execution::HostApprovalPolicy::AskEachTime.as_str()
-            } else {
-                step.host_approval.trim()
-            },
+            step.host_approval.trim(),
         )
         .is_some_and(|policy| policy.automatic()),
         settings_preset: step.settings_preset.clone(),
