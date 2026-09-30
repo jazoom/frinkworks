@@ -1,0 +1,21 @@
+<div class="flex flex-col gap-4" role="group" aria-label="Reply details">
+  {% for request in usage.requests %}
+    <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1">
+      <dt>Model</dt>
+      <dd class="break-words">{{ request.model }}</dd>
+      <dt>Tokens</dt>
+      <dd>{{ request.detail }}</dd>
+      <dt>Cost</dt>
+      <dd>{{ request.cost }}</dd>
+      <dt class="sr-only">Request</dt>
+      <dd class="col-start-2">
+        <a class="link link-hover" href="{{ request.context_href }}" data-graft
+          >View request context</a
+        >
+      </dd>
+    </dl>
+  {% endfor %}
+  {% if usage.requests.len() > 1 && !usage.subtotal.is_empty() %}
+    <p>{{ usage.subtotal }}</p>
+  {% endif %}
+</div>

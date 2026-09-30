@@ -8,6 +8,7 @@ pub(crate) mod input;
 pub(crate) mod prompts;
 pub(crate) mod questions;
 pub(crate) mod queue;
+pub(crate) mod statistics;
 mod store;
 pub(crate) mod titles;
 

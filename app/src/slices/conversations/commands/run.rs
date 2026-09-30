@@ -152,6 +152,7 @@ pub(crate) async fn start_saved(
             "The command entry could not be recorded.",
         ));
     };
+    job.start_work();
     let secret = provider_secret(state, &model.settings.model);
     let result = started.clone();
     let state = state.clone();

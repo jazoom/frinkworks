@@ -160,14 +160,9 @@ async fn invalid_prompt_links_never_become_composer_commands() {
 }
 
 #[tokio::test]
-async fn provider_free_draft_validates_before_it_consumes_consent() {
+async fn invalid_direct_command_does_not_consume_draft_consent() {
     let state = test_state();
     let token = connected(&state);
-    state
-        .vault
-        .forget(ProviderKind::Xai)
-        .expect("forget provider");
-    assert!(!state.vault.has_providers());
     let fields = "action=send&provider=xai&model=grok-4.6&location=host&tool_run=run&host_approval=automatic";
     let preview = app(&state)
         .oneshot(command(

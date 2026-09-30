@@ -112,12 +112,6 @@ pub(super) async fn show(
             .map(|effort| effort.as_str().to_owned())
             .unwrap_or_default();
         form.model = provider.model;
-    } else {
-        // Execution settings retain a model selection even without a provider connection.
-        // Model submission still requires credentials. Direct commands never dispatch this model.
-        let provider = ProviderKind::Xai;
-        form.provider = provider.as_str().to_owned();
-        form.model = provider.default_model().to_owned();
     }
     if let Some(settings) = state.preferences.conversation_defaults() {
         super::settings::copy_settings_to_draft(&mut form, &settings);
@@ -184,7 +178,7 @@ impl NewForm {
     pub(super) fn consent_nonce(&self) -> String {
         use sha2::{Digest, Sha256};
         let mut digest = Sha256::new();
-        // Bind incomplete draft fields without a provider prerequisite for directory selection.
+        // Consent binds to all submitted execution settings, including incomplete drafts.
         for value in [
             &self.provider,
             &self.model,

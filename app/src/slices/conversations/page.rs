@@ -1,6 +1,7 @@
 pub(crate) mod model_picker;
 mod presets;
 mod recent_directories;
+pub(super) mod statistics;
 use presets::{PresetPreviewView, PresetSettingView, setup_rows};
 use recent_directories::{RecentDirectoryView, recent_directory_views};
 
@@ -244,6 +245,7 @@ pub(super) struct MessageView {
     /// True for `!!`, which excludes the command from model context.
     pub(super) excluded: bool,
     pub(super) html: String,
+    pub(super) details: String,
     /// The original skill command, retained for display beside the expanded
     /// message. A plain or assistant entry leaves this absent.
     pub(super) command: Option<String>,
@@ -493,6 +495,7 @@ pub(super) struct ConversationDetailView {
     pub(super) job_active: bool,
     pub(super) retry: Option<RetryView>,
     pub(super) context: Option<ContextView>,
+    statistics: Option<statistics::StatisticsView>,
     pub(super) can_compact: bool,
     pub(super) compaction: Option<super::compaction::CompactionView>,
     summary_usage: Option<UsagePanelView>,
@@ -515,6 +518,8 @@ pub(super) struct ForkNotice {
 
 pub(super) struct ContextView {
     pub(super) label: String,
+    input_tokens: u64,
+    capacity: Option<u64>,
     /// Catalogue capacity is unknown, so the limit is an operational fallback.
     pub(super) unknown_capacity: bool,
     /// The count came from an approximation instead of a model tokenizer.
@@ -741,6 +746,7 @@ impl ConversationDetailView {
             job_active: false,
             retry: None,
             context: None,
+            statistics: None,
             can_compact: false,
             compaction: None,
             summary_usage: None,
@@ -1386,6 +1392,7 @@ impl ConversationDetailView {
             } else {
                 context_view(record, sources.models, job)
             },
+            statistics: None,
             can_compact: !job_active
                 && pending_gate.is_none()
                 && record.continuation.is_none()
@@ -1420,6 +1427,16 @@ impl ConversationDetailView {
                 workflow_progress: None,
             })),
         }
+    }
+
+    pub(super) fn with_statistics(
+        mut self,
+        state: &crate::state::AppState,
+        id: &ConversationId,
+        job: Option<&JobSnapshot>,
+    ) -> Self {
+        self.statistics = Some(statistics::StatisticsView::load(state, id, job));
+        self
     }
 
     pub(super) fn with_instruction_sources(
@@ -2156,6 +2173,7 @@ fn message_views(
             message_view_in(&record.id, messages, start)
         };
         let cost = view.html.len()
+            + view.details.len()
             + view
                 .command
                 .as_ref()
@@ -2257,13 +2275,13 @@ pub(super) fn message_view_in(
                 &message.text,
                 &message.activity,
                 &[],
-                &message.requests,
                 streaming,
                 message
                     .completion
                     .is_some_and(crate::providers::CompletionReason::incomplete),
             )
         },
+        details: message_details(conversation, &message.requests),
         status: if command_entry {
             match message.status {
                 MessageStatus::Complete => "",
@@ -2310,7 +2328,9 @@ pub(super) fn response_view(
 ) -> MessageView {
     let id = reply_id(conversation, anchor);
     let mut html = String::new();
+    let mut requests = Vec::new();
     for message in phases {
+        requests.extend_from_slice(&message.requests);
         let phase_id = message_id(conversation, message);
         let content = activity_html(
             conversation,
@@ -2318,7 +2338,6 @@ pub(super) fn response_view(
             &message.text,
             &message.activity,
             &[],
-            &message.requests,
             false,
             message
                 .completion
@@ -2357,13 +2376,13 @@ pub(super) fn response_view(
                 .any(|phase| phase.requests.iter().any(|stored| stored.id == request.id))
         });
         if !committed {
+            requests.extend_from_slice(&reply.usage);
             html.push_str(&activity_html(
                 conversation,
                 &live_id,
                 &reply.text,
                 &reply.activity,
                 &reply.progress,
-                &reply.usage,
                 live_streaming,
                 reply
                     .completion
@@ -2417,6 +2436,7 @@ pub(super) fn response_view(
         command: None,
         copy,
         html,
+        details: message_details(conversation, &requests),
         status,
         retry_message: String::new(),
         error,
@@ -2453,7 +2473,26 @@ struct MessageContent<'a> {
     id: &'a str,
     output_action: &'a str,
     blocks: Vec<MessageBlock>,
-    usage: Option<UsagePanelView>,
+}
+
+#[derive(Template)]
+#[template(path = "conversations/templates/message_details.html")]
+struct MessageDetails<'a> {
+    usage: &'a UsagePanelView,
+}
+
+fn message_details(
+    conversation: &ConversationId,
+    requests: &[crate::conversations::RequestUsage],
+) -> String {
+    let base = format!("/conversations/{conversation}/context/");
+    usage_panel(requests, &base)
+        .map(|usage| {
+            MessageDetails { usage: &usage }
+                .render()
+                .expect("message details template")
+        })
+        .unwrap_or_default()
 }
 
 struct UsagePanelView {
@@ -2539,7 +2578,6 @@ fn command_entry_html(
     streaming: bool,
 ) -> String {
     let output_action = format!("/conversations/{}/output", conversation.as_hex());
-    let context_base = format!("/conversations/{}/context/", conversation.as_hex());
     let block = match message
         .command
         .as_ref()
@@ -2566,7 +2604,6 @@ fn command_entry_html(
         id,
         output_action: &output_action,
         blocks: vec![block],
-        usage: usage_panel(&[], &context_base),
     }
     .render()
     .expect("command content template");
@@ -2588,13 +2625,11 @@ fn activity_html(
     text: &str,
     activity: &[crate::providers::AssistantActivity],
     progress: &[crate::providers::ToolProgress],
-    requests: &[crate::conversations::RequestUsage],
     streaming: bool,
     incomplete: bool,
 ) -> String {
     use crate::providers::AssistantActivity;
     let output_action = format!("/conversations/{}/output", conversation.as_hex());
-    let context_base = format!("/conversations/{}/context/", conversation.as_hex());
     let progress_blocks: Vec<MessageBlock> = progress
         .iter()
         .map(|progress| MessageBlock {
@@ -2686,10 +2721,26 @@ fn activity_html(
         id,
         output_action: &output_action,
         blocks,
-        usage: usage_panel(requests, &context_base),
     }
     .render()
     .expect("message content template")
+}
+
+impl ContextView {
+    fn from_job(job: Option<&JobSnapshot>) -> Option<Self> {
+        let job = job?;
+        let estimate = job.context?;
+        Some(Self {
+            label: estimate.label(),
+            input_tokens: estimate.input_tokens,
+            capacity: estimate.catalogue_limit,
+            unknown_capacity: estimate.unknown_capacity(),
+            approximate: estimate.approximate(),
+            partial: false,
+            measured: estimate.measured,
+            compacting: job.compacting,
+        })
+    }
 }
 
 fn context_view(
@@ -2697,15 +2748,8 @@ fn context_view(
     models: &ModelsDevCatalogue,
     job: Option<&JobSnapshot>,
 ) -> Option<ContextView> {
-    if let Some(estimate) = job.and_then(|job| job.context) {
-        return Some(ContextView {
-            label: estimate.label(),
-            unknown_capacity: estimate.unknown_capacity(),
-            approximate: estimate.approximate(),
-            partial: false,
-            measured: estimate.measured,
-            compacting: job.is_some_and(|job| job.compacting),
-        });
+    if let Some(context) = ContextView::from_job(job) {
+        return Some(context);
     }
     let model = record.model.as_ref()?;
     let selection = &model.settings.model;
@@ -2732,6 +2776,8 @@ fn context_view(
     .ok()?;
     Some(ContextView {
         label: estimate.label(),
+        input_tokens: estimate.input_tokens,
+        capacity: estimate.catalogue_limit,
         unknown_capacity: estimate.unknown_capacity(),
         approximate: estimate.approximate(),
         // Idle estimates omit the runtime project instructions and discovered

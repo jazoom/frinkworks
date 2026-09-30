@@ -1292,6 +1292,7 @@ async fn start_message_mode(
             return Err(StartMessageError::User(status_for(error), error.message()));
         }
     };
+    job.start_work();
     if let Some(kind) = ordinary {
         let secret = match connection.auth {
             crate::providers::AuthMethod::ApiKey => Some(connection.api_key.expose()),
@@ -1973,6 +1974,7 @@ fn detail_view_with_transcript(
         transcript,
         leaf,
     )
+    .with_statistics(state, &record.id, snapshot.as_ref())
     .with_access_status(state, session, record)
     .with_instruction_sources(state, record)
     .with_pending_question(

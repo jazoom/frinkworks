@@ -257,6 +257,12 @@ Mobile avatars sit beside the labels, above full-width content. Mobile circles a
 
 Message text uses the transcript scale. Status stays beside the author. Revise, Fork from here and Copy appear below the applicable message.
 
+Details sits beside the reply actions. It hides the model, token counts and estimated cost until the user opens it.
+
+A neutral summary above the composer shows recorded conversation totals, cache hit percentage and active-work timers. Context occupancy stays separate from cumulative token usage. Missing provider reports stay unknown or show an incomplete subtotal.
+
+Both timers pause for questions and approvals. Completed durations persist. Earlier replies without recorded durations show no invented time.
+
 Tool results use bordered disclosures with the actual tool label. Unfinished tools show their recorded name without an inferred path or result. Tool disclosures expose recorded call IDs and arguments when available. Separate calls retain separate records, even when their arguments match.
 
 The retained-output control reveals the full record in place. It leaves the browser address unchanged and appears only when the retained record holds more text than the preview.
@@ -551,7 +557,7 @@ The mobile handoff page passes the browser accessibility audit. This result does
 
 Rust tests cover ownership transfer, restart and plan decision integrity. Real Microsandbox tests cover live Read and Write mounts.
 
-The Read/Write browser pass uses isolated local data without a connected provider.
+An earlier Read/Write browser pass used isolated local data without a connected provider. App access now requires a stored provider connection.
 
 Browser evidence does not establish successful hosted-model generation or hosted agent execution.
 

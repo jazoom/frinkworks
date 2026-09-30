@@ -3237,6 +3237,84 @@ document.addEventListener("submit", (event) => {
 
 // Transcript snapshots contain previews, not the user's expanded records.
 // Keep inert DOM copies only while their output targets remain in this page.
+const expandedReplyDetails = new Set<string>();
+let replyDetailsLocation = location.pathname;
+
+function syncReplyDetails() {
+    document
+        .querySelectorAll<HTMLButtonElement>("[data-reply-details]")
+        .forEach((button) => {
+            const id = button.getAttribute("aria-controls");
+            const panel = id ? document.getElementById(id) : null;
+            if (!id || !panel) return;
+            const expanded = expandedReplyDetails.has(id);
+            button.setAttribute("aria-expanded", String(expanded));
+            panel.hidden = !expanded;
+        });
+}
+
+document.addEventListener("click", (event) => {
+    const button = (event.target as Element | null)?.closest<HTMLButtonElement>(
+        "[data-reply-details]",
+    );
+    const id = button?.getAttribute("aria-controls");
+    if (!id) return;
+    if (expandedReplyDetails.has(id)) expandedReplyDetails.delete(id);
+    else expandedReplyDetails.add(id);
+    syncReplyDetails();
+});
+listenForRequestSettled(syncReplyDetails);
+listenForLivePatches(syncReplyDetails);
+document.addEventListener("hypergraft:progress", syncReplyDetails);
+listenForLocationChanges(() => {
+    if (location.pathname !== replyDetailsLocation)
+        expandedReplyDetails.clear();
+    replyDetailsLocation = location.pathname;
+    syncReplyDetails();
+});
+
+const workTimerAnchors = new WeakMap<
+    HTMLElement,
+    { signature: string; start: number }
+>();
+function updateWorkTimers() {
+    const now = performance.now();
+    document
+        .querySelectorAll<HTMLElement>("[data-work-timer]")
+        .forEach((timer) => {
+            const base = Number(timer.dataset.elapsedMs);
+            if (!Number.isFinite(base) || base < 0) return;
+            // Hypergraft retains elements. Each authoritative clock change needs a
+            // fresh anchor, especially when a paused job resumes on the same node.
+            const signature = `${timer.dataset.workKey}:${base}:${timer.dataset.running}`;
+            let anchor = workTimerAnchors.get(timer);
+            if (anchor?.signature !== signature) {
+                anchor = { signature, start: now };
+                workTimerAnchors.set(timer, anchor);
+            }
+            const seconds = Math.floor(
+                (base +
+                    (timer.dataset.running === "true"
+                        ? now - anchor.start
+                        : 0)) /
+                    1000,
+            );
+            const minutes = Math.floor(seconds / 60);
+            const remainder = String(seconds % 60).padStart(2, "0");
+            timer.textContent =
+                minutes >= 60
+                    ? `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")}:${remainder}`
+                    : `${minutes}:${remainder}`;
+        });
+}
+const workTimerInterval = window.setInterval(updateWorkTimers, 1000);
+import.meta.hot?.dispose(() => window.clearInterval(workTimerInterval));
+listenForRequestSettled(updateWorkTimers);
+listenForLivePatches(updateWorkTimers);
+listenForLocationChanges(updateWorkTimers);
+document.addEventListener("hypergraft:progress", updateWorkTimers);
+updateWorkTimers();
+
 const expandedOutputs = new Map<string, Node[]>();
 
 function reconcileExpandedOutputs() {

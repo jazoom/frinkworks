@@ -145,10 +145,11 @@ pub(crate) async fn build(
         .map_err(|_| "The provider vault is unreadable.".to_owned())?;
     let preferences = Arc::new(Preferences::open(data_dir.join("preferences.json")));
     let models_dev = ModelsDevCatalogue::open(data_dir.join("models-dev-catalogue.json"))?;
+    let conversations = Arc::new(conversations);
     let state = AppState {
         config: Arc::new(config.runtime),
         assets: Arc::new(assets),
-        sessions: Arc::new(SessionStore::new()),
+        sessions: Arc::new(SessionStore::with_conversations(conversations.clone())),
         vault: Arc::new(vault),
         chat: Arc::new(ChatBackend::Rig),
         models_dev: Arc::new(models_dev),
@@ -158,7 +159,7 @@ pub(crate) async fn build(
         agents: Arc::new(agents),
         skills: Arc::new(skills),
         prompts: Arc::new(prompts),
-        conversations: Arc::new(conversations),
+        conversations,
         forks: Arc::new(crate::conversations::ForkDrafts::default()),
         directory_picker: DirectoryPicker::native(),
         access_consent: Arc::new(AccessConsentStore::new(preferences)),

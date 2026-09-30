@@ -1554,6 +1554,7 @@ fn persist_output(
     let Some(conversation) = conversation else {
         return Ok(());
     };
+    job.checkpoint_work();
     if job.snapshot().owner != crate::sessions::JobOwner::Conversation(conversation)
         || (reply.is_empty() && reply.usage.is_empty())
         || state.conversations.get(&conversation).is_none()

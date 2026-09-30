@@ -564,7 +564,6 @@ fn command_output_escapes_untrusted_stream_text() {
             },
         ],
         &[],
-        &[],
         false,
         false,
     );
@@ -618,16 +617,7 @@ fn usage_panel_labels_unknown_cost_instead_of_a_zero_total() {
         sources: Vec::new(),
         advertised: Vec::new(),
     };
-    let html = activity_html(
-        &conversation,
-        "message-1",
-        "Done.",
-        &[],
-        &[],
-        &[known_request, unknown, plan],
-        false,
-        false,
-    );
+    let html = message_details(&conversation, &[known_request, unknown, plan]);
     assert!(html.contains("Estimated cost $1.00") || html.contains("Known subtotal $1.00"));
     assert!(html.contains("Cost unknown"));
     assert!(html.contains("Cost unknown for plan authentication"));

@@ -8,6 +8,35 @@ use super::{
     TranscriptCursor,
 };
 
+#[test]
+fn reservation_identity_and_snapshot_do_not_require_the_database_mutex() {
+    let store = std::sync::Arc::new(ConversationStore::in_memory());
+    let record = store.create("Reserved".to_owned()).unwrap();
+    store
+        .record_work_time(&record.id, JobId::generate().unwrap(), 15_000)
+        .unwrap();
+    let sessions = crate::sessions::SessionStore::with_conversations(store.clone());
+    let session = crate::sessions::generate_session_token().unwrap().id();
+    sessions.insert(session);
+    let (sent, received) = std::sync::mpsc::channel();
+    let database = store.database();
+    let worker = std::thread::spawn(move || {
+        let job = sessions
+            .begin_conversation_job(&session, record.id)
+            .unwrap();
+        let snapshot = job.snapshot();
+        assert!(sessions.finish_conversation_job(&session, record.id, job.id()));
+        drop(job);
+        sent.send(snapshot.work_ms).unwrap();
+    });
+    let result = received.recv_timeout(std::time::Duration::from_secs(2));
+    drop(database);
+    worker.join().unwrap();
+    assert_eq!(result, Ok(None));
+    let time = store.work_time(&record.id, None).unwrap();
+    assert_eq!((time.turn_ms, time.total_ms), (15_000, 15_000));
+}
+
 impl ConversationStore {
     pub(crate) fn list(&self) -> Vec<super::ConversationRecord> {
         let database = self.database();

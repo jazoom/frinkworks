@@ -91,6 +91,113 @@ async fn picker_commands_are_patch_only_and_revision_bound() {
 }
 
 #[tokio::test]
+async fn directory_access_changes_reach_the_next_model_request() {
+    use crate::execution::{DirectoryAccess, DirectoryGrant};
+
+    let mut state = test_state();
+    ready_starter_environment(&state).await;
+    let backend = crate::providers::tests::ScriptedBackend::accept();
+    state.chat = std::sync::Arc::new(crate::providers::ChatBackend::Scripted(backend.clone()));
+    let token = connected(&state);
+    let mut record = conversation(&state);
+    let directory = tempfile::tempdir().unwrap();
+    let reference = tempfile::tempdir().unwrap();
+    let grant = DirectoryGrant::from_selected(directory.path(), &[]).unwrap();
+    let read_only =
+        DirectoryGrant::from_selected(reference.path(), std::slice::from_ref(&grant)).unwrap();
+    let mut settings = record.model.as_ref().unwrap().settings.clone();
+    settings.model.thinking =
+        state
+            .models_dev
+            .effective_effort(ProviderKind::Xai, "grok-4.6", None);
+    settings.environment = super::super::default_environment(&state).unwrap();
+    settings.tools = vec![crate::agents::ToolId::List];
+    settings.directories = vec![grant.clone(), read_only.clone()];
+    record = state
+        .conversations
+        .update_execution_settings(&record.id, record.revision, settings)
+        .unwrap();
+    let access_path = format!(
+        "/conversations/{}/directories/{}/access",
+        record.id,
+        grant.id.as_hex()
+    );
+    let message_path = format!("/conversations/{}/messages", record.id);
+
+    for access in [
+        DirectoryAccess::Read,
+        DirectoryAccess::Write,
+        DirectoryAccess::Read,
+    ] {
+        let response = app(&state)
+            .oneshot(command(
+                &access_path,
+                &token,
+                &format!("revision={}&access={}", record.revision, access.as_str()),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "{}",
+            text(response).await
+        );
+        record = state.conversations.get(&record.id).unwrap();
+        let response = app(&state)
+            .oneshot(command(
+                &message_path,
+                &token,
+                &format!(
+                    "revision={}&message=Inspect%20the%20project",
+                    record.revision
+                ),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "{}",
+            text(response).await
+        );
+        record = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                let current = state.conversations.get(&record.id).unwrap();
+                if current.active_job.is_none() {
+                    break current;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("reply settlement");
+        let reply = record.messages.last().unwrap();
+        assert_eq!(
+            reply.status,
+            crate::conversations::MessageStatus::Complete,
+            "{reply:?}"
+        );
+        let preamble = backend.last_preamble().unwrap();
+        let expected = match access {
+            DirectoryAccess::Read => "Read",
+            DirectoryAccess::Write => "Write: cancellation does not undo file changes.",
+        };
+        let prefix = format!("- {}: ", grant.guest_path());
+        assert_eq!(
+            preamble.lines().find_map(|line| line.strip_prefix(&prefix)),
+            Some(expected),
+        );
+        assert!(
+            preamble
+                .lines()
+                .any(|line| line == format!("- {}: Read", read_only.guest_path()))
+        );
+    }
+    assert_eq!(backend.captured().len(), 3);
+}
+
+#[tokio::test]
 async fn saved_access_selection_applies_permissions_and_rejects_native_stale_and_active_commands() {
     use crate::execution::{DirectoryAccess, DirectoryGrant};
 

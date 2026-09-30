@@ -16,13 +16,14 @@ pub(crate) fn test_state(config: RuntimeConfig) -> AppState {
         EnvironmentPreparationScheduler::idle(environments.clone(), environment_snapshots.clone());
     let workflow_artefacts = Arc::new(WorkflowArtefactRepository::in_memory());
     let preferences = Arc::new(Preferences::in_memory());
+    let conversations = Arc::new(crate::conversations::ConversationStore::in_memory());
     AppState {
         config: Arc::new(config),
         assets: Arc::new(AssetPaths {
             css_path: "/static/test.css".to_owned(),
             js_path: "/static/test.js".to_owned(),
         }),
-        sessions: Arc::new(SessionStore::new()),
+        sessions: Arc::new(SessionStore::with_conversations(conversations.clone())),
         vault: Arc::new(ProviderVault::in_memory()),
         chat: Arc::new(ChatBackend::Scripted(
             crate::tests::ScriptedBackend::accept(),
@@ -34,7 +35,7 @@ pub(crate) fn test_state(config: RuntimeConfig) -> AppState {
         agents: Arc::new(AgentStore::in_memory()),
         skills: Arc::new(crate::skills::SkillStore::temporary()),
         prompts: Arc::new(crate::conversations::prompts::PromptStore::temporary()),
-        conversations: Arc::new(crate::conversations::ConversationStore::in_memory()),
+        conversations,
         forks: Arc::new(crate::conversations::ForkDrafts::default()),
         directory_picker: crate::execution::DirectoryPicker::scripted(),
         access_consent: Arc::new(crate::execution::AccessConsentStore::new(preferences)),

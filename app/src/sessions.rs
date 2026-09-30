@@ -38,7 +38,7 @@ pub(crate) const SESSION_LIFETIME: Duration = Duration::from_secs(SESSION_LIFETI
 
 const SESSION_PURGE_INTERVAL: Duration = Duration::from_secs(60);
 
-/// Sessions own command authority independently of provider credentials.
+/// A stored provider is required for a session to grant command authority.
 pub(crate) async fn resolve_session(
     State(state): State<AppState>,
     mut request: Request,
@@ -46,20 +46,11 @@ pub(crate) async fn resolve_session(
 ) -> Response {
     let read = cookies::read_session(request.headers());
     let mut issued = None;
-    let mut resolved = match read {
+    let resolved = match read {
         CookieRead::Missing => restore_or(ResolvedSession::Anonymous, &state, &mut issued),
         CookieRead::Invalid => restore_or(ResolvedSession::Invalid, &state, &mut issued),
         CookieRead::Valid(token) => existing_or_restore(&state, &token),
     };
-    // This explicit entry point creates a provider-free session. Commands still require a cookie.
-    if !matches!(resolved, ResolvedSession::Present(_))
-        && request.method() == axum::http::Method::GET
-        && request.uri().path() == "/conversations/new"
-        && let Some((id, token)) = issue_session(&state)
-    {
-        issued = Some(token);
-        resolved = ResolvedSession::Present(id);
-    }
     let invalid = matches!(resolved, ResolvedSession::Invalid);
     if let ResolvedSession::Present(id) = &resolved
         && let Some(language) = BrowserLanguage::from_headers(request.headers())
@@ -99,6 +90,13 @@ fn restore_or(
 
 fn existing_or_restore(state: &AppState, token: &ValidatedToken) -> ResolvedSession {
     let id = SessionId::from_validated(token);
+    if !state.vault.has_providers() {
+        if crate::workflows::interrupt_session_continuations(state, id).is_err() {
+            return ResolvedSession::Invalid;
+        }
+        state.sessions.remove(&id);
+        return ResolvedSession::Invalid;
+    }
     if state.sessions.contains_live(&id) {
         return ResolvedSession::Present(id);
     }
@@ -117,9 +115,6 @@ fn existing_or_restore(state: &AppState, token: &ValidatedToken) -> ResolvedSess
             return ResolvedSession::Invalid;
         }
         state.sessions.remove(&id);
-    }
-    if !state.vault.has_providers() {
-        return ResolvedSession::Invalid;
     }
     state.sessions.insert(id);
     if state.sessions.contains_live(&id) {

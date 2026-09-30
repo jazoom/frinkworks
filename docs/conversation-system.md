@@ -26,13 +26,14 @@ Write mounts original directories read-write. Changes take effect immediately. P
 
 ## Storage
 
-Conversations persist in a private SQLite database inside the data-directory `conversations` folder. The database is the sole backend. Startup loads transcripts only for interrupted requests and ownership recovery.
+Conversations persist in a private SQLite database inside the data-directory `conversations` folder. The database is the sole backend. Startup loads full conversation records only for interrupted requests and ownership recovery. It also builds a temporary index of stored provider reports for statistics.
 
 Metadata, messages and cumulative summary requests use separate tables:
 
 - One conversation row holds the title, revision, network access, model settings, approvals, continuation checkpoint, compaction record and queue.
 - Message rows have conversation-scoped identifiers, immutable parents and immutable append order. Each parent exists earlier in the same conversation.
 - Summary-request rows are keyed by conversation and append order.
+- Work-time rows hold monotonic active durations per conversation and job.
 
 A mutation commits only affected rows in one transaction. Unchanged message and request rows keep their bytes, including across appends. Output checkpoints load only metadata and the pending response. Summary-request updates and automatic titles do not load transcripts.
 
@@ -45,6 +46,18 @@ The database file and its SQLite sidecars stay inside the private directory boun
 Database locks have a five-second wait bound. Disk-full and database-busy errors stop the commit without automatic replay. An uncertain commit blocks later mutations until restart.
 
 An alpha record that still uses the JSON file format fails closed. The application does not migrate it and does not replace it.
+
+## Usage and work time
+
+Conversation totals include recorded requests from retained branches and compaction summaries. Request identities prevent duplicate counts across live and stored output. Cached tokens form part of input, not additional usage. Unknown reports never become known zeroes.
+
+A connection-local SQLite index holds provider reports without message text or instruction sources. Database triggers update the index within each message or summary transaction. Observation reads this index instead of the transcript. Startup rebuilds the index from stored reports without a migration.
+
+Context occupancy describes the active branch rather than cumulative usage. Idle context estimates exclude runtime instructions and discovered tools.
+
+The server measures active work with a monotonic clock after execution admission. Reservations and rejected submissions add no duration. Questions and approvals pause both timers. Browser counters interpolate server snapshots and reset their anchors after each authoritative change.
+
+Completed durations persist. A server interruption retains only the last saved duration and excludes downtime. Earlier work without a duration stays unknown. Timer writes hold no session or job mutex. Timing errors do not change execution authority.
 
 ## Read-only conversation tree
 
@@ -257,7 +270,11 @@ A composer message that starts with `!` runs a shell command directly. A message
 
 The first non-whitespace character decides the syntax. Classification runs on the original typed text before resource expansion. A backslash before `!` writes literal text, for example `\!note`. Expansion output never runs command classification again.
 
-A direct command needs the selected location, the Run capability and valid consent. A host command needs host selection. A sandbox command needs a ready environment and directory approval. It needs no provider connection. The provider page offers **Continue without a provider** for a new session. With Ask each time, every direct command waits for the same approval as a model Run call. Typed syntax alone is not approval. The application rejects an empty command and an attached image. A rejected submission leaves the draft intact.
+A direct command needs the selected location, the Run capability and valid consent. A host command needs host selection. A sandbox command needs a ready environment and directory approval.
+
+App access requires a stored provider connection, including direct commands and resource catalogues. The connection page remains available without a provider. The application does not support local models.
+
+With Ask each time, every direct command waits for the same approval as a model Run call. Typed syntax alone is not approval. The application rejects an empty command and an attached image. A rejected submission leaves the draft intact.
 
 The application persists the pending command entry before it starts a process. The entry records the context inclusion, the command text, the actual directory, the output reference and the termination. A restart marks an unsettled command as interrupted. Captured process output survives a restart before a review decision. The application never replays the command.
 

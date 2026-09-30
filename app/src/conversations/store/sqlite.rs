@@ -61,6 +61,13 @@ CREATE TABLE IF NOT EXISTS summary_requests (
     UNIQUE (conversation_id, id),
     FOREIGN KEY (conversation_id) REFERENCES conversations(id)
 );
+CREATE TABLE IF NOT EXISTS work_times (
+    conversation_id TEXT NOT NULL,
+    job_id TEXT NOT NULL,
+    elapsed_ms INTEGER NOT NULL CHECK(elapsed_ms >= 0),
+    PRIMARY KEY (conversation_id, job_id),
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS attachments (
     id TEXT PRIMARY KEY NOT NULL,
     sha256 TEXT NOT NULL,
@@ -117,7 +124,99 @@ impl Database {
     }
 
     fn initialise(&self) -> Result<(), ConversationError> {
-        self.connection.execute_batch(SCHEMA).map_err(map_error)
+        self.connection.execute_batch(SCHEMA).map_err(map_error)?;
+        self.connection
+            .execute_batch(include_str!("sqlite/usage.sql"))
+            .map_err(map_error)
+    }
+
+    pub(super) fn usage_totals(
+        &self,
+        id: &ConversationId,
+        live: &[RequestUsage],
+    ) -> Result<crate::conversations::statistics::UsageTotals, ConversationError> {
+        let mut totals = crate::conversations::statistics::UsageTotals::default();
+        // All branches and summary requests contribute. A live checkpoint replaces
+        // its stored request by identity, so observation never counts it twice.
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT request FROM request_usage
+                 WHERE conversation_id = ?1 GROUP BY request_id",
+            )
+            .map_err(map_error)?;
+        let rows = statement
+            .query_map([id.as_hex()], |row| row.get::<_, String>(0))
+            .map_err(map_error)?;
+        for row in rows {
+            let request: RequestUsage = serde_json::from_str(&row.map_err(map_error)?)
+                .map_err(|_| ConversationError::Corrupt)?;
+            if !request.valid() {
+                return Err(ConversationError::Corrupt);
+            }
+            if !live.iter().any(|current| current.id == request.id) {
+                totals.add(&request);
+            }
+        }
+        for (index, request) in live.iter().enumerate() {
+            if !live[index + 1..].iter().any(|later| later.id == request.id) {
+                totals.add(request);
+            }
+        }
+        Ok(totals)
+    }
+
+    pub(super) fn record_work_time(
+        &self,
+        id: &ConversationId,
+        job: crate::sessions::JobId,
+        elapsed_ms: u64,
+    ) -> Result<(), ConversationError> {
+        self.connection
+            .execute(
+                "INSERT INTO work_times (conversation_id, job_id, elapsed_ms)
+                SELECT id, ?2, ?3 FROM conversations WHERE id = ?1
+             ON CONFLICT(conversation_id, job_id) DO UPDATE
+                SET elapsed_ms = MAX(work_times.elapsed_ms, excluded.elapsed_ms)",
+                params![
+                    id.as_hex(),
+                    job.as_hex(),
+                    elapsed_ms.min(i64::MAX as u64) as i64
+                ],
+            )
+            .map_err(map_error)?;
+        Ok(())
+    }
+
+    pub(super) fn work_time(
+        &self,
+        id: &ConversationId,
+        live: Option<(crate::sessions::JobId, u64)>,
+    ) -> Result<crate::conversations::statistics::WorkTime, ConversationError> {
+        let mut time = crate::conversations::statistics::WorkTime::default();
+        let mut statement = self.connection.prepare(
+            "SELECT job_id, elapsed_ms FROM work_times WHERE conversation_id = ?1 ORDER BY rowid",
+        ).map_err(map_error)?;
+        let rows = statement
+            .query_map([id.as_hex()], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
+            .map_err(map_error)?;
+        for row in rows {
+            let (job, elapsed) = row.map_err(map_error)?;
+            time.recorded = true;
+            let elapsed = u64::try_from(elapsed).map_err(|_| ConversationError::Corrupt)?;
+            if live.is_none_or(|(id, _)| id.as_hex() != job) {
+                time.total_ms = time.total_ms.saturating_add(elapsed);
+                time.turn_ms = elapsed;
+            }
+        }
+        if let Some((_, elapsed)) = live {
+            time.recorded = true;
+            time.total_ms = time.total_ms.saturating_add(elapsed);
+            time.turn_ms = elapsed;
+        }
+        Ok(time)
     }
 
     pub(crate) fn contains(&self, id: &ConversationId) -> Result<bool, ConversationError> {

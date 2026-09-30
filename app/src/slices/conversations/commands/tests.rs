@@ -10,9 +10,7 @@ use super::super::tests::{
     app, command, connected, document, form_value, session_id, state_with_prompts, test_state, text,
 };
 use crate::{
-    conversations::{
-        ConversationId, ConversationModelConfiguration, ConversationRecord, MessageRole,
-    },
+    conversations::{ConversationId, ConversationModelConfiguration, ConversationRecord},
     execution::{DirectoryGrant, ExecutionSettings, ToolLocation},
     providers::{ModelSelection, ProviderKind},
     state::AppState,
@@ -748,7 +746,7 @@ async fn empty_command_is_rejected_without_an_entry() {
 }
 
 #[tokio::test]
-async fn direct_command_runs_without_a_provider_connection() {
+async fn direct_command_rejects_a_session_after_the_last_provider_is_forgotten() {
     let state = test_state();
     let token = connected(&state);
     let record = host_conversation(&state, session_id(&token));
@@ -770,34 +768,9 @@ async fn direct_command_runs_without_a_provider_connection() {
         .await
         .expect("send");
     assert_eq!(response.status(), StatusCode::OK);
-    for _ in 0..200 {
-        let current = state.conversations.get(&record.id).expect("conversation");
-        if current.active_job.is_none()
-            && current
-                .messages
-                .iter()
-                .any(|message| message.role == MessageRole::Command)
-        {
-            let entry = current
-                .messages
-                .iter()
-                .find(|message| message.role == MessageRole::Command)
-                .expect("command entry");
-            assert!(
-                entry
-                    .command
-                    .as_ref()
-                    .and_then(|command| command.output.as_ref())
-                    .is_some_and(|output| output
-                        .chunks
-                        .iter()
-                        .any(|chunk| chunk.text.contains("direct-sentinel")))
-            );
-            return;
-        }
-        tokio::task::yield_now().await;
-    }
-    panic!("direct command did not settle");
+    assert!(text(response).await.contains("navigate=\"/connect\""));
+    assert_eq!(state.conversations.get(&record.id).unwrap(), record);
+    assert!(!state.sessions.contains_live(&session_id(&token)));
 }
 
 #[tokio::test]

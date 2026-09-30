@@ -12,13 +12,18 @@ const MAXIMUM_SOCKETS_PER_SESSION: usize = 8;
 #[derive(Clone)]
 pub(crate) struct LiveSessionGuard {
     sessions: Arc<SessionStore>,
+    vault: Arc<crate::vault::ProviderVault>,
     admission: SocketAdmission<SessionId>,
 }
 
 impl LiveSessionGuard {
-    pub(crate) fn new(sessions: Arc<SessionStore>) -> Self {
+    pub(crate) fn new(
+        sessions: Arc<SessionStore>,
+        vault: Arc<crate::vault::ProviderVault>,
+    ) -> Self {
         Self {
             sessions,
+            vault,
             admission: SocketAdmission::new(),
         }
     }
@@ -37,6 +42,9 @@ impl LiveGuard for LiveSessionGuard {
         let Some(ResolvedSession::Present(session)) = extensions.get::<ResolvedSession>() else {
             return Err(GuardFailure::Terminal);
         };
+        if !self.vault.has_providers() {
+            return Err(GuardFailure::Terminal);
+        }
         let permit = self
             .admission
             .try_acquire(*session, MAXIMUM_SOCKETS_PER_SESSION)
@@ -51,7 +59,7 @@ impl LiveGuard for LiveSessionGuard {
         &self,
         connection: &Self::Connection,
     ) -> Result<Self::Context, GuardFailure> {
-        if self.sessions.contains_live(&connection.session) {
+        if self.vault.has_providers() && self.sessions.contains_live(&connection.session) {
             Ok(connection.session)
         } else {
             Err(GuardFailure::Terminal)

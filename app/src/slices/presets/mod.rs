@@ -8,7 +8,7 @@ use crate::{
     presets::{PresetId, PresetProvenance, PresetRecord},
     providers::{ModelSelection, ProviderKind, ThinkingEffort},
     responses,
-    sessions::OptionalSession,
+    sessions::RequiredSession,
     state::AppState,
 };
 use axum::{
@@ -226,7 +226,7 @@ struct Selection {
 
 async fn show(
     State(state): State<AppState>,
-    _session: OptionalSession,
+    _session: RequiredSession,
     graft: PageGraft,
     Query(query): Query<Selection>,
 ) -> AppResult<Response> {
@@ -277,7 +277,7 @@ fn patch(
 
 async fn create(
     State(state): State<AppState>,
-    _session: OptionalSession,
+    _session: RequiredSession,
     _graft: PatchGraft,
     form: Result<Form<PresetForm>, FormRejection>,
 ) -> AppResult<Response> {
@@ -286,7 +286,7 @@ async fn create(
 
 async fn edit(
     State(state): State<AppState>,
-    _session: OptionalSession,
+    _session: RequiredSession,
     _graft: PatchGraft,
     form: Result<Form<PresetForm>, FormRejection>,
 ) -> AppResult<Response> {
@@ -396,7 +396,7 @@ struct DeleteForm {
 
 async fn delete(
     State(state): State<AppState>,
-    _session: OptionalSession,
+    _session: RequiredSession,
     _graft: PatchGraft,
     form: Result<Form<DeleteForm>, FormRejection>,
 ) -> AppResult<Response> {

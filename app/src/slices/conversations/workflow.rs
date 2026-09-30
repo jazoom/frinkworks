@@ -495,6 +495,7 @@ pub(super) async fn launch(
             .finish_conversation_job(&session.0, started.id, job.id());
         return Err(AppError::new("store workflow run", error));
     }
+    job.start_work();
     let follow_session = session.0;
     let follow_conversation = started.id;
     tokio::spawn(async move {

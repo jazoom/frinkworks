@@ -679,6 +679,7 @@ async fn historical_observation_patches_status_without_replacing_the_window() {
             "Question".to_owned(),
         )
         .expect("begin");
+    job.start_work();
     let message = record.messages.last().expect("pending").id;
 
     let progress = super::historical_status_frame(
@@ -703,6 +704,8 @@ async fn historical_observation_patches_status_without_replacing_the_window() {
     let body = String::from_utf8(frame.into_bytes()).expect("frame");
     assert!(body.contains("conversation-history-status"));
     assert!(body.contains("New output is available."));
+    assert!(body.contains("target=\"conversation-statistics\""));
+    assert!(body.contains("data-running=\"false\""));
     assert!(!body.contains("target=\"conversation-detail\""));
     assert!(!body.contains(&format!(
         "target=\"{}\"",

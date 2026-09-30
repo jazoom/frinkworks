@@ -24,6 +24,7 @@ pub(crate) struct SessionStore {
     pub(crate) job_changes: crate::changes::Changes,
     sessions: Mutex<HashMap<SessionId, StoredSession>>,
     conversation_jobs: Mutex<HashMap<ConversationId, ConversationJob>>,
+    work_store: Option<Arc<crate::conversations::ConversationStore>>,
     clock: Clock,
 }
 
@@ -105,7 +106,15 @@ impl SessionStore {
             job_changes: crate::changes::Changes::default(),
             sessions: Mutex::new(HashMap::new()),
             conversation_jobs: Mutex::new(HashMap::new()),
+            work_store: None,
             clock: Clock::real(),
+        }
+    }
+
+    pub(crate) fn with_conversations(store: Arc<crate::conversations::ConversationStore>) -> Self {
+        Self {
+            work_store: Some(store),
+            ..Self::new()
         }
     }
 
@@ -259,6 +268,9 @@ impl SessionStore {
             return Err(BeginTurnError::Conflict);
         }
         let job = Job::for_conversation(job_id, conversation_id, self.job_changes.clone());
+        if let Some(store) = &self.work_store {
+            job.track_work(store.clone());
+        }
         jobs.insert(
             conversation_id,
             ConversationJob {

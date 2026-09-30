@@ -1,5 +1,7 @@
 //! Server-owned chat jobs. Events keep a monotonic sequence for observation.
 
+mod clock;
+
 #[cfg(test)]
 mod tests;
 
@@ -143,6 +145,7 @@ pub(crate) struct JobSnapshot {
     pub(crate) retry: Option<JobRetry>,
     pub(crate) compacting: bool,
     pub(crate) context: Option<crate::execution::ContextEstimate>,
+    pub(crate) work_ms: Option<u64>,
 }
 
 pub(crate) struct Job {
@@ -157,6 +160,7 @@ pub(crate) struct Job {
 
 struct JobInner {
     status: JobStatus,
+    clock: clock::WorkClock,
     events: Vec<JobEvent>,
     output: AssistantReply,
     output_base: AssistantReply,
@@ -182,6 +186,7 @@ impl Job {
             owner: JobOwner::Conversation(conversation),
             inner: Mutex::new(JobInner {
                 status: JobStatus::Running,
+                clock: clock::WorkClock::default(),
                 events: Vec::new(),
                 output: AssistantReply::default(),
                 output_base: AssistantReply::default(),
@@ -198,6 +203,33 @@ impl Job {
             cancel: AtomicBool::new(false),
             output_visible: AtomicBool::new(true),
         })
+    }
+
+    pub(super) fn track_work(&self, store: Arc<crate::conversations::ConversationStore>) {
+        let JobOwner::Conversation(conversation) = self.owner;
+        self.lock().clock.track(store, conversation, self.id);
+    }
+
+    /// Start the clock only after the durable execution claim succeeds.
+    pub(crate) fn start_work(&self) {
+        let checkpoint = {
+            let mut inner = self.lock();
+            if inner.status != JobStatus::Running {
+                return;
+            }
+            inner.clock.resume();
+            inner.clock.checkpoint(true)
+        };
+        if let Some(checkpoint) = checkpoint {
+            checkpoint.save();
+        }
+    }
+
+    pub(crate) fn checkpoint_work(&self) {
+        let checkpoint = self.lock().clock.checkpoint(false);
+        if let Some(checkpoint) = checkpoint {
+            checkpoint.save();
+        }
     }
 
     pub(crate) fn id(&self) -> JobId {
@@ -227,6 +259,8 @@ impl Job {
         if inner.status != JobStatus::Running {
             return None;
         }
+        inner.clock.pause();
+        let checkpoint = inner.clock.checkpoint(true);
         inner.status = status;
         self.status_changes.notify();
         inner.latest_seq += 1;
@@ -236,6 +270,9 @@ impl Job {
             kind: JobEventKind::Completed,
         });
         drop(inner);
+        if let Some(checkpoint) = checkpoint {
+            checkpoint.save();
+        }
         self.notify.notify_waiters();
         Some(seq)
     }
@@ -248,6 +285,7 @@ impl Job {
         ) {
             return false;
         }
+        inner.clock.resume();
         inner.status = JobStatus::Running;
         self.status_changes.notify();
         inner.error = None;
@@ -293,6 +331,7 @@ impl Job {
             retry: inner.retry.clone(),
             compacting: inner.compacting,
             context: inner.context,
+            work_ms: inner.clock.elapsed_ms(),
         }
     }
 
@@ -503,6 +542,8 @@ impl Job {
         ) {
             return None;
         }
+        inner.clock.pause();
+        let checkpoint = inner.clock.checkpoint(true);
         inner.status = status;
         self.status_changes.notify();
         inner.retry = None;
@@ -522,6 +563,9 @@ impl Job {
             },
         });
         drop(inner);
+        if let Some(checkpoint) = checkpoint {
+            checkpoint.save();
+        }
         self.notify.notify_waiters();
         Some(seq)
     }

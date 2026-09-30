@@ -180,7 +180,10 @@ async fn observe_segment(
     let job_id = job.id().as_hex();
     job.wait_after(cursor, OBSERVE_WAIT).await;
     let started = std::time::Instant::now();
+    let mut last_usage = None;
+    let mut last_context = None;
     while job.latest_seq() > cursor {
+        job.checkpoint_work();
         let snapshot = job.snapshot();
         let output = job.output_up_to(snapshot.latest_seq);
         if snapshot.status == JobStatus::Running || !output.is_empty() || snapshot.retry.is_some() {
@@ -221,6 +224,25 @@ async fn observe_segment(
             {
                 return;
             }
+        }
+        if last_usage.as_ref() != Some(&snapshot.output.usage) || last_context != snapshot.context {
+            let statistics = super::page::statistics::StatisticsView::load(
+                &state,
+                &conversation,
+                Some(&snapshot),
+            );
+            let mut patches = PatchSet::new();
+            if patches
+                .children("conversation-statistics", &statistics)
+                .is_ok()
+                && let Ok(frame) = patches.encode_progress()
+                && budget.try_progress(&frame).is_ok()
+                && tx.send(frame).await.is_err()
+            {
+                return;
+            }
+            last_usage = Some(snapshot.output.usage.clone());
+            last_context = snapshot.context;
         }
         cursor = snapshot.latest_seq;
         if !job.is_running() || started.elapsed() >= OBSERVE_SEGMENT_MAX {
@@ -368,6 +390,7 @@ fn final_frame(
     cursor: u64,
     historical: bool,
 ) -> hypergraft::StreamFrame {
+    job.checkpoint_work();
     let snapshot = job.snapshot();
     let record = if historical {
         None
@@ -437,6 +460,10 @@ fn final_frame(
         }
         let _ = patches.children(&message.id, &MessageBody { message: &message });
     }
+    let _ = patches.children(
+        "conversation-statistics",
+        &super::page::statistics::StatisticsView::load(state, conversation, Some(&snapshot)),
+    );
     let active = snapshot.status == JobStatus::Running;
     let id = conversation.as_hex();
     let job_id = job.id().as_hex();

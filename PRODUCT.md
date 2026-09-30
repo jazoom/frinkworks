@@ -4,7 +4,7 @@
 
 Frinkworks is a local coding agent. Axum, Askama, Hypergraft and Rig form its application stack.
 
-The user supplies a hosted model connection. Frinkworks has no user accounts or product account.
+The user supplies a hosted model connection. The application requires a stored provider connection and does not support local models. Frinkworks has no user accounts or product account.
 
 A local vault stores provider credentials until the user forgets that provider. Conversations and configuration persist locally.
 
@@ -121,7 +121,7 @@ Microsandbox environment-image snapshots remain. They contain the prepared envir
 
 Host execution requires explicit consent. Host tools run as the Frinkworks process user without path confinement. Host execution cannot enforce Read and rejects Read grants.
 
-A direct `!command` or `!!command` runs in the selected location without a provider connection. Sandbox commands require a ready environment.
+A direct `!command` or `!!command` runs in the selected location without a model request. App access still requires a stored provider connection. Sandbox commands require a ready environment.
 
 **Automatic (YOLO)** is the default command policy in both locations. It omits individual command decisions but never increases directory permissions. **Ask each time** remains available for individual command approval.
 

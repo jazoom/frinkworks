@@ -15,7 +15,7 @@ use hypergraft::{PageGraft, PatchGraft, PatchStatus};
 use crate::{
     error::AppResult,
     responses,
-    sessions::{OptionalSession, RequiredSession},
+    sessions::RequiredSession,
     state::AppState,
     workflows::{CatalogueError, WorkflowId, WorkflowRecord},
 };
@@ -50,7 +50,7 @@ struct Selection {
 
 async fn catalogue(
     State(state): State<AppState>,
-    _session: OptionalSession,
+    _session: RequiredSession,
     graft: PageGraft,
     Query(query): Query<Selection>,
 ) -> AppResult<Response> {

@@ -139,6 +139,7 @@ pub(super) async fn compact(
             return reject(PatchStatus::Conflict, error.message());
         }
     };
+    job.start_work();
     job.set_compacting();
     let response = render_detail_command(
         graft,

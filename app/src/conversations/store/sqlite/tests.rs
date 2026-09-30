@@ -10,6 +10,114 @@ impl Database {
 }
 
 #[test]
+fn usage_index_preserves_scope_identity_and_transaction_boundaries() {
+    let source = super::super::ConversationStore::in_memory();
+    let first = source.create("First".to_owned()).unwrap();
+    let other = source.create("Other".to_owned()).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let mut db = Database::open(dir.path()).unwrap();
+    db.save(None, &first).unwrap();
+    db.save(None, &other).unwrap();
+    let mut usage = crate::providers::ModelUsage::new(
+        crate::providers::ProviderKind::Deepseek,
+        "deepseek-flash",
+    );
+    usage.input_tokens = Some(100);
+    usage.output_tokens = Some(10);
+    usage.cache_read_tokens = Some(80);
+    let mut request = RequestUsage {
+        id: crate::conversations::RequestId::generate().unwrap(),
+        usage,
+        auth: crate::providers::AuthMethod::ApiKey,
+        prices: None,
+        sources: Vec::new(),
+        advertised: Vec::new(),
+    };
+    for conversation in [first.id, other.id] {
+        for sequence in 0..2 {
+            db.connection.execute(
+                "INSERT INTO messages (conversation_id, sequence, id, message) VALUES (?1, ?2, ?3, ?4)",
+                params![conversation.as_hex(), sequence, format!("message-{sequence}"),
+                    serde_json::json!({"requests": [&request]}).to_string()],
+            ).unwrap();
+        }
+    }
+    // Repeated request identities across retained phases contribute once.
+    assert_eq!(db.usage_totals(&first.id, &[]).unwrap().tokens.known, 110);
+    request.usage.output_tokens = Some(20);
+    assert_eq!(
+        db.usage_totals(&first.id, &[request.clone()])
+            .unwrap()
+            .tokens
+            .known,
+        120
+    );
+    request.id = crate::conversations::RequestId::generate().unwrap();
+    db.connection.execute(
+        "INSERT INTO summary_requests (conversation_id, sequence, id, request) VALUES (?1, 0, ?2, ?3)",
+        params![first.id.as_hex(), request.id.as_hex(), serde_json::to_string(&request).unwrap()],
+    ).unwrap();
+    assert_eq!(db.usage_totals(&first.id, &[]).unwrap().tokens.known, 230);
+    assert_eq!(db.usage_totals(&other.id, &[]).unwrap().tokens.known, 110);
+
+    db.connection.execute_batch("BEGIN").unwrap();
+    db.connection.execute(
+        "UPDATE messages SET message = json_set(message, '$.requests[0].usage.output-tokens', 42)
+         WHERE conversation_id = ?1", [first.id.as_hex()],
+    ).unwrap();
+    assert_eq!(db.usage_totals(&first.id, &[]).unwrap().tokens.known, 262);
+    db.connection.execute_batch("ROLLBACK").unwrap();
+    assert_eq!(db.usage_totals(&first.id, &[]).unwrap().tokens.known, 230);
+    request.usage.output_tokens = Some(40);
+    db.connection
+        .execute(
+            "UPDATE summary_requests SET request = ?2 WHERE conversation_id = ?1",
+            params![first.id.as_hex(), serde_json::to_string(&request).unwrap()],
+        )
+        .unwrap();
+    db.connection
+        .execute(
+            "DELETE FROM messages WHERE conversation_id = ?1 AND sequence = 0",
+            [first.id.as_hex()],
+        )
+        .unwrap();
+    assert_eq!(db.usage_totals(&first.id, &[]).unwrap().tokens.known, 250);
+    drop(db);
+    let mut db = Database::open(dir.path()).unwrap();
+    assert_eq!(db.usage_totals(&first.id, &[]).unwrap().tokens.known, 250);
+    db.remove(&first.id).unwrap();
+    assert_eq!(db.usage_totals(&first.id, &[]).unwrap().requests, 0);
+    assert_eq!(db.usage_totals(&other.id, &[]).unwrap().tokens.known, 110);
+}
+
+#[test]
+fn recorded_time_stays_scoped_and_a_live_checkpoint_never_counts_twice() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = super::super::ConversationStore::in_memory();
+    let first = source.create("First".to_owned()).unwrap();
+    let other = source.create("Other".to_owned()).unwrap();
+    let mut db = Database::open(dir.path()).unwrap();
+    db.save(None, &first).unwrap();
+    db.save(None, &other).unwrap();
+    let job = crate::sessions::JobId::generate().unwrap();
+    db.record_work_time(&first.id, job, 12_000).unwrap();
+    db.record_work_time(&first.id, job, 5_000).unwrap();
+    assert_eq!(db.work_time(&first.id, None).unwrap().total_ms, 12_000);
+    assert_eq!(
+        db.work_time(&first.id, Some((job, 14_000)))
+            .unwrap()
+            .total_ms,
+        14_000
+    );
+    assert_eq!(db.work_time(&other.id, None).unwrap().total_ms, 0);
+    drop(db);
+    let mut db = Database::open(dir.path()).unwrap();
+    assert_eq!(db.work_time(&first.id, None).unwrap().total_ms, 12_000);
+    db.remove(&first.id).unwrap();
+    assert_eq!(db.work_time(&first.id, None).unwrap().total_ms, 0);
+}
+
+#[test]
 fn full_disk_rolls_back_metadata_and_entries_without_replay() {
     let source = super::super::ConversationStore::in_memory();
     let initial = source.create("Disk full".to_owned()).unwrap();

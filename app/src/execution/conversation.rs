@@ -271,9 +271,10 @@ async fn prepare(
     };
     let settings = model.settings.clone();
     let mut preamble = settings.instructions.trim().to_owned();
+    // Ordinary turns use each directory's grant without a workflow phase's read-only ceiling.
     append_block(
         &mut preamble,
-        &crate::workflows::input_context::authorised_source_text(&settings, false),
+        &crate::workflows::input_context::authorised_source_text(&settings, true),
     );
     if work.kind == OrdinaryKind::Host {
         append_block(&mut preamble, &host_policy_text(&settings));

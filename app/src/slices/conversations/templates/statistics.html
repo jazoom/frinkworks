@@ -1,0 +1,69 @@
+<div
+  class="workspace-statistics flex flex-col gap-1"
+  role="group"
+  aria-label="Conversation statistics"
+>
+  <p class="sr-only">
+    A dash means unknown. The ≥ symbol marks an incomplete subtotal. The ≈
+    symbol marks an estimate.
+  </p>
+  {% if available %}
+    <dl class="flex flex-wrap gap-x-4 gap-y-1">
+      {% for metric in metrics %}
+        <div
+          class="inline-flex gap-1 whitespace-nowrap"
+          title="{{ metric.note }}"
+        >
+          <dt>{{ metric.label }}</dt>
+          <dd>{{ metric.value }}</dd>
+        </div>
+      {% endfor %}
+    </dl>
+  {% else %}
+    <p>Usage totals are unavailable.</p>
+  {% endif %}
+  <dl class="flex flex-wrap gap-x-4 gap-y-1">
+    <div class="inline-flex flex-wrap gap-1" title="{{ context_note }}">
+      <dt>Context</dt>
+      <dd>{{ context }}</dd>
+    </div>
+    <div
+      class="inline-flex gap-1 whitespace-nowrap"
+      title="Active work only. Questions and approvals pause both timers. Earlier unrecorded work is excluded."
+    >
+      <dt>{{ turn_label }}</dt>
+      <dd>
+        {% if time_available %}
+          <span
+            data-work-timer
+            data-elapsed-ms="{{ turn_ms }}"
+            data-work-key="{{ work_key }}"
+            data-running="{{ running }}"
+            >{{ turn_time }}</span
+          >
+        {% else %}
+          —
+        {% endif %}{% if paused %}<span class="ml-1">(paused)</span>{% endif %}
+      </dd>
+    </div>
+    <div
+      class="inline-flex gap-1 whitespace-nowrap"
+      title="Recorded active work across this conversation. User wait time and server downtime are excluded."
+    >
+      <dt>Total work</dt>
+      <dd>
+        {% if time_available %}
+          <span
+            data-work-timer
+            data-elapsed-ms="{{ total_ms }}"
+            data-work-key="{{ work_key }}"
+            data-running="{{ running }}"
+            >{{ total_time }}</span
+          >
+        {% else %}
+          —
+        {% endif %}
+      </dd>
+    </div>
+  </dl>
+</div>

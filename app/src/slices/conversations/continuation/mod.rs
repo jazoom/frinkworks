@@ -422,6 +422,7 @@ async fn continue_ordinary(
             );
         }
     };
+    job.start_work();
     if matches!(
         ordinary,
         Some(crate::execution::OrdinaryKind::Host | crate::execution::OrdinaryKind::Sandbox)
@@ -581,6 +582,7 @@ async fn continue_workflow(
             ),
         );
     }
+    job.start_work();
     spawn_conversation_work(
         state.clone(),
         session.0,

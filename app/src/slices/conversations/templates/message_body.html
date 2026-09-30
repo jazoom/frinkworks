@@ -52,14 +52,14 @@
     {% endif %}
     <div class="chat-prose">{{ message.html|safe }}</div>
   {% else %}
-    {{ message.html|safe }}
+    <div class="flex flex-col gap-6">{{ message.html|safe }}</div>
   {% endif %}
   {% if message.error != "" %}
     <div class="alert alert-error mt-3" role="alert">
       <p>{{ message.error }}</p>
     </div>
   {% endif %}
-  {% if message.revisable || message.forkable || message.copy.is_some() %}
+  {% if message.revisable || message.forkable || message.copy.is_some() || !message.details.is_empty() %}
     <footer class="chat-message-actions mt-2 flex flex-wrap items-center gap-2">
       {% if message.revisable %}
         <a
@@ -112,6 +112,29 @@
           >
         </div>
       {% endif %}
+      {% if !message.details.is_empty() %}
+        <button
+          type="button"
+          class="btn btn-ghost btn-sm chat-details-toggle"
+          data-reply-details
+          aria-expanded="false"
+          aria-controls="{{ message.id }}-details"
+        >
+          Details
+          <svg class="workspace-icon" aria-hidden="true">
+            <use href="/static/images/workspace-icons.svg#down" />
+          </svg>
+        </button>
+      {% endif %}
     </footer>
+  {% endif %}
+  {% if !message.details.is_empty() %}
+    <div
+      id="{{ message.id }}-details"
+      class="chat-message-details text-quiet mt-2 text-sm"
+      hidden
+    >
+      {{ message.details|safe }}
+    </div>
   {% endif %}
 </div>

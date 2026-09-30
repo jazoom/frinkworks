@@ -806,6 +806,11 @@
             data-command-suggestions
             hidden
           ></div>
+          {% if self.saved().is_some() %}
+            <div id="conversation-statistics" class="mb-3">
+              {% if let Some(statistics) = statistics %}{{ statistics|safe }}{% endif %}
+            </div>
+          {% endif %}
           {% include "conversations/queue/templates/index.html" %}
           <div class="workspace-composer-surface">
             {% let view = &self.attachments %}

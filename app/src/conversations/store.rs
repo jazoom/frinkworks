@@ -569,6 +569,31 @@ fn attachment_to_file(reference: &crate::conversations::AttachmentRef) -> Attach
 }
 
 impl ConversationStore {
+    pub(crate) fn usage_totals(
+        &self,
+        id: &ConversationId,
+        live: &[super::RequestUsage],
+    ) -> Result<super::statistics::UsageTotals, ConversationError> {
+        self.database().usage_totals(id, live)
+    }
+
+    pub(crate) fn record_work_time(
+        &self,
+        id: &ConversationId,
+        job: JobId,
+        elapsed_ms: u64,
+    ) -> Result<(), ConversationError> {
+        self.database().record_work_time(id, job, elapsed_ms)
+    }
+
+    pub(crate) fn work_time(
+        &self,
+        id: &ConversationId,
+        live: Option<(JobId, u64)>,
+    ) -> Result<super::statistics::WorkTime, ConversationError> {
+        self.database().work_time(id, live)
+    }
+
     pub(crate) fn open(dir: PathBuf) -> Result<Self, ConversationError> {
         let changes = crate::changes::Changes::default();
         let database = Database::open(&dir)?;

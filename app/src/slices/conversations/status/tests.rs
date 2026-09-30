@@ -79,7 +79,7 @@ async fn subscribe(state: &AppState, session: SessionId) -> HarnessSession<LiveS
     LiveHarness::new(super::super::live_router(), state.clone())
         .subscribe_with(
             "/conversations?index=true",
-            LiveSessionGuard::new(state.sessions.clone()),
+            LiveSessionGuard::new(state.sessions.clone(), state.vault.clone()),
             extensions,
         )
         .await

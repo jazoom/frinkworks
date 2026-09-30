@@ -114,7 +114,7 @@ async fn the_live_guard_rejects_anonymous_and_removed_sessions() {
     let token = super::generate_session_token().expect("token");
     let session = token.id();
     state.sessions.insert(session);
-    let guard = super::LiveSessionGuard::new(state.sessions.clone());
+    let guard = super::LiveSessionGuard::new(state.sessions.clone(), state.vault.clone());
 
     assert!(matches!(
         guard.bind(&axum::http::Extensions::new()).await,
@@ -126,6 +126,23 @@ async fn the_live_guard_rejects_anonymous_and_removed_sessions() {
     let connection = guard.bind(&extensions).await.expect("live connection");
     assert_eq!(guard.revalidate(&connection).await, Ok(session));
 
+    state.vault.forget(ProviderKind::Xai).unwrap();
+    assert_eq!(
+        guard.revalidate(&connection).await,
+        Err(hypergraft::live::GuardFailure::Terminal)
+    );
+    assert!(matches!(
+        guard.bind(&extensions).await,
+        Err(hypergraft::live::GuardFailure::Terminal)
+    ));
+    state
+        .vault
+        .put(ProviderConnection::with_key(
+            ProviderKind::Xai,
+            "key",
+            "model",
+        ))
+        .unwrap();
     state.sessions.remove(&session);
     assert_eq!(
         guard.revalidate(&connection).await,
@@ -154,7 +171,66 @@ fn request_time_expiry_interrupts_a_gate_before_session_restore() {
 }
 
 #[tokio::test]
-async fn a_live_cookie_remains_valid_without_provider_credentials() {
+async fn workspace_routes_require_a_provider_and_never_issue_provider_free_sessions() {
+    let state = crate::tests::test_state(crate::config::RuntimeConfig::development());
+    let app = crate::slices::router()
+        .layer(from_fn_with_state(state.clone(), super::resolve_session))
+        .layer(axum::middleware::from_fn(hypergraft::middleware::classify))
+        .with_state(state.clone());
+    for (method, path) in [
+        ("GET", "/conversations/new"),
+        ("GET", "/workflows"),
+        ("GET", "/presets"),
+        ("POST", "/presets/create"),
+        ("POST", "/conversations/new"),
+    ] {
+        for enhanced in [false, true] {
+            let mut request = Request::builder().method(method).uri(path);
+            if enhanced {
+                request = request
+                    .header(
+                        hypergraft::GRAFT_REQUEST,
+                        if method == "GET" {
+                            "navigation"
+                        } else {
+                            "patch"
+                        },
+                    )
+                    .header(header::ACCEPT, hypergraft::MEDIA_TYPE);
+            }
+            let response = app
+                .clone()
+                .oneshot(request.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert!(!response.headers().contains_key(header::SET_COOKIE));
+            if method == "POST" && !enhanced {
+                assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            } else if enhanced {
+                assert_eq!(response.status(), StatusCode::OK);
+                let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .unwrap();
+                assert!(
+                    String::from_utf8(body.to_vec())
+                        .unwrap()
+                        .contains("navigate=\"/connect\"")
+                );
+            } else {
+                assert_eq!(response.status(), StatusCode::SEE_OTHER);
+                assert_eq!(
+                    response.headers().get(header::LOCATION).unwrap(),
+                    "/connect"
+                );
+            }
+        }
+    }
+    assert!(state.conversations.list().is_empty());
+    assert!(state.presets.list().is_empty());
+}
+
+#[tokio::test]
+async fn a_live_cookie_loses_authority_without_provider_credentials() {
     let (state, token, session, _) = state_with_gate("Forget");
     state.vault.forget(ProviderKind::Xai).expect("forget");
     assert!(!state.vault.has_providers());
@@ -182,6 +258,10 @@ async fn a_live_cookie_remains_valid_without_provider_credentials() {
         .await
         .expect("response");
 
-    assert_eq!(response.status(), StatusCode::NO_CONTENT);
-    assert!(state.sessions.contains_live(&session));
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        response.headers().get(header::LOCATION).unwrap(),
+        "/connect"
+    );
+    assert!(!state.sessions.contains_live(&session));
 }

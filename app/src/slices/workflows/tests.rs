@@ -512,8 +512,9 @@ async fn anonymous_workflow_authoring_requests_redirect_to_connect() {
 }
 
 #[tokio::test]
-async fn workflow_selection_is_non_mutating_and_validates_context_without_a_provider() {
+async fn workflow_selection_is_non_mutating_and_validates_context() {
     let state = test_state();
+    connected(&state);
     let conversation = state
         .conversations
         .create("Destination <script>alert(1)</script>".to_owned())

@@ -661,6 +661,18 @@ body:has(.workspace-catalogue) .app-frame {
     width: 22px;
     height: 22px;
 }
+.workspace-statistics {
+    color: var(--workspace-muted);
+    font-size: 12px;
+    line-height: 1.6;
+}
+.workspace-statistics dd {
+    font-variant-numeric: tabular-nums;
+}
+.workspace-statistics [data-work-timer] {
+    display: inline-block;
+    min-width: 4ch;
+}
 .workspace-composer-surface {
     border: 1px solid var(--color-base-300);
     border-radius: 9px;
@@ -840,6 +852,19 @@ body:has(.workspace-catalogue) .app-frame {
     padding: 6px 10px;
     font-size: 14px;
     font-weight: 400;
+}
+#transcript .chat-message-actions .chat-details-toggle {
+    width: auto;
+    color: var(--workspace-muted);
+}
+.chat-details-toggle[aria-expanded="true"] .workspace-icon {
+    transform: rotate(180deg);
+}
+.chat-message-details {
+    max-width: 70ch;
+    padding: 12px 0;
+    border-block-start: 1px solid var(--color-base-300);
+    overflow-wrap: anywhere;
 }
 #transcript .chat-tool-record {
     background: var(--color-base-100);

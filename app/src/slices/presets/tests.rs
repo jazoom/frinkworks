@@ -6,6 +6,19 @@ use axum::{
 };
 use tower::ServiceExt;
 
+fn connected_state() -> AppState {
+    let state = crate::tests::test_state(crate::config::RuntimeConfig::development());
+    state
+        .vault
+        .put(crate::providers::ProviderConnection::with_key(
+            ProviderKind::Xai,
+            "test-key",
+            "grok-4.6",
+        ))
+        .unwrap();
+    state
+}
+
 #[test]
 fn preset_destinations_validate_identity_without_application_or_preview_tokens() {
     use askama::Template;
@@ -55,7 +68,7 @@ fn preset_destinations_validate_identity_without_application_or_preview_tokens()
 
 #[tokio::test]
 async fn routes_support_navigation_and_patch_commands_only() {
-    let state = crate::tests::test_state(crate::config::RuntimeConfig::development());
+    let state = connected_state();
     let token = crate::sessions::generate_session_token().unwrap();
     state.sessions.insert(token.id());
     let app = crate::slices::router()
@@ -153,7 +166,7 @@ async fn routes_support_navigation_and_patch_commands_only() {
 
 #[tokio::test]
 async fn invalid_and_stale_edits_leave_the_saved_snapshot_unchanged() {
-    let state = crate::tests::test_state(crate::config::RuntimeConfig::development());
+    let state = connected_state();
     let record = state
         .presets
         .create(
@@ -218,7 +231,7 @@ async fn post_form(app: &axum::Router, uri: &str, body: String) -> StatusCode {
 
 #[tokio::test]
 async fn capable_models_need_a_listed_effort_while_unlisted_models_stay_retained() {
-    let state = crate::tests::test_state(crate::config::RuntimeConfig::development());
+    let state = connected_state();
     let app = crate::slices::router()
         .layer(from_fn_with_state(
             state.clone(),
