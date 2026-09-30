@@ -122,8 +122,20 @@ pub(super) fn router() -> Router<AppState> {
             post(directories::pick_new),
         )
         .route(
+            "/conversations/new/directories/recent/{id}/select",
+            post(directories::recent::select),
+        )
+        .route(
+            "/conversations/new/directories/recent/{id}/forget",
+            post(directories::recent::forget),
+        )
+        .route(
             "/conversations/new/directories/consent",
             post(directories::approve_new),
+        )
+        .route(
+            "/conversations/new/directories/consent/cancel",
+            post(directories::cancel_new),
         )
         .route(
             "/conversations/new/directories/{grant_id}/consent",
@@ -278,6 +290,18 @@ pub(super) fn router() -> Router<AppState> {
         .route(
             "/conversations/{conversation_id}/directories/start",
             post(directories::start_saved),
+        )
+        .route(
+            "/conversations/{conversation_id}/directories/recent/{id}/select",
+            post(directories::recent::select_saved),
+        )
+        .route(
+            "/conversations/{conversation_id}/directories/recent/{id}/forget",
+            post(directories::recent::forget_saved),
+        )
+        .route(
+            "/conversations/{conversation_id}/directories/consent/cancel",
+            post(directories::cancel_saved),
         )
         .route(
             "/conversations/{conversation_id}/directories/pick",
@@ -1421,12 +1445,16 @@ async fn cancel_message(
             ),
         );
     };
+    let awaiting_command = state
+        .host_approvals
+        .pending_for(record.id, job.id())
+        .is_some();
     job.request_cancel();
     state.host_approvals.invalidate_job(job.id());
     state.conversations.invalidate_questions_for_job(job.id());
-    // Observation must follow cancellation before the question waiter settles.
+    // Observation must follow cancellation before the decision waiter settles.
     // The cancellation flag remains set. This starts no replacement work.
-    if job.snapshot().status == crate::sessions::JobStatus::AwaitingQuestion {
+    if awaiting_command || job.snapshot().status == crate::sessions::JobStatus::AwaitingQuestion {
         let _ = job.resume();
     }
     render_detail_command(
@@ -1956,15 +1984,6 @@ fn detail_view_with_transcript(
         record
             .active_job
             .and_then(|job_id| state.host_approvals.pending_for(record.id, job_id)),
-        record
-            .model
-            .as_ref()
-            .map(|model| {
-                crate::slices::execution_settings::page::host_approval_label(
-                    model.settings.host_approval,
-                )
-            })
-            .unwrap_or("Ask each time"),
     )
     .with_pending_command(pending_command)
     .with_workflow_progress(workflow_progress)

@@ -205,6 +205,7 @@ async fn live_sidebar_tracks_attention_without_reply_updates() {
         job: job.id(),
         conversation: record.id,
         execution_revision: record.revision,
+        location: crate::execution::ToolLocation::Host,
         command: "pwd".into(),
         directory: "/tmp".into(),
         explanation: String::new(),

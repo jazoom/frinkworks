@@ -1,0 +1,18 @@
+{% if let Some(call) = block.call %}
+  <dl class="mb-3 space-y-2 text-xs">
+    <div>
+      <dt class="text-quiet">Call ID</dt>
+      <dd class="font-mono break-all">{{ call.id }}</dd>
+    </div>
+    <div>
+      <dt class="text-quiet">Arguments</dt>
+      <dd>
+        <pre
+          class="max-h-48 overflow-auto break-words whitespace-pre-wrap"
+          tabindex="0"
+          aria-label="Tool arguments"
+        ><code>{{ call.arguments }}</code></pre>
+      </dd>
+    </div>
+  </dl>
+{% endif %}

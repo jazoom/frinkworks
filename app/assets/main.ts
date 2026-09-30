@@ -945,6 +945,10 @@ function syncNetworkDomains() {
 }
 
 function selectConversationSettingsSection(panel: HTMLElement, id: string) {
+    panel.classList.toggle(
+        "directory-manager-open",
+        id === "settings-directories",
+    );
     panel
         .querySelectorAll<HTMLElement>("[data-settings-panel]")
         .forEach((section) => {
@@ -971,9 +975,21 @@ function selectConversationSettingsSection(panel: HTMLElement, id: string) {
         "[data-execution-actions]",
     );
     if (actions) actions.hidden = id !== "settings-execution";
+    syncExecutionReview();
 }
 
 function revealConversationSetting(target: HTMLElement, focus = true) {
+    const inline = target.closest<HTMLElement>(
+        '[data-directory-inline="true"]',
+    );
+    if (inline) {
+        document
+            .querySelector<HTMLElement>("#conversation-settings:popover-open")
+            ?.hidePopover();
+        target.scrollIntoView({ block: "nearest" });
+        if (focus) target.focus({ preventScroll: true });
+        return;
+    }
     const panel = target.closest<HTMLElement>("#conversation-settings");
     const scroll = panel?.querySelector<HTMLElement>("[data-settings-scroll]");
     if (!panel || !scroll) return;
@@ -983,7 +999,7 @@ function revealConversationSetting(target: HTMLElement, focus = true) {
     else if (section || target.id === "conversation-settings-heading")
         selectConversationSettingsSection(
             panel,
-            section?.id ?? "settings-directories",
+            section?.id ?? "settings-execution",
         );
     let parent = target.parentElement;
     while (parent && parent !== panel) {
@@ -1029,6 +1045,10 @@ document.addEventListener("click", (event) => {
     if (target?.closest("[data-execution-sandbox-settings][hidden]"))
         target = document.getElementById("conversation-execution-heading");
     if (!target) return;
+    if (target.closest('[data-directory-inline="true"]')) {
+        revealConversationSetting(target);
+        return;
+    }
     const panel = target.closest<HTMLElement>("#conversation-settings");
     if (!panel) return;
     if (
@@ -1038,7 +1058,7 @@ document.addEventListener("click", (event) => {
         return;
     selectConversationSettingsSection(
         panel,
-        target.closest("[data-settings-panel]")?.id ?? "settings-directories",
+        target.closest("[data-settings-panel]")?.id ?? "settings-execution",
     );
     // Native activation retains the trigger for Escape focus restoration.
     requestAnimationFrame(() => revealConversationSetting(target));
@@ -1098,7 +1118,13 @@ function syncExecutionReview() {
     const reviewTitle = panel.querySelector<HTMLElement>(
         "[data-execution-review-title]",
     );
-    if (title) title.hidden = !!review;
+    const directories =
+        panel.classList.contains("directory-manager-open") && !review;
+    const directoryTitle = panel.querySelector<HTMLElement>(
+        "[data-directory-title]",
+    );
+    if (title) title.hidden = !!review || directories;
+    if (directoryTitle) directoryTitle.hidden = !directories;
     if (reviewTitle) reviewTitle.hidden = !review;
 }
 
@@ -1328,13 +1354,27 @@ listenForLocationChanges(() => {
 });
 
 function syncDirectoryAccess() {
-    const blocked = !!commandBlockReason();
+    // Hypergraft owns pending command exclusion. Only uncertainty disables the whole directory manager.
+    const reason = commandBlockReason();
+    const blocked = reason === "uncertain-command";
     document
         .querySelectorAll<HTMLFieldSetElement>(
             "fieldset.directory-access-options",
         )
         .forEach((fieldset) => {
-            fieldset.disabled = blocked;
+            const disabled =
+                blocked || fieldset.dataset.directoryDisabled === "true";
+            if (fieldset.disabled !== disabled) fieldset.disabled = disabled;
+        });
+    document
+        .querySelectorAll<HTMLInputElement>(
+            "[data-recent-directory], [data-command-directory]",
+        )
+        .forEach((field) => {
+            const disabled =
+                blocked || field.dataset.directoryDisabled === "true";
+            if (field.disabled !== disabled) field.disabled = disabled;
+            if (!reason) field.checked = field.defaultChecked;
         });
 }
 
@@ -1344,10 +1384,13 @@ listenForLivePatches(syncDirectoryAccess);
 
 let settingsScroll: number | undefined;
 let settingsSection: string | undefined;
+let directoryFocus: string | undefined;
+let directoryListScroll: number | undefined;
+let directoryTranscriptScroll: number | undefined;
 document.addEventListener(
     "submit",
     () => {
-        // Hypergraft reserves the command after this capture listener. Lock only after admission.
+        // Hypergraft reserves the command after this capture listener. The microtask reads the guard after admission.
         queueMicrotask(syncDirectoryAccess);
         const name = document.querySelector<HTMLInputElement>(
             "#conversation-preset-name",
@@ -1364,8 +1407,21 @@ document.addEventListener(
             "[data-settings-scroll]",
         )?.scrollTop;
         settingsSection = panel?.querySelector<HTMLElement>(
-            '[data-settings-tab][aria-pressed="true"]',
-        )?.dataset.settingsTab;
+            "[data-settings-panel]:not([hidden])",
+        )?.id;
+        const manager = document.querySelector<HTMLElement>(
+            "[data-directory-manager]",
+        );
+        const active = document.activeElement;
+        directoryFocus =
+            active instanceof HTMLElement && manager?.contains(active)
+                ? active.id
+                : undefined;
+        directoryListScroll = manager?.querySelector<HTMLElement>(
+            "[data-directory-list]",
+        )?.scrollTop;
+        directoryTranscriptScroll =
+            document.querySelector<HTMLElement>("#transcript")?.scrollTop;
     },
     true,
 );
@@ -1420,6 +1476,45 @@ listenForRequestSettled((detail) => {
     const requestedPanel = document.querySelector<HTMLElement>(
         '#conversation-settings[data-settings-open="true"]',
     );
+    const directoryCommand = detail.url.includes("/directories/");
+    const manager = document.querySelector<HTMLElement>(
+        "[data-directory-manager]",
+    );
+    const directoryConsent = manager?.querySelector<HTMLElement>(
+        "#conversation-directory-consent",
+    );
+    if (detail.outcome === "applied-patch" && directoryCommand && manager) {
+        if (requestedPanel) {
+            selectConversationSettingsSection(
+                requestedPanel,
+                "settings-directories",
+            );
+            requestedPanel.showPopover();
+        }
+        if (directoryConsent) {
+            revealConversationSetting(directoryConsent);
+        } else {
+            const list = manager.querySelector<HTMLElement>(
+                "[data-directory-list]",
+            );
+            if (list && directoryListScroll !== undefined)
+                list.scrollTop = directoryListScroll;
+            const scroll =
+                requestedPanel?.querySelector<HTMLElement>(
+                    "[data-settings-scroll]",
+                ) ?? document.querySelector<HTMLElement>("#transcript");
+            const position = requestedPanel
+                ? previousScroll
+                : directoryTranscriptScroll;
+            if (scroll && position !== undefined) scroll.scrollTop = position;
+            const focus = document.getElementById(directoryFocus ?? "");
+            if (focus && manager.contains(focus))
+                focus.focus({ preventScroll: true });
+        }
+    }
+    directoryFocus = undefined;
+    directoryListScroll = undefined;
+    directoryTranscriptScroll = undefined;
     // A top-layer panel must not conceal command or transport errors.
     document
         .querySelectorAll<HTMLElement>(".conversation-panel:popover-open")
@@ -1427,7 +1522,11 @@ listenForRequestSettled((detail) => {
             if (detail.outcome !== "applied-patch" || panel !== requestedPanel)
                 panel.hidePopover();
         });
-    if (detail.outcome === "applied-patch" && requestedPanel) {
+    if (
+        detail.outcome === "applied-patch" &&
+        requestedPanel &&
+        !directoryCommand
+    ) {
         if (previousSection)
             selectConversationSettingsSection(requestedPanel, previousSection);
         if (!requestedPanel.matches(":popover-open"))
@@ -1486,6 +1585,35 @@ document.addEventListener("change", (event) => {
     }
     if (
         field instanceof HTMLInputElement &&
+        field.matches(
+            "[data-recent-directory], [data-directory-access], [data-command-directory]",
+        ) &&
+        commandBlockReason()
+    ) {
+        const controls =
+            field.type === "radio"
+                ? document.querySelectorAll<HTMLInputElement>(
+                      "input[type=radio]",
+                  )
+                : [field];
+        for (const control of controls) {
+            if (control.name === field.name && control.form === field.form)
+                control.checked = control.defaultChecked;
+        }
+        return;
+    }
+    if (
+        field instanceof HTMLInputElement &&
+        field.matches("[data-recent-directory]")
+    ) {
+        const submitter = document.getElementById(
+            field.dataset.recentDirectory ?? "",
+        );
+        if (submitter instanceof HTMLButtonElement && submitter.form)
+            submitter.form.requestSubmit(submitter);
+    }
+    if (
+        field instanceof HTMLInputElement &&
         field.checked &&
         field.matches("[data-directory-access]")
     ) {
@@ -1498,7 +1626,8 @@ document.addEventListener("change", (event) => {
         }
     }
     if (
-        field instanceof HTMLSelectElement &&
+        field instanceof HTMLInputElement &&
+        field.checked &&
         field.matches("[data-command-directory]")
     ) {
         const submitter = document.getElementById("command-directory-submit");
@@ -3267,6 +3396,7 @@ function enableSupervisedDevelopment() {
     let submitting = false;
     let reloading = false;
     let requestVersion = 0;
+    let offerInterrupt = false;
     const render = () => {
         const busy =
             submitting ||
@@ -3276,16 +3406,27 @@ function enableSupervisedDevelopment() {
             .querySelectorAll<HTMLElement>("[data-supervised-development]")
             .forEach((control) => {
                 control.hidden = false;
-                const button = control.querySelector<HTMLButtonElement>(
-                    "[data-supervised-rebuild]",
+                control
+                    .querySelectorAll<HTMLButtonElement>(
+                        "[data-supervised-rebuild]",
+                    )
+                    .forEach((button) => {
+                        const interrupt =
+                            button.dataset.supervisedRebuild === "interrupt";
+                        button.disabled =
+                            busy || (interrupt && !offerInterrupt);
+                        if (!interrupt) button.hidden = offerInterrupt && !busy;
+                    });
+                const confirmation = control.querySelector<HTMLElement>(
+                    "[data-supervised-interrupt]",
                 );
+                if (confirmation) confirmation.hidden = !offerInterrupt || busy;
                 const progress = control.querySelector<HTMLElement>(
                     "[data-supervised-progress]",
                 );
                 const status = control.querySelector<HTMLElement>(
                     "[data-supervised-status]",
                 );
-                if (button) button.disabled = busy;
                 if (progress) progress.hidden = !busy;
                 if (status && status.textContent !== text)
                     status.textContent = text;
@@ -3298,7 +3439,10 @@ function enableSupervisedDevelopment() {
     }) => {
         phase = data.phase;
         message = data.message;
-        if (["checking", "building", "restarting"].includes(phase)) notice = "";
+        if (["checking", "building", "restarting"].includes(phase)) {
+            notice = "";
+            offerInterrupt = false;
+        }
         render();
         if (
             phase === "ready" &&
@@ -3312,27 +3456,46 @@ function enableSupervisedDevelopment() {
     render();
     listenForLocationChanges(render);
     document.addEventListener("click", async (event) => {
-        const button =
-            event.target instanceof Element
-                ? event.target.closest<HTMLButtonElement>(
-                      "[data-supervised-rebuild]",
-                  )
-                : null;
+        if (!(event.target instanceof Element)) return;
+        const control = event.target.closest<HTMLElement>(
+            "[data-supervised-development]",
+        );
+        if (event.target.closest("[data-supervised-cancel]") && control) {
+            offerInterrupt = false;
+            render();
+            control
+                .querySelector<HTMLElement>('[data-supervised-rebuild=""]')
+                ?.focus();
+            return;
+        }
+        const button = event.target.closest<HTMLButtonElement>(
+            "[data-supervised-rebuild]",
+        );
         if (!button || button.disabled || submitting) return;
+        const interrupt = button.dataset.supervisedRebuild === "interrupt";
+        if (interrupt && !offerInterrupt) return;
+        offerInterrupt = false;
         submitting = true;
         requestVersion++;
         phase = "checking";
-        message = "Idle check in progress.";
+        message = interrupt
+            ? "Build request in progress."
+            : "Idle check in progress.";
         notice = "";
         render();
         try {
             const response = await fetch(endpoint, {
                 method: "POST",
-                headers: { "X-Frinkworks-Dev": "restart" },
+                headers: {
+                    "X-Frinkworks-Dev": interrupt
+                        ? "interrupt-restart"
+                        : "restart",
+                },
                 signal: AbortSignal.timeout(10000),
             });
             const data = await response.json();
             if (!response.ok) notice = data.message;
+            offerInterrupt = !response.ok && data.canInterrupt === true;
             receive(data);
         } catch {
             phase = "error";
@@ -3341,11 +3504,15 @@ function enableSupervisedDevelopment() {
         } finally {
             submitting = false;
             render();
-            const status = button
-                .closest("[data-supervised-development]")
-                ?.querySelector<HTMLElement>("[data-supervised-status]");
-            if (status?.getClientRects().length)
-                status.scrollIntoView({ block: "nearest" });
+            const feedback = control?.querySelector<HTMLElement>(
+                offerInterrupt
+                    ? "[data-supervised-interrupt]"
+                    : "[data-supervised-status]",
+            );
+            if (feedback?.getClientRects().length) {
+                if (offerInterrupt) feedback.focus({ preventScroll: true });
+                feedback.scrollIntoView({ block: "nearest" });
+            }
         }
     });
     window.addEventListener("pageshow", () => {

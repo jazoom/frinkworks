@@ -489,13 +489,8 @@ export function initConversation(
             }
             const settingsRevisionChanged =
                 context.cause === "patch" &&
-                (["conversation-model-form", "command-directory-form"].includes(
-                    context.detail.form.id,
-                ) ||
-                    context.detail.form.id.startsWith(
-                        "directory-access-form-",
-                    ) ||
-                    context.detail.url.endsWith("/directories/consent"));
+                (context.detail.form.id === "conversation-model-form" ||
+                    context.detail.url.includes("/directories/"));
             if (unsavedSettings) {
                 const form = modelForm();
                 for (const [name, saved] of unsavedSettings) {

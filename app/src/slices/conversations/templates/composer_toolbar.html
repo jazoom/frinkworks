@@ -137,7 +137,7 @@
         >{% if self.queue.follow_up && self.revision.is_none() %}Queue{% else %}Send{% endif %}</span
       >
     </button>
-    {% if observe_active %}
+    {% if self.can_stop() %}
       {% if let Some(saved) = self.saved() %}
         <button
           class="btn btn-outline"

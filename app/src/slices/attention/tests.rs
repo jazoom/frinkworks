@@ -102,6 +102,7 @@ async fn decisions_retain_gate_and_conversation_identity_without_commands() {
             job,
             conversation: record.id,
             execution_revision: 1,
+            location: crate::execution::ToolLocation::Host,
             command: "echo test".to_owned(),
             directory: std::path::PathBuf::from("/tmp"),
             explanation: "Fixture".to_owned(),

@@ -404,6 +404,7 @@ impl WorkflowEvidenceStore {
             "conversation": request.conversation.to_string(),
             "job": request.job.to_string(),
             "execution_revision": request.execution_revision,
+            "location": request.location.as_str(),
             "command": text(&request.command, crate::tools::MAXIMUM_COMMAND_BYTES),
             "directory": text(&request.directory.to_string_lossy(), MAXIMUM_ACTIVITY_TEXT_BYTES),
             "explanation": text(&request.explanation, MAXIMUM_ACTIVITY_TEXT_BYTES),

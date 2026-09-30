@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
-    sync::{Mutex, MutexGuard},
+    sync::{Arc, Mutex, MutexGuard},
 };
 
 use rand::{rand_core::TryRng, rngs::SysRng};
@@ -45,8 +45,8 @@ struct ConsentBinding {
     target: ConsentTarget,
 }
 
-#[derive(Default)]
 pub(crate) struct AccessConsentStore {
+    preferences: Arc<crate::preferences::Preferences>,
     pending: Mutex<HashMap<String, ConsentBinding>>,
     approved: Mutex<HashMap<String, ConsentBinding>>,
     consumed_drafts: Mutex<HashSet<(SessionId, String)>>,
@@ -68,8 +68,15 @@ pub(crate) enum ConsentError {
 }
 
 impl AccessConsentStore {
-    pub(crate) fn new() -> Self {
-        Self::default()
+    pub(crate) fn new(preferences: Arc<crate::preferences::Preferences>) -> Self {
+        Self {
+            preferences,
+            pending: Mutex::default(),
+            approved: Mutex::default(),
+            consumed_drafts: Mutex::default(),
+            launch_previews: Mutex::default(),
+            launches: Mutex::default(),
+        }
     }
 
     pub(crate) fn request_draft(
@@ -168,6 +175,9 @@ impl AccessConsentStore {
         directories: &[DirectoryGrant],
         grant: &DirectoryGrant,
     ) -> bool {
+        if directories.contains(grant) && self.preferences.directory_approved(grant) {
+            return true;
+        }
         let expected = ConsentBinding {
             session,
             subject: Subject::Draft {
@@ -191,6 +201,9 @@ impl AccessConsentStore {
         nonce: &str,
         grant: &DirectoryGrant,
     ) -> bool {
+        if self.preferences.directory_approved(grant) {
+            return true;
+        }
         let target = ConsentTarget::Grant(grant.into());
         let base = nonce.split(':').next().unwrap_or_default();
         let approved = lock(&self.approved);
@@ -234,9 +247,10 @@ impl AccessConsentStore {
                 subject: subject.clone(),
                 target: ConsentTarget::Grant(grant.into()),
             };
-            if !reference
-                .split(',')
-                .any(|key| approved.get(key) == Some(&expected))
+            if !self.preferences.directory_approved(grant)
+                && !reference
+                    .split(',')
+                    .any(|key| approved.get(key) == Some(&expected))
             {
                 return Err(ConsentError::Invalid);
             }
@@ -283,6 +297,15 @@ impl AccessConsentStore {
         approved.extend(replacements);
         consumed.insert(draft);
         Ok(())
+    }
+
+    pub(crate) fn cancel_directory_request(&self, request: &str, session: SessionId) {
+        let mut pending = lock(&self.pending);
+        if pending.get(request).is_some_and(|binding| {
+            binding.session == session && matches!(binding.target, ConsentTarget::Grant(_))
+        }) {
+            pending.remove(request);
+        }
     }
 
     pub(crate) fn retain_sessions(&self, live: impl Fn(&SessionId) -> bool) {
@@ -401,12 +424,13 @@ impl AccessConsentStore {
         settings: &super::ExecutionSettings,
         grant: &DirectoryGrant,
     ) -> bool {
-        self.authorised_target(
-            session,
-            conversation,
-            settings,
-            ConsentTarget::Grant(grant.into()),
-        )
+        (settings.directories.contains(grant) && self.preferences.directory_approved(grant))
+            || self.authorised_target(
+                session,
+                conversation,
+                settings,
+                ConsentTarget::Grant(grant.into()),
+            )
     }
 
     pub(crate) fn request_host_draft(

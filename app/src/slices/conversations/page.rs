@@ -1,6 +1,8 @@
 pub(crate) mod model_picker;
 mod presets;
+mod recent_directories;
 use presets::{PresetPreviewView, PresetSettingView, setup_rows};
+use recent_directories::{RecentDirectoryView, recent_directory_views};
 
 use askama::Template;
 use model_picker::ModelPicker;
@@ -32,6 +34,7 @@ pub(super) struct ConversationListItem {
     pub(super) meta: String,
 }
 
+#[derive(Clone)]
 pub(super) struct DirectoryView {
     pub(super) id: String,
     pub(super) name: String,
@@ -341,7 +344,7 @@ pub(super) struct HostCommandView {
     pub(super) command_input: String,
     pub(super) directory: String,
     pub(super) explanation: String,
-    pub(super) approval_policy: String,
+    pub(super) location_host: bool,
 }
 
 pub(super) struct PendingCommandView {
@@ -436,6 +439,7 @@ pub(super) struct ConversationDetailView {
     preset_setup: Vec<PresetSettingView>,
     pub(super) preset_save_open: bool,
     pub(super) directories: Vec<DirectoryView>,
+    recent_directories: Vec<RecentDirectoryView>,
     pub(super) data_root: String,
     pub(super) consent_path: String,
     pub(super) consent_request: String,
@@ -678,6 +682,7 @@ impl ConversationDetailView {
             historical: false,
             window_nav: false,
             history_status: String::new(),
+            recent_directories: recent_directory_views(state, &directories),
             directories,
             data_root: state.local_data.root().to_string_lossy().into_owned(),
             consent_path,
@@ -835,13 +840,21 @@ impl ConversationDetailView {
     }
 
     fn attention_label(&self) -> &'static str {
-        if self.pending_question.is_some() {
+        if self.pending_host_command.is_some() {
+            "Command approval required"
+        } else if self.pending_question.is_some() {
             "Needs your answer"
         } else if self.continuation.is_some() {
             "Execution paused"
         } else {
             "Needs your review"
         }
+    }
+
+    fn can_stop(&self) -> bool {
+        self.observe_active
+            || self.pending_host_command.is_some()
+            || self.pending_question.is_some()
     }
 
     fn active_workflow(&self) -> bool {
@@ -1134,16 +1147,36 @@ impl ConversationDetailView {
                 );
             }
         }
-        if job.is_some_and(|job| job.status == JobStatus::AwaitingQuestion) {
-            for message in messages.iter_mut().filter(|message| message.streaming) {
-                message.status = "Awaiting your answer";
-                message.streaming = false;
+        let awaiting_status = match job.map(|job| job.status) {
+            Some(JobStatus::AwaitingQuestion) => Some("Awaiting your answer"),
+            Some(JobStatus::AwaitingDecision) if pending_gate.is_none() => {
+                Some("Awaiting command approval")
             }
-        } else if pending_gate.is_some()
-            || job.is_some_and(|job| job.status == JobStatus::AwaitingDecision)
-        {
-            for message in messages.iter_mut().filter(|message| message.streaming) {
-                message.status = "Awaiting your decision";
+            _ if pending_gate.is_some() => Some("Awaiting your decision"),
+            _ => None,
+        };
+        if let Some(status) = awaiting_status {
+            let active_id = job.and_then(|job| {
+                record
+                    .messages
+                    .iter()
+                    .rev()
+                    .find(|message| {
+                        message.request == Some(job.id) && message.status == MessageStatus::Pending
+                    })
+                    .map(|message| {
+                        if message.role == MessageRole::Assistant {
+                            reply_id(&record.id, message.response.unwrap_or(message.id))
+                        } else {
+                            message_id(&record.id, message)
+                        }
+                    })
+            });
+            for message in messages
+                .iter_mut()
+                .filter(|message| message.streaming || active_id.as_ref() == Some(&message.id))
+            {
+                message.status = status;
                 message.streaming = false;
             }
         }
@@ -1216,7 +1249,15 @@ impl ConversationDetailView {
                 window
                     .messages
                     .iter()
-                    .map(|message| (message.id.as_hex(), message_id(&record.id, message)))
+                    .map(|message| {
+                        // Assistant phases share one displayed response identity.
+                        let anchor = if message.role == MessageRole::Assistant {
+                            message.response.unwrap_or(message.id)
+                        } else {
+                            message.id
+                        };
+                        (message.id.as_hex(), reply_id(&record.id, anchor))
+                    })
                     .collect()
             }),
             inspection_leaf_query: leaf_query.clone(),
@@ -1260,6 +1301,7 @@ impl ConversationDetailView {
                 sources.environments,
             ),
             preset_save_open: false,
+            recent_directories: Vec::new(),
             directories: configuration
                 .map(|configuration| directory_views(&configuration.settings.directories))
                 .unwrap_or_default(),
@@ -1459,6 +1501,7 @@ impl ConversationDetailView {
                     &configuration.settings,
                 );
         }
+        self.recent_directories = recent_directory_views(state, &self.directories);
         self
     }
 
@@ -1471,7 +1514,6 @@ impl ConversationDetailView {
     pub(super) fn with_pending_host_command(
         mut self,
         command: Option<crate::execution::HostCommandRequest>,
-        approval_policy: &str,
     ) -> Self {
         self.pending_host_command = command.map(|command| HostCommandView {
             request: command.token,
@@ -1485,7 +1527,7 @@ impl ConversationDetailView {
             } else {
                 command.explanation
             },
-            approval_policy: approval_policy.to_owned(),
+            location_host: command.location == crate::execution::ToolLocation::Host,
         });
         self
     }
@@ -1546,6 +1588,7 @@ impl ConversationDetailView {
             &grant.host_path,
             state.local_data.root(),
         );
+        self.recent_directories = recent_directory_views(state, &self.directories);
         self
     }
 
@@ -1557,6 +1600,18 @@ impl ConversationDetailView {
     pub(super) fn open_directories(mut self) -> Self {
         self.directories_open = true;
         self
+    }
+
+    fn has_recent_directories(&self) -> bool {
+        self.recent_directories
+            .iter()
+            .any(|choice| !choice.recent_id.is_empty())
+    }
+
+    fn has_other_directories(&self) -> bool {
+        self.recent_directories
+            .iter()
+            .any(|choice| choice.recent_id.is_empty())
     }
 
     pub(super) fn with_settings_fields(
@@ -2396,6 +2451,7 @@ struct RequestUsageView {
     context_href: String,
 }
 
+#[derive(Default)]
 struct MessageBlock {
     kind: &'static str,
     html: String,
@@ -2404,6 +2460,12 @@ struct MessageBlock {
     active: bool,
     command: Option<CommandView>,
     progress: Vec<ProgressChunkView>,
+    call: Option<ToolCallView>,
+}
+
+struct ToolCallView {
+    id: String,
+    arguments: String,
 }
 
 struct CommandView {
@@ -2471,9 +2533,8 @@ fn command_entry_html(
             html: String::new(),
             label: "Command output".to_owned(),
             output: String::new(),
-            active: false,
             command: Some(command_view(output)),
-            progress: Vec::new(),
+            ..Default::default()
         },
         None => MessageBlock {
             kind: "progress",
@@ -2481,8 +2542,7 @@ fn command_entry_html(
             label: String::new(),
             output: String::new(),
             active: streaming,
-            command: None,
-            progress: Vec::new(),
+            ..Default::default()
         },
     };
     let output = MessageContent {
@@ -2526,12 +2586,12 @@ fn activity_html(
             label: String::new(),
             output: String::new(),
             active: true,
-            command: None,
             progress: vec![ProgressChunkView {
                 stream: progress.stream.label(),
                 stderr: progress.stream.is_stderr(),
                 text: progress.text.clone(),
             }],
+            ..Default::default()
         })
         .collect();
     let blocks = if activity.is_empty() {
@@ -2541,8 +2601,7 @@ fn activity_html(
             label: String::new(),
             output: String::new(),
             active: streaming,
-            command: None,
-            progress: Vec::new(),
+            ..Default::default()
         }]
     } else {
         activity
@@ -2556,9 +2615,14 @@ fn activity_html(
                     label: String::new(),
                     output: String::new(),
                     active,
-                    command: None,
-                    progress: Vec::new(),
+                    ..Default::default()
                 };
+                if let AssistantActivity::ToolCall { id, arguments, .. } = item {
+                    block.call = Some(ToolCallView {
+                        id: id.clone(),
+                        arguments: serde_json::to_string(arguments).unwrap_or_default(),
+                    });
+                }
                 match item {
                     AssistantActivity::Response(text) => {
                         block.kind = "response";
@@ -2598,9 +2662,7 @@ fn activity_html(
             html: String::new(),
             label: String::new(),
             output: String::new(),
-            active: false,
-            command: None,
-            progress: Vec::new(),
+            ..Default::default()
         });
     }
     MessageContent {

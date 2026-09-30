@@ -89,6 +89,22 @@ async fn title_request_excludes_tools_presets_and_later_history() {
     assert!(!history[0].text.contains("Later private"));
     assert!(!history[0].text.contains("Private preset"));
 
+    for status in [MessageStatus::Failed, MessageStatus::Interrupted] {
+        record.messages[1].status = status;
+        record.messages[1].error = Some("Private execution evidence".to_owned());
+        assert_eq!(
+            request_title(&state, &connection, &record, None)
+                .await
+                .as_deref(),
+            Some("Parser repair")
+        );
+        assert_eq!(backend.last_history()[0].text, history[0].text);
+    }
+    record.messages[1].status = MessageStatus::Pending;
+    assert!(exchange(&record).is_none());
+    record.messages[1].status = MessageStatus::Complete;
+    record.messages[1].error = None;
+
     state.chat = std::sync::Arc::new(ChatBackend::Scripted(ScriptedBackend::tool_then(
         "run",
         serde_json::json!({}),

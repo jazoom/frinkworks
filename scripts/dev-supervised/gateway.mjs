@@ -10,7 +10,13 @@ export function createGateway({ origin, status, backend, idle, rebuild }) {
         ["checking", "building", "restarting"].includes(status.phase);
     const permittedHost = (request) =>
         request.headers.host === new URL(origin).host;
-    const reply = (response, code, message, includeStatus = false) => {
+    const reply = (
+        response,
+        code,
+        message,
+        includeStatus = false,
+        canInterrupt = false,
+    ) => {
         response.writeHead(code, {
             "Content-Type": "application/json",
             "Cache-Control": "no-store",
@@ -18,7 +24,9 @@ export function createGateway({ origin, status, backend, idle, rebuild }) {
         });
         response.end(
             JSON.stringify(
-                includeStatus ? { ...status, message } : { message },
+                includeStatus
+                    ? { ...status, message, canInterrupt }
+                    : { message },
             ),
         );
     };
@@ -31,29 +39,35 @@ export function createGateway({ origin, status, backend, idle, rebuild }) {
                 return reply(response, 200, status.message, true);
             if (request.method !== "POST")
                 return reply(response, 405, "Use GET or POST.");
+            const action = request.headers["x-frinkworks-dev"];
+            const interrupt = action === "interrupt-restart";
             if (
                 request.headersDistinct.origin?.length !== 1 ||
                 request.headers.origin !== origin ||
-                request.headers["x-frinkworks-dev"] !== "restart"
+                request.headersDistinct["x-frinkworks-dev"]?.length !== 1 ||
+                (action !== "restart" && !interrupt)
             )
                 return reply(response, 403, "The origin is not permitted.");
-            if (busy() || commands !== 0) {
+            if (busy() || (!interrupt && commands !== 0)) {
                 return reply(
                     response,
                     409,
                     "Another request is active. Try again after it finishes.",
                     true,
+                    !busy(),
                 );
             }
-            // Close command admission before the idle probe. No new work can race the restart.
+            // Close command admission before either restart path. Only explicit interruption bypasses idle checks.
             status.phase = "checking";
-            status.message = "Idle check in progress.";
+            status.message = interrupt
+                ? "Build request in progress."
+                : "Idle check in progress.";
             try {
-                const message = await idle();
+                const message = interrupt ? null : await idle();
                 if (message) {
                     status.phase = "error";
                     status.message = message;
-                    return reply(response, 409, message, true);
+                    return reply(response, 409, message, true, true);
                 }
                 status.phase = "building";
                 status.message = "Build in progress. Commands are unavailable.";
@@ -66,7 +80,7 @@ export function createGateway({ origin, status, backend, idle, rebuild }) {
                 status.phase = "error";
                 status.message =
                     "The server did not answer the idle request. Try again.";
-                reply(response, 503, status.message, true);
+                reply(response, 503, status.message, true, true);
             }
             return;
         }

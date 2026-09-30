@@ -144,7 +144,7 @@ Mobile composer content uses a bounded scroll area. Queued records have their ow
 
 Short mobile screens omit the empty-state description and reduce its heading. The composer remains available without a page scroll.
 
-Configured drafts show a directory summary above the composer. Short mobile screens retain its heading and the access strip, with full details in Setup.
+New drafts show the directory manager above the composer. Saved conversations open it from the access summary in the existing companion position. Desktop bounds the draft list height. Mobile drafts use the transcript scroll area.
 
 Below 701 pixels, the companion fills the conversation area. The hidden transcript, composer and conversation toolbar become inert.
 
@@ -225,6 +225,8 @@ Providers and Settings stay separate below the group.
 
 The sidebar has no local status footer. Catalogue headers omit generic return links to conversations.
 
+Supervised development initially exposes only Rebuild and restart. Active work or an unavailable idle probe replaces that action with a warning, Interrupt work and restart, and Cancel. The warning covers interruption across conversations, partial file changes and lost unsent text. Cancel restores the normal button without a restart request. Concurrent rebuilds and build failures do not expose interruption. A failed build leaves the current server active.
+
 Workflows and Presets each combine use and management on their canonical page. An optional conversation identifier selects the destination only.
 
 Valid context retains Back to conversation. Without valid context, the selected resource offers a conversation chooser on its own page.
@@ -255,7 +257,7 @@ Mobile avatars sit beside the labels, above full-width content. Mobile circles a
 
 Message text uses the transcript scale. Status stays beside the author. Revise, Fork from here and Copy appear below the applicable message.
 
-Tool results use bordered disclosures with the actual tool label. Unfinished tools show their recorded name without an inferred path or result.
+Tool results use bordered disclosures with the actual tool label. Unfinished tools show their recorded name without an inferred path or result. Tool disclosures expose recorded call IDs and arguments when available. Separate calls retain separate records, even when their arguments match.
 
 The retained-output control reveals the full record in place. It leaves the browser address unchanged and appears only when the retained record holds more text than the preview.
 
@@ -271,7 +273,9 @@ The paperclip opens image selection. Selection uploads automatically. The slash 
 
 Send uses an accessible Send message label. An empty composer disables Send unless it contains an attachment or prepared-change handoff.
 
-Effective directory access appears below the composer. Add a directory stays beside it. The execution label stays visible even without directory access. Host mode names unrestricted access.
+Effective directory access appears below the composer. Empty and selected summaries share label geometry, so one-line state changes do not move the composer. The empty label stays transparent.
+
+Add a directory appears inside the manager, not beside the access summary. The execution label stays visible without directory access. Host mode names unrestricted access on the right. The left summary names work locations or their absence.
 
 Job-bound cancellation reads Stop beside the composer submit control. It posts without a confirmation step. Current work keeps the same Stop control when the composer is inert.
 
@@ -288,6 +292,14 @@ Jump to latest appears when the reader leaves the transcript end. New output doe
 New conversations show the title without an explanatory subtitle. Saved records identify their directory context beside the conversation title.
 
 The new-conversation empty state asks what the user wants to work on. It contains no starter buttons or decorative mark.
+
+The directory manager appears below the question, even without recent history. Recent directories shows up to ten shortcuts, with new additions first. Other directories in this conversation contains current grants absent from history.
+
+Each row has an add/remove checkbox and Read and Write radios. Only the checkbox and its directory text activate selection. Selected rows apply access changes immediately. Unselected rows show the remembered mode with disabled radios.
+
+Forget appears only on unselected recent rows. Selected rows reserve the same action space. Forget removes the shared shortcut without changes to other conversation grants or sensitive-directory approval. Access changes never recreate a forgotten shortcut.
+
+Sandbox paths remain visible for selected directories. The row reserves their line height. Unavailable and overlapping paths show the reason beside their controls.
 
 New drafts omit the transcript toolbar. Saved conversations retain its controls.
 
@@ -329,7 +341,9 @@ The companion retains its 400-pixel width. Markdown code blocks receive keyboard
 
 The idle companion reads Ready when you are with View activity and evidence and Continue the conversation.
 
-Command approval reads Run this command for both execution locations. It shows the exact command, work location and effective policy.
+Command approval reads Run this command for both execution locations. It shows the exact command, work location and effective policy. The warning follows the command's execution location, not the conversation defaults.
+
+The Command approval required strip exposes Review command. The queue note explains that work waits for approval. Stop remains available beside Queue and in Current work during approval.
 
 Evidence links show requests and bounded output. They start no command and make no current-file claim.
 
@@ -347,7 +361,6 @@ Setup occupies the companion position. Its section controls retain unsaved value
 
 The visible sections are:
 
-- Directories, or Work locations in host mode.
 - Execution.
 - Instructions.
 - Presets.
@@ -368,25 +381,31 @@ The name accepts up to 80 UTF-8 bytes without control characters. An empty name 
 
 Preset controls retain the larger workspace scale and theme accent. Narrow screens stack the decision buttons. Every action remains accessible through the panel scroll area.
 
-Directories opens with a Directory access heading and Add a directory. Empty conversations explain the absence of directory access.
+The directory manager occupies the same companion shell as Setup, without Setup sections or its defaults footer. Host mode names it Work locations.
 
-Each directory has a bordered record with labelled paths and radio controls. Selection applies Read or Write immediately for ordinary directories. Sensitive directories retain explicit consent actions.
+Add a directory opens the native picker. Compact rows retain full host paths and visible sandbox paths. Selection applies the last chosen Read or Write mode immediately for ordinary directories.
 
-The command start-directory selector moves the chosen directory first. It retains each access mode and requires fresh consent where applicable.
+A directory without history defaults to Read. Sensitive directories require initial consent. Frinkworks retains that consent for the exact canonical path across conversations and restarts.
 
-Unavailable directories remain visible but cannot become a new command location. Active work disables the selector.
+Each directory row contains a button-style cwd radio, separate from Read and Write. A divider separates the controls. A tint and tick identify the selected cwd.
+
+Selection changes the command start directory without changes to the visual list order or access modes.
+
+Each cwd label uses a native title tooltip, including labels for disabled controls. The browser controls its delay and dismissal. Screen readers receive the same description through the radio control. Unselected and unavailable directories retain disabled cwd controls. Active work disables cwd changes.
+
+Hypergraft retains keyed directory controls during patches. Its command guard blocks concurrent changes without a temporary disable state across the list. Uncertain results disable changes.
+
+The execution summary below the composer names the selected sandbox beside Sandbox. The directory manager contains no repeated sandbox summary.
 
 Saved access changes use a directory command when the user selects a radio. Ordinary directories need no execution review or additional approval. Active work disables access changes.
 
-Configured drafts show the actual directory paths and access states. The summary names the execution location and network setting without a readiness claim.
+Drafts and saved conversations share the manager. Directory commands retain the unsent message and uncommitted Setup fields. The server patches their authoritative state together.
 
-Directory commands retain the unsent message. Add and remove retain transparent hover backgrounds without text underlines.
+The access summary opens the inline manager in drafts and the directory companion in saved conversations. The execution summary opens Execution. Setup retains its independent sections.
 
-Draft summary items open their relevant Setup section. Directory names, paths and access labels share one button. Execution and network summaries open Execution.
+Initial sensitive selection exposes an approval block in the manager. Cancel removes the pending request without consent. Existing unapproved grants retain Review access.
 
-Add a directory below the composer opens the native directory picker directly. The response opens Directories with the applicable access controls and approval steps.
-
-Directories shows the applied execution context and directory access controls. It contains no repository selector. Setup toggles the companion open and closed.
+Host work locations do not confine access. Read grants block host execution until an explicit Write change. Host consent stays in Execution.
 
 Directory controls expose exactly Read and Write. Read is the default. Write changes original files immediately.
 

@@ -14,4 +14,32 @@
     ></span>
   </button>
   <p class="px-3 text-sm break-words" data-supervised-status role="status"></p>
+  <div
+    data-supervised-interrupt
+    hidden
+    tabindex="-1"
+    role="group"
+    aria-label="Restart interruption"
+    class="mt-1 space-y-3 px-3 py-2 text-sm"
+  >
+    <p>
+      After a successful build, this action interrupts active work in every
+      conversation and restarts the server.
+    </p>
+    <p>
+      Partial file changes remain. Cleanup can require recovery. All tabs reload
+      and lose unsent text.
+    </p>
+    <p>If the build fails, the current server stays active.</p>
+    <button
+      type="button"
+      class="btn btn-error h-auto min-h-11 w-full whitespace-normal"
+      data-supervised-rebuild="interrupt"
+    >
+      Interrupt work and restart
+    </button>
+    <button type="button" class="btn btn-ghost w-full" data-supervised-cancel>
+      Cancel
+    </button>
+  </div>
 </div>

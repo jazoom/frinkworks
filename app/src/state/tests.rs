@@ -15,6 +15,7 @@ pub(crate) fn test_state(config: RuntimeConfig) -> AppState {
     let environment_preparations =
         EnvironmentPreparationScheduler::idle(environments.clone(), environment_snapshots.clone());
     let workflow_artefacts = Arc::new(WorkflowArtefactRepository::in_memory());
+    let preferences = Arc::new(Preferences::in_memory());
     AppState {
         config: Arc::new(config),
         assets: Arc::new(AssetPaths {
@@ -28,7 +29,7 @@ pub(crate) fn test_state(config: RuntimeConfig) -> AppState {
         )),
         models_dev: Arc::new(ModelsDevCatalogue::bundled()),
         plan_login: Arc::new(PlanLogin::new()),
-        preferences: Arc::new(Preferences::in_memory()),
+        preferences: preferences.clone(),
         presets: Arc::new(crate::presets::PresetStore::in_memory()),
         agents: Arc::new(AgentStore::in_memory()),
         skills: Arc::new(crate::skills::SkillStore::temporary()),
@@ -36,7 +37,7 @@ pub(crate) fn test_state(config: RuntimeConfig) -> AppState {
         conversations: Arc::new(crate::conversations::ConversationStore::in_memory()),
         forks: Arc::new(crate::conversations::ForkDrafts::default()),
         directory_picker: crate::execution::DirectoryPicker::scripted(),
-        access_consent: Arc::new(crate::execution::AccessConsentStore::new()),
+        access_consent: Arc::new(crate::execution::AccessConsentStore::new(preferences)),
         host_approvals: Arc::new(crate::execution::HostApprovalStore::new()),
         conversation_runtime: Arc::new(crate::execution::ConversationRuntime::ephemeral()),
         local_data: crate::local_data::LocalDataReset::detached(),

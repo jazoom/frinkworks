@@ -7,7 +7,11 @@
     >
       {% if self.queue.follow_up %}
         <p class="text-quiet text-sm" role="status">
-          New messages wait until the current work finishes.
+          {% if pending_host_command.is_some() %}
+            Work waits for command approval. New messages stay queued.
+          {% else %}
+            New messages wait until the current work finishes.
+          {% endif %}
         </p>
       {% endif %}
       {% if !self.queue.return_message.is_empty() %}

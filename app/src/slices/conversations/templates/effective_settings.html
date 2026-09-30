@@ -4,9 +4,15 @@
   <button
     type="button"
     class="btn btn-ghost btn-sm h-auto text-left"
-    popovertarget="conversation-settings"
-    popovertargetaction="show"
+    {% if !self.is_new() %}
+      popovertarget="conversation-settings" popovertargetaction="show"
+    {% endif %}
     data-settings-section="conversation-directory-heading"
+    aria-label="{% if location_host %}
+      Manage work locations
+    {% else %}
+      Manage directories
+    {% endif %}"
   >
     <svg class="workspace-icon" aria-hidden="true">
       {% if directories.is_empty() %}
@@ -15,15 +21,17 @@
         <use href="/static/images/workspace-icons.svg#folder" />
       {% endif %}
     </svg>
-    {% if directories.is_empty() %}
-      {% if location_host %}
-        {{ host_summary }}
+    <span class="flex flex-wrap gap-x-2">
+      {% if directories.is_empty() %}
+        <span class="directory-access-label directory-access-empty">
+          {% if location_host %}
+            No work locations
+          {% else %}
+            No directory access
+          {% endif %}
+        </span>
       {% else %}
-        No directory access
-      {% endif %}
-    {% else %}
-      <span class="flex flex-wrap gap-x-2"
-        >{% for directory in directories %}
+        {% for directory in directories %}
           <span
             class="directory-access-label {% if directory.available && !directory.pending_approval && !location_host %}directory-access-approved{% endif %} break-all"
             >{{ directory.name }} ·
@@ -33,25 +41,10 @@
               · Pending approval
             {% endif %}</span
           >
-        {% endfor %}</span
-      >
-    {% endif %}
+        {% endfor %}
+      {% endif %}
+    </span>
   </button>
-  <div class="border-base-300 border-l pl-3">
-    <button
-      type="submit"
-      class="btn btn-ghost btn-sm workspace-add-directory"
-      form="{% if self.is_new() %}conversation-composer{% else %}conversation-directory-picker{% endif %}"
-      {% if self.is_new() %}formaction="/conversations/new/directories/pick"{% endif %}
-      formmethod="post"
-      {% if job_active || directories.len() >= 8 %}disabled{% endif %}
-    >
-      <svg class="workspace-icon" aria-hidden="true">
-        <use href="/static/images/workspace-icons.svg#plus" />
-      </svg>
-      Add a directory
-    </button>
-  </div>
   <button
     type="button"
     class="btn btn-ghost btn-sm ml-auto h-auto gap-2"
@@ -62,6 +55,15 @@
     <svg class="workspace-icon" aria-hidden="true">
       <use href="/static/images/workspace-icons.svg#cube" />
     </svg>
-    {% if location_host %}{{ host_summary }}{% else %}Sandbox{% endif %}
+    {% if location_host %}
+      {{ host_summary }}
+    {% else %}
+      <span class="flex flex-wrap items-baseline gap-x-2">
+        <span>Sandbox</span>
+        <span class="text-quiet" data-conversation-environment-summary
+          >{{ environment_summary }}</span
+        >
+      </span>
+    {% endif %}
   </button>
 </div>

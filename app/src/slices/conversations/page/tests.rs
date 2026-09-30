@@ -85,9 +85,59 @@ fn escaped_history_keeps_the_latest_message_within_the_patch_bound() {
     patches
         .encode_final(hypergraft::PatchStatus::Ok)
         .expect("bounded envelope");
-    let rendered = view.render().expect("page");
-    let rendered = rendered.split_whitespace().collect::<Vec<_>>().join(" ");
-    assert!(rendered.contains("remain in local history and model context"));
+}
+
+#[test]
+fn grouped_response_phases_are_not_missing_entries() {
+    let state = crate::tests::test_state(RuntimeConfig::development());
+    let mut record = state.conversations.create("Phases".to_owned()).unwrap();
+    let mut first = assistant_message("First phase", MessageStatus::Complete);
+    first.final_phase = false;
+    let mut last = assistant_message("Last phase", MessageStatus::Interrupted);
+    last.response = Some(first.id);
+    last.parent = Some(first.id);
+    let anchor = first.id;
+
+    for phases in [vec![first, last.clone()], vec![last]] {
+        record.messages = phases;
+        let window = crate::conversations::TranscriptWindow {
+            messages: record.messages.clone(),
+            total: record.messages.len(),
+            has_before: false,
+            has_after: false,
+            before_anchor: record.messages.first().map(|message| message.id),
+            after_anchor: record.messages.last().map(|message| message.id),
+            live: true,
+        };
+        let view = ConversationDetailView::from_record(
+            &record,
+            ModelSources {
+                vault: &state.vault,
+                preferences: &state.preferences,
+                models: &state.models_dev,
+                environments: &state.environments,
+                environment_snapshots: &state.environment_snapshots,
+                presets: &[],
+            },
+            &[],
+            None,
+            &record.title,
+            "",
+            Some(&window),
+        );
+        assert_eq!(view.messages.len(), 1);
+        assert_eq!(view.messages[0].id, reply_id(&record.id, anchor));
+        assert_eq!(view.omitted_messages, 0);
+        assert!(view.omitted_entries().is_empty());
+
+        let view = view.with_companion("x".repeat(672 * 1024), "activity");
+        assert!(view.messages.is_empty());
+        let omitted = view.omitted_entries();
+        assert_eq!(omitted.len(), record.messages.len());
+        for (entry, message) in omitted.iter().zip(&record.messages) {
+            assert_eq!(entry.0, message.id.as_hex());
+        }
+    }
 }
 
 #[test]
@@ -499,7 +549,20 @@ fn command_output_escapes_untrusted_stream_text() {
         &conversation,
         "message-1",
         "",
-        &[crate::providers::AssistantActivity::Tool(tool)],
+        &[
+            crate::providers::AssistantActivity::ToolCall {
+                id: "<script>alert(2)</script>".to_owned(),
+                name: "run".to_owned(),
+                arguments: serde_json::json!({"command": "<img src=x onerror=alert(3)>"}),
+                result: Some(tool),
+            },
+            crate::providers::AssistantActivity::ToolCall {
+                id: "<script>alert(4)</script>".to_owned(),
+                name: "run".to_owned(),
+                arguments: serde_json::json!({"command": "<img src=x onerror=alert(5)>"}),
+                result: None,
+            },
+        ],
         &[],
         &[],
         false,
@@ -509,6 +572,9 @@ fn command_output_escapes_untrusted_stream_text() {
     assert!(!html.contains("<img"));
     assert!(html.contains("alert(1)"));
     assert!(html.contains("img src=x onerror=alert(1)"));
+    for marker in ["alert(2)", "alert(3)", "alert(4)", "alert(5)"] {
+        assert!(html.contains(marker));
+    }
 }
 
 #[test]

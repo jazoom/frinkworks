@@ -6,7 +6,9 @@ use crate::{
 use axum::http::StatusCode;
 use tower::ServiceExt;
 
-fn conversation(state: &crate::state::AppState) -> crate::conversations::ConversationRecord {
+pub(super) fn conversation(
+    state: &crate::state::AppState,
+) -> crate::conversations::ConversationRecord {
     state
         .conversations
         .create_saved(
@@ -339,7 +341,6 @@ async fn credential_picker_and_access_require_consent_for_read_and_write() {
     let home = std::path::PathBuf::from(home);
     let state = test_state();
     let token = connected(&state);
-    let session = session_id(&token);
 
     for relative in DIRECTORIES {
         let directory = home.join(relative);
@@ -380,6 +381,9 @@ async fn credential_picker_and_access_require_consent_for_read_and_write() {
         }
 
         for access in [DirectoryAccess::Read, DirectoryAccess::Write] {
+            let state = test_state();
+            let token = connected(&state);
+            let session = session_id(&token);
             let mut grant = DirectoryGrant::from_selected(&directory, &[]).unwrap();
             grant.access = access;
             assert!(grant.requires_access_consent(state.local_data.root()));
@@ -539,57 +543,12 @@ async fn sensitive_saved_grant_needs_exact_single_use_consent() {
         .sessions
         .advance_clock(crate::sessions::SESSION_LIFETIME + std::time::Duration::from_secs(1));
     let restored = app(&state)
-        .oneshot(command(
-            &format!(
-                "/conversations/{}/directories/{}/consent",
-                record.id,
-                grant.id.as_hex()
-            ),
-            &token,
-            &format!("revision={}", current.revision),
-        ))
+        .oneshot(document(&format!("/conversations/{}", record.id), &token))
         .await
         .unwrap();
     assert_eq!(restored.status(), StatusCode::OK);
     assert!(state.sessions.contains_live(&session));
-    assert!(
-        !state
-            .access_consent
-            .authorised_conversation(session, record.id, settings, grant)
-    );
-    let preview = text(restored).await;
-    let request = hidden_value(&preview, "consent_request");
-    let pending = hidden_value(&preview, "pending_directory");
-    let renamed = state
-        .conversations
-        .rename(&record.id, current.revision, "Renamed".to_owned())
-        .unwrap();
-    let body = format!(
-        "revision={}&existing=true&consent_request={}&pending_directory={}",
-        current.revision,
-        form_value(&request),
-        form_value(&pending)
-    );
-    let stale = app(&state)
-        .oneshot(command(&consent_path, &token, &body))
-        .await
-        .unwrap();
-    assert_eq!(stale.status(), StatusCode::CONFLICT);
-    assert!(
-        !state
-            .access_consent
-            .authorised_conversation(session, record.id, settings, grant)
-    );
-    let body = body.replacen(
-        &format!("revision={}", current.revision),
-        &format!("revision={}", renamed.revision),
-        1,
-    );
-    let approved = app(&state)
-        .oneshot(command(&consent_path, &token, &body))
-        .await
-        .unwrap();
-    assert_eq!(approved.status(), StatusCode::OK);
+    assert!(!text(restored).await.contains("Pending approval"));
     assert!(
         state
             .access_consent
@@ -882,7 +841,7 @@ async fn saved_command_directory_is_revision_bound_and_invalidates_authority() {
     );
 }
 
-fn hidden_value(body: &str, name: &str) -> String {
+pub(super) fn hidden_value(body: &str, name: &str) -> String {
     let marker = format!("name=\"{name}\"");
     let tail = &body[body.find(&marker).expect("hidden field") + marker.len()..];
     let value = &tail[tail.find("value=\"").expect("value") + 7..];

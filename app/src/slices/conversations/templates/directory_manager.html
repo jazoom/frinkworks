@@ -1,0 +1,102 @@
+<section
+  id="settings-directories"
+  data-settings-panel
+  {% if !self.is_new() %}hidden{% endif %}
+  data-directory-manager
+  data-directory-inline="{% if self.is_new() %}true{% else %}false{% endif %}"
+  data-directory-open="{% if directories_open %}true{% else %}false{% endif %}"
+  aria-labelledby="conversation-directory-heading"
+  class="@container text-left"
+>
+  {% if self.is_new() && directories_open && error != "" %}
+    <div
+      id="conversation-error"
+      class="alert alert-error mb-4"
+      role="alert"
+      tabindex="-1"
+    >
+      <p>{{ error }}</p>
+    </div>
+  {% endif %}
+  {% if let Some(saved) = self.saved() %}
+    <form
+      id="conversation-directory-picker"
+      data-graft
+      method="post"
+      action="/conversations/{{ saved.id }}/directories/pick"
+      hidden
+    >
+      <input type="hidden" name="revision" value="{{ saved.revision }}" />
+    </form>
+  {% endif %}
+  {% include "conversations/templates/command_directory.html" %}
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <h3
+      id="conversation-directory-heading"
+      class="text-lg font-semibold"
+      tabindex="-1"
+    >
+      {% if location_host %}Work locations{% else %}Directories{% endif %}
+    </h3>
+    <button
+      id="conversation-add-directory"
+      form="{% if self.is_new() %}conversation-composer{% else %}conversation-directory-picker{% endif %}"
+      {% if self.is_new() %}formaction="/conversations/new/directories/pick"{% endif %}
+      formmethod="post"
+      class="btn btn-ghost btn-sm directory-add min-h-11"
+      type="submit"
+      {% if job_active || directories.len() >= 8 || consent_request != "" %}disabled{% endif %}
+    >
+      <svg class="workspace-icon" aria-hidden="true">
+        <use href="/static/images/workspace-icons.svg#plus" />
+      </svg>
+      Add a directory
+    </button>
+  </div>
+  <p class="text-quiet mt-1 text-sm">
+    {% if location_host %}
+      Work locations choose where commands start. Host tools have unrestricted
+      access.
+    {% else %}
+      Select directories for this conversation.
+    {% endif %}
+  </p>
+  {% if job_active %}
+    <p class="text-quiet mt-3 text-sm">
+      Active work blocks changes to conversation access.
+    </p>
+  {% else if directories.len() >= 8 %}
+    <p class="text-quiet mt-3 text-sm">
+      This conversation has the maximum of eight directories.
+    </p>
+  {% endif %}
+  <div
+    data-directory-list
+    class="{% if self.is_new() %}sm:max-h-[min(24rem,40dvh)] sm:overflow-y-auto{% endif %} mt-5"
+  >
+    {% if self.has_recent_directories() %}
+      <h4 class="text-base font-semibold">Recent directories</h4>
+      <ul class="border-base-300 mt-2 border-y" aria-label="Recent directories">
+        {% for choice in recent_directories %}
+          {% if !choice.recent_id.is_empty() %}{% include "conversations/templates/directory_choice.html" %}{% endif %}
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="text-quiet text-sm">No recent directories.</p>
+    {% endif %}
+    {% if self.has_other_directories() %}
+      <h4 class="mt-5 text-base font-semibold">
+        Other directories in this conversation
+      </h4>
+      <ul
+        class="border-base-300 mt-2 border-y"
+        aria-label="Other directories in this conversation"
+      >
+        {% for choice in recent_directories %}
+          {% if choice.recent_id.is_empty() %}{% include "conversations/templates/directory_choice.html" %}{% endif %}
+        {% endfor %}
+      </ul>
+    {% endif %}
+  </div>
+  {% if consent_request != "" %}{% include "conversations/templates/directory_consent.html" %}{% endif %}
+</section>

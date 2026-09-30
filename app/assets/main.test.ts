@@ -403,7 +403,7 @@ test("saved directory radios submit only the selected access command", () => {
 });
 
 test.each([200, 409, "uncertain"] as const)(
-    "directory permissions stay locked until a known result (%s)",
+    "the command guard rejects directory changes without a pending disable flash (%s)",
     async (outcome) => {
         document.body.insertAdjacentHTML(
             "beforeend",
@@ -411,7 +411,8 @@ test.each([200, 409, "uncertain"] as const)(
                 <input type="radio" name="access-one" data-directory-access="directory-access-one" value="read" checked>
                 <input type="radio" name="access-one" data-directory-access="directory-access-one" value="write">
                 <input type="radio" name="access-active" data-directory-access="directory-access-active" disabled>
-            </fieldset>`,
+            </fieldset>
+            <button id="directory-access-one" form="conversation-composer" type="submit" hidden></button>`,
         );
         const form = document.querySelector<HTMLFormElement>(
             "#conversation-composer",
@@ -424,7 +425,19 @@ test.each([200, 409, "uncertain"] as const)(
         );
         vi.mocked(commandBlockReason).mockReturnValue("pending-command");
         await Promise.resolve();
-        expect(fieldset.disabled).toBe(true);
+        expect(fieldset.disabled).toBe(false);
+        const submit = vi
+            .spyOn(form, "requestSubmit")
+            .mockImplementation(() => {});
+        const read =
+            fieldset.querySelector<HTMLInputElement>('[value="read"]')!;
+        const write =
+            fieldset.querySelector<HTMLInputElement>('[value="write"]')!;
+        write.checked = true;
+        write.dispatchEvent(new Event("change", { bubbles: true }));
+        expect(submit).not.toHaveBeenCalled();
+        expect(read.checked).toBe(true);
+        expect(write.checked).toBe(false);
 
         vi.mocked(commandBlockReason).mockReturnValue(
             outcome === "uncertain" ? "uncertain-command" : undefined,
@@ -472,6 +485,36 @@ test("draft directory radios use the access command rather than the message comm
     expect(button.value).toBe("write");
     expect(submit).toHaveBeenCalledExactlyOnceWith(button);
 });
+
+test.each(["conversation-composer", "command-directory-form"])(
+    "cwd selection submits the directory identity through %s",
+    (formId) => {
+        if (formId !== "conversation-composer")
+            document.body.insertAdjacentHTML(
+                "beforeend",
+                `<form id="${formId}" action="/conversations/example/directories/start"></form>`,
+            );
+        document.body.insertAdjacentHTML(
+            "beforeend",
+            `<input type="radio" name="start_directory" value="one" form="${formId}" data-command-directory checked>
+             <input type="radio" name="start_directory" value="two" form="${formId}" data-command-directory>
+             <button id="command-directory-submit" form="${formId}" type="submit" hidden></button>`,
+        );
+        const form = document.getElementById(formId) as HTMLFormElement;
+        const submit = vi
+            .spyOn(form, "requestSubmit")
+            .mockImplementation(() => {});
+        const radio = document.querySelector<HTMLInputElement>(
+            '[data-command-directory][value="two"]',
+        )!;
+        radio.checked = true;
+        radio.dispatchEvent(new Event("change", { bubbles: true }));
+        expect(new FormData(form).get("start_directory")).toBe("two");
+        expect(submit).toHaveBeenCalledExactlyOnceWith(
+            document.getElementById("command-directory-submit"),
+        );
+    },
+);
 
 function search(query: string) {
     const input = document.querySelector<HTMLInputElement>(

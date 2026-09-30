@@ -81,17 +81,24 @@ test("restart requires an exact origin, host and explicit browser header", async
         },
     });
     status.message = "Private supervisor status";
-    for (const headers of [
-        { Origin: "http://attacker.example" },
-        { Origin: "null" },
-        { Origin: "" },
-        { Origin: ["http://localhost:4000", "http://localhost:4000"] },
-        { Host: "attacker.example" },
-        { "X-Frinkworks-Dev": "" },
-    ]) {
-        const response = await request("POST", "/_dev/supervised", headers);
-        assert.equal(response.status, 403);
-        assert.ok(!response.body.includes(status.message));
+    for (const action of ["restart", "interrupt-restart"]) {
+        for (const headers of [
+            { Origin: "http://attacker.example" },
+            { Origin: "null" },
+            { Origin: "" },
+            { Origin: ["http://localhost:4000", "http://localhost:4000"] },
+            { Host: "attacker.example" },
+            { "X-Frinkworks-Dev": "" },
+            { "X-Frinkworks-Dev": "force" },
+            { "X-Frinkworks-Dev": [action, action] },
+        ]) {
+            const response = await request("POST", "/_dev/supervised", {
+                "X-Frinkworks-Dev": action,
+                ...headers,
+            });
+            assert.equal(response.status, 403);
+            assert.ok(!response.body.includes(status.message));
+        }
     }
     const rebound = await request("GET", "/_dev/supervised", {
         Host: "attacker.example",
@@ -101,7 +108,9 @@ test("restart requires an exact origin, host and explicit browser header", async
     assert.equal(builds, 0);
     assert.equal((await request("GET")).headers["cache-control"], "no-store");
     assert.equal((await request("GET", "/_dev/supervised/idle")).status, 404);
-    assert.equal((await request("POST")).status, 202);
+    const accepted = await request("POST");
+    assert.equal(accepted.status, 202);
+    assert.equal(JSON.parse(accepted.body).canInterrupt, false);
     assert.equal(builds, 1);
 });
 
@@ -122,13 +131,18 @@ test("the idle probe closes command admission and duplicate restart requests", a
     const restart = request("POST");
     await probe;
     assert.equal((await request("POST", "/conversations/new")).status, 503);
-    assert.equal((await request("POST")).status, 409);
+    const duplicate = await request("POST");
+    assert.equal(duplicate.status, 409);
+    assert.equal(JSON.parse(duplicate.body).canInterrupt, false);
     assert.equal(
         (await request("GET", "/conversations/new")).body,
         "application",
     );
     release("Work is active.");
-    assert.equal((await restart).status, 409);
+    const blocked = await restart;
+    assert.equal(blocked.status, 409);
+    assert.equal(JSON.parse(blocked.body).canInterrupt, true);
+    assert.equal(JSON.parse((await request("GET")).body).canInterrupt, false);
     assert.equal(status.phase, "error");
     assert.equal((await request("POST", "/conversations/new")).status, 200);
 });
@@ -152,10 +166,100 @@ test("an in-flight application command blocks the idle probe", async (t) => {
     });
     const command = request("POST", "/command");
     await started;
-    assert.equal((await request("POST")).status, 409);
+    const blocked = await request("POST");
+    assert.equal(blocked.status, 409);
+    assert.equal(JSON.parse(blocked.body).canInterrupt, true);
     assert.equal(probes, 0);
     release();
     await command;
+});
+
+test("explicit interruption bypasses active work and an unavailable idle probe", async (t) => {
+    let builds = 0;
+    let probes = 0;
+    let unavailable = false;
+    const { request } = await fixture(t, {
+        idle: async () => {
+            probes++;
+            if (unavailable) throw new Error("offline");
+            return "Work is active.";
+        },
+        rebuild: async () => {
+            builds++;
+        },
+    });
+    assert.equal((await request("POST")).status, 409);
+    unavailable = true;
+    assert.equal((await request("POST")).status, 503);
+    assert.equal(builds, 0);
+    assert.equal(
+        (
+            await request("POST", "/_dev/supervised", {
+                "X-Frinkworks-Dev": "interrupt-restart",
+            })
+        ).status,
+        202,
+    );
+    assert.equal(probes, 2);
+    assert.equal(builds, 1);
+    assert.equal((await request("POST", "/conversations/new")).status, 503);
+    for (const action of ["restart", "interrupt-restart"]) {
+        const duplicate = await request("POST", "/_dev/supervised", {
+            "X-Frinkworks-Dev": action,
+        });
+        assert.equal(duplicate.status, 409);
+        assert.equal(JSON.parse(duplicate.body).canInterrupt, false);
+    }
+    assert.equal(builds, 1);
+});
+
+test("explicit interruption bypasses an in-flight command but a failed build reopens admission", async (t) => {
+    let release;
+    let entered;
+    let rejectBuild;
+    const started = new Promise((resolve) => {
+        entered = resolve;
+    });
+    const { request, status } = await fixture(t, {
+        idle: async () => {
+            assert.fail(
+                "The interrupt action must not depend on the application.",
+            );
+        },
+        handler: (request, response) => {
+            if (request.url === "/blocked-command") {
+                release = () => response.end("done");
+                entered();
+            } else response.end("application");
+        },
+        rebuild: () =>
+            new Promise((_, reject) => {
+                rejectBuild = reject;
+            }),
+    });
+    const command = request("POST", "/blocked-command");
+    await started;
+    assert.equal((await request("POST")).status, 409);
+    assert.equal(
+        (
+            await request("POST", "/_dev/supervised", {
+                "X-Frinkworks-Dev": "interrupt-restart",
+            })
+        ).status,
+        202,
+    );
+    assert.equal((await request("POST", "/conversations/new")).status, 503);
+    rejectBuild(new Error("Build failed."));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(status.phase, "error");
+    assert.equal(status.revision, "old");
+    assert.equal(JSON.parse((await request("GET")).body).canInterrupt, false);
+    assert.equal(
+        (await request("POST", "/conversations/new")).body,
+        "application",
+    );
+    release();
+    assert.equal((await command).body, "done");
 });
 
 test("an unavailable idle probe fails closed without a build", async (t) => {
@@ -168,7 +272,9 @@ test("an unavailable idle probe fails closed without a build", async (t) => {
             builds++;
         },
     });
-    assert.equal((await request("POST")).status, 503);
+    const unavailable = await request("POST");
+    assert.equal(unavailable.status, 503);
+    assert.equal(JSON.parse(unavailable.body).canInterrupt, true);
     assert.equal(builds, 0);
     assert.equal(status.revision, "old");
 });

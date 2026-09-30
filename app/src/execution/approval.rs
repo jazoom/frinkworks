@@ -95,6 +95,7 @@ pub(crate) struct HostCommandRequest {
     pub(crate) job: JobId,
     pub(crate) conversation: ConversationId,
     pub(crate) execution_revision: u32,
+    pub(crate) location: super::ToolLocation,
     pub(crate) command: String,
     pub(crate) directory: PathBuf,
     pub(crate) explanation: String,

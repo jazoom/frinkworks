@@ -51,7 +51,11 @@
           Run this command?
         </h3>
         <p class="text-quiet text-sm">
-          This command awaits approval on this computer.
+          {% if command.location_host %}
+            This command awaits approval to run on this computer.
+          {% else %}
+            This command awaits approval to run in the sandbox.
+          {% endif %}
         </p>
       </div>
       <p
@@ -60,6 +64,10 @@
         {{- command.command -}}
       </p>
       <dl class="grid gap-2 text-sm sm:grid-cols-[9rem_1fr]">
+        <dt class="text-quiet">Execution location</dt>
+        <dd>
+          {% if command.location_host %}This computer{% else %}Sandbox{% endif %}
+        </dd>
         <dt class="text-quiet">Work location</dt>
         <dd class="font-mono break-all">{{ command.directory }}</dd>
         <dt class="text-quiet">Purpose</dt>
@@ -67,16 +75,27 @@
           {{- command.explanation -}}
         </dd>
         <dt class="text-quiet">Approval policy</dt>
-        <dd>{{ command.approval_policy }}</dd>
+        <dd>Ask each time</dd>
       </dl>
       <div class="alert alert-warning" role="note">
         <div>
-          <p class="font-semibold">Unrestricted host access</p>
+          {% if command.location_host %}
+            <p class="font-semibold">Unrestricted host access</p>
+            <p class="mt-1 text-sm">
+              This command runs with unrestricted host access. File changes take
+              effect immediately.
+            </p>
+          {% else %}
+            <p class="font-semibold">Sandbox access</p>
+            <p class="mt-1 text-sm">
+              This command runs in the sandbox with the approved directory
+              permissions. Write access changes original files immediately.
+            </p>
+          {% endif %}
           <p class="mt-1 text-sm">
-            The command runs with unrestricted host access. Output enters model
-            context unless the command is marked Context excluded. Approval
-            covers the submitted shell request, not every action inside a
-            script.
+            Approval covers the submitted shell request, not every action inside
+            a script. Output enters model context unless the command is marked
+            Context excluded.
           </p>
         </div>
       </div>
@@ -124,8 +143,7 @@
           </button>
         </form>
         <p class="text-quiet text-center text-xs">
-          Rejection runs nothing. Earlier host effects remain; rejection does
-          not reverse them.
+          Rejection runs nothing. It does not reverse earlier file changes.
         </p>
       </div>
     </section>

@@ -1504,7 +1504,7 @@ async fn transcript_cursors_expose_bounded_history_across_representations() {
         &record.id,
         record.messages.last().unwrap()
     )));
-    assert!(normalised(&document_body).contains("remain in local history and model context"));
+    assert!(document_body.contains(&format!("{base}?before=")));
 
     let (_, window) = state
         .conversations

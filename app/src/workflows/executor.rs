@@ -1373,6 +1373,7 @@ async fn run_system_exec(
             job: work.job.id(),
             conversation,
             execution_revision: work.agent_revision,
+            location: crate::execution::ToolLocation::Sandbox,
             command: "git status --porcelain=v1".to_owned(),
             directory: directory.into(),
             explanation: command.consequence().to_owned(),

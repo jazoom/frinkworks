@@ -12,6 +12,9 @@ use crate::{
 const FILE_VERSION: u32 = 1;
 const MAXIMUM_FILE_BYTES: usize = 512 * 1024;
 
+mod directories;
+pub(crate) use directories::RecentDirectory;
+
 #[cfg(test)]
 mod tests;
 
@@ -113,6 +116,10 @@ struct PreferencesFile {
     selected_provider: Option<ProviderKind>,
     models: Vec<ProviderPreference>,
     conversation_defaults: Option<crate::execution::ExecutionSettingsFile>,
+    #[serde(default)]
+    recent_directories: Vec<RecentDirectory>,
+    #[serde(default)]
+    approved_directories: Vec<PathBuf>,
 }
 
 #[derive(Clone, Default)]
@@ -123,6 +130,8 @@ struct PreferenceValues {
     selected_provider: Option<ProviderKind>,
     models: Vec<ProviderPreference>,
     conversation_defaults: Option<crate::execution::ExecutionSettings>,
+    recent_directories: Vec<RecentDirectory>,
+    approved_directories: Vec<PathBuf>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -154,6 +163,7 @@ impl PreferenceValues {
 
     fn is_valid(&self) -> bool {
         (1..=100).contains(&self.compaction.threshold)
+            && directories::valid_history(&self.recent_directories, &self.approved_directories)
             && self.models.len() <= ProviderKind::ALL.len()
             && self.selected_provider.is_none_or(|kind| {
                 self.models
@@ -413,6 +423,8 @@ fn load(path: &std::path::Path) -> PreferenceValues {
         conversation_defaults: file
             .conversation_defaults
             .and_then(crate::execution::ExecutionSettings::from_file),
+        recent_directories: file.recent_directories,
+        approved_directories: file.approved_directories,
     };
     if values.is_valid() {
         values
@@ -438,8 +450,13 @@ fn persist(path: &std::path::Path, values: &PreferenceValues) -> Result<(), Pref
             .conversation_defaults
             .as_ref()
             .map(crate::execution::ExecutionSettings::to_file),
+        recent_directories: values.recent_directories.clone(),
+        approved_directories: values.approved_directories.clone(),
     };
     let bytes = serde_json::to_vec_pretty(&file).map_err(|_| PreferenceError)?;
+    if bytes.len() > MAXIMUM_FILE_BYTES {
+        return Err(PreferenceError);
+    }
     let dir = path.parent().ok_or(PreferenceError)?;
     crate::storage::ensure_private_dir(dir).map_err(|_| PreferenceError)?;
     crate::storage::write_private(path, &bytes).map_err(|_| PreferenceError)

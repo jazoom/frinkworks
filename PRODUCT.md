@@ -26,7 +26,15 @@ New with same settings copies settings and ordinary directory permissions into a
 
 Conversation settings stay local. Use saved settings as future defaults explicitly stores an independent settings snapshot.
 
-New drafts copy those defaults with ordinary directory permissions. Ordinary setup controls apply when they change. Execution review, sensitive-directory consent, host consent and preset replacement retain explicit decisions.
+New drafts copy those defaults with ordinary directory permissions. Ordinary setup controls apply when they change. Initial sensitive-directory consent, execution review, host consent and preset replacement retain explicit decisions.
+
+The directory manager appears inline in new drafts and in the companion for saved conversations. The access summary opens it.
+
+Recent directories contains up to ten shortcuts. Current grants outside recent history remain visible in a separate group. Existing entries retain their order after selection, access changes and command start selection.
+
+Local preferences retain recent paths and their last Read or Write mode across restarts. Access changes update existing shortcuts but do not recreate forgotten shortcuts.
+
+Forget appears only for directories outside the current conversation. It removes the shared shortcut, not grants in other conversations or remembered sensitive-directory approval.
 
 Saved network changes require execution review with the other execution settings. Host consent authorises the exact configuration after that review.
 
@@ -93,7 +101,11 @@ The authority boundaries are:
 - Approval for an individual shell command.
 - Plan review.
 
-Conversation directories have exactly two modes: **Read** and **Write**. Read is the default. Selection applies the mode immediately for ordinary directories. Write requires no additional approval. Active work blocks access changes.
+Conversation directories have exactly two modes: **Read** and **Write**. A directory without history defaults to Read. Later selections restore its last chosen mode.
+
+Selection applies the mode immediately for ordinary directories. Write requires no additional approval. Active work blocks access changes.
+
+Sensitive-directory consent persists for the exact canonical path across conversations and restarts. It covers later Read and Write selections, not parent or child paths. Host consent remains separate.
 
 Directory permissions bind to the canonical absolute path, not a device or inode number. Permissions cover a replacement directory or filesystem at that path. A missing path blocks access until the directory returns. A symbolic link that redirects the saved path requires a new directory selection.
 

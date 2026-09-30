@@ -2,7 +2,7 @@
 version: 1
 slug: "route-conversations-new"
 primary_target: "route:/conversations/new"
-related_targets: ["app/src/slices/conversations/templates/detail.html","app/src/slices/conversations/templates/current_work.html","app/src/slices/conversations/templates/candidate.html","app/src/slices/human_gates/templates/detail.html","app/src/slices/conversations/templates/workflow_progress.html","app/src/slices/conversations/templates/composer_toolbar.html","app/src/slices/conversations/templates/draft_summary.html","app/src/slices/conversations/templates/directory_card.html","app/src/slices/conversations/templates/command_directory.html","app/src/slices/conversations/templates/effective_settings.html","app/src/slices/conversations/templates/instructions_settings.html","app/src/slices/conversations/templates/presets_settings.html","app/src/slices/conversations/page/presets.rs","app/src/shared_templates/layout/chat.html"]
+related_targets: ["app/src/slices/conversations/templates/detail.html","app/src/slices/conversations/templates/current_work.html","app/src/slices/conversations/templates/candidate.html","app/src/slices/human_gates/templates/detail.html","app/src/slices/conversations/templates/workflow_progress.html","app/src/slices/conversations/templates/composer_toolbar.html","app/src/slices/conversations/templates/directory_manager.html","app/src/slices/conversations/templates/directory_choice.html","app/src/slices/conversations/templates/directory_consent.html","app/src/slices/conversations/templates/command_directory.html","app/src/slices/conversations/templates/effective_settings.html","app/src/slices/conversations/templates/instructions_settings.html","app/src/slices/conversations/templates/presets_settings.html","app/src/slices/conversations/page/presets.rs","app/src/shared_templates/layout/chat.html"]
 ---
 
 # New conversation
@@ -41,7 +41,7 @@ The implementation retains Hypergraft target identifiers and native navigation l
 
 This bounded extension covers configured drafts and directory setup. Stage 1 remains approved.
 
-The configured draft shows actual paths and access modes. Pending approval remains explicit. The heading makes no claim that an environment is ready.
+The draft manager shows actual paths and access modes. Pending approval remains explicit. The heading makes no claim that an environment is ready.
 
 Directory records contain access radios with descriptions. Selection applies ordinary directory permissions immediately without an additional approval. Presets and defaults carry those permissions. Sensitive directories and host access need separate consent. Active work blocks access changes.
 
@@ -146,3 +146,27 @@ Stage 5a covers the workflow catalogue. Ordinary unsent text survives catalogue 
 The workflow editor and preset catalogue remain separate passes. Stage 5a grants no permission to stage or commit.
 
 The workload and browser evidence live in `docs/ui-overhaul.md`.
+
+## Recent directories
+
+This extension supplies one directory manager. New drafts show it inline. Saved conversations open it from the access summary in the existing companion shell. It replaces the Add action below the composer and the Directories section in Setup.
+
+The manager retains the existing visual system and native picker. It contains up to ten recent shortcuts and current grants absent from history. Each row has an add/remove checkbox and Read and Write radios. Forget appears only on unselected recent rows.
+
+A selection restores the last chosen mode. A directory without history defaults to Read. Unavailable or overlapping paths cannot receive new access.
+
+Local preferences retain history and exact-path sensitive-directory approval across restarts. Later conversations reuse that approval for Read and Write. Host consent remains separate.
+
+Forget removes the shared shortcut without changes to grants in other conversations or sensitive-directory approval. Access changes update existing shortcuts without recreation of forgotten paths. Directory commands retain unsent text and uncommitted Setup fields.
+
+Sandbox paths remain visible without disclosures. Each row contains a button-style cwd radio, separate from Read and Write with a divider. A tint and tick identify the selected cwd. Unselected and unavailable rows retain disabled cwd controls.
+
+Each cwd label uses a native title tooltip, including labels for disabled controls. The browser controls its delay and dismissal. Screen readers retain the description. The manager contains no separate help icon or expandable cwd explanation.
+
+Host mode names the manager Work locations. The execution summary below the composer names the selected sandbox beside Sandbox. Only that summary names unrestricted host access.
+
+Hypergraft retains keyed controls during directory patches. The command guard blocks concurrent changes without a temporary disable state across the list. Uncertain results disable changes.
+
+Existing rows retain their order after selection and Read or Write changes. Stable identifiers preserve each control's identity. Only the checkbox and directory text activate selection. Mobile uses the transcript scroll area. Desktop bounds the list height.
+
+The browser pass uses isolated local paths without model requests. It covers mode changes, multiple directories, remembered consent and Forget.

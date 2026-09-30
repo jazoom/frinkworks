@@ -19,6 +19,7 @@ fn request(
         job,
         conversation,
         execution_revision: revision,
+        location: crate::execution::ToolLocation::Host,
         command: command.to_owned(),
         directory: PathBuf::from("/tmp"),
         explanation: explanation.to_owned(),
@@ -68,6 +69,12 @@ async fn approval_binds_session_job_revision_and_command() {
     tampered.command = "rm -rf /".to_owned();
     assert_eq!(
         store.decide(&tampered, HostCommandDecision::Approved),
+        Err(ApprovalError::Invalid)
+    );
+    let mut other_location = submitted.clone();
+    other_location.location = crate::execution::ToolLocation::Sandbox;
+    assert_eq!(
+        store.decide(&other_location, HostCommandDecision::Approved),
         Err(ApprovalError::Invalid)
     );
     let mut other_directory = submitted.clone();

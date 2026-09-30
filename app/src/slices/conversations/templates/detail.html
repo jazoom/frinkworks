@@ -36,7 +36,7 @@
               class="text-lg font-semibold break-words"
             >
               {% block conversation_heading %}{{ heading }}{% endblock conversation_heading %}
-              {% if self.is_new() && !directories.is_empty() %}
+              {% if self.is_new() %}
                 <span
                   class="badge badge-ghost ml-2 align-middle text-sm font-normal"
                   >Draft</span
@@ -234,6 +234,11 @@
               <svg class="workspace-icon" aria-hidden="true">
                 <use href="/static/images/workspace-icons.svg#attention" /></svg
               ><span class="flex-1">{{ self.attention_label() }}</span>
+              {% if pending_host_command.is_some() %}
+                <span class="btn btn-warning btn-sm shrink-0"
+                  >Review command</span
+                >
+              {% endif %}
             </button>
           {% else if let Some(saved) = self.saved() %}
             <a
@@ -248,6 +253,11 @@
               <svg class="workspace-icon" aria-hidden="true">
                 <use href="/static/images/workspace-icons.svg#attention" /></svg
               ><span class="flex-1">{{ self.attention_label() }}</span>
+              {% if pending_host_command.is_some() %}
+                <span class="btn btn-warning btn-sm shrink-0"
+                  >Review command</span
+                >
+              {% endif %}
             </a>
           {% endif %}
         {% endif %}
@@ -510,7 +520,11 @@
             class="mx-auto w-[calc(100%-2rem)] max-w-3xl shrink-0 py-2 text-sm"
           >
             <summary class="cursor-pointer">
-              {{ omitted.len() }} entries exceed this window's display budget
+              {% if omitted.len() == 1 %}
+                Show 1 more message
+              {% else %}
+                Show {{ omitted.len() }} more messages
+              {% endif %}
             </summary>
             <div class="flex flex-wrap gap-3 py-2">
               {% for entry in omitted %}
@@ -518,15 +532,30 @@
                   href="{{ latest_href }}?around={{ entry.0 }}{{ self.inspection_leaf_query }}"
                   data-graft
                   class="link"
-                  >View omitted entry {{ loop.index }}</a
+                  >View message {{ loop.index }}</a
                 >
               {% endfor %}
             </div>
           </details>
         {% endif %}
         {% if self.transcript_empty() %}
-          {% if self.is_new() && !directories.is_empty() %}
-            {% include "conversations/templates/draft_summary.html" %}
+          {% if self.is_new() %}
+            <div
+              class="recent-directory-empty m-auto w-full max-w-3xl py-3 text-center sm:px-6 sm:py-8"
+            >
+              <h2 class="text-2xl font-semibold text-balance sm:text-[34px]">
+                What do you want to work on?
+              </h2>
+              <p class="text-quiet mt-4 hidden text-xl sm:block">
+                Ask a question or describe a change.
+              </p>
+
+              {% if !self.draft_access_note().is_empty() %}
+                <p class="text-quiet mt-4 text-sm">
+                  {{ self.draft_access_note() }}
+                </p>
+              {% endif %}
+            </div>
           {% else %}
             <div
               class="empty-conversation m-auto max-w-3xl px-6 py-8 text-center"
@@ -538,17 +567,15 @@
             </div>
           {% endif %}
         {% endif %}
+        {% if self.is_new() %}
+          <div class="mx-auto mt-7 w-full max-w-3xl pb-4 sm:px-6">
+            {% include "conversations/templates/directory_manager.html" %}
+          </div>
+        {% endif %}
         {% if omitted_messages > 0 %}
           <p class="text-quiet text-sm">
-            {% if historical %}
-              {{ omitted_messages }}
-              messages are outside this window. They remain in local history and
-              model context.
-            {% else %}
-              {{ omitted_messages }}
-              earlier messages exceed the display limit. They remain in local
-              history and model context.
-            {% endif %}
+            Only part of this conversation appears here. The complete transcript
+            remains in local history.
           </p>
         {% endif %}
 
@@ -726,7 +753,7 @@
             {% endif %}
           {% endif %}
         </div>
-        {% if companion_html.is_empty() && (observe_active || pending_question.is_some()) %}
+        {% if companion_html.is_empty() && self.can_stop() %}
           {% if let Some(saved) = self.saved() %}
             {% if saved.pending_gate.is_none() %}
               <footer
@@ -1052,7 +1079,7 @@
               />
             </form>
           {% endif %}
-          {% if let Some(saved) = self.saved() %}{% if observe_active || pending_question.is_some() %}
+          {% if let Some(saved) = self.saved() %}{% if self.can_stop() %}
             <form
               id="conversation-stop"
               data-graft
@@ -1069,7 +1096,7 @@
       <section
         id="conversation-settings"
         popover
-        data-settings-open="{% if settings_open || directories_open %}true{% else %}false{% endif %}"
+        data-settings-open="{% if settings_open || (!self.is_new() && directories_open) %}true{% else %}false{% endif %}"
         data-directories-open="{% if directories_open %}true{% else %}false{% endif %}"
         class="conversation-panel fixed inset-0 m-auto h-[min(44rem,calc(100dvh-2rem))] w-[calc(100%-2rem)] max-w-4xl min-w-0 flex-col overflow-hidden p-0 [&:popover-open]:flex"
         aria-labelledby="conversation-settings-heading"
@@ -1085,6 +1112,8 @@
               tabindex="-1"
             >
               <span data-setup-title>Setup</span
+              ><span data-directory-title hidden
+                >{% if location_host %}Work locations{% else %}Directories{% endif %}</span
               ><span data-execution-review-title hidden
                 >Review execution change</span
               >
@@ -1112,18 +1141,9 @@
           <button
             type="button"
             class="btn btn-ghost btn-sm"
-            data-settings-tab="settings-directories"
-            aria-controls="settings-directories"
-            aria-pressed="true"
-          >
-            {% if location_host %}Work locations{% else %}Directories{% endif %}
-          </button>
-          <button
-            type="button"
-            class="btn btn-ghost btn-sm"
             data-settings-tab="settings-execution"
             aria-controls="settings-execution"
-            aria-pressed="false"
+            aria-pressed="true"
           >
             Execution
           </button>
@@ -1159,7 +1179,7 @@
             data-settings-scroll
             class="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-[22px] pb-6 max-[700px]:px-[21px]"
           >
-            {% if error != "" && (settings_open || directories_open) %}
+            {% if error != "" && (settings_open || (directories_open && !self.is_new())) %}
               <div
                 id="conversation-error"
                 class="alert alert-error mt-4"
@@ -1248,214 +1268,9 @@
             {% include "conversations/templates/presets_settings.html" %}
             {% include "conversations/templates/instructions_settings.html" %}
             {% include "conversations/templates/execution_settings.html" %}
-            <section
-              id="settings-directories"
-              data-settings-panel
-              aria-labelledby="conversation-directory-heading"
-            >
-              <div class="mt-5 space-y-3">
-                <div
-                  class="flex flex-wrap items-start justify-between gap-x-3 gap-y-3"
-                >
-                  <div class="min-w-0 flex-[1_1_15rem]">
-                    <h3
-                      id="conversation-directory-heading"
-                      class="text-lg font-semibold"
-                      tabindex="-1"
-                    >
-                      {% if location_host %}
-                        Work locations
-                      {% else %}
-                        Directory access
-                      {% endif %}
-                    </h3>
-                    <p class="text-quiet mt-1 text-sm">
-                      {% if location_host %}
-                        Choose where commands start.
-                      {% else %}
-                        Choose which files this conversation can use.
-                      {% endif %}
-                    </p>
-                  </div>
-                  {% if directories.len() >= 8 %}
-                    <span class="text-quiet text-xs">Maximum reached</span>
-                  {% else %}
-                    {% if let Some(saved) = self.saved() %}
-                      <form
-                        id="conversation-directory-picker"
-                        data-graft
-                        method="post"
-                        action="/conversations/{{ saved.id }}/directories/pick"
-                        hidden
-                      >
-                        <input
-                          type="hidden"
-                          name="revision"
-                          value="{{ saved.revision }}"
-                        />
-                      </form>
-                    {% endif %}
-                    <button
-                      form="{% if self.is_new() %}conversation-composer{% else %}conversation-directory-picker{% endif %}"
-                      {% if self.is_new() %}formaction="/conversations/new/directories/pick"{% endif %}
-                      formmethod="post"
-                      id="conversation-add-directory"
-                      class="btn btn-ghost btn-sm directory-add"
-                      type="submit"
-                      {% if job_active %}disabled{% endif %}
-                    >
-                      <svg class="workspace-icon" aria-hidden="true">
-                        <use href="/static/images/workspace-icons.svg#plus" />
-                      </svg>
-                      Add a directory
-                    </button>
-                  {% endif %}
-                </div>
-                {% if directories.is_empty() %}
-                  <div
-                    class="directory-empty border-base-300 flex flex-col items-start gap-3 rounded-lg border p-5"
-                  >
-                    <svg class="workspace-icon" aria-hidden="true">
-                      <use href="/static/images/workspace-icons.svg#folder" />
-                    </svg>
-                    <p class="font-semibold">
-                      {% if location_host %}
-                        No work locations
-                      {% else %}
-                        No directory access
-                      {% endif %}
-                    </p>
-                    <p class="text-quiet text-sm">
-                      {% if location_host %}
-                        Commands start in Frinkworks's current directory.
-                      {% else %}
-                        Add a directory to work on your files. Tools can use
-                        private scratch storage without directory access.
-                      {% endif %}
-                    </p>
-                  </div>
-                {% endif %}
-                {% if !directories.is_empty() %}
-                  <ul
-                    class="directory-list"
-                    aria-label="Authorised directories"
-                  >
-                    {% for directory in directories %}
-                      {% include "conversations/templates/directory_card.html" %}
-                    {% endfor %}
-                  </ul>
-                {% endif %}
-                {% if consent_request != "" %}
-                  <div
-                    id="conversation-directory-consent"
-                    class="{% if consent_sensitive %}
-                      alert alert-warning items-start
-                    {% else %}
-                      border-base-300 rounded-box border p-4
-                    {% endif %}"
-                    role="alert"
-                    tabindex="-1"
-                  >
-                    <div class="min-w-0 space-y-3">
-                      <div class="space-y-1">
-                        {% if consent_sensitive %}
-                          <h3 class="font-semibold">
-                            Sensitive directory access
-                          </h3>
-                        {% endif %}
-                        <p class="text-sm break-all">
-                          <code>{{ consent_path }}</code>
-                        </p>
-                        {% if consent_sensitive %}
-                          <p class="text-sm">
-                            Sensitive directories can contain SSH keys,
-                            credentials and private records. Frinkworks stores
-                            its data at
-                            <code class="break-all">{{ data_root }}</code>. Tool
-                            output can expose these records to the model. Read
-                            access and Network off do not prevent this
-                            disclosure.
-                          </p>
-                        {% endif %}
-                        {% if consent_direct && consent_sensitive %}
-                          <p class="text-sm">
-                            Write access can alter or delete SSH keys,
-                            credentials, configuration and private records.
-                          </p>
-                        {% endif %}
-                      </div>
-                      {% if self.is_new() %}
-                        <button
-                          form="conversation-composer"
-                          formaction="/conversations/new/directories/consent"
-                          formmethod="post"
-                          class="btn {% if consent_sensitive %}btn-warning{% else %}btn-primary{% endif %} min-h-11"
-                          type="submit"
-                        >
-                          Approve
-                          {% if consent_direct %}
-                            Write access
-                          {% else %}
-                            Read access
-                          {% endif %}
-                        </button>
-                      {% else if let Some(saved) = self.saved() %}
-                        <form
-                          data-graft
-                          method="post"
-                          action="/conversations/{{ saved.id }}/directories/consent"
-                        >
-                          <input
-                            type="hidden"
-                            name="revision"
-                            value="{{ saved.revision }}"
-                          />
-                          <input
-                            type="hidden"
-                            name="consent_request"
-                            value="{{ consent_request }}"
-                          />
-                          <input
-                            type="hidden"
-                            name="pending_directory"
-                            value="{{ pending_directory }}"
-                          />
-                          <input
-                            type="hidden"
-                            name="existing"
-                            value="{% if consent_existing %}true{% else %}false{% endif %}"
-                          />
-                          <button
-                            class="btn {% if consent_sensitive %}btn-warning{% else %}btn-primary{% endif %} min-h-11"
-                            type="submit"
-                          >
-                            Approve
-                            {% if consent_direct %}
-                              Write access
-                            {% else %}
-                              Read access
-                            {% endif %}
-                          </button>
-                        </form>
-                      {% endif %}
-                    </div>
-                  </div>
-                {% endif %}
-                {% if !directories.is_empty() %}
-                  {% include "conversations/templates/command_directory.html" %}
-                {% endif %}
-                <p class="text-quiet border-base-300 border-t pt-4 text-sm">
-                  {% if location_host %}
-                    {{ host_summary }}
-                  {% else %}
-                    Sandbox ·
-                    <span data-conversation-environment-summary
-                      >{{ environment_summary }}</span
-                    ><br />New directories use Read by default.
-                  {% endif %}
-                </p>
-              </div>
-            </section>
+            {% if !self.is_new() %}
+              {% include "conversations/templates/directory_manager.html" %}
+            {% endif %}
             <div
               data-execution-actions
               {% if directories.is_empty() %}hidden{% endif %}

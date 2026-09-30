@@ -24,9 +24,19 @@ A spinner appears beside the button label during a rebuild. Progress and errors 
 
 ## Restart behaviour
 
-The supervisor refuses a restart while commands or agent work remain active. This restriction also covers workflow decisions and environment preparation.
+The normal **Rebuild and restart** action refuses a restart while commands or agent work remain active. This restriction also covers workflow decisions and environment preparation.
 
-Recovery-only reservations permit a restart. Other active work and unfinished cleanup still block it.
+Only **Rebuild and restart** appears initially. If active work blocks that request, a warning replaces it with **Interrupt work and restart** and **Cancel**.
+
+An unavailable idle probe also offers interruption. Concurrent rebuilds and build failures do not expose the option. Cancel restores the normal button without a restart request.
+
+The confirmed action bypasses the active-work guard, including an unavailable idle probe. It still rejects concurrent rebuilds and requests from other origins.
+
+After a successful build, the supervisor interrupts active work across all conversations and restarts the server. Startup records interrupted work and attempts cleanup. Partial file changes remain, and cleanup can require recovery. All tabs reload and lose unsent text.
+
+A failed build leaves the current server active.
+
+Recovery-only reservations permit a normal restart. Other active work and unfinished cleanup still block the normal action.
 
 The current server serves pages during a build. The supervisor rejects new commands until the build finishes or fails.
 

@@ -117,6 +117,11 @@ async fn decide(
             job: job_id,
             conversation: record.id,
             execution_revision: revision,
+            location: pending
+                .as_ref()
+                .map_or(crate::execution::ToolLocation::Sandbox, |request| {
+                    request.location
+                }),
             // JSON escapes preserve shell newlines across HTML form normalisation.
             command: serde_json::from_str(&form.command).unwrap_or_default(),
             directory: pending

@@ -24,6 +24,7 @@ fn host_evidence_redacts_secrets_and_rejects_path_tokens() {
         conversation: crate::conversations::ConversationId::generate().unwrap(),
         job: crate::sessions::JobId::generate().unwrap(),
         execution_revision: 1,
+        location: crate::execution::ToolLocation::Host,
         command: format!("printf {secret}"),
         directory: PathBuf::from(format!("/tmp/{secret}")),
         explanation: secret.to_owned(),
@@ -40,6 +41,8 @@ fn host_evidence_redacts_secrets_and_rejects_path_tokens() {
             .join(format!("{}.json", request.token)),
     )
     .unwrap();
+    let record: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(record["location"], "host");
     assert!(!String::from_utf8(bytes).unwrap().contains(secret));
     request.token = "../escape".to_owned();
     assert_eq!(

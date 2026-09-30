@@ -205,6 +205,66 @@ fn sandbox_context<'a>(
 }
 
 #[tokio::test]
+async fn sandbox_file_tools_use_the_granted_directory_without_write_access() {
+    let directory = tempfile::tempdir().unwrap();
+    let guest = "/mnt/read-only";
+    let policy = DirectoryPolicy::from_grants_with_workspace(
+        vec![crate::agents::PolicyGrant {
+            alias: "read-only".to_owned(),
+            guest_path: guest.to_owned(),
+            host_path: directory.path().to_owned(),
+            access: AccessMode::ReadOnly,
+        }],
+        "read-only".to_owned(),
+    );
+    let sandbox = crate::sandbox::GuestSandbox::scripted();
+    sandbox
+        .start_from_snapshot(
+            std::path::Path::new("snapshot"),
+            "sha256:deadbeef",
+            crate::sandbox::SandboxSpec {
+                mounts: vec![crate::sandbox::MountSpec {
+                    guest: guest.to_owned(),
+                    host: directory.path().to_owned(),
+                    read_only: true,
+                }],
+                workdir: guest.to_owned(),
+                network: crate::agents::NetworkAccess::None,
+            },
+        )
+        .await
+        .unwrap();
+    let job = tool_job();
+    let mut context = sandbox_context(&policy, &job, &ToolId::ALL);
+    context.sandbox = Some(&sandbox);
+    for (tool, path) in [
+        ("list", guest.to_owned()),
+        ("read", format!("{guest}/note.txt")),
+    ] {
+        let trace = super::invoke(
+            &context,
+            "call-read",
+            tool,
+            &serde_json::json!({"path": path}),
+        )
+        .await;
+        assert_eq!(trace.failure, None, "{}", trace.output);
+    }
+    let commands = sandbox.exec_log();
+    assert_eq!(commands.len(), 2);
+    assert!(commands.iter().all(|command| command.cwd == guest));
+    let denied = super::invoke(
+        &context,
+        "call-write",
+        "write",
+        &serde_json::json!({"path": format!("{guest}/note.txt"), "contents": "changed"}),
+    )
+    .await;
+    assert_eq!(denied.failure, Some(ToolFailureKind::Authority));
+    assert_eq!(sandbox.exec_log().len(), 2);
+}
+
+#[tokio::test]
 async fn path_escape_is_an_authority_failure() {
     let policy = policy();
     let job = tool_job();

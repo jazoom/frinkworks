@@ -71,6 +71,7 @@ async fn execute(
         job: work.job.id(),
         conversation: work.record.id,
         execution_revision: work.record.revision,
+        location: settings.location,
         command: work.command.clone(),
         directory: work.directory.clone(),
         explanation: "Direct command from the conversation.".to_owned(),

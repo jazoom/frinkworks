@@ -115,6 +115,7 @@ async fn host_approval_shows_actual_command_and_location_before_decision() {
             job: job.id(),
             conversation: record.id,
             execution_revision: record.revision,
+            location: crate::execution::ToolLocation::Host,
             command: "printf hi".to_owned(),
             directory: directory.clone(),
             explanation: "Print a greeting".to_owned(),

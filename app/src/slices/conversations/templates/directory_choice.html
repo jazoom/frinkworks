@@ -1,0 +1,185 @@
+{% let directory = &choice.directory %}
+<li
+  id="recent-row-{{ choice.id }}"
+  class="border-base-300 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 border-b py-3 last:border-b-0 @lg:grid-cols-[minmax(0,1fr)_auto_auto]"
+>
+  <div class="flex min-h-11 min-w-0 items-center gap-3">
+    <input
+      id="recent-checkbox-{{ choice.id }}"
+      type="checkbox"
+      class="checkbox checkbox-primary shrink-0"
+      aria-label="{% if choice.selected %}Remove{% else %}Add{% endif %} {{ directory.host_path }}"
+      aria-describedby="directory-note-{{ choice.id }}"
+      data-recent-directory="recent-select-{{ choice.id }}"
+      data-directory-disabled="{% if job_active || !choice.disabled_reason.is_empty() || (consent_request != "" && !directory.transient) %}true{% else %}false{% endif %}"
+      {% if choice.selected %}checked{% endif %}
+      {% if job_active || !choice.disabled_reason.is_empty() || (consent_request != "" && !directory.transient) %}disabled{% endif %}
+    />
+    <label for="recent-checkbox-{{ choice.id }}" class="min-w-0 cursor-pointer">
+      <span class="block text-base font-semibold break-words"
+        >{{ directory.name }}</span
+      >
+      <span class="text-quiet block font-mono text-xs break-all"
+        >{{ directory.host_path }}</span
+      >
+    </label>
+  </div>
+  <div
+    class="col-span-full col-start-1 row-start-2 flex flex-wrap items-center gap-x-4 pl-9 @lg:col-span-1 @lg:col-start-2 @lg:row-start-1 @lg:pl-0"
+  >
+    <fieldset
+      id="recent-access-options-{{ choice.id }}"
+      class="directory-access-options flex gap-3"
+      data-directory-disabled="{% if job_active || !choice.selected || !directory.available || directory.transient || consent_request != "" %}true{% else %}false{% endif %}"
+      {% if job_active || !choice.selected || !directory.available || directory.transient || consent_request != "" %}disabled{% endif %}
+    >
+      <legend class="sr-only">Access for {{ directory.host_path }}</legend>
+      <label class="flex min-h-11 cursor-pointer items-center gap-2 text-sm">
+        <input
+          id="recent-read-{{ choice.id }}"
+          type="radio"
+          class="radio radio-primary radio-sm"
+          name="recent-access-{{ choice.id }}"
+          value="read"
+          data-directory-access="recent-access-{{ choice.id }}"
+          {% if !directory.direct_write %}checked{% endif %}
+        />
+        Read
+      </label>
+      <label class="flex min-h-11 cursor-pointer items-center gap-2 text-sm">
+        <input
+          id="recent-write-{{ choice.id }}"
+          type="radio"
+          class="radio radio-primary radio-sm"
+          name="recent-access-{{ choice.id }}"
+          value="write"
+          data-directory-access="recent-access-{{ choice.id }}"
+          {% if directory.direct_write %}checked{% endif %}
+        />
+        Write
+      </label>
+    </fieldset>
+    <div class="border-base-300 border-l pl-4">
+      <label
+        class="btn btn-outline btn-sm directory-start-option min-h-11 gap-2"
+        title="Current working directory (cwd). Commands start in the cwd."
+      >
+        <input
+          id="recent-cwd-{{ choice.id }}"
+          type="radio"
+          class="sr-only"
+          name="start_directory"
+          value="{{ directory.id }}"
+          form="{% if self.is_new() %}conversation-composer{% else %}command-directory-form{% endif %}"
+          data-command-directory
+          aria-label="Use {{ directory.host_path }} as cwd"
+          aria-describedby="directory-cwd-help-{{ choice.id }}"
+          data-directory-disabled="{% if job_active || !choice.selected || !directory.available || directory.transient || (consent_request != "" && !consent_existing) %}true{% else %}false{% endif %}"
+          {% if choice.command_start %}checked{% endif %}
+          {% if job_active || !choice.selected || !directory.available || directory.transient || (consent_request != "" && !consent_existing) %}disabled{% endif %}
+        />
+        <svg class="workspace-icon directory-cwd-mark" aria-hidden="true">
+          <use href="/static/images/workspace-icons.svg#check" />
+        </svg>
+        cwd
+        <span id="directory-cwd-help-{{ choice.id }}" class="sr-only">
+          Current working directory (cwd). Commands start in the cwd.
+        </span>
+      </label>
+    </div>
+  </div>
+  <div class="col-start-2 row-start-1 w-[4.5rem] @lg:col-start-3">
+    {% if !choice.selected %}
+      <button
+        type="submit"
+        form="{% if self.is_new() %}conversation-composer{% else %}conversation-directory-picker{% endif %}"
+        formaction="{% if let Some(saved) = self.saved() %}/conversations/{{ saved.id }}{% else %}/conversations/new{% endif %}/directories/recent/{{ choice.recent_id }}/forget"
+        formmethod="post"
+        class="btn btn-ghost btn-sm min-h-11"
+        aria-label="Forget {{ directory.host_path }}"
+      >
+        Forget
+      </button>
+    {% endif %}
+  </div>
+  <div id="directory-note-{{ choice.id }}" class="col-span-full pl-9 text-sm">
+    {% if !choice.disabled_reason.is_empty() %}
+      <p
+        class="{% if !directory.available %}text-error{% else %}text-quiet{% endif %}"
+      >
+        {{ choice.disabled_reason }}
+      </p>
+    {% else if !directory.available %}
+      <p class="text-error">
+        Cannot access the saved path. This directory remains removable.
+      </p>
+    {% endif %}
+    {% if choice.selected %}
+      {% if directory.pending_approval || directory.transient %}
+        <p class="text-quiet">
+          {{ directory.access_label }} · Pending approval
+        </p>
+      {% endif %}
+      {% if location_host && !directory.direct_write %}
+        <p class="text-quiet">
+          Host execution requires Write. Read requires Sandbox.
+        </p>
+      {% endif %}
+      {% if !location_host && directory.pending_approval && !directory.transient && consent_request == "" %}
+        <button
+          type="submit"
+          form="{% if self.is_new() %}conversation-composer{% else %}conversation-directory-picker{% endif %}"
+          formaction="{% if let Some(saved) = self.saved() %}/conversations/{{ saved.id }}{% else %}/conversations/new{% endif %}/directories/{{ directory.id }}/consent"
+          formmethod="post"
+          class="btn btn-warning btn-sm mt-2 min-h-11"
+          {% if job_active %}disabled{% endif %}
+        >
+          Review access
+        </button>
+      {% endif %}
+    {% endif %}
+    {% if !location_host %}
+      <div class="text-quiet leading-5">
+        {#
+          Morphlex 1.4.0's published dist/morphlex.js skips adjacent attribute removals.
+          The upstream source fix is https://github.com/yippee-fun/morphlex/commit/c2b2a941991857a079577073d1b9ae8c574276ca.
+          The command `pnpm view morphlex version` lists the latest npm release.
+          The workaround is unnecessary after an upgrade to a release whose installed dist/morphlex.js snapshots from.attributes before it removes attributes.
+        #}
+        <span
+          class="{% if !choice.selected || directory.transient %}invisible{% else %}visible{% endif %}"
+          aria-hidden="{% if !choice.selected || directory.transient %}true{% else %}false{% endif %}"
+        >
+          Sandbox path:
+          <code class="font-mono text-xs leading-5 break-all"
+            >{{ directory.guest_path }}</code
+          >
+        </span>
+      </div>
+    {% endif %}
+  </div>
+  <button
+    id="recent-select-{{ choice.id }}"
+    type="submit"
+    form="{% if self.is_new() %}conversation-composer{% else if directory.transient %}conversation-directory-consent-form{% else %}conversation-directory-picker{% endif %}"
+    formaction="{% if let Some(saved) = self.saved() %}/conversations/{{ saved.id }}{% else %}/conversations/new{% endif %}/directories/{% if directory.transient %}consent/cancel{% else if choice.selected %}{{ directory.id }}/remove{% else %}recent/{{ choice.recent_id }}/select{% endif %}"
+    formmethod="post"
+    hidden
+  >
+    Change directory selection
+  </button>
+  {% if choice.selected && !directory.transient %}
+    <button
+      id="recent-access-{{ choice.id }}"
+      type="submit"
+      form="{% if self.is_new() %}conversation-composer{% else %}conversation-directory-picker{% endif %}"
+      formaction="{% if let Some(saved) = self.saved() %}/conversations/{{ saved.id }}{% else %}/conversations/new{% endif %}/directories/{{ directory.id }}/access"
+      formmethod="post"
+      name="{% if self.is_new() %}action{% else %}access{% endif %}"
+      value="read"
+      hidden
+    >
+      Change access
+    </button>
+  {% endif %}
+</li>

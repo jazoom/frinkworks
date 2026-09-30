@@ -867,6 +867,7 @@ async fn dispatch(
                 job: context.job.id(),
                 conversation: host.conversation,
                 execution_revision: host.execution_revision,
+                location: ToolLocation::Sandbox,
                 command: command.to_owned(),
                 directory: std::path::PathBuf::from(context.policy.primary_guest()),
                 explanation: args.explanation.trim().to_owned(),
@@ -975,6 +976,7 @@ async fn host_run(
         job: context.job.id(),
         conversation: host.conversation,
         execution_revision: host.execution_revision,
+        location: ToolLocation::Host,
         command: command.to_owned(),
         directory: host.directory.clone(),
         explanation: explanation.to_owned(),
@@ -1705,7 +1707,7 @@ async fn capture(
     // File tools consume raw capture before their own page bounds, not a command preview.
     crate::execution::command::capture_sandbox_command(
         sandbox,
-        request,
+        request.in_dir(context.policy.primary_guest()),
         context.job,
         context.secret,
         SANDBOX_COMMAND_TIMEOUT,
@@ -1733,7 +1735,10 @@ async fn capture_stdout_bytes(
         return Err(ToolFailure::Ordinary("That tool is not available."));
     };
     let _ = call_id;
-    let mut session = match sandbox.exec_cmd(request).await {
+    let mut session = match sandbox
+        .exec_cmd(request.in_dir(context.policy.primary_guest()))
+        .await
+    {
         Ok(session) => session,
         Err(error) => {
             return Err(ToolFailure::Ordinary(error.message()));

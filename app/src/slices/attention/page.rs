@@ -90,14 +90,22 @@ fn decisions(state: &AppState) -> Vec<Decision> {
     let mut conversations = state.conversations.metadata();
     conversations.sort_by_key(|record| std::cmp::Reverse(record.updated_at_ms));
     for record in conversations {
-        if record
+        if let Some(command) = record
             .active_job
-            .is_some_and(|job| state.host_approvals.pending_for(record.id, job).is_some())
+            .and_then(|job| state.host_approvals.pending_for(record.id, job))
         {
             decisions.push(Decision {
                 title: record.title,
-                context: "This computer · unrestricted host access".to_owned(),
-                href: format!("/conversations/{}", record.id.as_hex()),
+                context: match command.location {
+                    crate::execution::ToolLocation::Host => {
+                        "This computer · unrestricted host access"
+                    }
+                    crate::execution::ToolLocation::Sandbox => {
+                        "Sandbox · authorised directory access"
+                    }
+                }
+                .to_owned(),
+                href: format!("/conversations/{}?work=true", record.id.as_hex()),
                 evidence: String::new(),
                 reason: "Needs command approval",
             });

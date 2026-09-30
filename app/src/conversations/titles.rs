@@ -16,7 +16,7 @@ pub(crate) fn start(state: &AppState, id: ConversationId, language: Option<Brows
     let Some(record) = state.conversations.claim_title(&id) else {
         return;
     };
-    let (user, _) = exchange(&record).expect("a title claim requires a completed exchange");
+    let (user, _) = exchange(&record).expect("a title claim requires a settled exchange");
     let fallback = excerpt(user);
     let request = record
         .model
@@ -114,7 +114,7 @@ pub(super) fn exchange(record: &ConversationRecord) -> Option<(&str, &str)> {
     record.messages.windows(2).find_map(|pair| {
         (pair[0].role == MessageRole::User
             && pair[1].role == MessageRole::Assistant
-            && pair[1].status == MessageStatus::Complete
+            && pair[1].status != MessageStatus::Pending
             && !pair[1].text.trim().is_empty())
         .then_some((pair[0].text.as_str(), pair[1].text.as_str()))
     })

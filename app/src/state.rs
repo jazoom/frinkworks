@@ -143,7 +143,7 @@ pub(crate) async fn build(
         .map_err(|_| "The workflow workspace store is unreadable.".to_owned())?;
     let vault = ProviderVault::open(data_dir.join("providers.json"))
         .map_err(|_| "The provider vault is unreadable.".to_owned())?;
-    let preferences = Preferences::open(data_dir.join("preferences.json"));
+    let preferences = Arc::new(Preferences::open(data_dir.join("preferences.json")));
     let models_dev = ModelsDevCatalogue::open(data_dir.join("models-dev-catalogue.json"))?;
     let state = AppState {
         config: Arc::new(config.runtime),
@@ -153,7 +153,7 @@ pub(crate) async fn build(
         chat: Arc::new(ChatBackend::Rig),
         models_dev: Arc::new(models_dev),
         plan_login: Arc::new(PlanLogin::new()),
-        preferences: Arc::new(preferences),
+        preferences: preferences.clone(),
         presets: Arc::new(presets),
         agents: Arc::new(agents),
         skills: Arc::new(skills),
@@ -161,7 +161,7 @@ pub(crate) async fn build(
         conversations: Arc::new(conversations),
         forks: Arc::new(crate::conversations::ForkDrafts::default()),
         directory_picker: DirectoryPicker::native(),
-        access_consent: Arc::new(AccessConsentStore::new()),
+        access_consent: Arc::new(AccessConsentStore::new(preferences)),
         host_approvals: Arc::new(HostApprovalStore::new()),
         conversation_runtime: Arc::new(
             ConversationRuntime::open(data_dir.join("conversation-runtime"))

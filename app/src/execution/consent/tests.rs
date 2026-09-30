@@ -2,9 +2,62 @@ use crate::{conversations::ConversationId, sessions};
 
 use super::AccessConsentStore;
 
+fn consent_store() -> AccessConsentStore {
+    AccessConsentStore::new(std::sync::Arc::new(
+        crate::preferences::Preferences::in_memory(),
+    ))
+}
+
 fn session() -> sessions::SessionId {
     let token = sessions::generate_session_token().unwrap();
     token.id()
+}
+
+#[test]
+fn directory_cancellation_is_session_bound_and_leaves_host_requests_intact() {
+    let root = tempfile::tempdir().unwrap();
+    let grant = crate::execution::DirectoryGrant::from_selected(root.path(), &[]).unwrap();
+    let directories = vec![grant.clone()];
+    let owner = session();
+    let store = consent_store();
+    let request = store
+        .request_draft(owner, "draft", &directories, &grant)
+        .unwrap();
+    store.cancel_directory_request(&request, session());
+    assert!(
+        store
+            .approve_draft(&request, owner, "draft", &directories, &grant)
+            .is_ok()
+    );
+    let request = store
+        .request_draft(owner, "draft", &directories, &grant)
+        .unwrap();
+    store.cancel_directory_request(&request, owner);
+    assert!(
+        store
+            .approve_draft(&request, owner, "draft", &directories, &grant)
+            .is_err()
+    );
+    let settings = crate::execution::ExecutionSettings::new(
+        crate::providers::ModelSelection::new(
+            crate::providers::ProviderKind::Xai,
+            "model".to_owned(),
+            None,
+        )
+        .unwrap(),
+        String::new(),
+        Vec::new(),
+        crate::tests::test_environment_id(),
+    )
+    .unwrap()
+    .with_location(crate::execution::ToolLocation::Host);
+    let request = store.request_host_draft(owner, "draft", &settings).unwrap();
+    store.cancel_directory_request(&request, owner);
+    assert!(
+        store
+            .approve_host_draft(&request, owner, "draft", &settings)
+            .is_ok()
+    );
 }
 
 #[test]
@@ -27,7 +80,7 @@ fn draft_consent_is_single_use_and_becomes_conversation_consent() {
     .with_directories(directories.clone())
     .unwrap();
     let session = session();
-    let store = AccessConsentStore::new();
+    let store = consent_store();
     let request = store
         .request_draft(session, "draft", &directories, &grant)
         .unwrap();
@@ -61,12 +114,7 @@ fn draft_consent_is_single_use_and_becomes_conversation_consent() {
     changed = settings.clone();
     changed.tools.push(crate::agents::ToolId::Read);
     assert!(!store.authorised_conversation(session, conversation, &changed, &grant));
-    assert!(!AccessConsentStore::new().authorised_conversation(
-        session,
-        conversation,
-        &settings,
-        &grant
-    ));
+    assert!(!consent_store().authorised_conversation(session, conversation, &settings, &grant));
     assert!(
         store
             .consume_draft(
@@ -100,7 +148,7 @@ fn direct_write_consent_is_destination_bound_and_single_use() {
         &data
     ));
     let grants = vec![grant.clone()];
-    let store = AccessConsentStore::new();
+    let store = consent_store();
     let owner = session();
     let request = store
         .request_draft(owner, "original", &grants, &grant)
@@ -137,7 +185,7 @@ fn host_consent_is_destination_bound_and_not_copied() {
     )
     .unwrap()
     .with_location(crate::execution::ToolLocation::Host);
-    let store = AccessConsentStore::new();
+    let store = consent_store();
     let owner = session();
     let request = store.request_host_draft(owner, "draft", &settings).unwrap();
     let reference = store
@@ -181,7 +229,7 @@ fn automatic_host_consent_does_not_reuse_ask_each_time_approval() {
     let automatic = settings
         .clone()
         .with_host_approval(crate::execution::HostApprovalPolicy::Automatic);
-    let store = AccessConsentStore::new();
+    let store = consent_store();
     let owner = session();
     let conversation = ConversationId::generate().unwrap();
     let request = store
@@ -213,7 +261,7 @@ fn consent_binds_session_access_and_path_but_not_native_identity() {
     let directories = vec![grant.clone()];
     let owner = session();
     let other = session();
-    let store = AccessConsentStore::new();
+    let store = consent_store();
     let request = store
         .request_draft(owner, "draft", &directories, &grant)
         .unwrap();

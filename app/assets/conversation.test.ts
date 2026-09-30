@@ -276,16 +276,27 @@ describe.each(["new", "saved"])("%s conversation settings", (state) => {
             expect(value("revision")).toBe("4");
         });
 
-        test.each(["command-directory-form", "directory-access-form-one"])(
+        test.each([
+            "start",
+            "one/access",
+            "one/remove",
+            "pick",
+            "recent/one/select",
+            "recent/one/forget",
+        ])(
             "%s retains unsaved execution fields and accepts the new revision",
-            (formId) => {
+            (action) => {
                 const original = root.innerHTML;
                 edit();
                 root.innerHTML = original;
                 root.querySelector<HTMLInputElement>(
                     '[name="revision"]',
                 )!.value = "4";
-                reconcile(formId);
+                reconcile(
+                    "conversation-directory-picker",
+                    200,
+                    `/conversations/example/directories/${action}`,
+                );
                 expect(value("network")).toBe("restricted");
                 expect(value("revision")).toBe("4");
                 root.innerHTML = original;
