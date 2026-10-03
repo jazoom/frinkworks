@@ -82,6 +82,13 @@ export function initTranscript(root: HTMLElement): () => void {
     let lastScrollTop = root.scrollTop;
     let frame: number | null = null;
     let destroyed = false;
+    let collapseAnchor: {
+        details: HTMLDetailsElement;
+        collapsedHeight: number;
+        top: number;
+        space: number;
+        overflowAnchorStyle: string;
+    } | null = null;
     const streams = new Map<string, StreamState>();
     const motionSkipped = new Set<string>();
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -111,12 +118,106 @@ export function initTranscript(root: HTMLElement): () => void {
         lastScrollTop = root.scrollTop;
     };
 
+    const releaseCollapseAnchor = () => {
+        if (!collapseAnchor) return;
+        resize.unobserve(collapseAnchor.details);
+        root.style.removeProperty("--transcript-collapse-space");
+        root.style.overflowAnchor = collapseAnchor.overflowAnchorStyle;
+        collapseAnchor = null;
+    };
+
+    const preserveCollapseAnchor = () => {
+        if (!collapseAnchor) return;
+        const anchor = collapseAnchor;
+        const contentHeight = root.scrollHeight - anchor.space;
+        const remainingCollapse = anchor.details.open
+            ? 0
+            : Math.max(
+                  0,
+                  anchor.details.getBoundingClientRect().height -
+                      anchor.collapsedHeight,
+              );
+        anchor.space = Math.ceil(
+            Math.max(
+                0,
+                anchor.top +
+                    root.clientHeight -
+                    contentHeight +
+                    remainingCollapse,
+            ),
+        );
+        root.style.setProperty(
+            "--transcript-collapse-space",
+            `${anchor.space}px`,
+        );
+        root.scrollTop = anchor.top;
+        lastScrollTop = root.scrollTop;
+        // scrollHeight never falls below clientHeight, even when the content is shorter.
+        if (
+            root.scrollHeight <= root.clientHeight ||
+            (anchor.space === 0 &&
+                anchor.details.getAnimations({ subtree: true }).length === 0)
+        ) {
+            releaseCollapseAnchor();
+        }
+    };
+
     const onScroll = () => {
-        trackScroll();
+        if (collapseAnchor) {
+            collapseAnchor.top = root.scrollTop;
+            preserveCollapseAnchor();
+        }
+        if (!collapseAnchor) trackScroll();
         updateJump();
     };
 
+    const onToolClick = (event: MouseEvent) => {
+        if (event.defaultPrevented || !(event.target instanceof Element))
+            return;
+        const summary = event.target.closest<HTMLElement>(
+            "details.chat-tool-record > summary",
+        );
+        if (!summary) return;
+        const details = summary.parentElement;
+        if (!(details instanceof HTMLDetailsElement) || !details.open) return;
+        const space = Math.max(
+            0,
+            details.offsetHeight - summary.offsetHeight - measure(),
+        );
+        if (!space) return;
+        if (!collapseAnchor) {
+            collapseAnchor = {
+                details,
+                collapsedHeight: 0,
+                top: root.scrollTop,
+                space: 0,
+                overflowAnchorStyle: root.style.overflowAnchor,
+            };
+        }
+        resize.unobserve(collapseAnchor.details);
+        collapseAnchor.details = details;
+        collapseAnchor.collapsedHeight =
+            summary.getBoundingClientRect().height +
+            details.offsetHeight -
+            details.clientHeight;
+        collapseAnchor.top = root.scrollTop;
+        collapseAnchor.space += space;
+        // Reserve room before native collapse. Scroll clamping otherwise moves the heading.
+        root.style.overflowAnchor = "none";
+        root.style.setProperty(
+            "--transcript-collapse-space",
+            `${collapseAnchor.space}px`,
+        );
+        pinned = false;
+        resize.observe(details);
+    };
+
     const stick = () => {
+        preserveCollapseAnchor();
+        if (collapseAnchor) {
+            updateJump();
+            return;
+        }
         trackScroll();
         if (pinned && root.querySelector(".chat-turn")) {
             // Scroll the transcript, not its ancestors or the composer.
@@ -127,6 +228,7 @@ export function initTranscript(root: HTMLElement): () => void {
     };
 
     const jumpToLatest = () => {
+        releaseCollapseAnchor();
         pinned = true;
         lastScrollTop = root.scrollTop;
         stick();
@@ -287,7 +389,8 @@ export function initTranscript(root: HTMLElement): () => void {
     reducedMotion.addEventListener("change", onMotionChange);
     jump?.addEventListener("click", jumpToLatest);
     const resize = new ResizeObserver(stick);
-    resize.observe(root);
+    resize.observe(root, { box: "border-box" });
+    root.addEventListener("click", onToolClick);
     root.addEventListener("toggle", stick, true);
     reconcile();
     const initialScroll = requestAnimationFrame(stick);
@@ -303,9 +406,11 @@ export function initTranscript(root: HTMLElement): () => void {
         }
         streams.clear();
         observer.disconnect();
+        releaseCollapseAnchor();
         resize.disconnect();
         jump?.removeEventListener("click", jumpToLatest);
         root.removeEventListener("toggle", stick, true);
+        root.removeEventListener("click", onToolClick);
         root.removeEventListener("scroll", onScroll);
         reducedMotion.removeEventListener("change", onMotionChange);
     };

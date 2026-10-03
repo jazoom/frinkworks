@@ -1164,6 +1164,14 @@
         padding-block: 0.75rem 1.5rem;
     }
 
+    /* A spacer preserves the scroll range without changes to the viewport size. */
+    .chat-transcript::after {
+        content: "";
+        flex: 0 0 var(--transcript-collapse-space, 0px);
+        overflow-anchor: none;
+        transition-property: none;
+    }
+
     .chat-transcript:focus-visible {
         outline: 2px solid var(--frinkworks-focus);
         outline-offset: -3px;
