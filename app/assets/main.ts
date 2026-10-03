@@ -1327,6 +1327,10 @@ function selectConversationSettingsSection(panel: HTMLElement, id: string) {
         "directory-manager-open",
         id === "settings-directories",
     );
+    panel.classList.toggle(
+        "conversation-management-open",
+        id === "settings-conversation",
+    );
     panel
         .querySelectorAll<HTMLElement>("[data-settings-panel]")
         .forEach((section) => {
@@ -1385,7 +1389,11 @@ function revealConversationSetting(target: HTMLElement, focus = true) {
         parent = parent.parentElement;
     }
     if (!panel.matches(":popover-open")) panel.showPopover();
-    if (focus) target.focus({ preventScroll: true });
+    if (focus) {
+        if (target.matches('input, select, textarea, [role="alert"]'))
+            target.focus({ preventScroll: true });
+        else focusQuietly(target, { preventScroll: true });
+    }
     scroll.scrollTop =
         scroll.contains(target) && !target.classList.contains("sr-only")
             ? scroll.scrollTop +
@@ -1442,6 +1450,63 @@ document.addEventListener("click", (event) => {
     requestAnimationFrame(() => revealConversationSetting(target));
 });
 
+let settingsReturnFocus: HTMLElement | null = null;
+let settingsReturnOwner = "";
+
+document.addEventListener("click", (event) => {
+    if (!(event.target instanceof Element)) return;
+    const trigger = event.target.closest<HTMLElement>(
+        '[popovertarget="conversation-settings"]:not([popovertargetaction="hide"])',
+    );
+    if (trigger) {
+        settingsReturnFocus = trigger;
+        settingsReturnOwner = conversationUrl();
+    }
+    if (event.target.closest("[data-conversation-delete-cancel]")) {
+        const confirmation =
+            event.target.closest<HTMLDetailsElement>("details");
+        if (confirmation) confirmation.open = false;
+        focusQuietly(confirmation?.querySelector("summary"));
+    }
+});
+
+document.addEventListener(
+    "toggle",
+    (event) => {
+        if (
+            !(event.target instanceof HTMLElement) ||
+            event.target.id !== "conversation-settings"
+        )
+            return;
+        if (event.target.matches(":popover-open")) return;
+        const confirmation = event.target.querySelector<HTMLDetailsElement>(
+            "#conversation-actions-delete",
+        );
+        if (confirmation) confirmation.open = false;
+        const destination = settingsReturnFocus?.isConnected
+            ? settingsReturnFocus
+            : document.querySelector<HTMLElement>('[aria-label="Setup"]');
+        requestAnimationFrame(() => {
+            // A rejected command owns error focus, even when it also closes the panel.
+            if (document.activeElement?.matches('[role="alert"]')) return;
+            if (settingsReturnOwner === conversationUrl())
+                focusQuietly(destination, { preventScroll: true });
+        });
+    },
+    true,
+);
+
+matchMedia("(max-width: 700px)").addEventListener("change", () => {
+    requestAnimationFrame(() => {
+        if (document.activeElement?.closest("[inert]")) {
+            const panel = document.querySelector<HTMLElement>(
+                "#conversation-settings:popover-open",
+            );
+            focusQuietly(panel, { preventScroll: true });
+        }
+    });
+});
+
 function syncExecutionConsent() {
     const form = document.querySelector<HTMLFormElement>(
         "#conversation-settings-form",
@@ -1489,7 +1554,7 @@ function syncExecutionReview() {
     const panel = document.getElementById("conversation-settings");
     if (!panel) return;
     const review = panel.querySelector<HTMLElement>(
-        "[data-execution-switch]:not([hidden])",
+        "[data-execution-actions]:not([hidden]) [data-execution-switch]:not([hidden])",
     );
     panel.classList.toggle("execution-review-open", !!review);
     const title = panel.querySelector<HTMLElement>("[data-setup-title]");
@@ -1851,8 +1916,15 @@ listenForRequestSettled((detail) => {
                 (detail.status !== 200 && detail.url.endsWith("/presets/save")),
         );
     }
+    const conversationAction = /\/(rename|delete|compact)$/.test(
+        new URL(detail.url, location.href).pathname,
+    );
     const requestedPanel = document.querySelector<HTMLElement>(
-        '#conversation-settings[data-settings-open="true"]',
+        conversationAction &&
+            detail.status === 200 &&
+            previousSection === "settings-conversation"
+            ? "#conversation-settings"
+            : '#conversation-settings[data-settings-open="true"]',
     );
     const directoryCommand = detail.url.includes("/directories/");
     const manager = document.querySelector<HTMLElement>(

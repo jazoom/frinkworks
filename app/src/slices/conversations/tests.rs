@@ -513,8 +513,7 @@ async fn conversation_actions_bind_commands_and_draft_copy_to_the_record() {
     let actions_start = body
         .find("id=\"conversation-actions\"")
         .expect("actions menu");
-    let transcript_start = body.find("id=\"transcript\"").unwrap_or(body.len());
-    let actions = &body[actions_start..transcript_start];
+    let actions = body[actions_start..].split("</section>").next().unwrap();
     // The draft copy carries source identity in Conversation actions, not Plans.
     let draft = format!("/conversations/new?source={}", record.id.as_hex());
     assert!(actions.contains(&draft));

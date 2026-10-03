@@ -10,7 +10,6 @@ export function initWorkspace(
     let expanded = false;
     let returnFocus: HTMLElement | null = null;
     let previousCompanion = false;
-    let setupReturnFocus: HTMLElement | null = null;
     let menuTrigger: HTMLElement | null = null;
     let header: HTMLElement | null = null;
     const positionPanels = () => {
@@ -61,9 +60,7 @@ export function initWorkspace(
                 strip.hidden = workOpen;
             },
         );
-        const setup = root.querySelector(
-            "#conversation-settings:popover-open, #conversation-actions:popover-open",
-        );
+        const setup = root.querySelector("#conversation-settings:popover-open");
         if (work) work.inert = !workOpen || !!setup;
         detail?.toggleAttribute(
             "data-review-expanded",
@@ -204,44 +201,6 @@ export function initWorkspace(
         root.querySelector<HTMLElement>("#composer-message")?.focus();
     }
 
-    function showActionsPanel(name: string | null) {
-        const dialog = root.querySelector<HTMLElement>("#conversation-actions");
-        if (!dialog) return;
-        if (name) {
-            // Reveal before focusing: the menu button loses visibility in
-            // the same handler, and the click default action can otherwise
-            // return focus to that hidden button and drop it to the body.
-            const panel = dialog.querySelector<HTMLElement>(
-                `[data-actions-panel="${name}"]`,
-            );
-            if (panel) panel.hidden = false;
-            // Destructive confirmation keeps focus on its safe exit, not
-            // the confirming submitter.
-            const field = panel?.querySelector<HTMLElement>(
-                "input:not([type=hidden]), [data-actions-back]",
-            );
-            field?.focus();
-            // Reassert after the click settles in case the mouse default
-            // action moved focus back to the hidden menu button first.
-            setTimeout(() => {
-                if (
-                    field?.isConnected &&
-                    (document.activeElement === document.body ||
-                        dialog.contains(document.activeElement) === false)
-                )
-                    field?.focus();
-            }, 0);
-        }
-        dialog
-            .querySelectorAll<HTMLElement>("[data-actions-panel]")
-            .forEach((panel) => {
-                panel.hidden = panel.dataset.actionsPanel !== name;
-            });
-        dialog
-            .querySelector<HTMLElement>("[data-actions-menu]")
-            ?.toggleAttribute("hidden", name !== null);
-    }
-
     function closeWork() {
         workOpen = false;
         expanded = false;
@@ -263,40 +222,17 @@ export function initWorkspace(
         (event) => {
             const target =
                 event.target instanceof Element ? event.target : null;
-            const setupTrigger = target?.closest<HTMLElement>(
-                '[popovertarget="conversation-settings"]',
-            );
-            if (
-                setupTrigger &&
-                setupTrigger.getAttribute("popovertargetaction") !== "hide"
-            )
-                setupReturnFocus = setupTrigger;
             if (target?.closest("button[data-work-toggle]")) {
                 returnFocus = target.closest<HTMLElement>("[data-work-toggle]");
                 workOpen = !workOpen;
                 root.querySelector<HTMLElement>(
-                    "#conversation-settings:popover-open, #conversation-actions:popover-open",
+                    "#conversation-settings:popover-open",
                 )?.hidePopover();
                 sync();
                 if (workOpen)
                     root.querySelector<HTMLElement>(
                         "#conversation-work",
                     )?.focus({ preventScroll: true });
-            } else if (target?.closest("[data-actions-show]")) {
-                const trigger = target.closest<HTMLElement>(
-                    "[data-actions-show]",
-                );
-                showActionsPanel(trigger?.dataset.actionsShow ?? null);
-            } else if (target?.closest("[data-actions-back]")) {
-                const panel = target.closest<HTMLElement>(
-                    "[data-actions-panel]",
-                );
-                showActionsPanel(null);
-                panel?.parentElement
-                    ?.querySelector<HTMLElement>(
-                        `[data-actions-show="${panel.dataset.actionsPanel}"]`,
-                    )
-                    ?.focus();
             } else if (target?.closest("[data-revision-cancel]")) {
                 const disclosure = target.closest<HTMLDetailsElement>(
                     "details.workspace-revision",
@@ -363,31 +299,9 @@ export function initWorkspace(
         (event) => {
             if (
                 event.target instanceof HTMLElement &&
-                (event.target.id === "conversation-settings" ||
-                    event.target.id === "conversation-actions")
+                event.target.id === "conversation-settings"
             ) {
-                if (
-                    event.target.id === "conversation-actions" &&
-                    !event.target.matches(":popover-open")
-                )
-                    showActionsPanel(null);
                 sync();
-                if (
-                    !event.target.matches(":popover-open") &&
-                    !root.querySelector(
-                        "#conversation-settings:popover-open, #conversation-actions:popover-open",
-                    )
-                ) {
-                    const actions = event.target.id === "conversation-actions";
-                    const trigger = actions ? null : setupReturnFocus;
-                    const fallback = actions
-                        ? '[popovertarget="conversation-actions"]'
-                        : '[popovertarget="conversation-settings"]';
-                    const destination = trigger?.isConnected
-                        ? trigger
-                        : root.querySelector<HTMLElement>(fallback);
-                    destination?.focus();
-                }
             }
         },
         { capture: true, signal },
@@ -429,7 +343,7 @@ export function initWorkspace(
                     openWork = true;
                     expanded = false;
                     root.querySelector<HTMLElement>(
-                        "#conversation-settings:popover-open, #conversation-actions:popover-open",
+                        "#conversation-settings:popover-open",
                     )?.hidePopover();
                 }
             }

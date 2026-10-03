@@ -359,9 +359,11 @@ Sandbox paths remain visible for selected directories. The row reserves their li
 
 New drafts omit the transcript toolbar. Saved conversations retain its controls.
 
-The header offers Handoff, Setup and a labelled menu for Conversation actions. The menu uses a vertical ellipsis.
+The header offers Handoff and Setup.
 
-Conversation actions contains an independent draft copy, rename and explicit deletion.
+The Conversation section in Setup contains an inline title field and an independent draft copy. Compact context remains available when eligible.
+
+Deletion expands its confirmation in place. The title field and other actions remain visible. Cancel closes only the confirmation.
 
 Current work appears when work is non-idle and its companion is closed. Initial page loads and reloads keep the companion closed. A message does not open the companion. A Needs your review strip opens the companion without approval.
 
@@ -418,6 +420,9 @@ The visible sections are:
 - Execution.
 - Instructions.
 - Presets.
+- Conversation.
+
+The Conversation section omits Save as future defaults. Its commands retain the source identity and revision.
 
 The Presets section offers a preview for each preset and a separate Save this setup as a preset action.
 

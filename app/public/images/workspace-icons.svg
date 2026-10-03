@@ -69,11 +69,6 @@ Lucide icons. Licence: lucide-LICENSE.txt. -->
   <path d="M12 5v14" />
   <path d="m19 12-7 7-7-7" />
 </symbol>
-<symbol id="ellipsis-vertical" viewBox="0 0 24 24">
-  <circle cx="12" cy="12" r="1" />
-  <circle cx="12" cy="5" r="1" />
-  <circle cx="12" cy="19" r="1" />
-</symbol>
 <symbol id="expand" viewBox="0 0 24 24">
   <path d="M15 3h6v6" />
   <path d="m21 3-7 7" />

@@ -31,6 +31,10 @@ Model selection keeps the picker open. The selected row offers Set default when 
 
 The paperclip uses automatic image upload. Composer help retains file references and command explanations.
 
+Setup includes a Conversation section with an inline title field and an independent draft copy. Delete confirmation expands in place without replacement of the other actions.
+
+Eligible conversations also expose Compact context. This section omits future defaults.
+
 Mobile controls wrap. Short mobile viewports omit the empty-state description so that the composer remains accessible.
 
 ## Constraints

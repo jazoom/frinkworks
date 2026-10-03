@@ -20,7 +20,6 @@ const icons = {
     database: "database",
     down: "chevron-down",
     "jump-latest": "arrow-down",
-    "ellipsis-vertical": "ellipsis-vertical",
     expand: "maximize-2",
     file: "file-text",
     folder: "folder",

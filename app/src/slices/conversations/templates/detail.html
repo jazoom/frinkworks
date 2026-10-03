@@ -89,19 +89,6 @@
               <use href="/static/images/workspace-icons.svg#setup" /></svg
             ><span class="workspace-action-label">Setup</span>
           </button>
-          <button
-            type="button"
-            class="btn btn-ghost btn-sm min-h-11"
-            aria-label="Conversation actions"
-            popovertarget="conversation-actions"
-            popovertargetaction="show"
-          >
-            <svg class="workspace-icon" aria-hidden="true">
-              <use
-                href="/static/images/workspace-icons.svg#ellipsis-vertical"
-              />
-            </svg>
-          </button>
         </div>
       </header>
       <div
@@ -262,175 +249,6 @@
           <p>{{ error }}</p>
         </div>
       {% endif %}
-      <section
-        id="conversation-actions"
-        popover
-        aria-labelledby="conversation-actions-heading"
-        class="conversation-panel m-auto max-h-[calc(100dvh-2rem)] w-[min(28rem,calc(100%-2rem))] overflow-y-auto p-5 sm:p-6"
-      >
-        <header class="flex items-center justify-between gap-4">
-          <h2 id="conversation-actions-heading" class="text-lg font-semibold">
-            Conversation actions
-          </h2>
-          <button
-            type="button"
-            class="btn btn-ghost btn-sm btn-square min-h-11"
-            popovertarget="conversation-actions"
-            popovertargetaction="hide"
-            aria-label="Close conversation actions"
-            title="Close conversation actions"
-          >
-            <svg class="workspace-icon" aria-hidden="true">
-              <use href="/static/images/workspace-icons.svg#close" />
-            </svg>
-          </button>
-        </header>
-        {% if let Some(saved) = self.saved() %}
-          <div class="action-menu mt-3" data-actions-menu>
-            <a
-              href="{{ self.fresh_draft_href() }}"
-              aria-describedby="conversation-copy-description"
-              data-graft
-              class="btn btn-outline w-full justify-start"
-              ><svg class="workspace-icon" aria-hidden="true">
-                <use href="/static/images/workspace-icons.svg#plus" /></svg
-              >New conversation with the same setup</a
-            >
-            <p
-              id="conversation-copy-description"
-              class="text-quiet mb-3 text-sm"
-            >
-              Copies settings and directory permissions with an empty history.
-              Sensitive directories and host access need separate consent.
-            </p>
-            {% if can_compact %}
-              <form
-                data-graft
-                method="post"
-                action="/conversations/{{ saved.id }}/compact"
-              >
-                <input
-                  type="hidden"
-                  name="revision"
-                  value="{{ saved.revision }}"
-                />
-                <label class="form-control w-full">
-                  <span class="label-text">What to preserve (optional)</span>
-                  <textarea
-                    name="preserve"
-                    class="textarea textarea-bordered mb-2"
-                    rows="3"
-                    maxlength="2048"
-                    placeholder="Add extra priorities below the fixed summary instructions."
-                  ></textarea>
-                </label>
-                <button
-                  class="btn btn-ghost w-full justify-start"
-                  type="submit"
-                >
-                  Compact context
-                </button>
-              </form>
-              <p class="text-quiet mb-3 text-sm">
-                A summary replaces earlier model context. The full transcript
-                stays on this computer.
-              </p>
-            {% endif %}
-            <button
-              type="button"
-              class="btn btn-ghost w-full justify-start"
-              data-actions-show="rename"
-              aria-controls="conversation-actions-rename"
-            >
-              Rename conversation
-            </button>
-            <hr class="border-base-300 my-2" />
-            <button
-              type="button"
-              class="btn btn-ghost danger-text w-full justify-start"
-              data-actions-show="delete"
-              aria-controls="conversation-actions-delete"
-            >
-              Delete conversation
-            </button>
-          </div>
-          <div
-            id="conversation-actions-rename"
-            data-actions-panel="rename"
-            class="mt-4 space-y-3"
-            hidden
-          >
-            <h3 class="text-sm font-semibold">Rename conversation</h3>
-            <form
-              data-graft
-              method="post"
-              action="/conversations/{{ saved.id }}/rename"
-              class="flex max-w-xl flex-col gap-3"
-            >
-              <input
-                type="hidden"
-                name="revision"
-                value="{{ saved.revision }}"
-              /><label
-                class="flex flex-col gap-1"
-                for="conversation-actions-rename-title"
-                ><span class="sr-only">Title</span
-                ><input
-                  id="conversation-actions-rename-title"
-                  class="input input-bordered"
-                  name="title"
-                  required
-                  maxlength="120"
-                  value="{{ title }}"
-              /></label>
-              <div class="flex flex-wrap gap-2">
-                <button class="btn btn-primary" type="submit">
-                  Save title
-                </button>
-                <button type="button" class="btn btn-ghost" data-actions-back>
-                  Cancel
-                </button>
-              </div>
-            </form>
-          </div>
-          <div
-            id="conversation-actions-delete"
-            data-actions-panel="delete"
-            class="mt-4 max-w-xl space-y-3"
-            hidden
-          >
-            <h3 class="text-sm font-semibold">Delete conversation</h3>
-            <p class="text-quiet text-sm">
-              This deletes the conversation from local history. You cannot
-              delete a conversation while a task is active.
-            </p>
-            <form
-              data-graft
-              method="post"
-              action="/conversations/{{ saved.id }}/delete"
-            >
-              <input
-                type="hidden"
-                name="revision"
-                value="{{ saved.revision }}"
-              />
-              <div class="flex flex-wrap gap-2">
-                <button class="btn btn-error" type="submit">
-                  Delete conversation
-                </button>
-                <button type="button" class="btn btn-ghost" data-actions-back>
-                  Cancel
-                </button>
-              </div>
-            </form>
-          </div>
-        {% else %}
-          <p class="text-quiet mt-3 text-sm">
-            Nothing is saved until your first message. Send a message before you
-            rename, copy or delete a conversation.
-          </p>
-        {% endif %}
-      </section>
       <section
         id="transcript"
         data-island="transcript"
@@ -1178,6 +996,15 @@
           >
             Presets
           </button>
+          <button
+            type="button"
+            class="btn btn-ghost btn-sm"
+            data-settings-tab="settings-conversation"
+            aria-controls="settings-conversation"
+            aria-pressed="false"
+          >
+            Conversation
+          </button>
         </div>
         {% if notice != "" %}
           <p
@@ -1278,6 +1105,7 @@
                 </form>
               {% endif %}
             {% endif %}
+            {% include "conversations/templates/conversation_settings.html" %}
             {% include "conversations/templates/presets_settings.html" %}
             {% include "conversations/templates/instructions_settings.html" %}
             {% include "conversations/templates/execution_settings.html" %}

@@ -1258,17 +1258,6 @@ body:has(.workspace-catalogue) .app-frame {
 #conversation-model-search::-webkit-search-cancel-button {
     appearance: none;
 }
-#conversation-actions::backdrop {
-    background: rgb(0 0 0 / 45%);
-}
-#conversation-actions .action-menu {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-#conversation-actions .action-menu .btn {
-    justify-content: flex-start;
-}
 #conversation-actions .danger-text {
     color: var(--color-error);
 }
@@ -1676,6 +1665,14 @@ body:has(.workspace-catalogue) .app-frame {
     outline: 2px solid var(--frinkworks-focus);
     outline-offset: -2px;
 }
+#conversation-settings #settings-conversation :is(.btn, .input, .textarea) {
+    font-size: 16px;
+    border-radius: 7px;
+}
+#conversation-settings #settings-conversation :is(.btn, .input) {
+    min-height: 44px;
+}
+.conversation-management-open .conversation-settings-footer,
 .directory-manager-open .setup-tabs,
 .directory-manager-open .conversation-settings-footer {
     display: none;

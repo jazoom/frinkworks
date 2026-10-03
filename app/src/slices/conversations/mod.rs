@@ -1648,22 +1648,26 @@ async fn rename_conversation(
     let Some(record) = load_conversation(&state, &conversation_id) else {
         return Ok(responses::command_navigation("/conversations"));
     };
-    let Some(revision) = parse_revision(&form.revision) else {
-        return render_detail_command(
+    let reply = |status, record: &ConversationRecord, title: &str, error| {
+        render_detail_command(
             graft,
+            status,
+            detail_view(&state, session.0, record, title, error).open_settings(),
+        )
+    };
+    let Some(revision) = parse_revision(&form.revision) else {
+        return reply(
             PatchStatus::UnprocessableEntity,
-            detail_view(&state, session.0, &record, &form.title, REVISION_MESSAGE),
+            &record,
+            &form.title,
+            REVISION_MESSAGE,
         );
     };
     match state
         .conversations
         .rename(&record.id, revision, form.title.clone())
     {
-        Ok(updated) => render_detail_command(
-            graft,
-            PatchStatus::Ok,
-            detail_view(&state, session.0, &updated, &updated.title, ""),
-        ),
+        Ok(updated) => reply(PatchStatus::Ok, &updated, &updated.title, ""),
         Err(
             error @ (ConversationError::Random
             | ConversationError::Persist
@@ -1672,23 +1676,14 @@ async fn rename_conversation(
         Err(ConversationError::Missing) => Ok(responses::command_navigation("/conversations")),
         Err(ConversationError::Conflict) => {
             let latest = state.conversations.get(&record.id).unwrap_or(record);
-            render_detail_command(
-                graft,
+            reply(
                 PatchStatus::Conflict,
-                detail_view(
-                    &state,
-                    session.0,
-                    &latest,
-                    &latest.title,
-                    ConversationError::Conflict.message(),
-                ),
+                &latest,
+                &latest.title,
+                ConversationError::Conflict.message(),
             )
         }
-        Err(error) => render_detail_command(
-            graft,
-            status_for(error),
-            detail_view(&state, session.0, &record, &form.title, error.message()),
-        ),
+        Err(error) => reply(status_for(error), &record, &form.title, error.message()),
     }
 }
 
@@ -1702,27 +1697,24 @@ async fn delete_conversation(
     let Some(record) = load_conversation(&state, &conversation_id) else {
         return Ok(responses::command_navigation("/conversations"));
     };
-    let Some(revision) = parse_revision(&form.revision) else {
-        return render_detail_command(
+    let reject = |status, record: &ConversationRecord, error| {
+        render_detail_command(
             graft,
-            PatchStatus::UnprocessableEntity,
-            detail_view(&state, session.0, &record, &record.title, REVISION_MESSAGE),
-        );
+            status,
+            detail_view(&state, session.0, record, &record.title, error).open_settings(),
+        )
+    };
+    let Some(revision) = parse_revision(&form.revision) else {
+        return reject(PatchStatus::UnprocessableEntity, &record, REVISION_MESSAGE);
     };
     if state.sessions.conversation_reserved(record.id)
         || has_pending_review(&state, record.id)
         || state.conversation_runtime.unsettled(record.id)
     {
-        return render_detail_command(
-            graft,
+        return reject(
             PatchStatus::Conflict,
-            detail_view(
-                &state,
-                session.0,
-                &record,
-                &record.title,
-                "Restore or resolve the pending decision before you delete this conversation.",
-            ),
+            &record,
+            "Restore or resolve the pending decision before you delete this conversation.",
         );
     }
     match state.conversations.delete(&record.id, revision) {
@@ -1739,23 +1731,13 @@ async fn delete_conversation(
         ) => Err(AppError::new("store conversation", error)),
         Err(ConversationError::Conflict) => {
             let latest = state.conversations.get(&record.id).unwrap_or(record);
-            render_detail_command(
-                graft,
+            reject(
                 PatchStatus::Conflict,
-                detail_view(
-                    &state,
-                    session.0,
-                    &latest,
-                    &latest.title,
-                    ConversationError::Conflict.message(),
-                ),
+                &latest,
+                ConversationError::Conflict.message(),
             )
         }
-        Err(error) => render_detail_command(
-            graft,
-            status_for(error),
-            detail_view(&state, session.0, &record, &record.title, error.message()),
-        ),
+        Err(error) => reject(status_for(error), &record, error.message()),
     }
 }
 
