@@ -116,7 +116,7 @@ async fn untrusted_activity_keeps_its_order_and_stays_secret_safe_in_each_repres
         assert!(body.contains("data-thinking-content"));
         assert!(body.find("First response.").unwrap() < body.find("Thought [redacted]").unwrap());
         assert!(body.find("Thought [redacted]").unwrap() < body.find("Next response.").unwrap());
-        assert!(body.contains("Tool call"));
+        assert!(body.find("Next response.").unwrap() < body.find("untrusted").unwrap());
     }
 }
 

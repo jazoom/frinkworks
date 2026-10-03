@@ -1431,11 +1431,24 @@ async fn edit_file(
         )
         .await,
     )?;
-    let body = if output.trim().is_empty() {
-        "Updated the file.".to_owned()
+    let mut body = if output.trim().is_empty() {
+        if original == next {
+            "The file is unchanged."
+        } else {
+            "Updated the file."
+        }
+        .to_owned()
     } else {
         output
     };
+    if original != next {
+        // A deadline bounds diff work for repetitive file contents.
+        let diff = similar::TextDiff::configure()
+            .timeout(Duration::from_millis(100))
+            .diff_lines(original, &next);
+        body.push_str("\n\n");
+        body.push_str(&diff.unified_diff().header(&path, &path).to_string());
+    }
     Ok(ToolRun::plain(format!("edit `{path}`"), body))
 }
 

@@ -40,7 +40,6 @@ pub(super) struct OutputFragment {
 
 pub(super) struct OutputChunkView {
     pub(super) stream: &'static str,
-    pub(super) stderr: bool,
     pub(super) text: String,
 }
 
@@ -61,7 +60,6 @@ fn chunks_view(chunks: &[CommandChunk]) -> Vec<OutputChunkView> {
         .into_iter()
         .map(|chunk| OutputChunkView {
             stream: chunk.stream.label(),
-            stderr: chunk.stream.is_stderr(),
             text: chunk.text,
         })
         .collect()

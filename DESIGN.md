@@ -293,7 +293,13 @@ Both timers pause for questions and approvals. Completed durations persist. Earl
 
 Code blocks use a quiet shaded surface without a border. They fill the message width while prose retains its 70-character measure.
 
-Tool results use bordered disclosures with a tinted header and a tool icon. The header separates the recorded status from the actual tool label. Unfinished tools show their recorded name without an inferred path or result. Tool disclosures expose recorded call IDs and arguments when available. Separate calls retain separate records, even when their arguments match.
+Tool results use bordered disclosures with a tinted header. Shell commands use a terminal icon and the exact command without the Run wrapper. Built-in tools use descriptive labels and tool-specific icons. A quiet tick identifies successful commands. Non-zero exit codes and other outcomes retain explicit status text.
+
+Expanded results show output without call IDs, argument objects or stream headings. Standard error retains neutral text because it can contain progress rather than errors. Empty results read No output. Storage-limit warnings remain visible. Separate calls retain separate records, even when their arguments match.
+
+Failed file tools show Failed and the requested path when the recorded result has no path. Their disclosures stay collapsed by default. Expanded failure reasons use the same spacing and type scale as other tool output. Paths remain plain text, without access links or raw argument objects.
+
+Unfinished tools show their recorded name without an inferred path or result. They expose their status without an empty disclosure.
 
 The retained-output control reveals the full record in place. It leaves the browser address unchanged and appears only when the retained record holds more text than the preview.
 

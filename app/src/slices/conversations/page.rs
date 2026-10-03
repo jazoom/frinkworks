@@ -2620,12 +2620,9 @@ struct MessageBlock {
     active: bool,
     command: Option<CommandView>,
     progress: Vec<ProgressChunkView>,
-    call: Option<ToolCallView>,
-}
-
-struct ToolCallView {
-    id: String,
-    arguments: String,
+    heading: &'static str,
+    icon: &'static str,
+    failed: bool,
 }
 
 struct CommandView {
@@ -2638,8 +2635,108 @@ struct CommandView {
 
 struct ProgressChunkView {
     stream: &'static str,
-    stderr: bool,
     text: String,
+}
+
+fn tool_block(
+    name: &str,
+    arguments: Option<&serde_json::Value>,
+    result: Option<&crate::providers::ToolOutput>,
+    active: bool,
+) -> MessageBlock {
+    let (heading, icon) = match name {
+        "run" => ("Shell command", "terminal"),
+        "read" => ("Read file", "file"),
+        "list" => ("List directory", "folder"),
+        "write" => ("Write file", "file-write"),
+        "edit" => ("Edit file", "pencil"),
+        "read_output" => ("Read output", "file"),
+        "ask_user" => ("Ask a question", "help"),
+        "submit" | "submit_workflow_output" => ("Submit output", "send"),
+        _ => ("Tool", "tool"),
+    };
+    let file_tool = matches!(name, "read" | "list" | "write" | "edit");
+    // File tools record a bare name for failure and a path for success.
+    // A live byte bound can truncate a successful label to its name, but leaves no output.
+    let failed = file_tool
+        && result.is_some_and(|tool| {
+            tool.command.is_none() && tool.label == name && !tool.output.is_empty()
+        });
+    let recorded = result.map_or(name, |tool| tool.label.as_str());
+    let label = recorded
+        .strip_prefix(name)
+        .and_then(|target| target.strip_prefix(" `"))
+        .and_then(|target| target.strip_suffix('`'))
+        .unwrap_or(recorded);
+    let label = if file_tool && result.is_some() && recorded == name {
+        arguments
+            .and_then(|arguments| arguments.get("path"))
+            .and_then(serde_json::Value::as_str)
+            .filter(|path| !path.is_empty())
+            .unwrap_or(label)
+    } else {
+        label
+    };
+    MessageBlock {
+        kind: if result.is_some() {
+            "tool"
+        } else {
+            "tool-call"
+        },
+        label: label.to_owned(),
+        output: result.map_or_else(String::new, |tool| {
+            if name == "edit" && !failed {
+                edit_output(&tool.output)
+            } else if name == "write"
+                && !failed
+                && tool.command.is_none()
+                && tool.output == "Wrote the file."
+            {
+                arguments
+                    .and_then(|arguments| arguments.get("contents"))
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("File content is unavailable.")
+                    .to_owned()
+            } else {
+                tool.output.clone()
+            }
+        }),
+        command: result
+            .and_then(|tool| tool.command.as_ref())
+            .map(command_view),
+        active: result.is_none() && active,
+        heading,
+        icon,
+        failed,
+        ..Default::default()
+    }
+}
+
+fn edit_output(output: &str) -> String {
+    if output == "Updated the file." {
+        return String::new();
+    }
+    let diff = output
+        .strip_prefix("Updated the file.\n\n")
+        .unwrap_or(output);
+    let mut lines = diff.split_inclusive('\n');
+    if !lines.next().is_some_and(|line| line.starts_with("--- "))
+        || !lines.next().is_some_and(|line| line.starts_with("+++ "))
+    {
+        return diff.to_owned();
+    }
+    let mut body = String::new();
+    for line in lines {
+        // Diff content starts with a space, + or -. Only metadata starts with @@.
+        if line.starts_with("@@ ") {
+            if !body.is_empty() {
+                body.push('\n');
+            }
+        } else {
+            body.push_str(line);
+        }
+    }
+    body
 }
 
 /// The transcript element that an on-demand retained-output patch fills.
@@ -2666,7 +2763,11 @@ fn command_view(command: &crate::execution::CommandResult) -> CommandView {
         .is_some_and(|retained| retained.truncated);
     CommandView {
         body: super::output::body_html(String::new(), &command.chunks, truncated),
-        status: command.status_text(),
+        status: if command.is_success() {
+            "Completed".to_owned()
+        } else {
+            command.status_text()
+        },
         error: command.is_error(),
         target: reference.as_deref().map(output_target).unwrap_or_default(),
         reference,
@@ -2690,6 +2791,8 @@ fn command_entry_html(
         Some(output) => MessageBlock {
             kind: "tool",
             html: String::new(),
+            heading: "Shell command",
+            icon: "terminal",
             label: "Command output".to_owned(),
             output: String::new(),
             command: Some(command_view(output)),
@@ -2744,7 +2847,6 @@ fn activity_html(
             active: true,
             progress: vec![ProgressChunkView {
                 stream: progress.stream.label(),
-                stderr: progress.stream.is_stderr(),
                 text: progress.text.clone(),
             }],
             ..Default::default()
@@ -2773,12 +2875,6 @@ fn activity_html(
                     active,
                     ..Default::default()
                 };
-                if let AssistantActivity::ToolCall { id, arguments, .. } = item {
-                    block.call = Some(ToolCallView {
-                        id: id.clone(),
-                        arguments: serde_json::to_string(arguments).unwrap_or_default(),
-                    });
-                }
                 match item {
                     AssistantActivity::Response(text) => {
                         block.kind = "response";
@@ -2788,22 +2884,17 @@ fn activity_html(
                         block.kind = "thinking";
                         block.html = reply_html(text);
                     }
-                    AssistantActivity::Tool(tool)
-                    | AssistantActivity::ToolCall {
-                        result: Some(tool), ..
-                    } => {
-                        block.kind = "tool";
-                        block.label = tool.label.clone();
-                        block.output = tool.output.clone();
-                        block.command = tool.command.as_ref().map(command_view);
-                        block.active = false;
+                    AssistantActivity::Tool(tool) => {
+                        let name = tool.label.split(' ').next().unwrap_or(&tool.label);
+                        block = tool_block(name, None, Some(tool), false);
                     }
                     AssistantActivity::ToolCall {
-                        name, result: None, ..
+                        name,
+                        arguments,
+                        result,
+                        ..
                     } => {
-                        block.kind = "tool-call";
-                        block.label = name.clone();
-                        block.active = streaming;
+                        block = tool_block(name, Some(arguments), result.as_ref(), streaming);
                     }
                 }
                 block

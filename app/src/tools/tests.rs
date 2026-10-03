@@ -249,6 +249,7 @@ async fn sandbox_file_tools_use_the_granted_directory_without_write_access() {
         )
         .await;
         assert_eq!(trace.failure, None, "{}", trace.output);
+        assert_eq!(trace.label, format!("{tool} `{path}`"));
     }
     let commands = sandbox.exec_log();
     assert_eq!(commands.len(), 2);
@@ -300,6 +301,7 @@ async fn path_escape_is_recoverable_without_file_access() {
                     Some(ToolFailureKind::Ordinary),
                     "{tool:?} {path}"
                 );
+                assert_eq!(trace.label, tool.as_str());
                 assert_eq!(trace.output, message);
                 assert!(trace.command.is_none());
             }
@@ -551,6 +553,7 @@ async fn host_file_tools_preserve_literal_paths_paging_and_edit_validation() {
     )
     .await;
     assert_eq!(invalid.failure, Some(ToolFailureKind::Ordinary));
+    assert_eq!(invalid.output, "Search text was not found.");
     assert_eq!(
         std::fs::read_to_string(root.path().join(path)).unwrap(),
         "one\nsk-secret\nthree\n"
@@ -563,10 +566,22 @@ async fn host_file_tools_preserve_literal_paths_paging_and_edit_validation() {
     )
     .await;
     assert_eq!(edited.failure, None, "{}", edited.output);
+    let visible = redact(&edited.output, context.secret);
+    assert!(visible.contains("@@ -1,3 +1,3 @@\n one\n [redacted]\n-three\n+four\n"));
+    assert!(!visible.contains("sk-secret"));
     assert_eq!(
         std::fs::read_to_string(root.path().join(path)).unwrap(),
         "one\nsk-secret\nfour\n"
     );
+    let unchanged = super::invoke(
+        &context,
+        "unchanged",
+        "edit",
+        &serde_json::json!({"path": path, "edits": [{"search": "four", "replace": "four"}]}),
+    )
+    .await;
+    assert_eq!(unchanged.failure, None, "{}", unchanged.output);
+    assert_eq!(unchanged.output, "The file is unchanged.");
     let listed = super::invoke(
         &context,
         "list",

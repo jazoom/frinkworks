@@ -533,7 +533,7 @@ fn command_output_escapes_untrusted_stream_text() {
     use crate::execution::command::{CommandChunk, CommandStream, CommandTermination};
     let tool = crate::providers::ToolOutput {
         resource: None,
-        label: "run `exit 3`".to_owned(),
+        label: "run `printf '<img src=x onerror=alert(6)>'`".to_owned(),
         output: "oute\nrrer\nThe command exited with code 3.".to_owned(),
         command: Some(crate::execution::CommandResult::new(
             vec![
@@ -568,7 +568,11 @@ fn command_output_escapes_untrusted_stream_text() {
                 result: None,
             },
         ],
-        &[],
+        &[crate::providers::ToolProgress {
+            id: "private-progress-id".to_owned(),
+            stream: CommandStream::Stderr,
+            text: "<script>alert(7)</script>".to_owned(),
+        }],
         false,
         false,
     );
@@ -576,8 +580,204 @@ fn command_output_escapes_untrusted_stream_text() {
     assert!(!html.contains("<img"));
     assert!(html.contains("alert(1)"));
     assert!(html.contains("img src=x onerror=alert(1)"));
+    assert!(html.contains("img src=x onerror=alert(6)"));
+    assert!(html.contains("alert(7)"));
+    assert!(!html.contains("private-progress-id"));
     for marker in ["alert(2)", "alert(3)", "alert(4)", "alert(5)"] {
-        assert!(html.contains(marker));
+        assert!(!html.contains(marker));
+    }
+}
+
+#[test]
+fn write_output_uses_only_successful_recorded_contents_and_escapes_html() {
+    let contents =
+        "\t<html>\r\n<script>alert('G’day')</script>\nWrote the file.\n@@ literal text\n";
+    let arguments = serde_json::json!({
+        "path": "/scratch/example.html",
+        "contents": contents,
+        "private": "PRIVATE-ARGUMENT",
+    });
+    let mut tool = crate::providers::ToolOutput {
+        label: "write `/scratch/example.html`".to_owned(),
+        output: "Wrote the file.".to_owned(),
+        ..Default::default()
+    };
+    let block = tool_block("write", Some(&arguments), Some(&tool), false);
+    assert_eq!(block.output, contents);
+    let html = MessageContent {
+        id: "message-1",
+        output_action: "/conversations/example/output",
+        blocks: vec![block],
+    }
+    .render()
+    .expect("message content");
+    assert!(!html.contains("<script>"));
+    assert!(html.contains("&#60;script&#62;"));
+    assert!(!html.contains("PRIVATE-ARGUMENT"));
+
+    for arguments in [serde_json::json!({}), serde_json::json!({"contents": 42})] {
+        assert_eq!(
+            tool_block("write", Some(&arguments), Some(&tool), false).output,
+            "File content is unavailable."
+        );
+    }
+    let empty = serde_json::json!({"contents": ""});
+    assert!(
+        tool_block("write", Some(&empty), Some(&tool), false)
+            .output
+            .is_empty()
+    );
+    assert!(
+        tool_block("write", Some(&arguments), None, true)
+            .output
+            .is_empty()
+    );
+
+    tool.label = "write".to_owned();
+    assert_eq!(
+        tool_block("write", Some(&arguments), Some(&tool), false).output,
+        "Wrote the file."
+    );
+    tool.output = "That path is read-only.".to_owned();
+    assert_eq!(
+        tool_block("write", Some(&arguments), Some(&tool), false).output,
+        tool.output
+    );
+}
+
+#[test]
+fn edit_output_preserves_untrusted_diff_content_without_metadata() {
+    let output = concat!(
+        "Updated the file.\n\n",
+        "--- /scratch/example.html\n+++ /scratch/example.html\n",
+        "@@ -1,3 +1,3 @@\n",
+        " <html>\r\n",
+        "-<script>old()</script>\n+<script>new()</script>\n",
+        "@@ -20,3 +20,3 @@\n",
+        "--- removed text\n+++ added text\n @@ literal context\n",
+        "[output truncated]",
+    );
+    let mut tool = crate::providers::ToolOutput {
+        label: "edit `/scratch/example.html`".to_owned(),
+        output: output.to_owned(),
+        ..Default::default()
+    };
+    let block = tool_block("edit", None, Some(&tool), false);
+    assert_eq!(
+        block.output,
+        concat!(
+            " <html>\r\n",
+            "-<script>old()</script>\n+<script>new()</script>\n\n",
+            "--- removed text\n+++ added text\n @@ literal context\n",
+            "[output truncated]",
+        )
+    );
+    let html = MessageContent {
+        id: "message-1",
+        output_action: "/conversations/example/output",
+        blocks: vec![block],
+    }
+    .render()
+    .expect("message content");
+    assert!(!html.contains("<script>"));
+    assert!(html.contains("&#60;script&#62;new()&#60;/script&#62;"));
+    assert_eq!(tool_block("read", None, Some(&tool), false).output, output);
+    tool.label = "edit".to_owned();
+    assert_eq!(tool_block("edit", None, Some(&tool), false).output, output);
+}
+
+#[test]
+fn tool_labels_preserve_command_text_inside_the_recorded_wrapper() {
+    for command in [
+        "  printf '  spaced  '  ",
+        "echo `pwd`",
+        "printf '%s\\n' \"a`b`c\"\nprintf done",
+        "<script>alert(1)</script>",
+    ] {
+        let tool = crate::providers::ToolOutput {
+            label: format!("run `{command}`"),
+            ..Default::default()
+        };
+        assert_eq!(tool_block("run", None, Some(&tool), false).label, command);
+    }
+    for label in ["run", "run `unfinished", "other `command`"] {
+        let tool = crate::providers::ToolOutput {
+            label: label.to_owned(),
+            ..Default::default()
+        };
+        assert_eq!(tool_block("run", None, Some(&tool), false).label, label);
+    }
+}
+
+#[test]
+fn failed_file_tools_preserve_requested_paths_without_exposing_other_arguments() {
+    use crate::providers::{AssistantActivity, ToolOutput};
+    let conversation = crate::conversations::ConversationId::generate().expect("conversation");
+    for name in ["read", "list", "write", "edit"] {
+        for (path, escaped) in [
+            ("/outside/file", "/outside/file"),
+            ("read `literal filename`", "read `literal filename`"),
+            (
+                "<img src=x onerror=alert(8)>",
+                "&#60;img src=x onerror=alert(8)&#62;",
+            ),
+        ] {
+            let arguments = serde_json::json!({"path": path, "contents": "PRIVATE-CONTENTS"});
+            let tool = ToolOutput {
+                label: name.to_owned(),
+                output: "Denied: <script>alert(9)</script>".to_owned(),
+                ..Default::default()
+            };
+            let block = tool_block(name, Some(&arguments), Some(&tool), false);
+            assert_eq!(block.label, path);
+            assert!(block.failed);
+            let html = activity_html(
+                &conversation,
+                "message-1",
+                "",
+                &[AssistantActivity::ToolCall {
+                    id: "PRIVATE-CALL-ID".to_owned(),
+                    name: name.to_owned(),
+                    arguments,
+                    result: Some(tool),
+                }],
+                &[],
+                false,
+                false,
+            );
+            assert!(html.contains(escaped));
+            assert!(html.contains("Denied:"));
+            assert!(html.contains("alert(9)"));
+            assert!(!html.contains("<script>"));
+            assert!(!html.contains("<img"));
+            assert!(!html.contains("PRIVATE-CONTENTS"));
+            assert!(!html.contains("PRIVATE-CALL-ID"));
+        }
+    }
+}
+
+#[test]
+fn file_contents_and_incomplete_records_do_not_imply_failure() {
+    let arguments = serde_json::json!({"path": "/requested/file"});
+    let mut tool = crate::providers::ToolOutput {
+        label: "read `/resolved/file`".to_owned(),
+        output: "That path does not exist.".to_owned(),
+        ..Default::default()
+    };
+    let block = tool_block("read", Some(&arguments), Some(&tool), false);
+    assert!(!block.failed);
+    assert_eq!(block.label, "/resolved/file");
+    tool.label = "read".to_owned();
+    tool.output.clear();
+    assert!(!tool_block("read", Some(&arguments), Some(&tool), true).failed);
+    let pending = tool_block("read", Some(&arguments), None, true);
+    assert!(!pending.failed);
+    assert_eq!(pending.label, "read");
+    tool.output = "Choose a file to read.".to_owned();
+    for arguments in [serde_json::json!({}), serde_json::json!({"path": 42})] {
+        let block = tool_block("read", Some(&arguments), Some(&tool), false);
+        assert!(block.failed);
+        assert_eq!(block.label, "read");
     }
 }
 
