@@ -115,6 +115,7 @@ struct PreferencesFile {
     #[serde(deserialize_with = "crate::storage::required_option")]
     selected_provider: Option<ProviderKind>,
     models: Vec<ProviderPreference>,
+    default_thinking: Option<ThinkingEffort>,
     conversation_defaults: Option<crate::execution::ExecutionSettingsFile>,
     #[serde(default)]
     recent_directories: Vec<RecentDirectory>,
@@ -129,6 +130,7 @@ struct PreferenceValues {
     compaction: CompactionPreference,
     selected_provider: Option<ProviderKind>,
     models: Vec<ProviderPreference>,
+    default_thinking: Option<ThinkingEffort>,
     conversation_defaults: Option<crate::execution::ExecutionSettings>,
     recent_directories: Vec<RecentDirectory>,
     approved_directories: Vec<PathBuf>,
@@ -163,6 +165,9 @@ impl PreferenceValues {
 
     fn is_valid(&self) -> bool {
         (1..=100).contains(&self.compaction.threshold)
+            && self.default_thinking.as_ref().is_none_or(|effort| {
+                ThinkingEffort::new(effort.as_str().to_owned()).as_ref() == Some(effort)
+            })
             && directories::valid_history(&self.recent_directories, &self.approved_directories)
             && self.models.len() <= ProviderKind::ALL.len()
             && self.selected_provider.is_none_or(|kind| {
@@ -308,6 +313,37 @@ impl Preferences {
         })
     }
 
+    pub(crate) fn set_default_model(
+        &self,
+        kind: ProviderKind,
+        model: String,
+    ) -> Result<(), PreferenceError> {
+        self.update(|values| {
+            values.provider(kind).selection.model = model.clone();
+            values.selected_provider = Some(kind);
+            if let Some(settings) = &mut values.conversation_defaults {
+                settings.model.provider = kind;
+                settings.model.model = model;
+            }
+        })
+    }
+
+    pub(crate) fn default_thinking(&self) -> Option<ThinkingEffort> {
+        self.values().default_thinking
+    }
+
+    pub(crate) fn set_default_thinking(
+        &self,
+        effort: ThinkingEffort,
+    ) -> Result<(), PreferenceError> {
+        self.update(|values| {
+            values.default_thinking = Some(effort.clone());
+            if let Some(settings) = &mut values.conversation_defaults {
+                settings.model.thinking = Some(effort);
+            }
+        })
+    }
+
     pub(crate) fn conversation_defaults(&self) -> Option<crate::execution::ExecutionSettings> {
         self.values().conversation_defaults
     }
@@ -321,6 +357,7 @@ impl Preferences {
         self.update(|values| {
             values.provider(settings.model.provider).selection = settings.model.clone();
             values.selected_provider = Some(settings.model.provider);
+            values.default_thinking = settings.model.thinking.clone();
             values.conversation_defaults = Some(settings);
         })
     }
@@ -420,6 +457,7 @@ fn load(path: &std::path::Path) -> PreferenceValues {
         },
         selected_provider: file.selected_provider,
         models: file.models,
+        default_thinking: file.default_thinking,
         conversation_defaults: file
             .conversation_defaults
             .and_then(crate::execution::ExecutionSettings::from_file),
@@ -446,6 +484,7 @@ fn persist(path: &std::path::Path, values: &PreferenceValues) -> Result<(), Pref
         compaction_threshold: values.compaction.threshold,
         selected_provider: values.selected_provider,
         models: values.models.clone(),
+        default_thinking: values.default_thinking.clone(),
         conversation_defaults: values
             .conversation_defaults
             .as_ref()

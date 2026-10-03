@@ -1,0 +1,15 @@
+<span
+  hidden
+  data-model-defaults
+  data-provider="{{ provider }}"
+  data-model="{{ model }}"
+  data-thinking="{{ thinking }}"
+></span>
+<p
+  role="status"
+  class="text-quiet w-full text-sm"
+  data-model-default-status
+  {% if message.is_empty() %}hidden{% endif %}
+>
+  {{ message }}
+</p>

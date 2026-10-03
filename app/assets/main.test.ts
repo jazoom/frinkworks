@@ -45,7 +45,7 @@ beforeEach(() => {
             <button id="conversation-model-search-clear" type="button" hidden>Clear model search</button>
             <select id="conversation-model-provider-filter"><option value="">All providers</option><option value="one">One</option><option value="two">Two</option></select>
             <button id="conversation-model-favourites-filter" type="button" aria-pressed="false">Favourites</button>
-            <button id="conversation-model-images-filter" type="button" aria-pressed="false">Images</button>
+            <button id="conversation-model-images-filter" type="button" aria-pressed="false">Accepts images</button>
             <p id="conversation-model-search-status"></p>
             <div id="conversation-model-results"></div>
             <template data-conversation-model-catalogue></template>
@@ -90,6 +90,37 @@ afterEach(() => {
     document.body.replaceChildren();
     vi.unstubAllGlobals();
 });
+test("deletion selection never carries authority into a different result set", () => {
+    document.body.innerHTML = `<form data-conversation-selection data-total="60">
+        <input type="hidden" name="scope" value="selected">
+        <input type="checkbox" data-select-page>
+        <input type="checkbox" name="selected" value="first:1">
+        <input type="checkbox" name="selected" value="second:1">
+        <span data-selection-count></span>
+        <button type="button" data-select-all>Select all</button>
+        <button type="button" data-clear-selection>Clear selection</button>
+        <button type="submit" disabled>Delete selected</button>
+    </form>`;
+    document.querySelector<HTMLButtonElement>("[data-select-all]")!.click();
+    const form = document.querySelector<HTMLFormElement>("form")!;
+    expect(new FormData(form).get("scope")).toBe("all");
+    const rows = [
+        ...form.querySelectorAll<HTMLInputElement>('input[name="selected"]'),
+    ];
+    rows[0]!.value = "different:1";
+    for (const listener of locations)
+        listener({
+            url: "/conversations?q=different",
+            cause: "get-form-replacement",
+        });
+    expect(new FormData(form).get("scope")).toBe("selected");
+    expect(new FormData(form).getAll("selected")).toEqual([]);
+    expect(
+        form.querySelector<HTMLButtonElement>('button[type="submit"]')!
+            .disabled,
+    ).toBe(true);
+});
+
 test("expanded output stays inert across snapshots and does not cross navigation", () => {
     const target = document.createElement("div");
     target.id = "output-record";
@@ -608,6 +639,58 @@ test("images filter keeps only models with catalogue image support", () => {
     filter.click();
     expect(filter.ariaPressed).toBe("false");
     expect(document.querySelectorAll("[data-composer-model]")).toHaveLength(3);
+});
+
+test("model defaults require an explicit action and retain the selected provider identity", () => {
+    document.body.insertAdjacentHTML(
+        "beforeend",
+        `<span data-model-defaults data-provider="one" data-model="Alpha" data-thinking="high" hidden></span>
+        <form id="conversation-model-default-form"><input name="kind"><input name="provider"><input name="model"><input name="thinking"></form>`,
+    );
+    const form = document.querySelector<HTMLFormElement>(
+        "#conversation-model-default-form",
+    )!;
+    const submit = vi.spyOn(form, "requestSubmit").mockImplementation(() => {});
+    search("Alpha");
+    expect(document.querySelector('[data-model-default="model"]')).toBeNull();
+    const badge = document.querySelector("[data-model-default-badge]")!;
+    expect(
+        badge.closest<HTMLButtonElement>("[data-composer-model]")!.dataset
+            .provider,
+    ).toBe("one");
+    document
+        .querySelector<HTMLButtonElement>(
+            '[data-composer-model="Alpha"][data-provider="two"]',
+        )!
+        .click();
+    expect(submit).not.toHaveBeenCalled();
+    expect(value("provider")).toBe("two");
+    const action = document.querySelector<HTMLButtonElement>(
+        '[data-model-default="model"]',
+    )!;
+    vi.mocked(commandBlockReason).mockReturnValue("pending-command");
+    action.click();
+    expect(submit).not.toHaveBeenCalled();
+    vi.mocked(commandBlockReason).mockReturnValue(undefined);
+    action.click();
+    expect(submit).toHaveBeenCalledOnce();
+    expect(Object.fromEntries(new FormData(form))).toEqual({
+        kind: "model",
+        provider: "two",
+        model: "Alpha",
+        thinking: "low",
+    });
+    expect(
+        document.getElementById("conversation-model-options")!.hidePopover,
+    ).not.toHaveBeenCalled();
+    expect(
+        document
+            .querySelector("[data-model-default-badge]")!
+            .closest<HTMLButtonElement>("[data-composer-model]")!.dataset
+            .provider,
+    ).toBe("one");
+    expect(value("message")).toBe("Unsent text");
+    submit.mockRestore();
 });
 
 test("effort choices accept only enabled options and preserve the unsent message", () => {

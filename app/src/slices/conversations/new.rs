@@ -99,6 +99,9 @@ pub(super) async fn show(
         })?,
         ..NewForm::default()
     };
+    if let Some(settings) = state.preferences.conversation_defaults() {
+        super::settings::copy_settings_to_draft(&mut form, &settings);
+    }
     if let Some(provider) = state
         .preferences
         .desk_providers(&state.vault)
@@ -112,9 +115,6 @@ pub(super) async fn show(
             .map(|effort| effort.as_str().to_owned())
             .unwrap_or_default();
         form.model = provider.model;
-    }
-    if let Some(settings) = state.preferences.conversation_defaults() {
-        super::settings::copy_settings_to_draft(&mut form, &settings);
     }
     let mut model_notice = String::new();
     if query.source.is_empty()
@@ -135,12 +135,16 @@ pub(super) async fn show(
                 )
             };
             form.model = preferred;
-            form.thinking = state
-                .models_dev
-                .effective_effort(provider, &form.model, None)
-                .map(|effort| effort.as_str().to_owned())
-                .unwrap_or_default();
         }
+        let thinking = state
+            .preferences
+            .default_thinking()
+            .or_else(|| ThinkingEffort::new(form.thinking.clone()));
+        form.thinking = state
+            .models_dev
+            .effective_effort(provider, &form.model, thinking.as_ref())
+            .map(|effort| effort.as_str().to_owned())
+            .unwrap_or_default();
     }
     if !query.source.is_empty() {
         let Some(source) = load_conversation(&state, &query.source) else {

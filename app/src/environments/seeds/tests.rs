@@ -23,7 +23,10 @@ fn first_open_seeds_alpine_git_once() {
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].name, "Alpine Git");
     assert_eq!(records[0].recipe.oci_image.as_str(), "alpine/git");
-    assert!(records[0].recipe.setup_script.is_empty());
+    assert_eq!(
+        records[0].recipe.setup_script,
+        "apk add --no-cache ripgrep\n"
+    );
     assert_eq!(first.applied_seed_count(), 1);
     assert_eq!(first.preparation_count(), 1);
     let second = EnvironmentCatalogue::open(path, logs).expect("reopen");

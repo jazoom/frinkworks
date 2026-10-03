@@ -174,7 +174,7 @@ async fn recent_commands_are_patch_only_and_restore_modes_without_loss_of_the_dr
     assert_eq!(response.status(), StatusCode::OK);
     let body = text(response).await;
     let grant = DirectoryGrant::parse_form(&hidden_value(&body, "directory_0")).unwrap();
-    assert_eq!(grant.access, DirectoryAccess::Read);
+    assert_eq!(grant.access, DirectoryAccess::Write);
     let access_path = format!(
         "/conversations/new/directories/{}/access?recent=true",
         grant.id.as_hex()
@@ -184,7 +184,7 @@ async fn recent_commands_are_patch_only_and_restore_modes_without_loss_of_the_dr
             &access_path,
             &token,
             &format!(
-                "draft_nonce=draft&action=write&directory_0={}&message=Keep+this+text",
+                "draft_nonce=draft&action=read&directory_0={}&message=Keep+this+text",
                 form_value(&grant.form_value())
             ),
         ))
@@ -193,7 +193,23 @@ async fn recent_commands_are_patch_only_and_restore_modes_without_loss_of_the_dr
     assert_eq!(response.status(), StatusCode::OK);
     assert!(text(response).await.contains("Keep this text"));
     let entry = &state.preferences.recent_directories()[0];
-    assert_eq!(entry.access, DirectoryAccess::Write);
+    assert_eq!(entry.access, DirectoryAccess::Read);
+    state
+        .directory_picker
+        .queue(Some(root.path().to_path_buf()));
+    let response = app(&state)
+        .oneshot(command(
+            "/conversations/new/directories/pick",
+            &token,
+            "draft_nonce=repicked",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = text(response).await;
+    let repicked = DirectoryGrant::parse_form(&hidden_value(&body, "directory_0")).unwrap();
+    assert_eq!(repicked.access, DirectoryAccess::Read);
+    assert_eq!(repicked.host_path, grant.host_path);
     let select = format!("/conversations/new/directories/recent/{}/select", entry.id);
     let mut native = command(&select, &token, "draft_nonce=fresh");
     native.headers_mut().remove("graft-request");
@@ -214,7 +230,7 @@ async fn recent_commands_are_patch_only_and_restore_modes_without_loss_of_the_dr
     assert!(body.contains("target=\"conversation-detail\""));
     assert!(body.contains("Keep this text"));
     let selected = DirectoryGrant::parse_form(&hidden_value(&body, "directory_0")).unwrap();
-    assert_eq!(selected.access, DirectoryAccess::Write);
+    assert_eq!(selected.access, DirectoryAccess::Read);
     assert_eq!(selected.host_path, grant.host_path);
     let fields = format!(
         "draft_nonce=fresh&directory_0={}&message=Keep+this+text",

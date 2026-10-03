@@ -281,7 +281,17 @@ The mobile activity strip repeats the server's active reply status. It opens Cur
 
 The model control opens a searchable popover above the composer. It lists connected providers with an optional provider filter. Favourites appear first, with a separate star control on each row. The active Favourites filter uses a soft tint and a check mark. Local application data stores favourites across browser sessions.
 
+Tinted headings identify Favourites and All models. A divider and additional space separate the groups.
+
+Search and filters retain the picker size and search position. The results fill the available space and reserve a stable scrollbar gutter. Short screens use a viewport-bound picker near the top, with space for the results.
+
 Thinking effort stays visible beside the model as an outlined control with its label, value and caret. Both controls share the same height. The effort popover uses padded options and a tick for the current value. Models without adjustable effort show a disabled Not available control. Saved conversations apply model and effort changes immediately without changes to other settings. Unsent messages and unsaved setup fields survive those commands.
+
+The selected model row offers Set default only when it differs from the saved default. A Default badge identifies the saved default, whether selected or not. The model picker has no defaults footer. The thinking menu retains its explicit default action.
+
+Model selection keeps the picker open. Saved model changes retain search, filters and scroll position. Escape and an outside click dismiss the picker. The Accepts images filter and row badges identify models that accept image attachments.
+
+Default actions apply to new conversations. Local preferences retain both choices across restarts. Existing conversations stay unchanged. A model without the preferred thinking level uses a supported level or Not available.
 
 The composer places its editor above a compact toolbar. The editor limit is 32768 characters. The persisted message bound stays in the conversation store.
 
@@ -291,7 +301,9 @@ Send uses an accessible Send message label. An empty composer disables Send unle
 
 Effective directory access appears below the composer. Empty and selected summaries share label geometry, so one-line state changes do not move the composer. The empty label stays transparent.
 
-Add a directory appears inside the manager, not beside the access summary. The execution label stays visible without directory access. Host mode names unrestricted access on the right. The left summary names work locations or their absence.
+The empty access summary offers Add a directory. Without recent or selected directories, it opens the native picker directly. Otherwise, it opens the manager.
+
+The execution label stays visible without directory access. Host mode names unrestricted access on the right. The left summary names work locations or their absence.
 
 Job-bound cancellation reads Stop beside the composer submit control. It posts without a confirmation step. Current work keeps the same Stop control when the composer is inert.
 
@@ -319,7 +331,9 @@ New conversations show the title without an explanatory subtitle. Saved records 
 
 The new-conversation empty state asks what the user wants to work on. It contains no starter buttons or decorative mark.
 
-The directory manager appears below the question, even without recent history. Recent directories shows up to ten shortcuts, with new additions first. Other directories in this conversation contains current grants absent from history.
+Without recent or selected directories, Work with your files appears below the question. It explains directory access and places an outlined Add a directory button beneath the explanation. It contains no empty history message.
+
+After selection, the prompt becomes the directory manager. Add another directory remains available. Recent directories shows up to ten shortcuts, with new additions first. Other directories in this conversation contains current grants absent from history.
 
 Each row has an add/remove checkbox and Read and Write radios. Only the checkbox and its directory text activate selection. Selected rows apply access changes immediately. Unselected rows show the remembered mode with disabled radios.
 
@@ -409,7 +423,7 @@ The directory manager occupies the same companion shell as Setup, without Setup 
 
 Add a directory opens the native picker. Compact rows retain full host paths and visible sandbox paths. Selection applies the last chosen Read or Write mode immediately for ordinary directories.
 
-A directory without history defaults to Read. Sensitive directories require initial consent. Frinkworks retains that consent for the exact canonical path across conversations and restarts.
+A directory without history defaults to Write. Sensitive directories require initial consent. Frinkworks retains that consent for the exact canonical path across conversations and restarts.
 
 Each directory row contains a button-style cwd radio, separate from Read and Write. A divider separates the controls. A tint and tick identify the selected cwd.
 
@@ -431,7 +445,7 @@ Initial sensitive selection exposes an approval block in the manager. Cancel rem
 
 Host work locations do not confine access. Read grants block host execution until an explicit Write change. Host consent stays in Execution.
 
-Directory controls expose exactly Read and Write. Read is the default. Write changes original files immediately.
+Directory controls expose exactly Read and Write. Write is the default for directories without history. Write changes original files immediately.
 
 New forms select the available tools by default. An explicit empty tool choice stays empty after validation and on copied records.
 
@@ -542,6 +556,12 @@ The conversation list has a maximum width of 768 pixels. Pale surfaces and eight
 Status dots align at the right edge, after their labels. Each record shows its update time. Exact UTC timestamps remain available through native time tooltips. Records omit the workflow label when no run exists.
 
 The result count includes every match, not only the current page. The query trims and matches titles without case sensitivity. Both filters stay in the canonical address and native form navigation. Access grants stay unchanged.
+
+Row checkboxes support individual selection, page selection and all matches across pages. The selection toolbar retains the count and Delete selected during scroll. Selected rows use a tint and accent checkboxes.
+
+Permanent deletion requires a modal confirmation with the count and selected titles. Cancel and Escape retain the selection and restore focus. The confirmation fixes the selected identities and revisions before deletion. New matches stay outside that selection.
+
+Active work and pending decisions block deletion. Stale selections delete nothing. Successful deletion removes the selected conversations together. Work directories and workflow run history stay unchanged.
 
 Run history filters by stored canonical directory path. The filter applies before the fifty-record bound with newest matches first. Unavailable directories keep their labels. Run history stays run-centred.
 

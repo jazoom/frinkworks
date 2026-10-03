@@ -28,6 +28,7 @@ use crate::{
 pub(super) const CATALOGUE_TITLE: &str = "Conversations | Frinkworks";
 
 pub(super) struct ConversationListItem {
+    pub(super) selection: String,
     pub(super) title: String,
     pub(super) href: String,
     pub(super) status: &'static str,
@@ -105,14 +106,9 @@ impl CatalogueView {
         back_href: String,
         back_label: &'static str,
     ) -> Self {
-        let needle = query.trim().to_lowercase();
         let mut ordered: Vec<_> = records
             .iter()
-            .filter(|record| {
-                (filter.is_empty()
-                    || history_grants(record).any(|grant| history_directory_key(grant) == filter))
-                    && (needle.is_empty() || record.title.to_lowercase().contains(&needle))
-            })
+            .filter(|record| history_matches(record, filter, query))
             .collect();
         let total = ordered.len();
         ordered.retain(|record| cursor.is_none_or(|cursor| catalogue_after(record, cursor)));
@@ -149,6 +145,7 @@ impl CatalogueView {
                 let status = super::status::conversation_status(state, record);
                 let (updated, updated_at) = catalogue_updated(record.updated_at_ms, now);
                 ConversationListItem {
+                    selection: format!("{}:{}", record.id.as_hex(), record.revision),
                     href: format!("/conversations/{}", record.id.as_hex()),
                     title: record.title.clone(),
                     status,
@@ -166,20 +163,30 @@ impl CatalogueView {
             let option = HistoryDirectoryOption {
                 selected: filter == id,
                 id: id.clone(),
-                name: format!(
-                    "{}{}",
-                    grant.host_path.display(),
-                    if available { "" } else { " — Unavailable" }
-                ),
+                name: grant
+                    .host_path
+                    .file_name()
+                    .unwrap_or(grant.host_path.as_os_str())
+                    .to_string_lossy()
+                    .into_owned(),
                 available,
             };
             let existing = directories.entry(id).or_insert(option);
-            if available && !existing.available {
-                existing.name = grant.host_path.display().to_string();
-                existing.available = true;
-            }
+            existing.available |= available;
+        }
+        let mut names = std::collections::BTreeMap::<String, usize>::new();
+        for directory in directories.values() {
+            *names.entry(directory.name.clone()).or_default() += 1;
         }
         let mut directories: Vec<_> = directories.into_values().collect();
+        for directory in &mut directories {
+            if names[&directory.name] > 1 {
+                directory.name = directory.id.clone();
+            }
+            if !directory.available {
+                directory.name.push_str(" — Unavailable");
+            }
+        }
         directories.sort_by(|left, right| left.name.cmp(&right.name));
         Self {
             conversations,
@@ -239,7 +246,12 @@ fn catalogue_after(
     }
 }
 
-fn catalogue_href(filter: &str, query: &str, back_href: &str, cursor: Option<&str>) -> String {
+pub(super) fn catalogue_href(
+    filter: &str,
+    query: &str,
+    back_href: &str,
+    cursor: Option<&str>,
+) -> String {
     let mut serializer = url::form_urlencoded::Serializer::new(String::new());
     if !filter.is_empty() {
         serializer.append_pair("directory", filter);
@@ -261,6 +273,19 @@ fn catalogue_href(filter: &str, query: &str, back_href: &str, cursor: Option<&st
     } else {
         format!("/conversations?{encoded}")
     }
+}
+
+pub(super) fn history_matches(
+    record: &crate::conversations::ConversationMetadata,
+    filter: &str,
+    query: &str,
+) -> bool {
+    (filter.is_empty()
+        || history_grants(record).any(|grant| history_directory_key(grant) == filter))
+        && record
+            .title
+            .to_lowercase()
+            .contains(&query.trim().to_lowercase())
 }
 
 pub(super) fn history_grants(

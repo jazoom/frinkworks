@@ -2061,22 +2061,35 @@ impl ConversationStore {
         id: &ConversationId,
         expected_revision: u32,
     ) -> Result<(), ConversationError> {
+        self.delete_many(&[(*id, expected_revision)])
+    }
+
+    pub(crate) fn delete_many(
+        &self,
+        selected: &[(ConversationId, u32)],
+    ) -> Result<(), ConversationError> {
+        // One store lock and one transaction prevent partial deletion after a stale selection.
         let mut database = self.database();
-        self.require_durable(id)?;
-        self.questions.invalidate_conversation(*id);
-        let Some(current) = database.load(id)? else {
-            return Err(ConversationError::Missing);
-        };
-        if current.revision != expected_revision {
-            return Err(ConversationError::Conflict);
+        for (id, revision) in selected {
+            self.require_durable(id)?;
+            let current = database.metadata(id)?.ok_or(ConversationError::Missing)?;
+            if current.revision != *revision {
+                return Err(ConversationError::Conflict);
+            }
+            if current.active_job.is_some() {
+                return Err(ConversationError::Active);
+            }
         }
-        if current.active_job.is_some() {
-            return Err(ConversationError::Active);
+        let ids: Vec<_> = selected.iter().map(|(id, _)| *id).collect();
+        let result = database.remove(&ids);
+        for id in &ids {
+            let _ = self.commit_result(*id, result.as_ref().map(|_| ()).map_err(|error| *error));
         }
-        let orphans = database.remove(id);
-        let orphans = self.commit_result(*id, orphans)?;
-        for digest in orphans {
+        for digest in result? {
             self.attachments.remove_object(&digest);
+        }
+        for id in ids {
+            self.questions.invalidate_conversation(id);
         }
         Ok(())
     }

@@ -2,21 +2,31 @@
   class="workspace-effective flex flex-wrap items-center gap-x-3 gap-y-1 px-6 pb-3 text-xs"
 >
   <button
-    type="button"
     class="btn btn-ghost btn-sm h-auto text-left"
-    {% if !self.is_new() %}
-      popovertarget="conversation-settings" popovertargetaction="show"
-    {% endif %}
-    data-settings-section="conversation-directory-heading"
-    aria-label="{% if location_host %}
-      Manage work locations
+    {% if recent_directories.is_empty() %}
+      type="submit"
+      form="{% if self.is_new() %}conversation-composer{% else %}conversation-directory-picker{% endif %}"
+      {% if self.is_new() %}formaction="/conversations/new/directories/pick"{% endif %}
+      formmethod="post"
+      {% if job_active || consent_request != "" %}disabled{% endif %}
     {% else %}
-      Manage directories
-    {% endif %}"
+      type="button"
+      {% if !self.is_new() %}
+        popovertarget="conversation-settings" popovertargetaction="show"
+      {% endif %}
+      data-settings-section="conversation-directory-heading"
+      aria-label="{% if directories.is_empty() %}
+        Add a directory
+      {% else if location_host %}
+        Manage work locations
+      {% else %}
+        Manage directories
+      {% endif %}"
+    {% endif %}
   >
     <svg class="workspace-icon" aria-hidden="true">
       {% if directories.is_empty() %}
-        <use href="/static/images/workspace-icons.svg#no-access" />
+        <use href="/static/images/workspace-icons.svg#plus" />
       {% else %}
         <use href="/static/images/workspace-icons.svg#folder" />
       {% endif %}
@@ -24,11 +34,7 @@
     <span class="flex flex-wrap gap-x-2">
       {% if directories.is_empty() %}
         <span class="directory-access-label directory-access-empty">
-          {% if location_host %}
-            No work locations
-          {% else %}
-            No directory access
-          {% endif %}
+          Add a directory
         </span>
       {% else %}
         {% for directory in directories %}

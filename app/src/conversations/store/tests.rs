@@ -9,6 +9,26 @@ use super::{
 };
 
 #[test]
+fn bulk_deletion_is_atomic_and_survives_restart() {
+    let root = tempfile::tempdir().unwrap();
+    let store = ConversationStore::open(root.path().to_owned()).unwrap();
+    let first = store.create("First".into()).unwrap();
+    let second = store.create("Second".into()).unwrap();
+    assert_eq!(
+        store.delete_many(&[(first.id, first.revision), (second.id, second.revision + 1)]),
+        Err(ConversationError::Conflict)
+    );
+    assert!(store.contains(&first.id));
+    assert!(store.contains(&second.id));
+    store
+        .delete_many(&[(first.id, first.revision), (second.id, second.revision)])
+        .unwrap();
+    drop(store);
+    let store = ConversationStore::open(root.path().to_owned()).unwrap();
+    assert!(store.metadata().is_empty());
+}
+
+#[test]
 fn reservation_identity_and_snapshot_do_not_require_the_database_mutex() {
     let store = std::sync::Arc::new(ConversationStore::in_memory());
     let record = store.create("Reserved".to_owned()).unwrap();

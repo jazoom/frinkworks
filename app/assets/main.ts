@@ -51,6 +51,131 @@ document.addEventListener(
     true,
 );
 
+function syncConversationSelection() {
+    const form = document.querySelector<HTMLFormElement>(
+        "[data-conversation-selection]",
+    );
+    if (!form) return;
+    const rows = [
+        ...form.querySelectorAll<HTMLInputElement>('input[name="selected"]'),
+    ];
+    const scope = form.elements.namedItem("scope") as HTMLInputElement;
+    const all = scope.value === "all";
+    const count = all
+        ? Number(form.dataset.total)
+        : rows.filter((row) => row.checked).length;
+    const page = form.querySelector<HTMLInputElement>("[data-select-page]")!;
+    page.checked = rows.every((row) => row.checked);
+    page.indeterminate = !page.checked && count > 0;
+    form.querySelector<HTMLElement>("[data-selection-count]")!.textContent =
+        `${count} selected${all ? " across all pages" : ""}`;
+    form.querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled =
+        count === 0;
+    form.querySelector<HTMLElement>("[data-clear-selection]")!.hidden =
+        count === 0;
+    const selectAll =
+        form.querySelector<HTMLButtonElement>("[data-select-all]");
+    if (selectAll) selectAll.disabled = all;
+}
+
+function closeConversationDeletion() {
+    document
+        .querySelector<HTMLDialogElement>("#conversation-delete-dialog")
+        ?.close();
+}
+
+function showConversationDeletion() {
+    const dialog = document.querySelector<HTMLDialogElement>(
+        "#conversation-delete-dialog",
+    );
+    if (!dialog || dialog.open) return;
+    dialog.showModal();
+    dialog.querySelector<HTMLElement>("[data-delete-error]")?.focus();
+}
+
+document.addEventListener("change", (event) => {
+    const input = event.target;
+    if (!(input instanceof HTMLInputElement)) return;
+    const form = input.closest<HTMLFormElement>(
+        "[data-conversation-selection]",
+    );
+    if (!form) return;
+    (form.elements.namedItem("scope") as HTMLInputElement).value = "selected";
+    if (input.hasAttribute("data-select-page")) {
+        form.querySelectorAll<HTMLInputElement>(
+            'input[name="selected"]',
+        ).forEach((row) => {
+            row.checked = input.checked;
+        });
+    }
+    syncConversationSelection();
+});
+
+document.addEventListener("click", (event) => {
+    if (!(event.target instanceof Element)) return;
+    if (event.target.closest("[data-delete-close]"))
+        closeConversationDeletion();
+    const button = event.target.closest<HTMLButtonElement>(
+        "[data-select-all], [data-clear-selection]",
+    );
+    const form = button?.closest<HTMLFormElement>(
+        "[data-conversation-selection]",
+    );
+    if (!button || !form) return;
+    const all = button.hasAttribute("data-select-all");
+    (form.elements.namedItem("scope") as HTMLInputElement).value = all
+        ? "all"
+        : "selected";
+    form.querySelectorAll<HTMLInputElement>('input[name="selected"]').forEach(
+        (row) => {
+            row.checked = all;
+        },
+    );
+    syncConversationSelection();
+    if (!all) focusQuietly(form.querySelector("[data-select-page]"));
+});
+
+document.addEventListener(
+    "cancel",
+    (event) => {
+        if (
+            !(event.target instanceof HTMLDialogElement) ||
+            event.target.id !== "conversation-delete-dialog"
+        )
+            return;
+        event.preventDefault();
+        closeConversationDeletion();
+    },
+    true,
+);
+
+document.addEventListener(
+    "close",
+    (event) => {
+        if (
+            !(event.target instanceof HTMLDialogElement) ||
+            event.target.id !== "conversation-delete-dialog"
+        )
+            return;
+        event.target.remove();
+        focusQuietly(document.getElementById("conversation-delete-trigger"));
+    },
+    true,
+);
+
+listenForLocationChanges(() => {
+    // Selection belongs to this result set, not to controls retained by a page patch.
+    const form = document.querySelector<HTMLFormElement>(
+        "[data-conversation-selection]",
+    );
+    if (!form) return;
+    form.reset();
+    (form.elements.namedItem("scope") as HTMLInputElement).value = "selected";
+    syncConversationSelection();
+});
+listenForRequestSettled(showConversationDeletion);
+syncConversationSelection();
+
 type ComposerModel = {
     id: string;
     favourite: boolean;
@@ -104,6 +229,17 @@ function renderComposerModels() {
         "#conversation-model-provider-filter",
     );
     if (!controls || !results || !search || !filter) return;
+    const defaults = document.querySelector<HTMLElement>(
+        "[data-model-defaults]",
+    );
+    const active = document.activeElement;
+    const restoreFocus =
+        active instanceof HTMLElement &&
+        results.contains(active) &&
+        active.matches('[data-composer-model], [data-model-default="model"]');
+    const defaultFocus =
+        restoreFocus && active.hasAttribute("data-model-default");
+    const scroll = results.scrollTop;
     const clear = document.getElementById("conversation-model-search-clear");
     if (clear) clear.hidden = search.value.length === 0;
     const query = search.value.trim().toLocaleLowerCase();
@@ -143,12 +279,18 @@ function renderComposerModels() {
     for (const item of matches) {
         const heading = item.favourite ? "Favourites" : "All models";
         if (heading !== group) {
-            const label = document.createElement("p");
-            label.className = "px-2 pt-3 pb-1 text-xs font-semibold text-quiet";
+            const label = document.createElement("h3");
+            label.className =
+                "bg-base-200 text-base-content px-2 py-2 text-sm font-semibold";
+            if (group)
+                label.classList.add("mt-4", "border-t", "border-base-300");
             label.textContent = heading;
             nodes.push(label);
             group = heading;
         }
+        const isDefault =
+            defaults?.dataset.provider === item.provider &&
+            defaults.dataset.model === item.id;
         const row = document.createElement("div");
         row.className = "flex min-w-0 items-center gap-1";
         const button = document.createElement("button");
@@ -174,8 +316,16 @@ function renderComposerModels() {
         if (item.image_input) {
             const images = document.createElement("span");
             images.className = "badge badge-ghost badge-xs";
-            images.textContent = "Images";
+            images.textContent = "Accepts images";
             meta.append(images);
+        }
+        if (isDefault) {
+            const badge = document.createElement("span");
+            badge.className = "badge badge-outline badge-xs";
+            badge.dataset.modelDefaultBadge = "";
+            badge.textContent = "Default";
+            badge.title = "Default model for new conversations";
+            meta.append(badge);
         }
         label.append(name, meta);
         button.append(label);
@@ -190,16 +340,41 @@ function renderComposerModels() {
         favourite.ariaLabel = `${item.favourite ? "Remove" : "Add"} ${item.id} (${item.label}) ${item.favourite ? "from" : "to"} favourites`;
         favourite.title = item.favourite ? "Remove favourite" : "Add favourite";
         favourite.append(modelIcon("star", item.favourite));
-        row.append(button, favourite);
+        row.append(button);
+        if (button.ariaPressed === "true" && !isDefault) {
+            const setDefault = document.createElement("button");
+            setDefault.type = "button";
+            setDefault.dataset.modelDefault = "model";
+            setDefault.className =
+                "btn btn-ghost btn-sm shrink-0 px-2 font-normal";
+            setDefault.textContent = "Set default";
+            setDefault.title = "Use this model for new conversations";
+            row.append(setDefault);
+        }
+        row.append(favourite);
         nodes.push(row);
     }
     results.replaceChildren(...nodes);
+    results.scrollTop = scroll;
+    syncModelDefaults();
+    if (restoreFocus) {
+        const target =
+            (defaultFocus &&
+                results.querySelector<HTMLButtonElement>(
+                    '[data-model-default="model"]',
+                )) ||
+            results.querySelector<HTMLButtonElement>(
+                '[data-composer-model][aria-pressed="true"]',
+            );
+        target?.focus({ preventScroll: true });
+    }
+    if (pendingModel?.picker) pendingModel.picker = composerPickerState();
     const status = document.getElementById("conversation-model-search-status");
     if (status)
         status.textContent = matches.length
             ? `${matches.length} ${matches.length === 1 ? "model" : "models"}`
             : imagesOnly
-              ? "No image-capable models match. Turn off Images to see all models."
+              ? "No models match. Turn off Accepts images to include models without image input."
               : favouritesOnly
                 ? "No favourites match. Turn off Favourites to see all models."
                 : filter.value &&
@@ -252,6 +427,43 @@ function composerEfforts(saved: string) {
     syncImageCompatibility();
 }
 
+function syncModelDefaults() {
+    const controls = composerControls();
+    const defaults = document.querySelector<HTMLElement>(
+        "[data-model-defaults]",
+    );
+    if (!controls || !defaults) return;
+    const selected = composerCatalogue()[controls.provider.value]?.find(
+        (item) => item.id === controls.model.value,
+    );
+    for (const button of document.querySelectorAll<HTMLButtonElement>(
+        "[data-model-default]",
+    )) {
+        const thinking = button.dataset.modelDefault === "thinking";
+        const saved = thinking
+            ? defaults.dataset.thinking === controls.thinking.value &&
+              controls.thinking.value !== ""
+            : defaults.dataset.provider === controls.provider.value &&
+              defaults.dataset.model === controls.model.value;
+        button.disabled =
+            controls.toggle.disabled ||
+            !selected ||
+            selected.deprecated ||
+            saved ||
+            (thinking &&
+                (controls.thinking.disabled ||
+                    !selected.efforts.some(
+                        (effort) => effort.value === controls.thinking.value,
+                    )));
+        button.hidden = !thinking && saved;
+        button.textContent = thinking
+            ? saved
+                ? "Default thinking level"
+                : "Set current level as default"
+            : "Set default";
+    }
+}
+
 function syncThinkingChoice() {
     const select = document.querySelector<HTMLSelectElement>(
         "#conversation-thinking",
@@ -262,6 +474,7 @@ function syncThinkingChoice() {
     const label = document.getElementById("conversation-thinking-value");
     const results = document.getElementById("conversation-thinking-results");
     if (!select || !toggle || !label || !results) return;
+    syncModelDefaults();
     toggle.disabled = select.disabled;
     label.textContent =
         select.selectedOptions[0]?.text.trim() || "Not available";
@@ -316,6 +529,31 @@ function syncImageCompatibility() {
     note.hidden = message === "";
 }
 
+function composerPickerState() {
+    if (!document.querySelector("#conversation-model-options:popover-open"))
+        return undefined;
+    return {
+        focus: document.activeElement?.id ?? "",
+        search:
+            document.querySelector<HTMLInputElement>(
+                "#conversation-model-search",
+            )?.value ?? "",
+        provider:
+            document.querySelector<HTMLSelectElement>(
+                "#conversation-model-provider-filter",
+            )?.value ?? "",
+        favourites:
+            document.getElementById("conversation-model-favourites-filter")
+                ?.ariaPressed ?? "false",
+        images:
+            document.getElementById("conversation-model-images-filter")
+                ?.ariaPressed ?? "false",
+        scroll:
+            document.getElementById("conversation-model-results")?.scrollTop ??
+            0,
+    };
+}
+
 let pendingModel:
     | {
           provider: string;
@@ -323,6 +561,7 @@ let pendingModel:
           thinking: string;
           focus: string;
           message: string;
+          picker: ReturnType<typeof composerPickerState>;
       }
     | undefined;
 let pendingFavourite:
@@ -348,6 +587,7 @@ function saveComposerModel(focus: string) {
         model: saved("model"),
         thinking: saved("thinking"),
         focus,
+        picker: composerPickerState(),
         message:
             document.querySelector<HTMLTextAreaElement>("#composer-message")
                 ?.value ?? "",
@@ -480,6 +720,35 @@ document.addEventListener("click", (event) => {
     if (!(event.target instanceof Element)) return;
     const controls = composerControls();
     if (!controls || controls.toggle.disabled) return;
+    const defaultButton = event.target.closest<HTMLButtonElement>(
+        "[data-model-default]",
+    );
+    if (defaultButton) {
+        if (defaultButton.disabled || commandBlockReason()) return;
+        const form = document.querySelector<HTMLFormElement>(
+            "#conversation-model-default-form",
+        );
+        if (!form) return;
+        const kind = defaultButton.dataset.modelDefault ?? "";
+        for (const [name, value] of Object.entries({
+            kind,
+            provider: controls.provider.value,
+            model: controls.model.value,
+            thinking: controls.thinking.value,
+        })) {
+            (form.elements.namedItem(name) as HTMLInputElement).value = value;
+        }
+        form.requestSubmit();
+        if (kind === "thinking") {
+            document
+                .getElementById("conversation-thinking-options")
+                ?.hidePopover();
+            focusQuietly(
+                document.getElementById("conversation-thinking-toggle"),
+            );
+        }
+        return;
+    }
     const effort = event.target.closest<HTMLButtonElement>(
         "[data-thinking-value]",
     );
@@ -568,14 +837,13 @@ document.addEventListener("click", (event) => {
         (item) => item.id === model,
     );
     if (!selected) return;
-    controls.panel.hidePopover();
-    focusQuietly(controls.toggle);
     if (provider === controls.provider.value && model === controls.model.value)
         return;
     const thinking = controls.thinking.value;
     controls.provider.value = provider;
     controls.model.value = model;
     composerEfforts(thinking);
+    renderComposerModels();
     saveComposerModel("conversation-model-toggle");
 });
 
@@ -732,6 +1000,35 @@ listenForRequestSettled((detail) => {
         detail.targetIds.includes("conversation-attachment-controls")
     )
         syncImageCompatibility();
+    if (detail.form.id === "conversation-model-default-form") {
+        if (detail.outcome !== "applied-patch") {
+            const status = document.querySelector<HTMLElement>(
+                "[data-model-default-status]",
+            );
+            if (status) {
+                status.hidden = false;
+                status.textContent =
+                    "Frinkworks cannot save the default. Reload and try again.";
+            }
+        }
+        if (
+            document.querySelector("#conversation-model-options:popover-open")
+        ) {
+            renderComposerModels();
+            const feedback = document.querySelector<HTMLElement>(
+                "[data-model-default-status]",
+            );
+            const status = document.getElementById(
+                "conversation-model-search-status",
+            );
+            if (feedback && status) {
+                feedback.hidden = true;
+                status.textContent = feedback.textContent;
+            }
+        } else {
+            syncModelDefaults();
+        }
+    }
     if (pendingFavourite && detail.form.id === "conversation-favourite-form") {
         const pending = pendingFavourite;
         pendingFavourite = undefined;
@@ -786,9 +1083,51 @@ listenForRequestSettled((detail) => {
                 message.value = pending.message;
                 message.dispatchEvent(new Event("input", { bubbles: true }));
             }
-            focusQuietly(document.getElementById(pending.focus), {
-                preventScroll: true,
-            });
+            const panel = document.querySelector<HTMLElement>(
+                "#conversation-model-options:popover-open",
+            );
+            if (
+                panel &&
+                pending.picker &&
+                detail.outcome === "applied-patch" &&
+                detail.status === 200
+            ) {
+                const search = panel.querySelector<HTMLInputElement>(
+                    "#conversation-model-search",
+                );
+                const provider = panel.querySelector<HTMLSelectElement>(
+                    "#conversation-model-provider-filter",
+                );
+                const favourites = panel.querySelector<HTMLButtonElement>(
+                    "#conversation-model-favourites-filter",
+                );
+                const images = panel.querySelector<HTMLButtonElement>(
+                    "#conversation-model-images-filter",
+                );
+                if (search) search.value = pending.picker.search;
+                if (provider) provider.value = pending.picker.provider;
+                if (favourites)
+                    favourites.ariaPressed = pending.picker.favourites;
+                if (images) images.ariaPressed = pending.picker.images;
+                renderComposerModels();
+                const results = panel.querySelector<HTMLElement>(
+                    "#conversation-model-results",
+                );
+                if (results) results.scrollTop = pending.picker.scroll;
+                const focused = document.getElementById(pending.picker.focus);
+                const destination =
+                    focused && panel.contains(focused)
+                        ? focused
+                        : panel.querySelector<HTMLElement>(
+                              '[data-composer-model][aria-pressed="true"]',
+                          );
+                destination?.focus({ preventScroll: true });
+            } else if (!pending.picker || panel) {
+                panel?.hidePopover();
+                focusQuietly(document.getElementById(pending.focus), {
+                    preventScroll: true,
+                });
+            }
         }
     }
 });

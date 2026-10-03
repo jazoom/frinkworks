@@ -156,53 +156,133 @@
         </section>
       {% endif %}
     {% else %}
-      <ul class="m-0 grid list-none gap-2 p-0" aria-label="Saved conversations">
-        {% for conversation in conversations %}
-          <li>
-            <a
-              href="{{ conversation.href }}"
-              data-graft
-              class="conversation-history-row grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-6 gap-y-3 px-4 py-4 text-inherit no-underline"
+      <form
+        method="post"
+        action="/conversations/delete/review"
+        data-graft
+        data-conversation-selection
+        data-total="{{ total }}"
+      >
+        <input type="hidden" name="scope" value="selected" />
+        <input type="hidden" name="directory" value="{{ filter }}" />
+        <input type="hidden" name="q" value="{{ query }}" />
+        <input
+          type="hidden"
+          name="conversation"
+          value="{{ back_href.trim_start_matches("/conversations/") }}"
+        />
+        <div
+          class="bg-base-200 sticky top-0 z-10 mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 py-2"
+        >
+          <label
+            class="flex min-h-11 cursor-pointer items-center gap-3 pl-4 text-sm"
+          >
+            <input
+              type="checkbox"
+              class="checkbox checkbox-sm"
+              data-select-page
+            />
+            {% if total > conversations.len() %}Select page{% else %}Select all{% endif %}
+          </label>
+          <span
+            class="text-quiet text-sm tabular-nums"
+            data-selection-count
+            aria-live="polite"
+            >0 selected</span
+          >
+          <button
+            type="button"
+            class="btn btn-ghost btn-sm"
+            data-clear-selection
+            hidden
+          >
+            Clear selection
+          </button>
+          <button
+            id="conversation-delete-trigger"
+            type="submit"
+            class="btn btn-outline btn-error btn-sm ml-auto"
+            disabled
+          >
+            Delete selected
+          </button>
+          {% if total > conversations.len() %}
+            <div class="w-full">
+              <button
+                type="button"
+                class="btn btn-ghost btn-sm"
+                data-select-all
+              >
+                Select all {{ total }}
+                {% if filter.is_empty() && query.is_empty() %}conversations{% else %}matches{% endif %}
+              </button>
+            </div>
+          {% endif %}
+        </div>
+        <ul
+          class="m-0 grid list-none gap-2 p-0"
+          aria-label="Saved conversations"
+        >
+          {% for conversation in conversations %}
+            <li
+              class="conversation-history-row grid grid-cols-[auto_minmax(0,1fr)] items-center"
             >
-              <span
-                class="col-span-full flex min-w-0 flex-col gap-1.5 sm:col-span-1"
+              <label class="flex min-h-11 cursor-pointer items-center p-4">
+                <input
+                  type="checkbox"
+                  class="checkbox checkbox-sm"
+                  name="selected"
+                  value="{{ conversation.selection }}"
+                  aria-label="Select {{ conversation.title }}"
+                />
+              </label>
+              <a
+                href="{{ conversation.href }}"
+                data-graft
+                class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-6 gap-y-3 py-4 pr-4 text-inherit no-underline"
               >
-                <strong class="text-base font-semibold [overflow-wrap:anywhere]"
-                  >{{ conversation.title }}</strong
+                <span
+                  class="col-span-full flex min-w-0 flex-col gap-1.5 sm:col-span-1"
                 >
-                <span class="text-quiet text-sm [overflow-wrap:anywhere]"
-                  >{{ conversation.meta }}</span
-                >
-              </span>
-              <span
-                class="col-span-full flex min-w-0 items-center gap-x-2 gap-y-1 sm:col-span-1 sm:grid sm:grid-cols-[auto_auto] sm:text-right"
-              >
-                <span class="text-sm sm:col-start-1 sm:row-start-1">
-                  {{ conversation.status }}
+                  <strong
+                    class="text-base font-semibold [overflow-wrap:anywhere]"
+                    >{{ conversation.title }}</strong
+                  >
+                  <span class="text-quiet text-sm [overflow-wrap:anywhere]"
+                    >{{ conversation.meta }}</span
+                  >
                 </span>
                 <span
-                  class="state-dot {{ conversation.dot }} sm:col-start-2 sm:row-start-1"
-                  aria-hidden="true"
-                ></span>
-                {% if !conversation.updated_at.is_empty() %}
-                  <time
-                    class="text-quiet order-first flex-1 text-xs tabular-nums sm:order-none sm:col-start-1 sm:row-start-2"
-                    datetime="{{ conversation.updated_at }}"
-                    title="Updated {{ conversation.updated_at }}"
-                    aria-label="Updated {{ conversation.updated }}"
-                    >{{ conversation.updated }}</time
-                  >
-                {% else %}
+                  class="col-span-full flex min-w-0 items-center gap-x-2 gap-y-1 sm:col-span-1 sm:grid sm:grid-cols-[auto_auto] sm:text-right"
+                >
+                  <span class="text-sm sm:col-start-1 sm:row-start-1">
+                    {{ conversation.status }}
+                  </span>
                   <span
-                    class="text-quiet order-first flex-1 text-xs sm:order-none sm:col-start-1 sm:row-start-2"
-                    >Update time unavailable</span
-                  >
-                {% endif %}
-              </span>
-            </a>
-          </li>
-        {% endfor %}
-      </ul>
+                    class="state-dot {{ conversation.dot }} sm:col-start-2 sm:row-start-1"
+                    aria-hidden="true"
+                  ></span>
+                  {% if !conversation.updated_at.is_empty() %}
+                    <time
+                      class="text-quiet order-first flex-1 text-xs tabular-nums sm:order-none sm:col-start-1 sm:row-start-2"
+                      datetime="{{ conversation.updated_at }}"
+                      title="Updated {{ conversation.updated_at }}"
+                      aria-label="Updated {{ conversation.updated }}"
+                      >{{ conversation.updated }}</time
+                    >
+                  {% else %}
+                    <span
+                      class="text-quiet order-first flex-1 text-xs sm:order-none sm:col-start-1 sm:row-start-2"
+                      >Update time unavailable</span
+                    >
+                  {% endif %}
+                </span>
+              </a>
+            </li>
+          {% endfor %}
+        </ul>
+      </form>
+      <div id="conversation-delete-review"></div>
     {% endif %}
     {% if !conversations.is_empty() && (has_more || paged) %}
       <nav

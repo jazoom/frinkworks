@@ -120,6 +120,9 @@ fn invalid_model_preferences_default_without_rewriting_the_file() {
         let mut value = valid.clone();
         value["models"][0]["selection"]["thinking"] = effort.into();
         cases.push(value);
+        let mut value = valid.clone();
+        value["default_thinking"] = effort.into();
+        cases.push(value);
     }
     for favourites in [
         vec!["same"; 2],

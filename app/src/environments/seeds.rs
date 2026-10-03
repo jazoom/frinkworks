@@ -48,7 +48,7 @@ pub(crate) fn alpine_git_draft() -> EnvironmentDraft {
     EnvironmentDraft {
         name: "Alpine Git".to_owned(),
         oci_image: "alpine/git".to_owned(),
-        setup_script: String::new(),
+        setup_script: "apk add --no-cache ripgrep\n".to_owned(),
     }
 }
 

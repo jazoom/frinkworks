@@ -265,20 +265,47 @@ async fn sandbox_file_tools_use_the_granted_directory_without_write_access() {
 }
 
 #[tokio::test]
-async fn path_escape_is_an_authority_failure() {
-    let policy = policy();
+async fn path_escape_is_recoverable_without_file_access() {
     let job = tool_job();
-    let tools = [ToolId::Read];
-    let context = sandbox_context(&policy, &job, &tools);
-    let trace = super::invoke(
-        &context,
-        "call-1",
-        "read",
-        &serde_json::json!({"path": ".."}),
-    )
-    .await;
-    assert_eq!(trace.failure, Some(ToolFailureKind::Authority));
-    assert!(trace.command.is_none());
+    let sandbox = crate::sandbox::GuestSandbox::scripted();
+    for (policy, message) in [
+        (policy(), "Stay inside a granted directory."),
+        (
+            DirectoryPolicy::from_grants_with_workspace(Vec::new(), String::new()),
+            "Stay inside the private scratch directory.",
+        ),
+    ] {
+        let mut context = sandbox_context(&policy, &job, &ToolId::ALL);
+        context.sandbox = Some(&sandbox);
+        for tool in [ToolId::List, ToolId::Read, ToolId::Edit, ToolId::Write] {
+            for path in [
+                "..",
+                "/etc/passwd",
+                "/mnt/hypergraft/README.md",
+                "/project/../secret",
+            ] {
+                let trace = super::invoke(
+                    &context,
+                    "call-1",
+                    tool.as_str(),
+                    &serde_json::json!({
+                        "path": path,
+                        "contents": "x",
+                        "edits": [{"search": "a", "replace": "b"}]
+                    }),
+                )
+                .await;
+                assert_eq!(
+                    trace.failure,
+                    Some(ToolFailureKind::Ordinary),
+                    "{tool:?} {path}"
+                );
+                assert_eq!(trace.output, message);
+                assert!(trace.command.is_none());
+            }
+        }
+    }
+    assert!(sandbox.exec_log().is_empty());
 }
 
 #[tokio::test]
@@ -328,19 +355,11 @@ async fn read_offset_zero_is_ordinary() {
 }
 
 #[tokio::test]
-async fn edit_escape_and_read_only_are_authority_failures() {
+async fn read_only_edit_is_an_authority_failure() {
     let policy = policy();
     let job = tool_job();
     let tools = [ToolId::Edit];
     let context = sandbox_context(&policy, &job, &tools);
-    let escape = super::invoke(
-        &context,
-        "call-1",
-        "edit",
-        &serde_json::json!({"path": "..", "edits": [{"search": "a", "replace": "b"}]}),
-    )
-    .await;
-    assert_eq!(escape.failure, Some(ToolFailureKind::Authority));
     let read_only = super::invoke(
         &context,
         "call-1",

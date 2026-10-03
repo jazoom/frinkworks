@@ -561,8 +561,10 @@ async fn directory_history_matches_path_without_granting_access() {
     let root = tempfile::tempdir().unwrap();
     let first = root.path().join("first/code");
     let second = root.path().join("second/code");
+    let unique = root.path().join("notes");
     std::fs::create_dir_all(&first).unwrap();
     std::fs::create_dir_all(&second).unwrap();
+    std::fs::create_dir_all(&unique).unwrap();
     let grant = crate::execution::DirectoryGrant::from_selected(&first, &[]).unwrap();
     let copied = crate::execution::DirectoryGrant::from_selected(&first, &[]).unwrap();
     assert_ne!(grant.id, copied.id);
@@ -572,6 +574,14 @@ async fn directory_history_matches_path_without_granting_access() {
         ("Original history", grant),
         ("Copied history", copied),
         ("Other history", other),
+        (
+            "Notes history",
+            crate::execution::DirectoryGrant::from_selected(&unique, &[]).unwrap(),
+        ),
+        (
+            "Copied notes history",
+            crate::execution::DirectoryGrant::from_selected(&unique, &[]).unwrap(),
+        ),
     ] {
         let mut model = crate::conversations::ConversationModelConfiguration::direct(
             ModelSelection::new(ProviderKind::Xai, "grok-4.6".to_owned(), None).unwrap(),
@@ -607,7 +617,18 @@ async fn directory_history_matches_path_without_granting_access() {
         assert!(body.contains(first.to_str().unwrap()));
         assert!(body.contains(second.to_str().unwrap()));
         assert!(body.contains("href=\"/conversations/new\""));
-        assert!(body.contains("id=\"conversation-directory-filter\""));
+        let options = normalised(
+            body.split("id=\"conversation-directory-filter\"")
+                .nth(1)
+                .unwrap()
+                .split("</select>")
+                .next()
+                .unwrap(),
+        );
+        assert!(options.contains(&format!("> {} </option>", first.display())));
+        assert!(options.contains(&format!("> {} </option>", second.display())));
+        assert_eq!(options.matches("> notes </option>").count(), 1);
+        assert!(options.contains(&format!("value=\"{}\"", unique.display())));
         assert!(body.contains("data-graft-submit-on=\"change\""));
     }
     std::fs::rename(&first, root.path().join("old-code")).unwrap();
@@ -640,7 +661,7 @@ async fn directory_history_matches_path_without_granting_access() {
             StatusCode::BAD_REQUEST
         );
     }
-    assert_eq!(state.conversations.list().len(), 3);
+    assert_eq!(state.conversations.list().len(), 5);
 
     let mut records = state.conversations.list();
     let original = records

@@ -447,7 +447,8 @@ body:has(.workspace-catalogue) .app-frame {
     height: auto;
     border: 0;
 }
-.conversation-history-row:is(:hover, :focus-visible),
+.conversation-history-row:is(:hover, :focus-within),
+.conversation-history-row:has(input:checked),
 .connect-first-use .connect-provider-choice:is(:hover, :focus-visible) {
     background: var(--color-base-200);
 }
@@ -1710,6 +1711,12 @@ body:has(.workspace-catalogue) .app-frame {
     background: transparent;
     color: inherit;
 }
+.app-frame .btn.directory-add-first {
+    min-height: 44px;
+    border-color: var(--workspace-muted);
+    font-size: 16px;
+    font-weight: 400;
+}
 .app-frame .directory-add {
     min-height: 40px;
     color: var(--frinkworks-composer-link);
@@ -1800,6 +1807,15 @@ body:has(.workspace-catalogue) .app-frame {
         padding-block: 4px;
     }
 }
+@media (max-height: 650px) {
+    #conversation-model-options {
+        position-area: none;
+        inset: 12px 12px auto;
+        width: min(32rem, calc(100vw - 24px));
+        height: min(32rem, calc(100dvh - 24px));
+        margin: 0 auto;
+    }
+}
 .presets-setup .preset-value,
 .preset-summary dd {
     overflow-wrap: anywhere;
@@ -1869,15 +1885,15 @@ body:has(.workspace-catalogue) .app-frame {
     line-height: 1.5;
     resize: vertical;
 }
-.instructions-setup .checkbox {
+:is(.instructions-setup, .conversation-catalogue) .checkbox {
     width: 22px;
     height: 22px;
     flex-shrink: 0;
     border-color: var(--workspace-muted);
     color: var(--frinkworks-composer-link);
 }
-.instructions-setup .checkbox:checked,
-.instructions-setup .checkbox:indeterminate {
+:is(.instructions-setup, .conversation-catalogue) .checkbox:checked,
+:is(.instructions-setup, .conversation-catalogue) .checkbox:indeterminate {
     border-color: var(--frinkworks-composer-link);
     background: var(--color-primary);
     color: var(--color-primary-content);
@@ -1885,7 +1901,7 @@ body:has(.workspace-catalogue) .app-frame {
 .instruction-tool:hover {
     background: var(--workspace-control-hover);
 }
-.instructions-setup .checkbox:focus-visible {
+:is(.instructions-setup, .conversation-catalogue) .checkbox:focus-visible {
     outline: 2px solid var(--frinkworks-focus);
     outline-offset: 3px;
 }

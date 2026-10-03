@@ -27,6 +27,8 @@ The sidebar carries grouped navigation. The header carries the title and Setup. 
 
 The composer sits near the viewport bottom. Its toolbar groups attachments and model controls. Effective access stays below it.
 
+Model selection keeps the picker open. The selected row offers Set default when it differs from the saved default. A Default badge identifies the saved default. There is no defaults footer. Accepts images names both the image-input filter and the row badges.
+
 The paperclip uses automatic image upload. Composer help retains file references and command explanations.
 
 Mobile controls wrap. Short mobile viewports omit the empty-state description so that the composer remains accessible.
@@ -153,11 +155,13 @@ The workload and browser evidence live in `docs/ui-overhaul.md`.
 
 ## Recent directories
 
-This extension supplies one directory manager. New drafts show it inline. Saved conversations open it from the access summary in the existing companion shell. It replaces the Add action below the composer and the Directories section in Setup.
+This extension supplies one directory manager. New drafts show it inline. Saved conversations open it from the access summary in the existing companion shell. It replaces the Directories section in Setup. The empty composer summary offers Add a directory. Without recent or selected directories, both Add controls open the native picker directly.
+
+Without recent or selected directories, an inline Work with your files prompt replaces the empty list. The prompt describes access to local files. An outlined Add a directory button sits beneath the explanation. Selection reveals the manager and Add another directory.
 
 The manager retains the existing visual system and native picker. It contains up to ten recent shortcuts and current grants absent from history. Each row has an add/remove checkbox and Read and Write radios. Forget appears only on unselected recent rows.
 
-A selection restores the last chosen mode. A directory without history defaults to Read. Unavailable or overlapping paths cannot receive new access.
+A selection restores the last chosen mode. A directory without history defaults to Write. Unavailable or overlapping paths cannot receive new access.
 
 Local preferences retain history and exact-path sensitive-directory approval across restarts. Later conversations reuse that approval for Read and Write. Host consent remains separate.
 

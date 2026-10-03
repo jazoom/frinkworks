@@ -1551,39 +1551,42 @@ impl Database {
         transaction.commit().map_err(map_error)
     }
 
-    /// Delete one conversation and its references. Returns every object
-    /// digest that no remaining row references; the caller removes those
-    /// files after the commit.
-    pub(crate) fn remove(&mut self, id: &ConversationId) -> Result<Vec<String>, ConversationError> {
+    // Object files stay until the transaction commits and no attachment references them.
+    pub(crate) fn remove(
+        &mut self,
+        ids: &[ConversationId],
+    ) -> Result<Vec<String>, ConversationError> {
         let transaction = self.connection.transaction().map_err(map_error)?;
-        let hex = id.as_hex();
-        let mut digests = Vec::new();
-        {
-            let mut statement = transaction
-                .prepare("SELECT DISTINCT sha256 FROM attachments WHERE conversation_id = ?1")
-                .map_err(map_error)?;
-            let rows = statement
-                .query_map([&hex], |row| row.get::<_, String>(0))
-                .map_err(map_error)?;
-            for row in rows {
-                digests.push(row.map_err(map_error)?);
+        let mut digests = std::collections::BTreeSet::new();
+        for id in ids {
+            let hex = id.as_hex();
+            {
+                let mut statement = transaction
+                    .prepare("SELECT DISTINCT sha256 FROM attachments WHERE conversation_id = ?1")
+                    .map_err(map_error)?;
+                let rows = statement
+                    .query_map([&hex], |row| row.get::<_, String>(0))
+                    .map_err(map_error)?;
+                for row in rows {
+                    digests.insert(row.map_err(map_error)?);
+                }
             }
+            transaction
+                .execute("DELETE FROM messages WHERE conversation_id = ?1", [&hex])
+                .map_err(map_error)?;
+            transaction
+                .execute(
+                    "DELETE FROM summary_requests WHERE conversation_id = ?1",
+                    [&hex],
+                )
+                .map_err(map_error)?;
+            transaction
+                .execute("DELETE FROM attachments WHERE conversation_id = ?1", [&hex])
+                .map_err(map_error)?;
+            transaction
+                .execute("DELETE FROM conversations WHERE id = ?1", [&hex])
+                .map_err(map_error)?;
         }
-        transaction
-            .execute("DELETE FROM messages WHERE conversation_id = ?1", [&hex])
-            .map_err(map_error)?;
-        transaction
-            .execute(
-                "DELETE FROM summary_requests WHERE conversation_id = ?1",
-                [&hex],
-            )
-            .map_err(map_error)?;
-        transaction
-            .execute("DELETE FROM attachments WHERE conversation_id = ?1", [&hex])
-            .map_err(map_error)?;
-        transaction
-            .execute("DELETE FROM conversations WHERE id = ?1", [&hex])
-            .map_err(map_error)?;
         let mut orphans = Vec::new();
         for digest in digests {
             if let Some(digest) = unreferenced_digest(&transaction, &digest)? {

@@ -897,53 +897,100 @@ async fn ordinary_read_error_then_a_corrected_call() {
 }
 
 #[tokio::test]
-async fn path_escape_stops_without_dispatching_the_rest() {
+async fn path_escape_returns_to_model_without_dispatching_denied_reads() {
     use crate::config::RuntimeConfig;
     use crate::providers::{
         ChatBackend, ChatTurn, CompletionReason, ModelEvent, ProviderConnection, ProviderKind,
     };
     let mut state = crate::tests::test_state(RuntimeConfig::development());
-    let backend = crate::tests::ScriptedBackend::events(vec![
-        Ok(ModelEvent::ToolCall {
-            id: "call-1".to_owned(),
-            name: "read".to_owned(),
-            arguments: serde_json::json!({"path": ".."}),
-        }),
-        Ok(ModelEvent::ToolCall {
-            id: "call-2".to_owned(),
-            name: "read".to_owned(),
-            arguments: serde_json::json!({"path": "src/main.rs"}),
-        }),
-        Ok(ModelEvent::Complete {
-            reason: CompletionReason::ToolCalls,
-        }),
+    let backend = crate::tests::ScriptedBackend::rounds(vec![
+        vec![
+            Ok(ModelEvent::ToolCall {
+                id: "call-1".to_owned(),
+                name: "read".to_owned(),
+                arguments: serde_json::json!({"path": "/mnt/hypergraft/README.md"}),
+            }),
+            Ok(ModelEvent::ToolCall {
+                id: "call-2".to_owned(),
+                name: "read".to_owned(),
+                arguments: serde_json::json!({"path": "src/main.rs"}),
+            }),
+            Ok(ModelEvent::Complete {
+                reason: CompletionReason::ToolCalls,
+            }),
+        ],
+        vec![
+            Ok(ModelEvent::ToolCall {
+                id: "call-3".to_owned(),
+                name: "read".to_owned(),
+                arguments: serde_json::json!({"path": "README.md"}),
+            }),
+            Ok(ModelEvent::Complete {
+                reason: CompletionReason::ToolCalls,
+            }),
+        ],
+        vec![
+            Ok(ModelEvent::Text("Read the granted files.".to_owned())),
+            Ok(ModelEvent::Complete {
+                reason: CompletionReason::Stop,
+            }),
+        ],
     ]);
-    state.chat = std::sync::Arc::new(ChatBackend::Scripted(backend));
+    state.chat = std::sync::Arc::new(ChatBackend::Scripted(backend.clone()));
     let connection = ProviderConnection::with_key(ProviderKind::Xai, "test-key", "grok-4.6");
     state.vault.put(connection.clone()).expect("provider");
     let (record, job) = conversation_job(&state);
+    let mut spec = granted_read_spec(connection, record.id, record.revision);
+    let directory = tempfile::tempdir().unwrap();
+    spec.policy = crate::agents::DirectoryPolicy::from_grants(
+        vec![crate::agents::PolicyGrant {
+            alias: "project".to_owned(),
+            guest_path: "/project".to_owned(),
+            host_path: directory.path().to_owned(),
+            access: crate::agents::AccessMode::ReadWrite,
+        }],
+        "project".to_owned(),
+    );
+    let sandbox = std::sync::Arc::new(crate::sandbox::GuestSandbox::scripted());
+    sandbox
+        .start_from_snapshot(
+            std::path::Path::new("snapshot"),
+            "sha256:deadbeef",
+            crate::sandbox::SandboxSpec {
+                mounts: vec![crate::sandbox::MountSpec {
+                    guest: "/project".to_owned(),
+                    host: directory.path().to_owned(),
+                    read_only: false,
+                }],
+                workdir: "/project".to_owned(),
+                network: crate::agents::NetworkAccess::None,
+            },
+        )
+        .await
+        .unwrap();
+    spec.sandbox = Some(sandbox.clone());
     let ended = super::run_agent_action(
         &state,
-        granted_read_spec(connection, record.id, record.revision),
-        vec![ChatTurn::user("Read the file".to_owned())],
+        spec,
+        vec![ChatTurn::user("Read the files".to_owned())],
         job.clone(),
     )
     .await;
-    assert_eq!(ended.outcome, super::AgentOutcome::AuthorityFailure);
-    assert_eq!(ended.reply.tools.len(), 2);
-    assert!(
-        ended.reply.tools[0]
-            .output
-            .contains("Stay inside a granted directory.")
-    );
-    assert_eq!(ended.reply.tools[1].output, "This tool did not run.");
+    assert_eq!(ended.outcome, super::AgentOutcome::Completed);
+    assert!(ended.error.is_none());
+    assert_eq!(ended.reply.text, "Read the granted files.");
+    assert_eq!(tool_finished_count(&job), 3);
+    let history = backend.last_history();
+    let calls: Vec<_> = history.iter().flat_map(|turn| &turn.calls).collect();
+    assert_eq!(calls.len(), 3);
     assert_eq!(
-        ended.reply.tools[1]
-            .command
-            .as_ref()
-            .map(|command| command.termination),
-        Some(crate::execution::CommandTermination::NotDispatched)
+        calls[0].result.as_ref().unwrap().output,
+        "Stay inside a granted directory."
     );
+    let commands = sandbox.exec_log();
+    assert_eq!(commands.len(), 2);
+    assert_eq!(commands[0].args[4], "/project/src/main.rs");
+    assert_eq!(commands[1].args[4], "/project/README.md");
 }
 
 #[tokio::test]

@@ -8,7 +8,9 @@ use hypergraft::{GraftRequest, PatchGraft, PatchStatus};
 use crate::{
     conversations::ConversationError,
     error::{AppError, AppResult},
-    execution::{DirectoryGrant, DirectoryGrantError, DirectoryGrantId, DirectoryPick},
+    execution::{
+        DirectoryAccess, DirectoryGrant, DirectoryGrantError, DirectoryGrantId, DirectoryPick,
+    },
     local_data::HOST_PATH_RESET_PENDING,
     responses,
     sessions::RequiredSession,
@@ -1207,14 +1209,12 @@ fn needs_consent(state: &AppState, grant: &DirectoryGrant) -> bool {
 }
 
 fn restore_access(state: &AppState, mut grant: DirectoryGrant) -> DirectoryGrant {
-    if let Some(entry) = state
+    grant.access = state
         .preferences
         .recent_directories()
         .iter()
         .find(|entry| entry.host_path == grant.host_path)
-    {
-        grant.access = entry.access;
-    }
+        .map_or(DirectoryAccess::Write, |entry| entry.access);
     grant
 }
 

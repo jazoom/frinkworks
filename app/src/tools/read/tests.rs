@@ -190,6 +190,14 @@ fn bounded_reader_rejects_directory_and_outside_symlink() {
             .expect("read");
         assert_eq!(output.status.code(), Some(code));
         assert!(!String::from_utf8_lossy(&output.stdout).contains("private"));
+        if code == 4 {
+            assert!(matches!(
+                super::super::file_stdout(output.status.code(), output.stdout),
+                Err(super::super::ToolFailure::Ordinary(
+                    "Stay inside a granted directory."
+                ))
+            ));
+        }
     }
 }
 

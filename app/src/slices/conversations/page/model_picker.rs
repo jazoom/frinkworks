@@ -1,3 +1,5 @@
+use askama::Template;
+
 use super::{ModelsDevCatalogue, ProviderOption, ProviderVault};
 
 #[cfg(test)]
@@ -20,10 +22,45 @@ pub(crate) struct ModelOption {
     default_effort: String,
 }
 
+#[derive(Template)]
+#[template(path = "conversations/templates/model_defaults.html")]
+pub(in crate::slices::conversations) struct ModelDefaults {
+    provider: String,
+    model: String,
+    thinking: String,
+    message: &'static str,
+}
+
+impl ModelDefaults {
+    pub(in crate::slices::conversations) fn new(
+        preferences: &crate::preferences::Preferences,
+        vault: &ProviderVault,
+        message: &'static str,
+    ) -> Self {
+        let selected = preferences
+            .desk_providers(vault)
+            .into_iter()
+            .find(|provider| provider.selected);
+        Self {
+            provider: selected
+                .as_ref()
+                .map(|item| item.kind.as_str().to_owned())
+                .unwrap_or_default(),
+            model: selected.map(|item| item.model).unwrap_or_default(),
+            thinking: preferences
+                .default_thinking()
+                .map(|effort| effort.as_str().to_owned())
+                .unwrap_or_default(),
+            message,
+        }
+    }
+}
+
 pub(crate) struct ModelPicker {
     pub(crate) providers: Vec<ProviderOption>,
     pub(crate) unavailable_provider: Option<crate::providers::ProviderKind>,
     pub(crate) catalogue: String,
+    pub(super) defaults: ModelDefaults,
     pub(crate) efforts: Vec<EffortOption>,
     pub(crate) model: String,
     pub(crate) model_unavailable: bool,
@@ -47,6 +84,7 @@ impl ModelPicker {
         thinking: &str,
     ) -> Self {
         let connections = preferences.desk_providers(vault);
+        let default_thinking = preferences.default_thinking();
         let catalogue_models: std::collections::BTreeMap<_, Vec<_>> = connections
             .iter()
             .map(|connection| {
@@ -70,7 +108,7 @@ impl ModelPicker {
                             .effective_effort(
                                 connection.kind,
                                 &model.id,
-                                connection.thinking.as_ref(),
+                                default_thinking.as_ref().or(connection.thinking.as_ref()),
                             )
                             .map(|effort| effort.as_str().to_owned())
                             .unwrap_or_default(),
@@ -114,6 +152,7 @@ impl ModelPicker {
             .and_then(|kind| catalogue.model(kind, model))
             .map(|metadata| metadata.image_input);
         Self {
+            defaults: ModelDefaults::new(preferences, vault, ""),
             unavailable_provider: crate::providers::ProviderKind::parse(provider).filter(|kind| {
                 !connections
                     .iter()

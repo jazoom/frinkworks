@@ -62,6 +62,7 @@ async fn picker_commands_are_patch_only_and_revision_bound() {
     let updated = state.conversations.get(&record.id).unwrap();
     let grant = &updated.model.as_ref().unwrap().settings.directories[0];
     assert_eq!(grant.host_path, directory.path().canonicalize().unwrap());
+    assert_eq!(grant.access, crate::execution::DirectoryAccess::Write);
 
     let remove = format!(
         "/conversations/{}/directories/{}/remove",
@@ -469,7 +470,7 @@ async fn credential_picker_and_access_require_consent_for_read_and_write() {
             let pending =
                 DirectoryGrant::parse_form(&hidden_value(&body, "pending_directory")).unwrap();
             assert_eq!(pending.host_path, directory.canonicalize().unwrap());
-            assert_eq!(pending.access, DirectoryAccess::Read);
+            assert_eq!(pending.access, DirectoryAccess::Write);
             if let Some(record) = record {
                 assert!(
                     state

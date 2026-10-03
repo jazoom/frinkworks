@@ -20,7 +20,7 @@ The authority boundaries remain distinct:
 
 Preferences supply no consent. Additional workflow authority requires run-only approval.
 
-Directory modes are **Read** and **Write**. Read is the default and permits shell commands through read-only Microsandbox mounts.
+Directory modes are **Read** and **Write**. Newly added directories default to Write. Recent directories retain their last selected mode. Read permits shell commands through read-only Microsandbox mounts.
 
 Write mounts original directories read-write. Changes take effect immediately. Plan acceptance never approves or applies file changes.
 

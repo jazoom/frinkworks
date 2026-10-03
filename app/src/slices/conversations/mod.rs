@@ -4,12 +4,14 @@ mod commands;
 mod compaction;
 mod context;
 mod continuation;
+mod deletion;
 mod directories;
 mod files;
 mod forks;
 mod handoff;
 mod job;
 pub(crate) use job::history_with_review;
+mod model_defaults;
 mod model_favourites;
 mod new;
 mod output;
@@ -60,6 +62,8 @@ const REVISION_MESSAGE: &str = "Reload the conversation and try again.";
 pub(super) fn router() -> Router<AppState> {
     Router::new()
         .route("/conversations", get(catalogue))
+        .route("/conversations/delete/review", post(deletion::review))
+        .route("/conversations/delete", post(deletion::delete))
         .route("/conversations/new", get(new::show).post(new::save))
         .route(
             "/conversations/new/attachments",
@@ -101,6 +105,7 @@ pub(super) fn router() -> Router<AppState> {
             "/conversations/models/favourite",
             post(model_favourites::toggle),
         )
+        .route("/conversations/models/default", post(model_defaults::save))
         .route(
             "/conversations/new/settings/presets/save",
             post(settings::save_draft_preset),

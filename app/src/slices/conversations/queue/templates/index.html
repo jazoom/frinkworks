@@ -1,17 +1,13 @@
 {% if let Some(saved) = self.saved() %}
-  {% if !self.queue.items.is_empty() || self.queue.follow_up %}
+  {% if !self.queue.items.is_empty() || (self.queue.follow_up && (pending_host_command.is_some() || !self.queue.return_message.is_empty())) %}
     <section
       id="conversation-queue"
       class="border-base-300 mb-3 flex flex-col gap-2 border-b pb-3"
       aria-label="Queued messages"
     >
-      {% if self.queue.follow_up %}
+      {% if self.queue.follow_up && pending_host_command.is_some() %}
         <p class="text-quiet text-sm" role="status">
-          {% if pending_host_command.is_some() %}
-            Work waits for command approval. New messages stay queued.
-          {% else %}
-            New messages wait until the current work finishes.
-          {% endif %}
+          Work waits for command approval. New messages stay queued.
         </p>
       {% endif %}
       {% if !self.queue.return_message.is_empty() %}

@@ -121,6 +121,9 @@
       <a href="/settings" data-graft class="link">Model catalogue settings</a>
     </p>
   {% endif %}
+  <div id="conversation-model-defaults" class="contents">
+    {{ model_picker.defaults|safe }}
+  </div>
   <section
     id="conversation-thinking-options"
     popover
@@ -132,14 +135,26 @@
       role="group"
       aria-label="Thinking effort options"
     ></div>
+    <div class="border-base-300 mt-2 border-t pt-2">
+      <button
+        type="button"
+        class="btn btn-ghost h-auto min-h-11 w-full px-3 py-2 text-left text-sm font-normal"
+        data-model-default="thinking"
+      >
+        Set current level as default
+      </button>
+      <p class="text-quiet px-3 pb-2 text-xs">
+        For new conversations, when supported.
+      </p>
+    </div>
   </section>
   <section
     id="conversation-model-options"
     popover
-    class="border-base-300 bg-base-100 text-base-content fixed inset-x-3 top-auto bottom-28 m-0 max-h-[min(32rem,70dvh)] w-auto max-w-lg flex-col overflow-hidden rounded border shadow-lg [&:popover-open]:flex"
+    class="border-base-300 bg-base-100 text-base-content fixed inset-x-3 top-auto bottom-28 m-0 h-[min(32rem,70dvh)] w-auto max-w-lg flex-col overflow-hidden rounded border shadow-lg [&:popover-open]:flex"
     aria-label="Choose model"
   >
-    <div class="border-base-300 flex flex-col gap-2 border-b p-3">
+    <div class="border-base-300 flex shrink-0 flex-col gap-2 border-b p-3">
       <label class="sr-only" for="conversation-model-search"
         >Search models</label
       >
@@ -167,13 +182,13 @@
           </svg>
         </button>
       </div>
-      <div class="flex items-center gap-2">
+      <div class="grid grid-cols-2 gap-2 sm:flex sm:items-center">
         <label class="sr-only" for="conversation-model-provider-filter"
           >Filter by provider</label
         >
         <select
           id="conversation-model-provider-filter"
-          class="select select-bordered select-sm min-h-10 min-w-0 flex-1"
+          class="select select-bordered select-sm col-span-2 min-h-10 min-w-0 flex-1"
           aria-controls="conversation-model-results"
         >
           <option value="">All providers</option>
@@ -199,7 +214,8 @@
         <button
           type="button"
           id="conversation-model-images-filter"
-          class="btn btn-ghost btn-sm group aria-pressed:border-base-300 aria-pressed:bg-base-200 min-h-10"
+          title="Show models that accept image attachments"
+          class="btn btn-ghost btn-sm group aria-pressed:border-base-300 aria-pressed:bg-base-200 min-h-10 gap-1 px-2"
           aria-pressed="false"
           aria-controls="conversation-model-results"
         >
@@ -209,20 +225,20 @@
           >
             <use href="/static/images/workspace-icons.svg#check" />
           </svg>
-          Images
+          Accepts images
         </button>
       </div>
     </div>
     <p
       id="conversation-model-search-status"
       role="status"
-      class="text-quiet px-3 pt-2 text-xs"
+      class="text-quiet shrink-0 px-3 pt-2 text-xs"
     ></p>
     <div
       id="conversation-model-results"
       role="group"
       aria-label="Models"
-      class="min-h-0 overflow-y-auto overscroll-contain p-2"
+      class="min-h-0 flex-1 [scrollbar-gutter:stable] overflow-y-auto overscroll-contain p-2"
     ></div>
     <div id="conversation-model-catalogue">
       {% let catalogue = model_picker.catalogue %}{% let error = "" %}

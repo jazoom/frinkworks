@@ -10,6 +10,25 @@ impl Database {
 }
 
 #[test]
+fn bulk_deletion_rolls_back_every_record_on_database_failure() {
+    let source = super::super::ConversationStore::in_memory();
+    let first = source.create("First".to_owned()).unwrap();
+    let second = source.create("Second".to_owned()).unwrap();
+    let mut db = Database::in_memory().unwrap();
+    db.save(None, &first).unwrap();
+    db.save(None, &second).unwrap();
+    db.connection
+        .execute_batch(&format!(
+            "CREATE TRIGGER fail_delete BEFORE DELETE ON conversations WHEN OLD.id = '{}'
+         BEGIN SELECT RAISE(ABORT, 'deletion failure'); END;",
+            second.id.as_hex()
+        ))
+        .unwrap();
+    assert!(db.remove(&[first.id, second.id]).is_err());
+    assert_eq!(db.metadata_all().unwrap().len(), 2);
+}
+
+#[test]
 fn usage_index_preserves_scope_identity_and_transaction_boundaries() {
     let source = super::super::ConversationStore::in_memory();
     let first = source.create("First".to_owned()).unwrap();
@@ -85,7 +104,7 @@ fn usage_index_preserves_scope_identity_and_transaction_boundaries() {
     drop(db);
     let mut db = Database::open(dir.path()).unwrap();
     assert_eq!(db.usage_totals(&first.id, &[]).unwrap().tokens.known, 250);
-    db.remove(&first.id).unwrap();
+    db.remove(&[first.id]).unwrap();
     assert_eq!(db.usage_totals(&first.id, &[]).unwrap().requests, 0);
     assert_eq!(db.usage_totals(&other.id, &[]).unwrap().tokens.known, 110);
 }
@@ -113,7 +132,7 @@ fn recorded_time_stays_scoped_and_a_live_checkpoint_never_counts_twice() {
     drop(db);
     let mut db = Database::open(dir.path()).unwrap();
     assert_eq!(db.work_time(&first.id, None).unwrap().total_ms, 12_000);
-    db.remove(&first.id).unwrap();
+    db.remove(&[first.id]).unwrap();
     assert_eq!(db.work_time(&first.id, None).unwrap().total_ms, 0);
 }
 

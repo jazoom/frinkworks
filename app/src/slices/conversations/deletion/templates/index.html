@@ -1,0 +1,65 @@
+<dialog
+  id="conversation-delete-dialog"
+  class="modal"
+  aria-labelledby="conversation-delete-heading"
+  aria-describedby="conversation-delete-warning"
+>
+  <div class="modal-box space-y-5">
+    <h2 id="conversation-delete-heading" class="text-xl font-semibold">
+      {% if error.is_empty() %}
+        Delete {{ count }}
+        {% if count == 1 %}conversation{% else %}conversations{% endif %}
+        permanently?
+      {% else %}
+        Cannot delete the selection
+      {% endif %}
+    </h2>
+    <p id="conversation-delete-warning">
+      This permanently deletes the selected conversations and their messages
+      from local history. You cannot undo this action.
+    </p>
+    {% if !error.is_empty() %}
+      <p class="alert alert-error" role="alert" tabindex="-1" data-delete-error>
+        {{ error }}
+      </p>
+    {% else %}
+      <ul class="list-disc space-y-1 pl-5 text-sm [overflow-wrap:anywhere]">
+        {% for title in titles %}<li>{{ title }}</li>{% endfor %}
+      </ul>
+      {% if remaining > 0 %}
+        <p class="text-quiet text-sm">
+          And {{ remaining }} more conversations.
+        </p>
+      {% endif %}
+      <p class="text-quiet text-sm">
+        Files in your work directories and workflow run history stay unchanged.
+      </p>
+    {% endif %}
+    <form
+      method="post"
+      action="/conversations/delete"
+      data-graft
+      class="flex flex-wrap justify-end gap-3"
+    >
+      <input type="hidden" name="confirm" value="delete" />
+      <input type="hidden" name="directory" value="{{ form.directory }}" />
+      <input type="hidden" name="q" value="{{ form.query }}" />
+      <input
+        type="hidden"
+        name="conversation"
+        value="{{ form.conversation }}"
+      />
+      {% for value in selected %}
+        <input type="hidden" name="selected" value="{{ value }}" />
+      {% endfor %}
+      <button type="button" class="btn btn-ghost" data-delete-close autofocus>
+        Cancel
+      </button>
+      {% if error.is_empty() %}
+        <button type="submit" class="btn btn-error">Delete permanently</button>
+      {% else %}
+        <a href="{{ href }}" data-graft class="btn btn-outline">Refresh list</a>
+      {% endif %}
+    </form>
+  </div>
+</dialog>

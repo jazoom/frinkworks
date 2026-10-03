@@ -30,6 +30,10 @@ New drafts copy those defaults with ordinary directory permissions. Ordinary set
 
 The directory manager appears inline in new drafts and in the companion for saved conversations. The access summary opens it.
 
+Without recent or selected directories, an inline prompt offers Add a directory and describes access to local files. Chat remains available without directory access.
+
+The empty composer summary offers Add a directory. Without recent or selected directories, both Add controls open the native picker.
+
 Recent directories contains up to ten shortcuts. Current grants outside recent history remain visible in a separate group. Existing entries retain their order after selection, access changes and command start selection.
 
 Local preferences retain recent paths and their last Read or Write mode across restarts. Access changes update existing shortcuts but do not recreate forgotten shortcuts.
@@ -101,7 +105,7 @@ The authority boundaries are:
 - Approval for an individual shell command.
 - Plan review.
 
-Conversation directories have exactly two modes: **Read** and **Write**. A directory without history defaults to Read. Later selections restore its last chosen mode.
+Conversation directories have exactly two modes: **Read** and **Write**. A directory without history defaults to Write. Later selections restore its last chosen mode.
 
 Selection applies the mode immediately for ordinary directories. Write requires no additional approval. Active work blocks access changes.
 

@@ -364,6 +364,7 @@ pub(crate) struct ToolTrace {
 }
 
 /// Ordinary errors and explicit rejections have no unsettled effects.
+/// Out-of-bounds paths are ordinary errors. The tool denies access, but the model can correct its call.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ToolFailureKind {
     Ordinary,
@@ -787,7 +788,7 @@ async fn dispatch(
             let (path, _) = context
                 .policy
                 .resolve(&args.path)
-                .map_err(ToolFailure::Authority)?;
+                .map_err(ToolFailure::Ordinary)?;
             let output = plain_capture(
                 format!("list `{path}`"),
                 capture(
@@ -806,7 +807,7 @@ async fn dispatch(
             let (path, access) = context
                 .policy
                 .resolve(&args.path)
-                .map_err(ToolFailure::Authority)?;
+                .map_err(ToolFailure::Ordinary)?;
             if !access.is_writable() {
                 return Err(ToolFailure::Authority("That path is read-only."));
             }
@@ -1292,10 +1293,7 @@ fn page_request(arguments: &serde_json::Value) -> Result<read::PageRequest, &'st
 }
 
 fn existing_file_path(context: &AgentToolContext<'_>, raw: &str) -> Result<String, ToolFailure> {
-    let (path, _) = context
-        .policy
-        .resolve(raw)
-        .map_err(ToolFailure::Authority)?;
+    let (path, _) = context.policy.resolve(raw).map_err(ToolFailure::Ordinary)?;
     reject_grant_root(context, &path, "Choose a file to read.")?;
     Ok(path)
 }
@@ -1401,7 +1399,7 @@ async fn edit_file(
     let (path, access) = context
         .policy
         .resolve(&args.path)
-        .map_err(ToolFailure::Authority)?;
+        .map_err(ToolFailure::Ordinary)?;
     if !access.is_writable() {
         return Err(ToolFailure::Authority("That path is read-only."));
     }
@@ -1825,7 +1823,7 @@ fn file_stdout(exit: Option<i32>, stdout: Vec<u8>) -> Result<Vec<u8>, ToolFailur
         Some(0) => Ok(stdout),
         Some(2) => Err(ToolFailure::Ordinary("That path is a directory.")),
         Some(3) => Err(ToolFailure::Ordinary("That path is not a file.")),
-        Some(4) => Err(ToolFailure::Authority("Stay inside a granted directory.")),
+        Some(4) => Err(ToolFailure::Ordinary("Stay inside a granted directory.")),
         Some(5) => Err(ToolFailure::Ordinary("The file changed since it was read.")),
         Some(1) => Err(ToolFailure::Ordinary("That path does not exist.")),
         Some(_) => Err(ToolFailure::Ordinary("The file tool command failed.")),
