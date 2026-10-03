@@ -145,11 +145,23 @@ pub(super) fn project_resources(
 pub(super) fn suggest(offers: &[SkillOffer], templates: &[PromptTemplate], query: &str) -> Search {
     let trimmed = query.trim_start();
     let skill_only = trimmed.starts_with(input::SKILL_PREFIX) || trimmed == "/skill";
+    let partial_skill_prefix = input::SKILL_PREFIX.starts_with(trimmed);
     let (scope, prefix) = query_parts(query);
     let mut suggestions = Vec::new();
+    if !skill_only && scope.is_empty() && name_starts_with("handoff", prefix) {
+        suggestions.push(Suggestion {
+            command: "/handoff".to_owned(),
+            name: "Handoff".to_owned(),
+            scope: String::new(),
+            source_label: "Built-in".to_owned(),
+            description: "Continue in a new conversation with fresh context.".to_owned(),
+            kind: "command".to_owned(),
+            hint: String::new(),
+        });
+    }
     let mut matched = offers
         .iter()
-        .filter(|offer| name_starts_with(&offer.name, prefix))
+        .filter(|offer| partial_skill_prefix || name_starts_with(&offer.name, prefix))
         .filter(|_| skill_only || scope.is_empty())
         .collect::<Vec<_>>();
     matched.sort_by(|left, right| {
@@ -197,7 +209,10 @@ pub(super) fn suggest(offers: &[SkillOffer], templates: &[PromptTemplate], query
                 .iter()
                 .filter(|candidate| candidate.name.eq_ignore_ascii_case(&template.name))
                 .count();
-            let command = if duplicates > 1 || !scope.is_empty() {
+            let command = if duplicates > 1
+                || !scope.is_empty()
+                || template.name.eq_ignore_ascii_case("handoff")
+            {
                 format!("/{}/{}", template.source.scope, template.name)
             } else {
                 format!("/{}", template.name)
@@ -213,10 +228,13 @@ pub(super) fn suggest(offers: &[SkillOffer], templates: &[PromptTemplate], query
             });
         }
     }
-    suggestions.sort_by(|left, right| {
-        left.command
-            .to_lowercase()
-            .cmp(&right.command.to_lowercase())
+    suggestions.sort_by_key(|suggestion| {
+        let group = match suggestion.kind.as_str() {
+            "command" => 0,
+            "skill" => 1,
+            _ => 2,
+        };
+        (group, suggestion.command.to_lowercase())
     });
     suggestions.truncate(MAXIMUM_COMMAND_RESULTS);
     Search {
@@ -233,6 +251,13 @@ pub(super) fn preview(
     text: &str,
     secret: Option<&str>,
 ) -> Search {
+    if text
+        .split_whitespace()
+        .next()
+        .is_some_and(|command| command.eq_ignore_ascii_case("/handoff"))
+    {
+        return suggest(offers, templates, "/handoff");
+    }
     match input::expand(text, offers, templates, secret) {
         Ok(expansion) => Search {
             preview: preview_from(&expansion, templates),

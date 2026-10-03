@@ -1,109 +1,95 @@
-{% extends "layout/page.html" %}
-{% block section %}conversations{% endblock %}
-{% block heading %}Handoff{% endblock %}
-{% block actions %}
-  <a
-    href="/conversations/{{ source_id }}"
-    data-graft
-    class="btn btn-ghost btn-sm"
-  >
-    <svg class="workspace-icon rotate-180" aria-hidden="true">
-      <use href="/static/images/workspace-icons.svg#arrow" />
-    </svg>
-    Back to conversation
-  </a>
-{% endblock %}
-{% block page_content %}
-  <div class="mx-auto max-w-4xl space-y-6">
-    <div class="space-y-2">
-      <h2 class="text-2xl font-semibold">Continue with fresh context</h2>
-      <p class="text-quiet max-w-prose">
-        Frinkworks asks {{ model }} for a continuation prompt from
-        <a href="/conversations/{{ source_id }}" data-graft class="link"
-          >{{ source_title }}</a
-        >. You can edit it before the next agent starts.
-      </p>
-      <p class="text-quiet max-w-prose">
-        Handoff does not apply, discard or undo changes. Access approval remains
-        separate.
+<div class="space-y-5" data-handoff-ready>
+  <div class="space-y-2">
+    <h3 class="text-lg font-semibold">Continue with fresh context</h3>
+    <p class="text-quiet text-sm">
+      Frinkworks asks {{ model }} for a continuation prompt from this
+      conversation. You can edit it before the next agent starts.
+    </p>
+  </div>
+  {% if pending_changes %}
+    <div class="alert alert-warning" role="note">
+      <p>
+        Isolated changes remain separate from host files. Neither handoff choice
+        applies or discards them.
       </p>
     </div>
-    {% if pending_changes %}
-      <div class="alert alert-warning" role="note">
-        <p>
-          Isolated changes remain separate from host files. Neither handoff
-          choice applies or discards them.
-        </p>
-      </div>
-    {% endif %}
-    {% if error != "" %}
-      <div class="alert alert-error" role="alert"><p>{{ error }}</p></div>
-    {% endif %}
-    {% if generated %}
-      <form
-        data-graft
-        method="post"
-        action="/conversations/{{ source_id }}/handoff/prepare"
-        class="space-y-4"
-      >
-        <input type="hidden" name="revision" value="{{ revision }}" />
-        <input type="hidden" name="focus" value="{{ focus }}" />
-        <input
-          type="hidden"
-          name="choice"
-          value="{% if continue_prepared %}continue-prepared{% else %}context-only{% endif %}"
-        />
-        <input
-          type="hidden"
-          name="run_fingerprint"
-          value="{{ run_fingerprint }}"
-        />
-        <p>
-          {% if continue_prepared %}
-            The destination will own this workflow after you send the prompt.
-            The plan and pending decisions stay unchanged.
-          {% else %}
-            This prompt carries context only. The workflow stays in the source
-            conversation. Existing file changes remain.
-          {% endif %}
-        </p>
-        <label class="flex flex-col gap-2" for="handoff-prompt">
-          <span class="font-semibold">Handoff prompt</span>
-          <textarea
-            id="handoff-prompt"
-            name="prompt"
-            class="textarea textarea-bordered min-h-80 w-full text-base leading-relaxed"
-            rows="16"
-            maxlength="32768"
-            required
-            aria-describedby="handoff-prompt-help"
-          >
+  {% endif %}
+  {% if error != "" %}
+    <div
+      id="handoff-error"
+      class="alert alert-error"
+      role="alert"
+      tabindex="-1"
+    >
+      <p>{{ error }}</p>
+    </div>
+  {% endif %}
+  {% if generated %}
+    <form
+      data-graft
+      method="post"
+      action="/conversations/{{ source_id }}/handoff/prepare"
+      class="space-y-4"
+    >
+      <input type="hidden" name="revision" value="{{ revision }}" />
+      <input type="hidden" name="focus" value="{{ focus }}" />
+      <input
+        type="hidden"
+        name="choice"
+        value="{% if continue_prepared %}continue-prepared{% else %}context-only{% endif %}"
+      />
+      <input
+        type="hidden"
+        name="run_fingerprint"
+        value="{{ run_fingerprint }}"
+      />
+      <p class="text-sm">
+        {% if continue_prepared %}
+          The destination will own this workflow after you send the prompt. The
+          plan and pending decisions stay unchanged.
+        {% else %}
+          This prompt carries context only. The workflow stays in the source
+          conversation. Existing file changes remain.
+        {% endif %}
+      </p>
+      <label class="flex flex-col gap-2" for="handoff-prompt">
+        <span class="font-semibold">Handoff prompt</span>
+        <textarea
+          id="handoff-prompt"
+          name="prompt"
+          class="textarea textarea-bordered min-h-64 w-full text-base leading-relaxed"
+          rows="12"
+          maxlength="32768"
+          required
+          aria-describedby="handoff-prompt-help"
+        >
 {{ prompt }}</textarea>
-        </label>
-        <p id="handoff-prompt-help" class="text-quiet text-sm">
-          The prompt opens as an unsent message. The next agent starts only
-          after you send it.
-        </p>
-        <div class="flex flex-wrap gap-3">
-          <button class="btn btn-primary" type="submit">
-            Prepare new conversation
-          </button>
-          <a
-            href="/conversations/{{ source_id }}"
-            data-graft
-            class="btn btn-ghost"
-            >Cancel</a
-          >
-        </div>
-      </form>
-      <details class="border-base-300 border-t pt-4">
-        <summary class="cursor-pointer text-sm">
-          Generate another prompt
-        </summary>
-        {% include "conversations/handoff/templates/generate.html" %}
-      </details>
-    {% else %}
+      </label>
+      <p id="handoff-prompt-help" class="text-quiet text-sm">
+        The prompt opens as an unsent message. The next agent starts only after
+        you send it.
+      </p>
+      <div class="flex flex-wrap gap-3">
+        <button class="btn btn-primary h-auto min-h-11 py-2" type="submit">
+          Prepare new conversation
+        </button>
+        <button
+          type="button"
+          class="btn btn-ghost"
+          popovertarget="conversation-settings"
+          popovertargetaction="hide"
+        >
+          Cancel
+        </button>
+      </div>
+    </form>
+    <details class="border-base-300 border-t pt-4">
+      <summary class="min-h-11 cursor-pointer text-sm">
+        Generate another prompt
+      </summary>
       {% include "conversations/handoff/templates/generate.html" %}
-    {% endif %}
-  </div>
-{% endblock %}
+    </details>
+  {% else %}
+    {% include "conversations/handoff/templates/generate.html" %}
+  {% endif %}
+</div>

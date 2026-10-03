@@ -664,6 +664,16 @@ body:has(.workspace-catalogue) .app-frame {
     display: inline-block;
     min-width: 4ch;
 }
+.workspace-command-menu {
+    border-color: var(--workspace-control-border);
+    border-radius: 9px;
+    background: var(--color-base-200);
+    box-shadow: 0 12px 32px rgb(0 0 0 / 24%);
+}
+.workspace-command-menu [aria-selected="true"] > button {
+    background: var(--workspace-selected);
+    box-shadow: inset 0 0 0 1px var(--workspace-control-border);
+}
 .workspace-composer-surface {
     border: 1px solid var(--color-base-300);
     border-radius: 9px;
@@ -1665,13 +1675,19 @@ body:has(.workspace-catalogue) .app-frame {
     outline: 2px solid var(--frinkworks-focus);
     outline-offset: -2px;
 }
-#conversation-settings #settings-conversation :is(.btn, .input, .textarea) {
+#conversation-settings
+    :is(#settings-conversation, #settings-handoff)
+    :is(.btn, .input, .textarea) {
     font-size: 16px;
     border-radius: 7px;
 }
-#conversation-settings #settings-conversation :is(.btn, .input) {
+#conversation-settings
+    :is(#settings-conversation, #settings-handoff)
+    :is(.btn, .input) {
     min-height: 44px;
 }
+.handoff-open .setup-tabs,
+.handoff-open .conversation-settings-footer,
 .conversation-management-open .conversation-settings-footer,
 .directory-manager-open .setup-tabs,
 .directory-manager-open .conversation-settings-footer {

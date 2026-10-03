@@ -2,7 +2,7 @@
   data-graft
   method="post"
   action="/conversations/{{ source_id }}/handoff/generate"
-  class="mt-4 space-y-4"
+  class="peer/handoff mt-4 space-y-4"
 >
   <input type="hidden" name="revision" value="{{ revision }}" />
   {% if can_transfer %}
@@ -56,8 +56,7 @@
 {{ focus }}</textarea>
   </label>
   <p class="text-quiet text-sm">
-    Generation sends the conversation context to the selected provider. It runs
-    no tools and creates no conversation.
+    Generation sends the conversation context to the selected provider.
   </p>
   <button
     class="btn btn-primary"
@@ -67,3 +66,14 @@
     Generate handoff prompt
   </button>
 </form>
+<p
+  role="status"
+  class="mt-3 hidden items-center gap-2 text-sm peer-aria-busy/handoff:flex"
+  data-handoff-pending
+>
+  <span
+    class="loading loading-spinner loading-sm motion-reduce:animate-none"
+    aria-hidden="true"
+  ></span>
+  Generating handoff prompt…
+</p>

@@ -311,7 +311,9 @@ Default actions apply to new conversations. Local preferences retain both choice
 
 The composer places its editor above a compact toolbar. The editor limit is 32768 characters. The persisted message bound stays in the conversation store.
 
-The paperclip opens image selection. Selection uploads automatically. The slash control opens skills and prompts. Composer help retains file references and prefix explanations.
+The paperclip opens image selection. Selection uploads automatically. The slash control opens Commands, Skills and Prompts as separate groups. Composer help retains file references and prefix explanations.
+
+The slash list remains visible during lookup updates. Partial prefixes from `/s` through `/skill:` retain skill suggestions. The list prevents selection until the current lookup completes.
 
 Send uses an accessible Send message label. An empty composer disables Send unless it contains an attachment or prepared-change handoff.
 
@@ -359,7 +361,7 @@ Sandbox paths remain visible for selected directories. The row reserves their li
 
 New drafts omit the transcript toolbar. Saved conversations retain its controls.
 
-The header offers Handoff and Setup.
+The header offers Setup as its only permanent action.
 
 The Conversation section in Setup contains an inline title field and an independent draft copy. Compact context remains available when eligible.
 
@@ -520,19 +522,25 @@ Closure restores focus even after a command replaces the original trigger. Escap
 
 ### Handoff
 
-The conversation header offers Handoff as a text link. Its canonical page keeps the selected theme and shared navigation.
+The built-in `/handoff` command opens Handoff in the existing companion shell. Both a typed slash and the slash button expose it.
 
-A focused page presents an optional instruction field before generation. The generated prompt appears in a labelled textarea with an explicit continuation action.
+Handoff remains separate from skills and prompts. A same-named prompt retains its scope-qualified command.
+
+The companion retains the transcript and unsent message. Opening it makes no model request. Its optional instruction field precedes explicit generation.
+
+A spinner and Generating handoff prompt status identify an active generation request. The status disappears after success or failure.
+
+The generated prompt appears in a labelled textarea with an explicit continuation action. Targeted requests keep the current address. The canonical route also supports document navigation.
 
 Prepare new conversation opens an unsent draft. It does not start the next agent.
 
-At a safe decision, the page offers workflow ownership transfer or context only. Neither choice changes files.
+At a safe decision, the companion offers workflow ownership transfer or context only. Neither choice changes files.
 
 A transfer draft displays pinned settings and explicit run-only approval. Send transfers ownership without another model call or gate decision.
 
 An expired runtime retains the plan in the owner companion. Decision controls stay disabled until fresh consent restores execution.
 
-The handoff page uses the existing type scale and controls. It introduces no new palette or panel system.
+The handoff companion uses the existing type scale and controls. Mobile excludes the covered conversation controls. Dismissal restores focus to the slash button.
 
 ### Workflow catalogue
 

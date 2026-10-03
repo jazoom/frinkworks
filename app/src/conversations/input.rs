@@ -96,7 +96,7 @@ impl InputError {
             Self::Ambiguous => {
                 "More than one resource uses that name. Use a scope-qualified name to choose one."
             }
-            Self::Empty => "Enter a command name after / or a skill name after /skill:.",
+            Self::Empty => "Enter a command name after / or a skill name after /skill:",
             Self::Bound => {
                 "The expanded message is empty or too large. Change the resource or arguments."
             }

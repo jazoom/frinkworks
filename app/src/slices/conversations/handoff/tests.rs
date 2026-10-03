@@ -44,6 +44,31 @@ async fn prepared_draft(
 }
 
 #[tokio::test]
+async fn builtin_handoff_opens_the_panel_without_a_model_request_or_a_message() {
+    let mut state = test_state();
+    let token = connected(&state);
+    let record = source(&state);
+    let backend = ScriptedBackend::chunks([Ok("Unexpected model request".to_owned())]);
+    state.chat = Arc::new(ChatBackend::Scripted(backend.clone()));
+    for name in ["handoff", "HANDOFF", "HaNdOfF"] {
+        let response = app(&state)
+            .oneshot(command(
+                &format!("/conversations/{}/messages", record.id),
+                &token,
+                &format!("revision={}&message=%20%2F{name}%20", record.revision),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = text(response).await;
+        assert!(body.contains("target=\"conversation-handoff-content\""));
+    }
+    assert!(backend.last_history().is_empty());
+    assert_eq!(state.conversations.get(&record.id), Some(record));
+    assert_eq!(state.conversations.list().len(), 1);
+}
+
+#[tokio::test]
 async fn prepared_handoff_needs_run_only_consent_and_rejects_stale_source_decisions() {
     let state = test_state();
     let token = connected(&state);
@@ -358,19 +383,24 @@ async fn handoff_navigation_is_read_only_and_commands_require_patches() {
     let record = source(&state);
     let path = format!("/conversations/{}/handoff", record.id);
     for request in [document(&path, &token), navigation(&path, &token)] {
-        assert_eq!(
-            app(&state).oneshot(request).await.unwrap().status(),
-            StatusCode::OK
-        );
+        let response = app(&state).oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = text(response).await;
+        assert!(body.contains("id=\"conversation-detail\""));
+        assert!(body.contains("id=\"conversation-handoff-content\""));
     }
     let mut targeted = document(&path, &token);
     targeted
         .headers_mut()
         .insert("graft-request", "patch".parse().unwrap());
-    assert_eq!(
-        app(&state).oneshot(targeted).await.unwrap().status(),
-        StatusCode::BAD_REQUEST
-    );
+    targeted
+        .headers_mut()
+        .insert("accept", hypergraft::MEDIA_TYPE.parse().unwrap());
+    let response = app(&state).oneshot(targeted).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = text(response).await;
+    assert!(body.contains("target=\"conversation-handoff-content\""));
+    assert!(!body.contains("target=\"chat-main\""));
     for endpoint in ["generate", "prepare"] {
         let mut request = command(
             &format!("{path}/{endpoint}"),
@@ -406,6 +436,8 @@ async fn generation_redacts_secrets_and_cannot_execute_tools_or_create_records()
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let body = text(response).await;
+    assert!(body.contains("target=\"conversation-handoff-content\""));
+    assert!(!body.contains("target=\"chat-main\""));
     assert!(!body.contains("test-key"));
     assert!(!body.contains("<script>bad()"));
     assert!(backend.last_tools().is_empty());

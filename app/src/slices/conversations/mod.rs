@@ -837,6 +837,9 @@ async fn send_message(
             detail_view(&state, session.0, &record, &record.title, REVISION_MESSAGE),
         );
     };
+    if form.message.trim().eq_ignore_ascii_case("/handoff") {
+        return handoff::show(State(state), session, graft.into(), Path(conversation_id)).await;
+    }
     // Direct command syntax is classified from the original text before any
     // resource expansion. It never reaches provider validation.
     if let Some(direct) = crate::conversations::input::direct_command(&form.message) {

@@ -29,11 +29,13 @@ The composer sits near the viewport bottom. Its toolbar groups attachments and m
 
 Model selection keeps the picker open. The selected row offers Set default when it differs from the saved default. A Default badge identifies the saved default. There is no defaults footer. Accepts images names both the image-input filter and the row badges.
 
-The paperclip uses automatic image upload. Composer help retains file references and command explanations.
+The paperclip uses automatic image upload. The slash picker groups built-in Commands, Skills and Prompts. Composer help retains file references and command explanations.
 
 Setup includes a Conversation section with an inline title field and an independent draft copy. Delete confirmation expands in place without replacement of the other actions.
 
 Eligible conversations also expose Compact context. This section omits future defaults.
+
+The built-in `/handoff` command opens a separate companion view without a page change. Generation and preparation retain the existing consent boundaries.
 
 Mobile controls wrap. Short mobile viewports omit the empty-state description so that the composer remains accessible.
 

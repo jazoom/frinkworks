@@ -16,6 +16,57 @@ use crate::{
     state::AppState,
 };
 
+#[tokio::test]
+async fn builtin_handoff_reserves_its_name_without_hiding_a_qualified_prompt() {
+    let (state, directory) = state_with_prompts();
+    let token = connected(&state);
+    std::fs::write(
+        directory.path().join("prompts/handoff.md"),
+        "---\ndescription: A user prompt.\n---\nUser-authored context.",
+    )
+    .unwrap();
+    for prefix in ["/ha", "/HA", "/HaN"] {
+        let response = app(&state)
+            .oneshot(json_request(
+                &format!("/conversations/new/commands?q={prefix}"),
+                &token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let payload: serde_json::Value = serde_json::from_str(&text(response).await).unwrap();
+        assert_eq!(payload["suggestions"][0]["command"], "/handoff");
+        assert_eq!(payload["suggestions"][0]["kind"], "command");
+        assert_eq!(payload["suggestions"][1]["command"], "/global/handoff");
+        assert_eq!(payload["suggestions"][1]["kind"], "prompt");
+    }
+    let catalogue = super::Catalogue {
+        templates: super::page::global_templates(&state).0,
+        ..Default::default()
+    };
+    for command in [
+        "/handoff",
+        "/HANDOFF",
+        " /HaNdOfF ",
+        "/handoff extra text",
+        "/HANDOFF extra text",
+        " /HaNdOfF extra text",
+    ] {
+        assert!(super::expand(command, &catalogue, None, None).is_err());
+        let preview = catalogue.search(command, "preview", None);
+        assert!(preview.preview.is_none());
+        assert_eq!(preview.suggestions[0].kind, "command");
+    }
+    for command in ["/global/handoff", "/GLOBAL/HANDOFF"] {
+        assert_eq!(
+            super::expand(command, &catalogue, None, None)
+                .unwrap()
+                .expanded,
+            "User-authored context."
+        );
+    }
+}
+
 fn conversation_with_grants(
     state: &AppState,
     grants: Vec<DirectoryGrant>,
@@ -157,22 +208,42 @@ async fn saved_lookup_suggests_global_skills() {
     let token = connected(&state);
     seed_global_skill(&state);
     let record = conversation_with_grants(&state, Vec::new(), ToolLocation::Sandbox);
-    let response = app(&state)
-        .oneshot(json_request(
-            &format!("/conversations/{}/commands?q=/skill:co", record.id),
-            &token,
-        ))
-        .await
-        .expect("lookup");
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = text(response).await;
-    assert!(
-        commands(&body).contains(&"/skill:code-review".to_owned()),
-        "{body}"
-    );
-    let value: serde_json::Value = serde_json::from_str(&body).expect("json");
-    assert!(value["preview"].is_null());
-    assert_eq!(value["suggestions"][0]["source_label"], "Global");
+    for prefix in [
+        "/s",
+        "/sk",
+        "/ski",
+        "/skil",
+        "/skill",
+        "/skill:",
+        "/skill:co",
+    ] {
+        let response = app(&state)
+            .oneshot(json_request(
+                &format!("/conversations/{}/commands?q={prefix}", record.id),
+                &token,
+            ))
+            .await
+            .expect("lookup");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = text(response).await;
+        assert!(
+            commands(&body).contains(&"/skill:code-review".to_owned()),
+            "{prefix}: {body}"
+        );
+        let value: serde_json::Value = serde_json::from_str(&body).expect("json");
+        assert!(value["preview"].is_null());
+        assert_eq!(value["suggestions"][0]["source_label"], "Global");
+    }
+    for prefix in ["/skeleton", "/skill:missing"] {
+        let response = app(&state)
+            .oneshot(json_request(
+                &format!("/conversations/{}/commands?q={prefix}", record.id),
+                &token,
+            ))
+            .await
+            .unwrap();
+        assert!(commands(&text(response).await).is_empty());
+    }
 }
 
 #[tokio::test]

@@ -6,7 +6,6 @@ use crate::{conversations::ConversationRecord, state::AppState};
 #[template(path = "conversations/handoff/templates/index.html")]
 pub(super) struct HandoffPage {
     source_id: String,
-    source_title: String,
     revision: u32,
     model: String,
     focus: String,
@@ -31,7 +30,6 @@ impl HandoffPage {
     ) -> Self {
         Self {
             source_id: record.id.as_hex(),
-            source_title: record.title.clone(),
             revision: record.revision,
             model: record
                 .model

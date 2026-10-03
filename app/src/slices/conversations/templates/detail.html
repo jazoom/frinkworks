@@ -65,18 +65,6 @@
         <div
           class="workspace-header-actions ml-auto flex shrink-0 items-center gap-1"
         >
-          {% if let Some(saved) = self.saved() %}
-            <a
-              href="/conversations/{{ saved.id }}/handoff"
-              data-graft
-              class="btn btn-ghost btn-sm min-h-11"
-            >
-              <svg class="workspace-icon" aria-hidden="true">
-                <use href="/static/images/workspace-icons.svg#arrow" />
-              </svg>
-              <span>Handoff</span>
-            </a>
-          {% endif %}
           <button
             type="button"
             class="btn btn-ghost btn-sm min-h-11"
@@ -601,7 +589,7 @@
         >
           Drop images to attach them.
         </p>
-        <div class="mx-auto w-full max-w-3xl">
+        <div class="relative mx-auto w-full max-w-3xl">
           <div
             id="conversation-file-suggestions"
             class="border-base-300 bg-base-100 rounded-box mb-2 border shadow-sm"
@@ -610,7 +598,7 @@
           ></div>
           <div
             id="conversation-command-suggestions"
-            class="border-base-300 bg-base-100 rounded-box mb-2 border shadow-sm"
+            class="workspace-command-menu absolute inset-x-0 bottom-full z-10 mb-2 max-h-[min(18rem,40dvh,var(--command-menu-space,40dvh))] overflow-y-auto overscroll-contain border"
             data-command-suggestions
             hidden
           ></div>
@@ -924,6 +912,16 @@
         </div>
       </div>
       {% include "conversations/templates/effective_settings.html" %}
+      {% if let Some(saved) = self.saved() %}
+        <form
+          id="conversation-handoff-open"
+          method="get"
+          action="/conversations/{{ saved.id }}/handoff"
+          data-graft
+          data-graft-history="none"
+          hidden
+        ></form>
+      {% endif %}
       <section
         id="conversation-settings"
         popover
@@ -942,6 +940,7 @@
               class="text-lg font-semibold"
               tabindex="-1"
             >
+              <span data-handoff-title hidden>Handoff</span>
               <span data-setup-title>Setup</span
               ><span data-directory-title hidden
                 >{% if location_host %}Work locations{% else %}Directories{% endif %}</span
@@ -1106,6 +1105,16 @@
               {% endif %}
             {% endif %}
             {% include "conversations/templates/conversation_settings.html" %}
+            <section
+              id="settings-handoff"
+              data-settings-panel
+              hidden
+              class="pt-5"
+            >
+              <div id="conversation-handoff-content">
+                {{ handoff_html|safe }}
+              </div>
+            </section>
             {% include "conversations/templates/presets_settings.html" %}
             {% include "conversations/templates/instructions_settings.html" %}
             {% include "conversations/templates/execution_settings.html" %}

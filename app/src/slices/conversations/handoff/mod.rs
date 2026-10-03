@@ -2,13 +2,14 @@ mod page;
 pub(super) mod recovery;
 pub(super) mod transfer;
 
+use askama::Template;
 use axum::{
     Form,
     extract::{Path, State},
     response::Response,
 };
 use futures_util::StreamExt;
-use hypergraft::{GraftRequest, PageGraft, PatchGraft, PatchStatus};
+use hypergraft::{GraftRequest, PatchGraft, PatchStatus};
 
 use crate::{
     conversations::{ConversationRecord, MAXIMUM_MESSAGE_BYTES},
@@ -37,32 +38,35 @@ pub(super) struct HandoffForm {
 pub(super) async fn show(
     State(state): State<AppState>,
     session: RequiredSession,
-    graft: PageGraft,
+    graft: GraftRequest,
     Path(id): Path<String>,
 ) -> AppResult<Response> {
     let Some(record) = super::load_conversation(&state, &id) else {
         return Ok(responses::request_navigation(graft, "/conversations"));
     };
     let error = ready(&state, &record).err().unwrap_or("");
-    render(
+    let view = page::HandoffPage::new(
         &state,
-        graft.into(),
-        PatchStatus::Ok,
-        page::HandoffPage::new(
-            &state,
-            &record,
-            HandoffForm::default(),
-            false,
-            error,
-            state.sessions.command_reserved(&session.0, &record.id),
-        ),
-    )
+        &record,
+        HandoffForm::default(),
+        false,
+        error,
+        state.sessions.command_reserved(&session.0, &record.id),
+    );
+    if graft == GraftRequest::Patch {
+        return render(PatchStatus::Ok, view);
+    }
+    let mut workspace = super::detail_view(&state, session.0, &record, &record.title, "");
+    workspace.handoff_html = view
+        .render()
+        .map_err(|error| AppError::new("render handoff", error))?;
+    super::render_detail(&state, session.0, graft, PatchStatus::Ok, workspace)
 }
 
 pub(super) async fn generate(
     State(state): State<AppState>,
     session: RequiredSession,
-    graft: PatchGraft,
+    _graft: PatchGraft,
     Path(id): Path<String>,
     Form(form): Form<HandoffForm>,
 ) -> AppResult<Response> {
@@ -71,8 +75,6 @@ pub(super) async fn generate(
     };
     let reject = |status, error, form| {
         render(
-            &state,
-            graft.into(),
             status,
             page::HandoffPage::new(&state, &record, form, false, error, false),
         )
@@ -170,8 +172,6 @@ pub(super) async fn generate(
         );
     }
     render(
-        &state,
-        graft.into(),
         PatchStatus::Ok,
         page::HandoffPage::new(
             &state,
@@ -193,7 +193,7 @@ pub(super) async fn generate(
 pub(super) async fn prepare(
     State(state): State<AppState>,
     session: RequiredSession,
-    graft: PatchGraft,
+    _graft: PatchGraft,
     Path(id): Path<String>,
     Form(form): Form<HandoffForm>,
 ) -> AppResult<Response> {
@@ -202,8 +202,6 @@ pub(super) async fn prepare(
     };
     let reject = |status, error, form| {
         render(
-            &state,
-            graft.into(),
             status,
             page::HandoffPage::new(&state, &record, form, true, error, false),
         )
@@ -401,29 +399,12 @@ fn redact(state: &AppState, text: &str) -> String {
     result
 }
 
-fn render(
-    state: &AppState,
-    graft: GraftRequest,
-    status: PatchStatus,
-    view: page::HandoffPage,
-) -> AppResult<Response> {
-    match graft {
-        GraftRequest::Document => {
-            let mut response = responses::chat_page_response("Handoff | Frinkworks", state, &view)?;
-            responses::apply_patch_status(&mut response, status);
-            Ok(response)
-        }
-        GraftRequest::Navigation => Ok(hypergraft::outcome::page_patch(
-            "Handoff | Frinkworks",
-            "chat-main",
-            &view,
-        )?),
-        GraftRequest::Patch => Ok(hypergraft::outcome::children_patch(
-            status,
-            "chat-main",
-            &view,
-        )?),
-    }
+fn render(status: PatchStatus, view: page::HandoffPage) -> AppResult<Response> {
+    Ok(hypergraft::outcome::children_patch(
+        status,
+        "conversation-handoff-content",
+        &view,
+    )?)
 }
 
 #[cfg(test)]

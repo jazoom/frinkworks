@@ -488,6 +488,7 @@ pub(super) struct ConversationDetailView {
     thinking_visibility_error: Option<&'static str>,
     pub(super) messages: Vec<MessageView>,
     pub(super) companion_html: String,
+    pub(super) handoff_html: String,
     pub(super) companion_kind: &'static str,
     pub(super) companion_title: String,
 
@@ -740,6 +741,7 @@ impl ConversationDetailView {
             error,
             notice: "",
             messages: Vec::new(),
+            handoff_html: String::new(),
             companion_html: String::new(),
             companion_kind: "activity",
             companion_title: String::new(),
@@ -1315,6 +1317,7 @@ impl ConversationDetailView {
             title: title.to_owned(),
             error,
             messages,
+            handoff_html: String::new(),
             companion_html: String::new(),
             companion_kind: "activity",
             companion_title: String::new(),

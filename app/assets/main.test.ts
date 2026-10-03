@@ -1513,6 +1513,100 @@ function commandResponse(): Response {
     } as Response;
 }
 
+test.each(["/handoff", " /HANDOFF ", "/HaNdOfF"])(
+    "%s opens handoff instead of a message submission",
+    (text) => {
+        const form = document.querySelector<HTMLFormElement>(
+            "#conversation-composer",
+        )!;
+        const field =
+            form.querySelector<HTMLTextAreaElement>("#composer-message")!;
+        const handoff = document.createElement("form");
+        handoff.id = "conversation-handoff-open";
+        handoff.method = "get";
+        document.body.append(handoff);
+        const open = vi
+            .spyOn(handoff, "requestSubmit")
+            .mockImplementation(() => {});
+        const send = vi.fn();
+        form.addEventListener("submit", send);
+        field.value = text;
+        const event = new Event("submit", { bubbles: true, cancelable: true });
+        form.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(true);
+        expect(open).toHaveBeenCalledOnce();
+        expect(send).not.toHaveBeenCalled();
+        expect(field.value.trim()).toBe("");
+    },
+);
+
+test("command suggestions retain the list but reject stale choices and responses", async () => {
+    const response = (command: string) =>
+        ({
+            json: async () => ({
+                suggestions: [
+                    {
+                        command,
+                        name: command,
+                        scope: "global",
+                        kind: "skill",
+                        description: "A skill.",
+                    },
+                ],
+            }),
+        }) as Response;
+    const pending: ((response: Response) => void)[] = [];
+    vi.stubGlobal(
+        "fetch",
+        vi
+            .fn()
+            .mockResolvedValueOnce(response("/skill:review"))
+            .mockImplementation(
+                () => new Promise<Response>((resolve) => pending.push(resolve)),
+            ),
+    );
+    const field = commandMarkup();
+    const type = (text: string) => {
+        field.value = text;
+        field.setSelectionRange(text.length, text.length);
+        field.dispatchEvent(new Event("input", { bubbles: true }));
+        document.dispatchEvent(new Event("selectionchange"));
+    };
+    type("/");
+    await settle();
+    const container = document.querySelector<HTMLElement>(
+        "[data-command-suggestions]",
+    )!;
+    const previous = container.firstChild;
+    const stale = container.querySelector<HTMLButtonElement>(
+        "[data-command-suggestion]",
+    )!;
+    type("/s");
+    expect(container.hidden).toBe(false);
+    expect(container.firstChild).toBe(previous);
+    expect(container.inert).toBe(true);
+    stale.click();
+    expect(field.value).toBe("/s");
+    await settle();
+    type("/sk");
+    await settle();
+    pending[0](response("/skill:obsolete"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(container.firstChild).toBe(previous);
+    expect(container.inert).toBe(true);
+    pending[1](response("/skill:current"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(container.hidden).toBe(false);
+    expect(container.inert).toBe(false);
+    expect(container.textContent).not.toContain("obsolete");
+    container
+        .querySelector<HTMLButtonElement>("[data-command-suggestion]")!
+        .click();
+    expect(field.value).toBe("/skill:current ");
+    press(field, "Escape");
+    expect(container.hidden).toBe(true);
+});
+
 test("skill preview survives trailing edits, caret movement and a pointer Send", async () => {
     const fetchMock = vi.fn(async () => commandResponse());
     vi.stubGlobal("fetch", fetchMock);

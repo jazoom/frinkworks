@@ -20,8 +20,8 @@
       type="button"
       class="btn btn-outline btn-square"
       data-composer-insert="/"
-      aria-label="Skills and prompts"
-      title="Skills and prompts"
+      aria-label="Commands, skills and prompts"
+      title="Commands, skills and prompts"
     >
       <svg class="workspace-icon" aria-hidden="true">
         <use href="/static/images/workspace-icons.svg#slash" />
@@ -52,8 +52,15 @@
       >
         Reference a file
       </button>
-      <p class="font-medium">Message prefixes</p>
+      <p class="font-medium">Commands and message prefixes</p>
       <dl class="mt-2 space-y-2">
+        <div>
+          <dt><code>/handoff</code></dt>
+          <dd class="text-quiet">
+            Open Handoff to prepare a new conversation with fresh context. This
+            built-in command sends no message.
+          </dd>
+        </div>
         <div>
           <dt><code>/skill:name</code></dt>
           <dd class="text-quiet">

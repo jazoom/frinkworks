@@ -151,13 +151,17 @@ Frinkworks provides no file-application transaction, rollback or automatic commi
 
 ## Handoff
 
+The built-in `/handoff` command opens a companion without a model request. The slash picker separates Commands, Skills and Prompts.
+
+The canonical GET supports document navigation and targeted patches. Generation updates only the handoff content. Preparation opens the destination as an unsent draft.
+
 Handoff generation uses the selected provider without tools. Context bounds, output bounds and credential redaction constrain the request.
 
 Generation reserves the browser session. A changed source or run invalidates its result.
 
 The user can edit the prompt before preparation opens an unsent draft. Generation and preparation create no conversation record.
 
-At a safe decision, the handoff page offers two choices:
+At a safe decision, the handoff companion offers two choices:
 
 - Transfer workflow ownership.
 - Carry context only and leave workflow ownership with the source.

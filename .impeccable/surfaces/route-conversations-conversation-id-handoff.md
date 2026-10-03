@@ -15,9 +15,11 @@ This surface prepares fresh agent context. The user inspects and edits a prompt 
 
 ## Structure
 
-A canonical page retains shared navigation and the selected theme. The instruction field precedes generation. A labelled textarea holds the generated prompt.
+The built-in `/handoff` command opens the existing companion shell. The slash button and a typed slash expose the same command.
 
-At a safe decision, the page offers exact prepared changes or context only. Neither choice applies, discards or reverses files.
+The canonical route supports document navigation and targeted updates. The companion retains the transcript and unsent message. The instruction field precedes explicit generation.
+
+A labelled textarea holds the generated prompt. At a safe decision, the companion offers workflow ownership transfer or context only. Neither choice changes files.
 
 Preparation opens an unsent draft. Exact-change drafts display pinned settings and an explicit run-only approval control.
 
@@ -35,4 +37,6 @@ Restart preserves safe gates. The owner companion provides a separate restoratio
 
 Desktop and mobile checks cover Springfield and Sector 7-G. The mobile draft remains within the viewport with its pinned settings open.
 
-The browser uses a supplied prompt through the real preparation endpoint. Successful hosted-model generation remains unverified.
+An isolated browser pass uses a scripted provider for generation and the real preparation endpoint. It covers draft retention and mobile exclusion of conversation controls.
+
+Successful hosted-model generation remains unverified.

@@ -278,6 +278,14 @@ pub(super) fn expand(
     secret: Option<&str>,
     preview: Option<(&str, &str)>,
 ) -> Result<crate::conversations::InputExpansion, crate::conversations::InputError> {
+    // Built-in actions never expand a same-named prompt or reach a provider.
+    if message
+        .split_whitespace()
+        .next()
+        .is_some_and(|command| command.eq_ignore_ascii_case("/handoff"))
+    {
+        return Err(crate::conversations::InputError::Unknown);
+    }
     crate::conversations::input::expand_checked(
         message,
         &catalogue.offers,
