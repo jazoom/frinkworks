@@ -237,7 +237,11 @@ pub(crate) fn count_turns(
                 image.height,
             ))
         });
-    Ok(count_tokens(model, &text).0.saturating_add(image_tokens))
+    let unresolved: u64 = turns.iter().map(ChatTurn::unresolved_text_tokens).sum();
+    Ok(count_tokens(model, &text)
+        .0
+        .saturating_add(image_tokens)
+        .saturating_add(unresolved))
 }
 
 /// Count tokens for plain text with the same tokenizer mapping as dispatch.
@@ -343,8 +347,15 @@ fn compose_estimate(
     }
     text.push_str(&projected);
     let (text_tokens, precision) = count_tokens(request.model, &text);
-    let input_tokens = text_tokens.saturating_add(image_tokens);
-    let precision = if image_tokens > 0 {
+    let unresolved: u64 = request
+        .turns
+        .iter()
+        .map(ChatTurn::unresolved_text_tokens)
+        .sum();
+    let input_tokens = text_tokens
+        .saturating_add(image_tokens)
+        .saturating_add(unresolved);
+    let precision = if image_tokens > 0 || unresolved > 0 {
         TokenPrecision::Approximate
     } else {
         precision

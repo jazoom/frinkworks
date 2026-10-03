@@ -87,7 +87,8 @@ pub(crate) async fn add_security_headers(
             .expect("the public origin is a canonical HTTP origin");
     let headers = response.headers_mut();
 
-    headers.insert(
+    // Browsers enforce every CSP header. A route can tighten but never relax the application policy.
+    headers.append(
         header::CONTENT_SECURITY_POLICY,
         content_security_policy(nonce.as_ref(), live_endpoint.csp_connect_src()),
     );

@@ -400,9 +400,9 @@ impl MessageForm {
                 continue;
             }
             let id = crate::conversations::attachments::parse_attachment_id(value)
-                .ok_or("That staged image is not valid. Add it again.")?;
+                .ok_or("That staged file is not valid. Add it again.")?;
             if ids.contains(&id) {
-                return Err("That staged image is not valid. Add it again.");
+                return Err("That staged file is not valid. Add it again.");
             }
             ids.push(id);
         }
@@ -574,17 +574,13 @@ async fn catalogue(
     } else {
         ""
     };
-    // The optional conversation only selects the return destination, as on
-    // the attention page. History always lists every matching conversation.
+    // The optional conversation retains navigation context across filters.
+    // History always lists every matching conversation.
     let back = crate::conversations::ConversationId::parse(query.conversation.trim())
         .filter(|id| state.conversations.metadata_for(id).is_some());
-    let (back_href, back_label) = match back {
-        Some(id) => (
-            format!("/conversations/{}", id.as_hex()),
-            "Back to conversation",
-        ),
-        None => (String::new(), ""),
-    };
+    let back_href = back
+        .map(|id| format!("/conversations/{}", id.as_hex()))
+        .unwrap_or_default();
     render_catalogue(
         &state,
         graft,
@@ -593,7 +589,6 @@ async fn catalogue(
         cursor,
         error,
         back_href,
-        back_label,
     )
 }
 
@@ -1218,7 +1213,19 @@ async fn start_message_mode(
             "Choose a stored provider.",
         ));
     };
-    if !attachments.is_empty() {
+    let has_images = if attachments.is_empty() {
+        false
+    } else {
+        state
+            .conversations
+            .staged_attachments(session, &attachment_scope)
+            .map_err(|error| {
+                StartMessageError::User(PatchStatus::UnprocessableEntity, error.message())
+            })?
+            .iter()
+            .any(|reference| attachments.contains(&reference.id) && reference.format.is_image())
+    };
+    if has_images {
         let selection = &model.settings.model;
         match state
             .models_dev
@@ -2033,7 +2040,6 @@ fn status_for(error: ConversationError) -> PatchStatus {
         _ => PatchStatus::UnprocessableEntity,
     }
 }
-#[allow(clippy::too_many_arguments)]
 fn render_catalogue(
     state: &AppState,
     graft: GraftRequest,
@@ -2042,7 +2048,6 @@ fn render_catalogue(
     cursor: Option<(u64, ConversationId)>,
     error: &'static str,
     back_href: String,
-    back_label: &'static str,
 ) -> AppResult<Response> {
     render_page(
         state,
@@ -2061,7 +2066,6 @@ fn render_catalogue(
             cursor,
             error,
             back_href,
-            back_label,
         ),
     )
 }

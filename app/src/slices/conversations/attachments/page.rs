@@ -31,11 +31,6 @@ impl AttachmentsView {
         self.error = error.message().to_owned();
         self
     }
-
-    pub(crate) fn with_message(mut self, message: &str) -> Self {
-        self.error = message.to_owned();
-        self
-    }
 }
 
 pub(crate) struct StagedAttachmentView {
@@ -43,6 +38,8 @@ pub(crate) struct StagedAttachmentView {
     pub(crate) src: String,
     pub(crate) remove_action: String,
     pub(crate) label: String,
+    pub(crate) filename: String,
+    pub(crate) is_image: bool,
 }
 
 #[derive(Template)]
@@ -107,7 +104,13 @@ pub(crate) fn view(
             id: reference.id.as_hex(),
             src: image_source(scope, reference.id),
             remove_action: remove_action(scope, reference.id),
-            label: format!("{} by {} image", reference.width, reference.height),
+            label: if reference.format.is_image() {
+                format!("{} by {} image", reference.width, reference.height)
+            } else {
+                format!("{} bytes · Plain text", reference.byte_length)
+            },
+            filename: reference.filename.clone(),
+            is_image: reference.format.is_image(),
         })
         .collect();
     view.has_room = view.attachments.len() < view.max;

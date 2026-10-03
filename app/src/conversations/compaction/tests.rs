@@ -4,7 +4,7 @@ use super::{CompactionError, CompactionRecord, project, select_boundary, validat
 use crate::conversations::history::{
     CommandEntry, ConversationMessage, MessageRole, MessageStatus, RequestUsage,
 };
-use crate::conversations::{MessageId, RequestId};
+use crate::conversations::{MessageId, RequestId, attachments::AttachmentStore};
 use crate::execution::command::CommandChunk;
 use crate::execution::{CommandResult, CommandStream, CommandTermination};
 
@@ -98,8 +98,14 @@ fn a_settled_included_command_is_a_compaction_boundary() {
         assistant("Done"),
     ];
     let budget = cost(&messages[2..=3]);
-    let (covered, retained) =
-        select_boundary(&messages, None, Some(&selection()), budget).expect("boundary");
+    let (covered, retained) = select_boundary(
+        &messages,
+        None,
+        Some(&selection()),
+        budget,
+        &AttachmentStore::in_memory(),
+    )
+    .expect("boundary");
     assert_eq!(covered, messages[1].id);
     assert_eq!(retained, messages[2].id);
 }
@@ -191,8 +197,14 @@ fn compaction_preserves_consumed_resource_provenance() {
     let mut request = usage();
     request.sources = sources;
     let budget = cost(&messages[3..=4]);
-    let (covered_through, retained_from) =
-        select_boundary(&messages, None, Some(&selection()), budget).expect("boundary");
+    let (covered_through, retained_from) = select_boundary(
+        &messages,
+        None,
+        Some(&selection()),
+        budget,
+        &AttachmentStore::in_memory(),
+    )
+    .expect("boundary");
     let record = CompactionRecord {
         covered_through,
         retained_from,
@@ -215,8 +227,14 @@ fn compaction_preserves_consumed_resource_provenance() {
 fn a_recent_context_budget_keeps_the_latest_complete_exchange() {
     let messages = two_exchanges();
     let budget = cost(&messages[2..=3]);
-    let (covered, retained) =
-        select_boundary(&messages, None, Some(&selection()), budget).expect("boundary");
+    let (covered, retained) = select_boundary(
+        &messages,
+        None,
+        Some(&selection()),
+        budget,
+        &AttachmentStore::in_memory(),
+    )
+    .expect("boundary");
     assert_eq!(covered, messages[1].id);
     assert_eq!(retained, messages[2].id);
     // When the whole history fits, the earliest exchange is still covered so a
@@ -226,10 +244,57 @@ fn a_recent_context_budget_keeps_the_latest_complete_exchange() {
         None,
         Some(&selection()),
         super::RECENT_CONTEXT_TOKENS,
+        &AttachmentStore::in_memory(),
     )
     .expect("boundary");
     assert_eq!(covered, messages[1].id);
     assert_eq!(retained, messages[2].id);
+}
+
+#[test]
+fn retention_uses_resolved_text_attachments_and_enforces_the_token_bound() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = AttachmentStore::open(directory.path().to_owned()).unwrap();
+    let bytes = "const value = 1;\n".repeat(768).into_bytes();
+    let normalised = store.normalise(&bytes).unwrap();
+    let reference = crate::conversations::AttachmentRef {
+        id: crate::conversations::AttachmentId::generate().unwrap(),
+        sha256: normalised.sha256(),
+        format: normalised.format,
+        width: normalised.width,
+        height: normalised.height,
+        byte_length: bytes.len() as u64,
+        filename: "source.rs".to_owned(),
+    };
+    store.write_object(&reference.sha256, &bytes).unwrap();
+    let mut messages = two_exchanges();
+    messages[2].text.clear();
+    messages[2].attachments.push(reference.clone());
+    assert!(cost(&messages[2..]) > super::RECENT_CONTEXT_TOKENS);
+    let selection = selection();
+    let turns = crate::conversations::history::project_with_attachments(
+        &messages[2..],
+        Some(&selection),
+        Some(&store),
+    )
+    .unwrap();
+    let budget =
+        crate::execution::context::count_turns(selection.provider, &selection.model, &turns)
+            .unwrap();
+    assert!(budget < super::RECENT_CONTEXT_TOKENS);
+    assert_eq!(
+        select_boundary(&messages, None, Some(&selection), budget, &store),
+        Ok((messages[1].id, messages[2].id)),
+    );
+    assert_eq!(
+        select_boundary(&messages, None, Some(&selection), budget - 1, &store),
+        Err(CompactionError::Retention),
+    );
+    store.remove_object(&reference.sha256);
+    assert_eq!(
+        select_boundary(&messages, None, Some(&selection), budget, &store),
+        Err(CompactionError::Malformed),
+    );
 }
 
 #[test]
@@ -252,7 +317,13 @@ fn no_complete_exchange_in_the_budget_is_reported() {
         assistant("Done"),
     ];
     assert_eq!(
-        select_boundary(&messages, None, Some(&selection()), 0),
+        select_boundary(
+            &messages,
+            None,
+            Some(&selection()),
+            0,
+            &AttachmentStore::in_memory()
+        ),
         Err(CompactionError::Retention)
     );
 }
@@ -276,8 +347,14 @@ fn a_retained_exchange_is_not_split_from_its_tool_result() {
         assistant("Done"),
     ];
     let budget = cost(&messages[4..=5]);
-    let (covered, retained) =
-        select_boundary(&messages, None, Some(&selection()), budget).expect("boundary");
+    let (covered, retained) = select_boundary(
+        &messages,
+        None,
+        Some(&selection()),
+        budget,
+        &AttachmentStore::in_memory(),
+    )
+    .expect("boundary");
     assert_eq!(covered, messages[3].id);
     assert_eq!(retained, messages[4].id);
 }
@@ -301,8 +378,14 @@ fn repeated_coverage_extends_one_previous_summary() {
         created_at_ms: 1,
     };
     let budget = cost(&messages[4..=5]);
-    let (covered, retained) =
-        select_boundary(&messages, Some(&first), Some(&selection()), budget).expect("boundary");
+    let (covered, retained) = select_boundary(
+        &messages,
+        Some(&first),
+        Some(&selection()),
+        budget,
+        &AttachmentStore::in_memory(),
+    )
+    .expect("boundary");
     assert_eq!(covered, messages[3].id);
     assert_eq!(retained, messages[4].id);
     let covered = super::covered_turns(&messages, Some(&selection()), covered, Some(&first))
@@ -325,7 +408,8 @@ fn a_tool_call_cannot_split_from_its_result() {
             &messages,
             None,
             Some(&selection()),
-            super::RECENT_CONTEXT_TOKENS
+            super::RECENT_CONTEXT_TOKENS,
+            &AttachmentStore::in_memory(),
         ),
         Err(CompactionError::Unsettled)
     );
@@ -339,7 +423,8 @@ fn one_exchange_cannot_compact() {
             &messages,
             None,
             Some(&selection()),
-            super::RECENT_CONTEXT_TOKENS
+            super::RECENT_CONTEXT_TOKENS,
+            &AttachmentStore::in_memory(),
         ),
         Err(CompactionError::NothingToCompact)
     );
@@ -405,7 +490,8 @@ fn a_missing_cover_boundary_is_rejected() {
             &messages,
             Some(&record),
             Some(&selection()),
-            super::RECENT_CONTEXT_TOKENS
+            super::RECENT_CONTEXT_TOKENS,
+            &AttachmentStore::in_memory(),
         ),
         Err(CompactionError::Malformed)
     );
@@ -606,7 +692,13 @@ fn opaque_continuation_blocks_an_otherwise_valid_boundary() {
         assistant_tool("call-3", Some(target("read", "latest"))),
     ];
     assert_eq!(
-        select_boundary(&messages, None, Some(&selection()), 100),
+        select_boundary(
+            &messages,
+            None,
+            Some(&selection()),
+            100,
+            &AttachmentStore::in_memory()
+        ),
         Err(CompactionError::Continuation)
     );
     let turns = crate::conversations::history::project(&messages, Some(&selection())).unwrap();

@@ -225,6 +225,7 @@ pub(crate) fn select_boundary(
     current: Option<&CompactionRecord>,
     selection: Option<&ModelSelection>,
     budget: u64,
+    attachments: &super::attachments::AttachmentStore,
 ) -> Result<(MessageId, MessageId), CompactionError> {
     if current.is_some_and(|record| !record.valid(messages)) {
         return Err(CompactionError::Malformed);
@@ -254,7 +255,7 @@ pub(crate) fn select_boundary(
         } else {
             suffix[position - 1] + 1
         };
-        let cost = messages_tokens(selection, &messages[begin..=suffix[count - 1]])?;
+        let cost = messages_tokens(selection, &messages[begin..=suffix[count - 1]], attachments)?;
         if retained_count == 0 && cost > budget {
             return Err(CompactionError::Retention);
         }
@@ -303,9 +304,15 @@ fn requires_continuation(
 fn messages_tokens(
     selection: Option<&ModelSelection>,
     messages: &[ConversationMessage],
+    attachments: &super::attachments::AttachmentStore,
 ) -> Result<u64, CompactionError> {
-    let turns =
+    let mut turns =
         super::history::project(messages, selection).map_err(|_| CompactionError::Unsettled)?;
+    // Retention needs resolved text counts, not metadata upper bounds. Image estimates use dimensions alone.
+    for turn in &mut turns {
+        super::attachments::resolve_text_attachments(turn, attachments)
+            .map_err(|_| CompactionError::Malformed)?;
+    }
     Ok(turns_tokens(selection, &turns))
 }
 
@@ -324,7 +331,11 @@ fn turns_tokens(selection: Option<&ModelSelection>, turns: &[ChatTurn]) -> u64 {
 }
 
 fn turn_text_bytes(turn: &ChatTurn) -> usize {
-    let mut bytes = turn.text.len();
+    let mut bytes = turn.text.len().saturating_add(
+        usize::try_from(turn.unresolved_text_tokens())
+            .unwrap_or(usize::MAX)
+            .saturating_mul(4),
+    );
     for image in &turn.images {
         bytes = bytes.saturating_add(
             crate::conversations::attachments::estimated_image_tokens(image.width, image.height)

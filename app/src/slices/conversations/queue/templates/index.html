@@ -36,8 +36,10 @@
             tabindex="0"
           >
 {{ item.text }}</pre>
-          {% if item.images > 0 %}
-            <p class="text-quiet text-xs">Attached images: {{ item.images }}</p>
+          {% if item.attachments > 0 %}
+            <p class="text-quiet text-xs">
+              Attached files: {{ item.attachments }}
+            </p>
           {% endif %}
           <div class="flex flex-wrap gap-2">
             <form

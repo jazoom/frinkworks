@@ -1052,6 +1052,7 @@ pub(crate) async fn run_agent_action(
             role: crate::providers::Role::Assistant,
             text: text.clone(),
             images: Vec::new(),
+            text_attachments: Vec::new(),
             thinking: String::new(),
             tools: Vec::new(),
             activity: Vec::new(),
@@ -1933,6 +1934,7 @@ async fn compact_history_inner(
             record.compaction.as_ref(),
             selection.as_ref(),
             budget,
+            state.conversations.attachment_store(),
         )
         .map_err(|error| context_blocked(AssistantReply::default(), error.message()))?;
         let covered = crate::conversations::compaction::covered_turns_with_attachments(

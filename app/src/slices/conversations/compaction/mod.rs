@@ -100,6 +100,7 @@ pub(super) async fn compact(
         record.compaction.as_ref(),
         Some(&selection),
         budget,
+        state.conversations.attachment_store(),
     ) {
         Ok(boundary) => boundary,
         Err(error) => return reject(PatchStatus::UnprocessableEntity, error.message()),

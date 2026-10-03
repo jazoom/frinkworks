@@ -315,7 +315,7 @@ Default actions apply to new conversations. Local preferences retain both choice
 
 The composer places its editor above a compact toolbar. The editor limit is 32768 characters. The persisted message bound stays in the conversation store.
 
-The paperclip opens image selection. Selection uploads automatically. The slash control opens Commands, Skills and Prompts as separate groups. Composer help retains file references and prefix explanations.
+The paperclip opens file selection with the label Attach files. Selection uploads automatically. Images retain thumbnails. Plain text files show their filenames and sizes with download and Remove controls. Content determines the format, regardless of extension or supplied MIME type. Text attachments do not require image input support. The slash control opens Commands, Skills and Prompts as separate groups. Composer help retains file references and prefix explanations.
 
 The slash list remains visible during lookup updates. Partial prefixes from `/s` through `/skill:` retain skill suggestions. The list prevents selection until the current lookup completes.
 

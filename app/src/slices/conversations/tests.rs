@@ -554,16 +554,14 @@ pub(super) fn awaiting_gate(state: &AppState) {
 }
 
 #[tokio::test]
-async fn directory_history_matches_path_without_granting_access() {
+async fn directory_history_filters_by_path_and_rejects_invalid_queries() {
     let state = test_state();
     let token = connected(&state);
     let root = tempfile::tempdir().unwrap();
     let first = root.path().join("first/code");
     let second = root.path().join("second/code");
-    let unique = root.path().join("notes");
     std::fs::create_dir_all(&first).unwrap();
     std::fs::create_dir_all(&second).unwrap();
-    std::fs::create_dir_all(&unique).unwrap();
     let grant = crate::execution::DirectoryGrant::from_selected(&first, &[]).unwrap();
     let copied = crate::execution::DirectoryGrant::from_selected(&first, &[]).unwrap();
     assert_ne!(grant.id, copied.id);
@@ -573,14 +571,6 @@ async fn directory_history_matches_path_without_granting_access() {
         ("Original history", grant),
         ("Copied history", copied),
         ("Other history", other),
-        (
-            "Notes history",
-            crate::execution::DirectoryGrant::from_selected(&unique, &[]).unwrap(),
-        ),
-        (
-            "Copied notes history",
-            crate::execution::DirectoryGrant::from_selected(&unique, &[]).unwrap(),
-        ),
     ] {
         let mut model = crate::conversations::ConversationModelConfiguration::direct(
             ModelSelection::new(ProviderKind::Xai, "grok-4.6".to_owned(), None).unwrap(),
@@ -605,38 +595,27 @@ async fn directory_history_matches_path_without_granting_access() {
         .header(header::ACCEPT, "text/vnd.hypergraft.patches+html")
         .body(Body::empty())
         .unwrap();
-    for request in [document(&path, &token), navigation(&path, &token), patch] {
+    for (request, content_type) in [
+        (document(&path, &token), "text/html; charset=utf-8"),
+        (navigation(&path, &token), hypergraft::MEDIA_TYPE),
+        (patch, hypergraft::MEDIA_TYPE),
+    ] {
         let response = app(&state).oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CONTENT_TYPE], content_type);
         let body = text(response).await;
         let body = body.split("id=\"chat-main\"").last().unwrap();
         assert!(body.contains("Original history"));
         assert!(body.contains("Copied history"));
         assert!(!body.contains("Other history"));
-        assert!(body.contains(first.to_str().unwrap()));
-        assert!(body.contains(second.to_str().unwrap()));
-        assert!(body.contains("href=\"/conversations/new\""));
-        let options = normalised(
-            body.split("id=\"conversation-directory-filter\"")
-                .nth(1)
-                .unwrap()
-                .split("</select>")
-                .next()
-                .unwrap(),
-        );
-        assert!(options.contains(&format!("> {} </option>", first.display())));
-        assert!(options.contains(&format!("> {} </option>", second.display())));
-        assert_eq!(options.matches("> notes </option>").count(), 1);
-        assert!(options.contains(&format!("value=\"{}\"", unique.display())));
-        assert!(body.contains("data-graft-submit-on=\"change\""));
     }
     std::fs::rename(&first, root.path().join("old-code")).unwrap();
     std::fs::create_dir(&first).unwrap();
     let replacement = crate::execution::DirectoryGrant::from_selected(&first, &[]).unwrap();
     assert_eq!(key, super::page::history_directory_key(&replacement));
     let body = text(app(&state).oneshot(document(&path, &token)).await.unwrap()).await;
-    assert!(!body.contains("Unavailable"));
     assert!(body.contains("Copied history"));
+    assert!(!body.contains("Other history"));
     for query in [
         "directory=invalid",
         "directory=0000000000000000-0000000000000000",
@@ -660,61 +639,7 @@ async fn directory_history_matches_path_without_granting_access() {
             StatusCode::BAD_REQUEST
         );
     }
-    assert_eq!(state.conversations.list().len(), 5);
-
-    let mut records = state.conversations.list();
-    let original = records
-        .iter()
-        .find(|record| record.title == "Original history")
-        .unwrap()
-        .clone();
-    let mut moved = original.clone();
-    let moved_path = root.path().join("old-code");
-    moved.model.as_mut().unwrap().settings.directories =
-        vec![crate::execution::DirectoryGrant::from_selected(&moved_path, &[]).unwrap()];
-    for pair in [[original.clone(), moved.clone()], [moved, original]] {
-        let pair: Vec<_> = pair.iter().map(|record| record.metadata()).collect();
-        let view = super::page::CatalogueView::from_records(
-            &state,
-            &pair,
-            &key,
-            "",
-            None,
-            "",
-            String::new(),
-            "",
-        );
-        assert_eq!(view.conversations.len(), 1);
-        assert_eq!(view.directories.len(), 2);
-    }
-
-    let mut replacement_record = records[0].clone();
-    replacement_record.id = crate::conversations::ConversationId::generate().unwrap();
-    replacement_record.title = "Replacement history".to_owned();
-    replacement_record
-        .model
-        .as_mut()
-        .unwrap()
-        .settings
-        .directories = vec![replacement];
-    records.push(replacement_record);
-    let records: Vec<_> = records.iter().map(|record| record.metadata()).collect();
-    let view = super::page::CatalogueView::from_records(
-        &state,
-        &records,
-        &key,
-        "",
-        None,
-        "",
-        String::new(),
-        "",
-    );
-    assert_eq!(view.conversations.len(), 3);
-    assert!(
-        view.conversations
-            .iter()
-            .any(|record| record.title == "Replacement history")
-    );
+    assert_eq!(state.conversations.list().len(), 3);
 }
 
 #[tokio::test]
@@ -750,7 +675,6 @@ async fn history_lists_one_row_per_conversation_including_drafts() {
         None,
         "",
         String::new(),
-        "",
     );
     let mut destinations: Vec<_> = view
         .conversations
@@ -797,10 +721,9 @@ async fn history_filters_preserve_only_valid_return_context() {
         if context == id {
             assert!(body.contains(&format!("name=\"conversation\" value=\"{id}\"")));
             assert!(body.contains(&format!("href=\"/conversations?conversation={id}\"")));
-            assert!(body.contains(&format!("href=\"/conversations/{id}\"")));
         } else {
             assert!(!body.contains("name=\"conversation\""));
-            assert!(!body.contains("Back to conversation"));
+            assert!(!body.contains("conversation="));
         }
     }
 }

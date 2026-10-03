@@ -42,7 +42,7 @@ pub(in crate::slices::conversations) fn reject_attachments(
     }
     Err(StartMessageError::User(
         PatchStatus::UnprocessableEntity,
-        "Direct commands do not accept images. Remove the images or send a model message.",
+        "Direct commands do not accept attachments. Remove the files or send a model message.",
     ))
 }
 

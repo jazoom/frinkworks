@@ -18,7 +18,7 @@ pub(crate) struct QueueItemView {
     pub(crate) edit_text: String,
     /// The original skill command. The expanded text stays in `text`.
     pub(crate) command: Option<String>,
-    pub(crate) images: usize,
+    pub(crate) attachments: usize,
     pub(crate) delivery: &'static str,
     pub(crate) confirm_replace: bool,
 }
@@ -35,7 +35,7 @@ impl QueueView {
                     text: item.text.clone(),
                     edit_text: crate::conversations::input::escape_leading(&item.text),
                     command: item.input.as_ref().map(|input| input.typed.clone()),
-                    images: item.attachments.len(),
+                    attachments: item.attachments.len(),
                     delivery: match item.delivery {
                         QueueDelivery::FollowUp => "Follow-up",
                         QueueDelivery::Steering => "Steering",

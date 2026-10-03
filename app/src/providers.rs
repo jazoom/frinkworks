@@ -516,6 +516,9 @@ pub(crate) struct ChatTurn {
     /// projection. Local metadata and serialisation never carry the bytes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) images: Vec<ChatImage>,
+    /// Unresolved text references contribute to estimates. Requests resolve them into user text.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) text_attachments: Vec<crate::conversations::AttachmentRef>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub(crate) thinking: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -533,11 +536,25 @@ pub(crate) struct ChatTurn {
 }
 
 impl ChatTurn {
+    pub(crate) fn unresolved_text_tokens(&self) -> u64 {
+        // Metadata estimates reserve JSON escapes and the reference label without a file read.
+        self.text_attachments
+            .iter()
+            .map(|reference| {
+                reference
+                    .byte_length
+                    .saturating_mul(2)
+                    .saturating_add(reference.filename.len() as u64 * 6 + 128)
+            })
+            .sum()
+    }
+
     pub(crate) fn user(text: String) -> Self {
         Self {
             role: Role::User,
             text,
             images: Vec::new(),
+            text_attachments: Vec::new(),
             thinking: String::new(),
             tools: Vec::new(),
             activity: Vec::new(),
@@ -570,6 +587,7 @@ impl ChatTurn {
             role: Role::Assistant,
             text: reply.text,
             images: Vec::new(),
+            text_attachments: Vec::new(),
             thinking: reply.thinking,
             tools: reply.tools,
             activity: reply.activity,
@@ -849,6 +867,11 @@ impl ChatBackend {
         preamble: &str,
         max_tokens: Option<u64>,
     ) -> Result<ModelStream, ProviderError> {
+        if history.iter().any(|turn| !turn.text_attachments.is_empty()) {
+            return Err(ProviderError::Detail(
+                "Text attachments require content before a model request.".to_owned(),
+            ));
+        }
         match self {
             Self::Rig => {
                 rig::stream_turn(connection, history, extra, tools, preamble, max_tokens).await

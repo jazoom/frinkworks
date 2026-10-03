@@ -77,7 +77,6 @@ pub(super) struct CatalogueView {
     pub(super) query: String,
     pub(super) error: &'static str,
     pub(super) back_href: String,
-    pub(super) back_label: &'static str,
     pub(super) has_more: bool,
     pub(super) next_href: String,
     pub(super) newest_href: String,
@@ -95,7 +94,6 @@ pub(super) struct HistoryDirectoryOption {
 pub(super) const CATALOGUE_PAGE_SIZE: usize = 50;
 
 impl CatalogueView {
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn from_records(
         state: &crate::state::AppState,
         records: &[crate::conversations::ConversationMetadata],
@@ -104,7 +102,6 @@ impl CatalogueView {
         cursor: Option<(u64, crate::conversations::ConversationId)>,
         error: &'static str,
         back_href: String,
-        back_label: &'static str,
     ) -> Self {
         let mut ordered: Vec<_> = records
             .iter()
@@ -196,7 +193,6 @@ impl CatalogueView {
             query: query.trim().to_owned(),
             error,
             back_href,
-            back_label,
             has_more,
             next_href,
             newest_href,
@@ -1044,7 +1040,13 @@ impl ConversationDetailView {
     /// rejects the request anyway; this note explains the mismatch before the
     /// user submits. An unknown capability is not treated as supported.
     fn image_compatibility_note(&self) -> &'static str {
-        if self.attachments.attachments.is_empty() || self.model_picker.model.is_empty() {
+        if !self
+            .attachments
+            .attachments
+            .iter()
+            .any(|attachment| attachment.is_image)
+            || self.model_picker.model.is_empty()
+        {
             return "";
         }
         match self.model_picker.selected_image_input {
@@ -2329,6 +2331,15 @@ pub(super) fn message_view_in(
                 ammonia::clean_text(&message.text)
             );
             for reference in &message.attachments {
+                if !reference.format.is_image() {
+                    html.push_str(&format!(
+                        "<a href=\"/conversations/{conversation}/attachments/{id}\" download class=\"flex items-center gap-2 py-2\"><svg class=\"workspace-icon shrink-0\" aria-hidden=\"true\"><use href=\"/static/images/workspace-icons.svg#file\" /></svg><span class=\"min-w-0 break-all\">{filename}<span class=\"text-quiet block text-sm\">{size} bytes · Plain text</span></span></a>",
+                        id = reference.id,
+                        filename = ammonia::clean_text(&reference.filename),
+                        size = reference.byte_length,
+                    ));
+                    continue;
+                }
                 html.push_str(&format!(
                     "<a href=\"/conversations/{conversation}/attachments/{id}\" target=\"_blank\" rel=\"noopener\"><img src=\"/conversations/{conversation}/attachments/{id}\" alt=\"Attached image\" loading=\"lazy\" class=\"max-h-64 max-w-full object-contain\"></a>",
                     id = reference.id,

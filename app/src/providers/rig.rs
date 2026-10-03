@@ -326,6 +326,11 @@ pub(crate) fn project_messages(
     extra: &[Message],
 ) -> Result<Vec<Message>, ProviderError> {
     for turn in history {
+        if turn.images.iter().any(|image| !image.format.is_image()) {
+            return Err(ProviderError::Detail(
+                "Plain text cannot form an image block.".to_owned(),
+            ));
+        }
         if !crate::conversations::history::valid_continuation(&turn.continuation)
             || turn
                 .continuation
@@ -699,6 +704,9 @@ fn image_media_type(format: crate::conversations::AttachmentFormat) -> ImageMedi
         crate::conversations::AttachmentFormat::Png => ImageMediaType::PNG,
         crate::conversations::AttachmentFormat::Jpeg => ImageMediaType::JPEG,
         crate::conversations::AttachmentFormat::Webp => ImageMediaType::WEBP,
+        crate::conversations::AttachmentFormat::Text => {
+            unreachable!("text attachments never enter image content")
+        }
     }
 }
 

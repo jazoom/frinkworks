@@ -380,7 +380,9 @@ body:has(.workspace-catalogue) .app-frame {
     font-size: 14px;
     white-space: normal;
 }
-.app-frame .workspace-catalogue[data-section="conversations"] .btn {
+.app-frame
+    .workspace-catalogue[data-section="conversations"]
+    .btn:not(.page-empty .btn) {
     min-height: 44px;
     border-radius: 7px;
     font-size: 14px;

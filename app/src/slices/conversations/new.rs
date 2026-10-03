@@ -228,9 +228,9 @@ impl NewForm {
                 continue;
             }
             let id = crate::conversations::attachments::parse_attachment_id(value)
-                .ok_or("That staged image is not valid. Add it again.")?;
+                .ok_or("That staged file is not valid. Add it again.")?;
             if ids.contains(&id) {
-                return Err("That staged image is not valid. Add it again.");
+                return Err("That staged file is not valid. Add it again.");
             }
             ids.push(id);
         }

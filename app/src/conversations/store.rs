@@ -537,6 +537,7 @@ struct AttachmentFile {
     width: u32,
     height: u32,
     byte_length: u64,
+    filename: String,
 }
 
 fn attachment_from_file(
@@ -550,6 +551,7 @@ fn attachment_from_file(
         width: file.width,
         height: file.height,
         byte_length: file.byte_length,
+        filename: file.filename,
     };
     reference
         .valid()
@@ -565,6 +567,7 @@ fn attachment_to_file(reference: &crate::conversations::AttachmentRef) -> Attach
         width: reference.width,
         height: reference.height,
         byte_length: reference.byte_length,
+        filename: reference.filename.clone(),
     }
 }
 

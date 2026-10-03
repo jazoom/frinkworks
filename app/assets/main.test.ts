@@ -580,7 +580,7 @@ function attachmentMarkup(action: string): string {
         >
             <input
                 type="file"
-                name="image"
+                name="file"
                 multiple
                 data-attachment-input
             />
@@ -1096,7 +1096,7 @@ test("mixed paste inserts the text once and stages each image once", () => {
     ).toBe(false);
 });
 
-test("mixed files retain distinct images and rejection details after the upload patch", () => {
+test("mixed files reach server validation regardless of extension or MIME type", () => {
     const action = "/conversations/new/attachments?draft=aaa";
     document.body.insertAdjacentHTML("beforeend", attachmentMarkup(action));
     const form = document.querySelector<HTMLFormElement>(
@@ -1113,8 +1113,9 @@ test("mixed files retain distinct images and rejection details after the upload 
         );
     }
     transfer.items.add(
-        new File(["pdf"], "notes.pdf", { type: "application/pdf" }),
+        new File(["plain text"], "notes.pdf", { type: "application/pdf" }),
     );
+    transfer.items.add(new File(["no extension"], "NOTES", { type: "" }));
     document.querySelector("#composer-message")!.dispatchEvent(
         new ClipboardEvent("paste", {
             bubbles: true,
@@ -1123,11 +1124,8 @@ test("mixed files retain distinct images and rejection details after the upload 
         }),
     );
     expect(form.querySelector<HTMLInputElement>("input")!.files).toHaveLength(
-        2,
+        4,
     );
-    expect(
-        document.querySelector("[data-attachment-error]")!.textContent,
-    ).toContain("PNG");
     expect(form.requestSubmit).toHaveBeenCalledOnce();
     const submittedForm = form.querySelector("input")!.closest("form")!;
     document
@@ -1149,8 +1147,8 @@ test("mixed files retain distinct images and rejection details after the upload 
     const error = document.querySelector<HTMLElement>(
         "[data-attachment-error]",
     )!;
-    expect(error.hidden).toBe(false);
-    expect(error.textContent).toContain("PNG");
+    expect(error.hidden).toBe(true);
+    expect(error.textContent).toBe("");
     expect(
         document.querySelector<HTMLTextAreaElement>("#composer-message")!.value,
     ).toBe("Unsent text");
@@ -1173,11 +1171,15 @@ test("a text-only paste keeps the browser's ordinary insertion", () => {
     ).toBeNull();
 });
 
-test("an unsupported drop reports beside the draft and stages nothing", () => {
+test("a plain text drop uses the same guarded upload as images", () => {
     document.body.insertAdjacentHTML(
         "beforeend",
         attachmentMarkup("/conversations/new/attachments?draft=aaa"),
     );
+    const form = document.querySelector<HTMLFormElement>(
+        "[data-attachment-upload]",
+    )!;
+    form.requestSubmit = vi.fn();
     const dock = document.createElement("div");
     dock.dataset.attachmentDropZone = "";
     const hint = document.createElement("p");
@@ -1196,12 +1198,13 @@ test("an unsupported drop reports beside the draft and stages nothing", () => {
     const input = document.querySelector<HTMLInputElement>(
         "[data-attachment-input]",
     )!;
-    expect(input.files ?? []).toHaveLength(0);
+    expect(input.files ?? []).toHaveLength(1);
+    expect(form.requestSubmit).toHaveBeenCalledOnce();
     const error = document.querySelector<HTMLElement>(
         "[data-attachment-error]",
     )!;
-    expect(error.hidden).toBe(false);
-    expect(error.textContent).toContain("PNG");
+    expect(error.hidden).toBe(true);
+    expect(error.textContent).toBe("");
 });
 
 test("a stale upload completion after navigation leaves the new draft alone", () => {
@@ -1225,7 +1228,7 @@ test("a stale upload completion after navigation leaves the new draft alone", ()
         <p data-attachment-error hidden></p>
         <p data-attachment-pending hidden></p>
         <form method="post" action="/conversations/new/attachments?draft=bbb" data-attachment-upload>
-            <input type="file" name="image" multiple data-attachment-input />
+            <input type="file" name="file" multiple data-attachment-input />
         </form>`;
     const newInput = document.querySelector<HTMLInputElement>(
         "[data-attachment-input]",

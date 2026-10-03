@@ -1,6 +1,6 @@
-//! Add-image controls for the conversation composer.
+//! Attachment controls for the conversation composer.
 //!
-//! Uploads stage session-owned images and never create a conversation. A saved
+//! Uploads stage session-owned files and never create a conversation. A saved
 //! conversation uses its identifier as the staging scope, so a draft and a
 //! saved transcript cannot share staged references. The fragment patch touches
 //! only the two attachment containers, so the composer keeps its draft text and
@@ -98,9 +98,12 @@ async fn upload(
                 break;
             }
         };
-        if field.name() != Some("image") {
+        if field.name() != Some("file") {
             continue;
         }
+        let filename = crate::conversations::attachments::normalise_filename(
+            field.file_name().unwrap_or("Attachment"),
+        );
         let mut bytes = Vec::new();
         let read_error = loop {
             match field.chunk().await {
@@ -151,6 +154,7 @@ async fn upload(
             width: image.width,
             height: image.height,
             byte_length: image.bytes.len() as u64,
+            filename,
         };
         if let Err(error) =
             state
@@ -206,7 +210,7 @@ async fn remove(
 ) -> AppResult<Response> {
     let mut view = page::view(&state, session.0, &scope);
     let Some(id) = AttachmentId::parse(attachment_id.trim()) else {
-        view = view.with_message("That image is no longer staged. Add it again.");
+        view = view.with_error(AttachmentError::Missing);
         return render_attachments(view);
     };
     if let Err(error) = state
@@ -223,7 +227,7 @@ async fn remove(
     render_attachments(view)
 }
 
-/// Serve one staged image for the composer preview. The route is
+/// Serve one staged attachment for the composer preview. The route is
 /// session-scoped, so a foreign session cannot read another draft's staging.
 pub(super) async fn serve_new(
     State(state): State<AppState>,
@@ -240,7 +244,7 @@ pub(super) async fn serve_new(
     serve(state, session, scope, attachment_id).await
 }
 
-/// Serve one retained image for a saved conversation. The reference must
+/// Serve one retained attachment for a saved conversation. The reference must
 /// belong to that conversation, so the route never exposes another path.
 pub(super) async fn serve_saved(
     State(state): State<AppState>,
@@ -301,6 +305,26 @@ async fn serve(
         axum::http::header::X_CONTENT_TYPE_OPTIONS,
         axum::http::HeaderValue::from_static("nosniff"),
     );
+    if !reference.format.is_image() {
+        // Plain text can contain HTML or SVG. It must never execute on this origin.
+        let filename: String = reference
+            .filename
+            .as_bytes()
+            .iter()
+            .map(|byte| format!("%{byte:02X}"))
+            .collect();
+        response.headers_mut().insert(
+            axum::http::header::CONTENT_DISPOSITION,
+            axum::http::HeaderValue::from_str(&format!(
+                "attachment; filename=\"attachment.txt\"; filename*=UTF-8''{filename}"
+            ))
+            .expect("percent-encoded filename"),
+        );
+        response.headers_mut().insert(
+            axum::http::header::CONTENT_SECURITY_POLICY,
+            axum::http::HeaderValue::from_static("default-src 'none'; sandbox"),
+        );
+    }
     Ok(response)
 }
 

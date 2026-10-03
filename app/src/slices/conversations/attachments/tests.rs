@@ -33,6 +33,7 @@ fn stage(state: &AppState, session: crate::sessions::SessionId, scope: &str) -> 
         width: image.width,
         height: image.height,
         byte_length: image.bytes.len() as u64,
+        filename: "image.png".to_owned(),
     };
     state
         .conversations
@@ -65,7 +66,7 @@ fn conversation(state: &AppState) -> crate::conversations::ConversationRecord {
 }
 
 #[tokio::test]
-async fn upload_rejects_svg_without_creating_a_conversation() {
+async fn upload_rejects_binary_without_creating_a_conversation() {
     let state = test_state();
     let token = connected(&state);
     let request = Request::builder().method("POST")
@@ -73,7 +74,7 @@ async fn upload_rejects_svg_without_creating_a_conversation() {
         .header(header::COOKIE, format!("frinkworks_session={token}"))
         .header(header::CONTENT_TYPE, "multipart/form-data; boundary=image-test")
         .header(hypergraft::GRAFT_REQUEST, "patch").header(header::ACCEPT, hypergraft::MEDIA_TYPE)
-        .body(Body::from("--image-test\r\nContent-Disposition: form-data; name=\"image\"; filename=\"x.png\"\r\nContent-Type: image/png\r\n\r\n<svg></svg>\r\n--image-test--\r\n")).expect("request");
+        .body(Body::from("--image-test\r\nContent-Disposition: form-data; name=\"file\"; filename=\"x.txt\"\r\nContent-Type: text/plain\r\n\r\nbinary\0data\r\n--image-test--\r\n")).expect("request");
     let response = app(&state).oneshot(request).await.expect("upload");
     assert_eq!(response.status(), axum::http::StatusCode::OK);
     let body = String::from_utf8(
@@ -84,8 +85,190 @@ async fn upload_rejects_svg_without_creating_a_conversation() {
     )
     .expect("text");
     assert!(body.contains("conversation-attachment-controls"));
-    assert!(body.contains("Use a PNG, JPEG or WebP image."));
+    assert!(body.contains("UTF-8 plain text file without binary control characters"));
     assert!(state.conversations.metadata().is_empty());
+}
+
+#[tokio::test]
+async fn text_uploads_ignore_extensions_and_mime_and_remain_inert_scoped_snapshots() {
+    let state = test_state();
+    let token = connected(&state);
+    let foreign = connected(&state);
+    let session = crate::sessions::SessionId::from_validated(
+        &crate::sessions::ValidatedToken::parse(&token).unwrap(),
+    );
+    let content = "\u{feff}<script>alert('not executable')</script>\n日本語\n";
+    let names = ["NOTES", "source.rs", "page.html", "pipe|name.png"];
+    for name in names {
+        let body = format!(
+            "--file-test\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{name}\"\r\nContent-Type: image/png\r\n\r\n{content}\r\n--file-test--\r\n"
+        );
+        for enhanced in [false, true] {
+            let mut request = Request::builder()
+                .method("POST")
+                .uri(format!("/conversations/new/attachments?draft={DRAFT}"))
+                .header(header::COOKIE, format!("frinkworks_session={token}"))
+                .header(
+                    header::CONTENT_TYPE,
+                    "multipart/form-data; boundary=file-test",
+                );
+            if enhanced {
+                request = request
+                    .header(hypergraft::GRAFT_REQUEST, "patch")
+                    .header(header::ACCEPT, hypergraft::MEDIA_TYPE);
+            }
+            let before = state
+                .conversations
+                .staged_attachments(session, SCOPE)
+                .unwrap()
+                .len();
+            let response = app(&state)
+                .oneshot(request.body(Body::from(body.clone())).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                if enhanced {
+                    axum::http::StatusCode::OK
+                } else {
+                    axum::http::StatusCode::BAD_REQUEST
+                }
+            );
+            assert_eq!(
+                state
+                    .conversations
+                    .staged_attachments(session, SCOPE)
+                    .unwrap()
+                    .len(),
+                before + usize::from(enhanced)
+            );
+            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        }
+    }
+    assert!(state.conversations.metadata().is_empty());
+    let references = state
+        .conversations
+        .staged_attachments(session, SCOPE)
+        .unwrap();
+    assert_eq!(
+        references
+            .iter()
+            .map(|r| r.filename.as_str())
+            .collect::<Vec<_>>(),
+        names
+    );
+    for reference in &references {
+        assert_eq!(
+            reference.format,
+            crate::conversations::AttachmentFormat::Text
+        );
+        let path = format!(
+            "/conversations/new/attachments/{}?draft={DRAFT}",
+            reference.id
+        );
+        for (cookie, status) in [
+            (&token, axum::http::StatusCode::OK),
+            (&foreign, axum::http::StatusCode::NOT_FOUND),
+        ] {
+            let response = app(&state)
+                .layer(axum::middleware::from_fn_with_state(
+                    state.clone(),
+                    crate::security::add_security_headers,
+                ))
+                .oneshot(
+                    Request::builder()
+                        .uri(&path)
+                        .header(header::COOKIE, format!("frinkworks_session={cookie}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), status);
+            if status.is_success() {
+                assert_eq!(
+                    response.headers()[header::CONTENT_TYPE],
+                    "text/plain; charset=utf-8"
+                );
+                assert_eq!(
+                    response.headers()[header::X_CONTENT_TYPE_OPTIONS],
+                    "nosniff"
+                );
+                assert!(
+                    response.headers()[header::CONTENT_DISPOSITION]
+                        .to_str()
+                        .unwrap()
+                        .starts_with("attachment;")
+                );
+                let policies = response
+                    .headers()
+                    .get_all(header::CONTENT_SECURITY_POLICY)
+                    .iter()
+                    .map(|value| value.to_str().unwrap())
+                    .collect::<Vec<_>>();
+                assert!(policies.contains(&"default-src 'none'; sandbox"));
+                assert!(policies.iter().any(|policy| {
+                    policy.contains("default-src 'self'") && policy.contains("script-src 'self'")
+                }));
+                assert_eq!(
+                    to_bytes(response.into_body(), usize::MAX).await.unwrap(),
+                    content.as_bytes()
+                );
+            }
+        }
+    }
+    let record = conversation(&state);
+    let connection = crate::providers::ProviderConnection::with_key(
+        crate::providers::ProviderKind::Deepseek,
+        "test-key",
+        "deepseek-v4-pro",
+    );
+    assert_eq!(
+        state
+            .models_dev
+            .supports_images(connection.kind, &connection.model),
+        Some(false)
+    );
+    state.vault.put(connection.clone()).unwrap();
+    let mut model = record.model.clone().unwrap();
+    model.settings.model = crate::providers::ModelSelection::new(
+        connection.kind,
+        connection.model.clone(),
+        crate::providers::ThinkingEffort::new("low".to_owned()),
+    )
+    .unwrap();
+    model.settings.tools.clear();
+    let started = super::super::start_message(
+        &state,
+        session,
+        record.clone(),
+        record.revision,
+        model,
+        String::new(),
+        None,
+        references.iter().map(|r| r.id).collect(),
+        SCOPE.to_owned(),
+    )
+    .await
+    .unwrap_or_else(|super::super::StartMessageError::User(_, message)| panic!("{message}"));
+    let retained = state.conversations.get(&record.id).unwrap();
+    assert_eq!(
+        retained.messages[0].attachments,
+        started.messages[0].attachments
+    );
+    let mut turns = crate::conversations::history::project(&retained.messages, None).unwrap();
+    assert_eq!(turns[0].text_attachments, references);
+    crate::conversations::attachments::prepare_turns(&state, &connection, &mut turns).unwrap();
+    assert!(turns[0].images.is_empty());
+    assert!(turns[0].text_attachments.is_empty());
+    assert!(turns[0].text.contains("not executable"));
+    let projected = crate::conversations::history::project_with_attachments(
+        &retained.messages,
+        None,
+        Some(state.conversations.attachment_store()),
+    )
+    .unwrap();
+    assert_eq!(turns, projected);
 }
 
 #[test]

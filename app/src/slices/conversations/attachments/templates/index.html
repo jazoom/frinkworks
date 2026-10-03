@@ -7,19 +7,48 @@
   {{ view.error }}
 </p>
 <p class="text-quiet text-sm" role="status" data-attachment-pending hidden>
-  Adding images…
+  Upload in progress…
+</p>
+<p id="attachment-help" class="sr-only">
+  Images and plain text files. UTF-8 text up to 256 KiB. Images up to 8 MiB. Up
+  to eight files and 24 MiB per message.
 </p>
 {% if !view.attachments.is_empty() %}
-  <ul class="flex flex-wrap gap-2" aria-label="Attached images">
+  <ul class="flex flex-wrap gap-2" aria-label="Attached files">
     {% for attachment in view.attachments %}
-      <li class="relative" data-attachment="{{ attachment.id }}">
-        <img
-          src="{{ attachment.src }}"
-          alt="Attached image, {{ attachment.label }}"
-          class="rounded-box h-16 w-16 object-cover"
-          width="64"
-          height="64"
-        />
+      <li
+        class="relative max-w-full"
+        data-attachment="{{ attachment.id }}"
+        {% if attachment.is_image %}data-image-attachment{% endif %}
+      >
+        {% if attachment.is_image %}
+          <img
+            src="{{ attachment.src }}"
+            alt="{{ attachment.filename }}, {{ attachment.label }}"
+            class="rounded-box h-16 w-16 object-cover"
+            width="64"
+            height="64"
+          />
+        {% else %}
+          <a
+            href="{{ attachment.src }}"
+            download
+            class="bg-base-200 rounded-box flex min-h-16 max-w-72 items-center gap-2 py-2 ps-3 pe-10"
+            aria-label="Download {{ attachment.filename }}"
+          >
+            <svg class="workspace-icon shrink-0" aria-hidden="true">
+              <use href="/static/images/workspace-icons.svg#file" />
+            </svg>
+            <span class="min-w-0">
+              <span class="block text-sm break-all"
+                >{{ attachment.filename }}</span
+              >
+              <span class="text-quiet block text-xs"
+                >{{ attachment.label }}</span
+              >
+            </span>
+          </a>
+        {% endif %}
         <form
           data-graft
           method="post"
@@ -34,9 +63,11 @@
           <button
             class="btn btn-circle btn-xs"
             type="submit"
-            aria-label="Remove attached image"
+            aria-label="Remove {{ attachment.filename }}"
           >
-            ×
+            <svg class="workspace-icon" aria-hidden="true">
+              <use href="/static/images/workspace-icons.svg#close" />
+            </svg>
           </button>
         </form>
       </li>
@@ -53,14 +84,14 @@
     data-attachment-upload
   >
     <label>
-      Add images
+      Attach files
       <input
         type="file"
-        name="image"
-        accept="image/png,image/jpeg,image/webp"
+        name="file"
         multiple
         class="sr-only"
         data-attachment-input
+        aria-describedby="attachment-help"
       />
     </label>
   </form>

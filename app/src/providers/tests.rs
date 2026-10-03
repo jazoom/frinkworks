@@ -1118,6 +1118,7 @@ fn projection_rejects_foreign_model_and_unsettled_calls() {
         role: Role::Assistant,
         text: String::new(),
         images: Vec::new(),
+        text_attachments: Vec::new(),
         thinking: String::new(),
         tools: Vec::new(),
         activity: Vec::new(),
@@ -1192,6 +1193,7 @@ async fn image_projection_survives_metadata_reload_and_rejects_a_model_change() 
         width: 2,
         height: 2,
         byte_length: normalised.bytes.len() as u64,
+        filename: "image.png".to_owned(),
     };
     state
         .conversations
@@ -1296,6 +1298,10 @@ async fn image_projection_survives_metadata_reload_and_rejects_a_model_change() 
     assert!(prepare_turns(&state, &incompatible, &mut turns).is_err());
     let unknown = ProviderConnection::with_key(ProviderKind::Xai, "key", "unknown-image-model");
     assert!(prepare_turns(&state, &unknown, &mut turns).is_err());
+    turns[0].images[0].reference.format = AttachmentFormat::Text;
+    assert!(prepare_turns(&state, &connection, &mut turns).is_err());
+    turns[0].images[0].format = AttachmentFormat::Text;
+    assert!(project_messages(connection.kind, &connection.model, &turns, &[]).is_err());
 }
 
 #[test]

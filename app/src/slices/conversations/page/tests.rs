@@ -201,6 +201,8 @@ fn image_compatibility_explains_mismatch_without_assuming_support() {
             src: "/conversations/new/attachments/0".to_owned(),
             remove_action: "/conversations/new/attachments/0/remove".to_owned(),
             label: "1 by 1 image".to_owned(),
+            filename: "image.png".to_owned(),
+            is_image: true,
         },
     );
     view.model_picker.model = "example-model".to_owned();
@@ -215,6 +217,9 @@ fn image_compatibility_explains_mismatch_without_assuming_support() {
             .contains("cannot confirm image input")
     );
     view.model_picker.selected_image_input = Some(true);
+    assert_eq!(view.image_compatibility_note(), "");
+    view.attachments.attachments[0].is_image = false;
+    view.model_picker.selected_image_input = Some(false);
     assert_eq!(view.image_compatibility_note(), "");
 }
 

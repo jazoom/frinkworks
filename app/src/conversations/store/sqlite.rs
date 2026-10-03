@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS attachments (
     id TEXT PRIMARY KEY NOT NULL,
     sha256 TEXT NOT NULL,
     format TEXT NOT NULL,
+    filename TEXT NOT NULL,
     width INTEGER NOT NULL,
     height INTEGER NOT NULL,
     byte_length INTEGER NOT NULL,
@@ -1284,8 +1285,8 @@ impl Database {
                 .execute(
                     "INSERT INTO attachments
                         (id, sha256, format, width, height, byte_length, created_at_ms,
-                         session, scope, conversation_id, message_id)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, '', ?8, NULL)",
+                         session, scope, conversation_id, message_id, filename)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, '', ?8, NULL, ?9)",
                     params![
                         reference.id.as_hex(),
                         reference.sha256,
@@ -1295,6 +1296,7 @@ impl Database {
                         i64::try_from(reference.byte_length).unwrap_or(i64::MAX),
                         i64::try_from(now_ms()).unwrap_or(i64::MAX),
                         record.id.as_hex(),
+                        reference.filename,
                     ],
                 )
                 .map_err(map_error)?;
@@ -1312,8 +1314,8 @@ impl Database {
             .connection
             .execute(
                 "INSERT INTO attachments
-                    (id, sha256, format, width, height, byte_length, created_at_ms, session, scope)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    (id, sha256, format, width, height, byte_length, created_at_ms, session, scope, filename)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
                     reference.id.as_hex(),
                     reference.sha256,
@@ -1324,6 +1326,7 @@ impl Database {
                     i64::try_from(now_ms()).unwrap_or(i64::MAX),
                     session.as_hex(),
                     scope,
+                    reference.filename,
                 ],
             )
             .map_err(map_error)?;
@@ -1440,7 +1443,7 @@ impl Database {
         let reference: Option<String> = self
             .connection
             .query_row(
-                "SELECT sha256 || '|' || format || '|' || width || '|' || height || '|' || byte_length
+                "SELECT sha256 || '|' || format || '|' || width || '|' || height || '|' || byte_length || '|' || filename
                  FROM attachments
                  WHERE id = ?1 AND session = ?2 AND scope = ?3
                  AND conversation_id IS NULL AND message_id IS NULL AND created_at_ms >= ?4",
@@ -1466,7 +1469,7 @@ impl Database {
         let mut statement = self
             .connection
             .prepare(
-                "SELECT sha256, format, width, height, byte_length, id FROM attachments
+                "SELECT sha256, format, width, height, byte_length, id, filename FROM attachments
                  WHERE session = ?1 AND scope = ?2 AND conversation_id IS NULL AND created_at_ms >= ?3
                  ORDER BY created_at_ms, rowid",
             )
@@ -1480,15 +1483,17 @@ impl Database {
                     row.get::<_, i64>(3)?,
                     row.get::<_, i64>(4)?,
                     row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
                 ))
             })
             .map_err(map_error)?;
         let mut references = Vec::new();
         for row in rows {
-            let (sha256, format, width, height, byte_length, id) = row.map_err(map_error)?;
+            let (sha256, format, width, height, byte_length, id, filename) =
+                row.map_err(map_error)?;
             references.push(attachment_ref(
                 id,
-                format!("{sha256}|{format}|{width}|{height}|{byte_length}"),
+                format!("{sha256}|{format}|{width}|{height}|{byte_length}|{filename}"),
             )?);
         }
         Ok(references)
@@ -1521,7 +1526,7 @@ impl Database {
         let reference: Option<String> = self
             .connection
             .query_row(
-                "SELECT sha256 || '|' || format || '|' || width || '|' || height || '|' || byte_length
+                "SELECT sha256 || '|' || format || '|' || width || '|' || height || '|' || byte_length || '|' || filename
                  FROM attachments WHERE conversation_id = ?1 AND id = ?2",
                 params![conversation.as_hex(), id.as_hex()],
                 |row| row.get(0),
@@ -1616,12 +1621,13 @@ fn attachment_ref(
     id: String,
     encoded: String,
 ) -> Result<crate::conversations::attachments::AttachmentRef, ConversationError> {
-    let mut fields = encoded.split('|');
+    let mut fields = encoded.splitn(6, '|');
     let sha256 = fields.next().ok_or(ConversationError::Corrupt)?.to_owned();
     let format = match fields.next().ok_or(ConversationError::Corrupt)? {
         "png" => crate::conversations::AttachmentFormat::Png,
         "jpeg" => crate::conversations::AttachmentFormat::Jpeg,
         "webp" => crate::conversations::AttachmentFormat::Webp,
+        "text" => crate::conversations::AttachmentFormat::Text,
         _ => return Err(ConversationError::Corrupt),
     };
     let width = fields
@@ -1636,9 +1642,7 @@ fn attachment_ref(
         .next()
         .and_then(|value| value.parse().ok())
         .ok_or(ConversationError::Corrupt)?;
-    if fields.next().is_some() {
-        return Err(ConversationError::Corrupt);
-    }
+    let filename = fields.next().ok_or(ConversationError::Corrupt)?.to_owned();
     let reference = crate::conversations::attachments::AttachmentRef {
         id: crate::conversations::attachments::AttachmentId::parse(&id)
             .ok_or(ConversationError::Corrupt)?,
@@ -1647,6 +1651,7 @@ fn attachment_ref(
         width,
         height,
         byte_length,
+        filename,
     };
     reference
         .valid()

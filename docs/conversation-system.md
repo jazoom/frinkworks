@@ -196,29 +196,34 @@ Retained command output references move to the destination scope. The applicatio
 
 Workflow ownership remains with the original conversation. A fork never transfers ownership. A later handoff remains the only explicit ownership transfer.
 
-## Image attachments
+## Attachments
 
-A conversation message can reference immutable images. Supported formats are PNG, JPEG and static WebP. SVG, animated PNG, animated WebP, GIF and every other format are rejected.
+A conversation message can reference immutable images and plain text files. Supported images are PNG, JPEG and static WebP. The application rejects animated images and other binary formats.
 
-These upload bounds apply to one staged image and one message:
+Plain text requires valid UTF-8, with an optional UTF-8 BOM. The application rejects control characters except tabs, carriage returns and line feeds. It accepts empty text files. Content determines the format, regardless of filename extension or supplied MIME type. HTML and SVG source remain plain text, not executable content.
+
+These upload bounds apply to one staged file and one message:
 
 - Input bytes: at most 8 MiB for one file, before decode.
-- Decoded size: at most 40 megapixels and 12,000 pixels on either edge.
-- Count: at most 8 images for one message.
+- Plain text: at most 256 KiB for one file.
+- Decoded image size: at most 40 megapixels and 12,000 pixels on either edge.
+- Count: at most 8 files for one message.
 - Aggregate normalised bytes: at most 24 MiB for one message.
 - Multipart request: at most 65 MiB, including form overhead.
 
-The application decodes each upload and re-encodes it without source metadata. It never trusts a filename or a client MIME header. A rejected upload adds no reference and keeps the composer draft.
+The application decodes each image upload and re-encodes it without source metadata. Plain text retains its original bytes. Filenames are bounded display metadata, never filesystem paths. A rejected upload adds no reference and keeps the composer draft.
 
-A staged image belongs to one browser session and one composer scope. Each new draft uses its nonce. A saved conversation uses its identifier. The upload route creates no conversation.
+A staged file belongs to one browser session and one composer scope. Each new draft uses its nonce. A saved conversation uses its identifier. The upload route creates no conversation.
 
 Send or queue submission claims staged references in the same transaction as the message or queue item. A foreign, consumed or stale reference aborts the whole append. A failed commit can leave an unreferenced object, never a committed reference to absent bytes.
 
-Image bytes live in a content-addressed object directory. The database holds only reference metadata. Several messages or forks can share one object. The application removes an object only after no reference row remains.
+Attachment bytes live in a content-addressed object directory. The database holds only reference metadata. Several messages or forks can share one object. The application removes an object only after no reference row remains.
 
 Unclaimed uploads expire after one hour. Startup removes all unclaimed uploads because sessions do not survive a restart. Fork drafts retain separate references until release or restart.
 
-Queue return restores staged references without deletion. Prompt revision retains the source images. Saved messages display retained images through scoped routes.
+Queue return restores staged references without deletion. Prompt revision retains the source attachments. Saved messages expose retained attachments through scoped routes.
+
+Text attachments resolve into user reference material before a model request. They do not become system instructions or grant directory access. Requests include the complete text without silent truncation. Metadata-only context estimates use conservative bounds until content resolves. Text files do not require image input support.
 
 Image blocks reach the provider through the shared request projection. The request validates the capability of the selected model before dispatch. An unknown or unsupported image capability is rejected. Opaque continuation data and duplicates stay out of the projection.
 
@@ -226,7 +231,9 @@ The model picker marks each model with known image-input support and offers an *
 
 A retained reference survives compaction and a fork. Compaction keeps original image references. A summary request includes the images of each covered chunk, so an image-only turn never reads as empty text. Context estimation uses decoded dimensions, not the encoded byte length.
 
-Image routes are session-scoped. A saved image requires a reference that belongs to its conversation. The response uses the explicit raster media type and `no-store`.
+Attachment routes are session-scoped. A saved attachment requires a reference that belongs to its conversation. Responses use an explicit media type with `nosniff` and `no-store`. Plain text downloads also use an attachment disposition and a sandbox CSP.
+
+The alpha attachment format retains version 1 and adds filename metadata. No compatibility migration exists for earlier attachment records or database schemas.
 
 ## Skill commands
 
@@ -278,7 +285,7 @@ A direct command needs the selected location, the Run capability and valid conse
 
 App access requires a stored provider connection, including direct commands and resource catalogues. The connection page remains available without a provider. The application does not support local models.
 
-With Ask each time, every direct command waits for the same approval as a model Run call. Typed syntax alone is not approval. The application rejects an empty command and an attached image. A rejected submission leaves the draft intact.
+With Ask each time, every direct command waits for the same approval as a model Run call. Typed syntax alone is not approval. The application rejects an empty command and attached files. A rejected submission leaves the draft intact.
 
 The application persists the pending command entry before it starts a process. The entry records the context inclusion, the command text, the actual directory, the output reference and the termination. A restart marks an unsettled command as interrupted. Captured process output survives a restart before a review decision. The application never replays the command.
 
@@ -298,7 +305,7 @@ Context exclusion remains separate from local approval and command evidence.
 
 Context exclusion does not restrict filesystem access through independently authorised tools.
 
-The application rejects command syntax in the steering and follow-up queues. It rejects command syntax that contains an image attachment. Expanded resource text remains ordinary model input.
+The application rejects command syntax in the steering and follow-up queues. It rejects command syntax that contains an attachment. Expanded resource text remains ordinary model input.
 
 ## Ownership and recovery
 

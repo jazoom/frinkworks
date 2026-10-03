@@ -29,7 +29,7 @@ The composer sits near the viewport bottom. Its toolbar groups attachments and m
 
 Model selection keeps the picker open. The selected row offers Set default when it differs from the saved default. A Default badge identifies the saved default. There is no defaults footer. Accepts images names both the image-input filter and the row badges.
 
-The paperclip uses automatic image upload. The slash picker groups built-in Commands, Skills and Prompts. Composer help retains file references and command explanations.
+The paperclip uses automatic upload for images and UTF-8 plain text files, regardless of extension. Its label reads Attach files. Document previews show filenames and sizes with download and Remove controls. The slash picker groups built-in Commands, Skills and Prompts. Composer help retains file references and command explanations.
 
 Setup includes a Conversation section with an inline title field and an independent draft copy. Delete confirmation expands in place without replacement of the other actions.
 

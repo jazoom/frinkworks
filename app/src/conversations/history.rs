@@ -648,8 +648,7 @@ pub(crate) fn project(
     project_with_attachments(messages, selection, None)
 }
 
-/// Project the active path and resolve the image references that the actual
-/// request includes. Text-only consumers pass no store and never read bytes.
+/// Metadata-only consumers retain unresolved references without access to bytes.
 pub(crate) fn project_with_attachments(
     messages: &[ConversationMessage],
     selection: Option<&ModelSelection>,
@@ -666,6 +665,10 @@ pub(crate) fn project_with_attachments(
                 let mut turn = ChatTurn::user(message.text.clone());
                 if !message.attachments.is_empty() {
                     for reference in &message.attachments {
+                        if !reference.format.is_image() {
+                            turn.text_attachments.push(reference.clone());
+                            continue;
+                        }
                         let bytes = attachments
                             .map(|store| store.load(reference))
                             .transpose()
@@ -679,6 +682,10 @@ pub(crate) fn project_with_attachments(
                             bytes,
                         });
                     }
+                }
+                if let Some(store) = attachments {
+                    super::attachments::resolve_text_attachments(&mut turn, store)
+                        .map_err(|_| HistoryError::Attachment)?;
                 }
                 history.push(turn);
             }
@@ -736,6 +743,7 @@ pub(crate) fn project_with_attachments(
                     role: crate::providers::Role::Assistant,
                     text,
                     images: Vec::new(),
+                    text_attachments: Vec::new(),
                     thinking: String::new(),
                     tools,
                     activity: message.activity.clone(),

@@ -447,6 +447,7 @@ impl AttemptContextPacket {
                     role: crate::providers::Role::Assistant,
                     text: text.clone(),
                     images: Vec::new(),
+                    text_attachments: Vec::new(),
                     thinking: String::new(),
                     tools: calls
                         .iter()

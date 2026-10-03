@@ -513,7 +513,9 @@ function syncImageCompatibility() {
     );
     if (!note || !text) return;
     const controls = composerControls();
-    const attached = document.querySelectorAll("[data-attachment]").length;
+    const attached = document.querySelectorAll(
+        "[data-image-attachment]",
+    ).length;
     let message = "";
     if (controls && attached > 0 && controls.model.value) {
         const selected = composerCatalogue()[controls.provider.value]?.find(
@@ -2500,14 +2502,8 @@ listenForRequestSettled((detail) => {
 });
 
 // Use the multipart form to retain Hypergraft's unsafe-command guard.
-const SUPPORTED_IMAGE_TYPES = new Set([
-    "image/png",
-    "image/jpeg",
-    "image/webp",
-]);
-
 let pendingAttachmentUpload:
-    { form: HTMLFormElement; action: string; warning: string } | undefined;
+    { form: HTMLFormElement; action: string } | undefined;
 
 // Mirror only the server's active reply status. A historical window can contain
 // a pending entry, but its content does not represent the live tail.
@@ -2680,12 +2676,8 @@ function setAttachmentPending(pending: boolean) {
     }
 }
 
-function supportedImage(file: File): boolean {
-    return SUPPORTED_IMAGE_TYPES.has(file.type.toLocaleLowerCase());
-}
-
 function distinctFiles(files: File[]): File[] {
-    // Equal metadata does not imply equal image bytes.
+    // Equal metadata does not imply equal file bytes.
     return [...new Set(files)];
 }
 
@@ -2705,19 +2697,19 @@ function stageAttachmentFiles(files: File[]): boolean {
     );
     if (!form || !input || input.disabled) {
         setAttachmentError(
-            "Frinkworks cannot attach another image to this message.",
+            "Frinkworks cannot attach another file to this message.",
         );
         return false;
     }
     if (typeof DataTransfer === "undefined") {
         setAttachmentError(
-            "This browser cannot stage images from the clipboard.",
+            "This browser cannot attach files from the clipboard.",
         );
         return false;
     }
     if (commandBlockReason()) {
         setAttachmentError(
-            "Wait for the current command to finish before adding images.",
+            "Wait for the current command to finish before you attach files.",
         );
         return false;
     }
@@ -2728,40 +2720,19 @@ function stageAttachmentFiles(files: File[]): boolean {
     return true;
 }
 
-function clipboardImages(clipboard: DataTransfer): File[] {
-    return distinctFiles(Array.from(clipboard.files ?? []));
-}
-
-function stageTransferredFiles(files: File[]) {
-    const supported = files.filter(supportedImage);
-    const unsupported = files.some((file) => !supportedImage(file));
-    const staged = supported.length > 0 && stageAttachmentFiles(supported);
-    if (!unsupported) return;
-    const warning = "Frinkworks can attach PNG, JPEG and WebP images only.";
-    if (staged && pendingAttachmentUpload) {
-        pendingAttachmentUpload.warning = warning;
-    }
-    const error = attachmentControls()?.querySelector<HTMLElement>(
-        "[data-attachment-error]",
-    );
-    setAttachmentError(
-        [error?.textContent?.trim(), warning].filter(Boolean).join(" "),
-    );
-}
-
 document.addEventListener("paste", (event) => {
     const field = event.target;
     if (!(field instanceof HTMLTextAreaElement)) return;
     if (field.id !== "composer-message" || field.disabled) return;
     const clipboard = event.clipboardData;
     if (!clipboard) return;
-    const files = clipboardImages(clipboard);
+    const files = distinctFiles(Array.from(clipboard.files ?? []));
     // A text-only paste keeps the browser's ordinary insertion behaviour.
     if (files.length === 0) return;
     event.preventDefault();
     const text = clipboard.getData("text/plain");
     if (text !== "") insertAtCaret(field, text);
-    stageTransferredFiles(files);
+    stageAttachmentFiles(files);
 });
 
 function dropZone(target: EventTarget | null): HTMLElement | null {
@@ -2815,7 +2786,7 @@ document.addEventListener("drop", (event) => {
     setDropHint(activeDropZone ?? zone, false);
     activeDropZone = null;
     const files = distinctFiles(Array.from(event.dataTransfer?.files ?? []));
-    stageTransferredFiles(files);
+    if (files.length > 0) stageAttachmentFiles(files);
 });
 
 document.addEventListener("change", (event) => {
@@ -2827,11 +2798,11 @@ document.addEventListener("change", (event) => {
     if (!form) return;
     if (commandBlockReason()) {
         setAttachmentError(
-            "Wait for the current command to finish before adding images.",
+            "Wait for the current command to finish before you attach files.",
         );
         return;
     }
-    pendingAttachmentUpload = { form, action: form.action, warning: "" };
+    pendingAttachmentUpload = { form, action: form.action };
     setAttachmentError("");
     setAttachmentPending(true);
     form.requestSubmit();
@@ -2854,21 +2825,11 @@ listenForRequestSettled((detail) => {
         "[data-attachment-input]",
     );
     if (detail.outcome === "applied-patch" && detail.status === 200) {
-        if (initiated.warning) {
-            const error = attachmentControls()?.querySelector<HTMLElement>(
-                "[data-attachment-error]",
-            );
-            setAttachmentError(
-                [error?.textContent?.trim(), initiated.warning]
-                    .filter(Boolean)
-                    .join(" "),
-            );
-        }
         if (input) input.value = "";
         return;
     }
     setAttachmentError(
-        "Frinkworks could not confirm the upload. Reload this page before another attempt.",
+        "The upload result is unknown. Reload this page before another attempt.",
     );
 });
 
