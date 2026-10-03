@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { initConversation } from "./conversation";
 
 describe.each(["new", "saved"])("%s conversation settings", (state) => {
@@ -40,6 +40,7 @@ describe.each(["new", "saved"])("%s conversation settings", (state) => {
     afterEach(() => {
         controller.abort();
         island.destroy?.();
+        vi.useRealTimers();
         document.body.replaceChildren();
     });
 
@@ -209,6 +210,7 @@ describe.each(["new", "saved"])("%s conversation settings", (state) => {
         );
 
         test("a rejected save retains later edits without an automatic retry", () => {
+            vi.useFakeTimers();
             const original = root.innerHTML;
             let submits = 0;
             const form = root.querySelector<HTMLFormElement>("form")!;
@@ -222,12 +224,12 @@ describe.each(["new", "saved"])("%s conversation settings", (state) => {
             field.dispatchEvent(new Event("focusout", { bubbles: true }));
             field.value = "Newer draft";
             field.dispatchEvent(new Event("input", { bubbles: true }));
-            field.dispatchEvent(new Event("focusout", { bubbles: true }));
             root.innerHTML = original;
             root.querySelector<HTMLFormElement>("form")!.requestSubmit = () => {
                 submits++;
             };
             reconcile("conversation-settings-form", 422);
+            vi.runAllTimers();
             expect(value("instructions")).toBe("Newer draft");
             expect(value("tool_read")).toBe("read");
             expect(submits).toBe(1);
@@ -237,6 +239,7 @@ describe.each(["new", "saved"])("%s conversation settings", (state) => {
         });
 
         test("an uncertain save retains the draft and never reports success", () => {
+            vi.useFakeTimers();
             const form = root.querySelector<HTMLFormElement>("form")!;
             form.requestSubmit = () => {};
             edit();
@@ -252,6 +255,7 @@ describe.each(["new", "saved"])("%s conversation settings", (state) => {
                     outcome: "uncertain-unsafe-result",
                 },
             });
+            vi.runAllTimers();
             expect(value("instructions")).toBe("Keep my draft");
             expect(
                 root.querySelector("[data-instructions-status]")!.textContent,
@@ -324,44 +328,81 @@ describe.each(["new", "saved"])("%s conversation settings", (state) => {
             expect(value("revision")).toBe("5");
         });
 
-        test("ordinary saved fields submit without dirty execution values", () => {
-            const form = root.querySelector<HTMLFormElement>("form")!;
-            const submitted: Array<{
-                location: FormDataEntryValue | null;
-                network: FormDataEntryValue | null;
-            }> = [];
-            form.requestSubmit = () => {
-                const data = new FormData(form);
-                submitted.push({
-                    location: data.get("location"),
-                    network: data.get("network"),
-                });
-            };
-            const host = root.querySelector<HTMLInputElement>(
-                '[name="location"][value="host"]',
-            )!;
-            host.checked = true;
-            host.dispatchEvent(new Event("input", { bubbles: true }));
-            const network = root.querySelector<HTMLInputElement>(
-                '[name="network"][value="restricted"]',
-            )!;
-            network.checked = true;
-            network.dispatchEvent(new Event("change", { bubbles: true }));
-            expect(submitted).toEqual([]);
-            const tool =
-                root.querySelector<HTMLInputElement>('[name="tool_read"]')!;
-            tool.checked = true;
-            tool.dispatchEvent(new Event("change", { bubbles: true }));
-            expect(submitted).toEqual([
-                { location: "sandbox", network: "none" },
-            ]);
-            expect(value("network")).toBe("restricted");
-            expect(
-                root.querySelector<HTMLInputElement>(
+        test.each(["tool_read", "instructions"])(
+            "autosave of %s excludes unreviewed execution authority",
+            (name) => {
+                vi.useFakeTimers();
+                const form = root.querySelector<HTMLFormElement>("form")!;
+                const submitted: Array<{
+                    location: FormDataEntryValue | null;
+                    network: FormDataEntryValue | null;
+                }> = [];
+                form.requestSubmit = () => {
+                    const data = new FormData(form);
+                    submitted.push({
+                        location: data.get("location"),
+                        network: data.get("network"),
+                    });
+                };
+                const host = root.querySelector<HTMLInputElement>(
                     '[name="location"][value="host"]',
-                )!.checked,
-            ).toBe(true);
-        });
+                )!;
+                host.checked = true;
+                host.dispatchEvent(new Event("input", { bubbles: true }));
+                const network = root.querySelector<HTMLInputElement>(
+                    '[name="network"][value="restricted"]',
+                )!;
+                network.checked = true;
+                network.dispatchEvent(new Event("change", { bubbles: true }));
+                expect(submitted).toEqual([]);
+                const field = form.elements.namedItem(name);
+                if (field instanceof HTMLInputElement) {
+                    field.checked = true;
+                    field.dispatchEvent(new Event("change", { bubbles: true }));
+                } else if (field instanceof HTMLTextAreaElement) {
+                    field.value = "First edit";
+                    field.dispatchEvent(new Event("input", { bubbles: true }));
+                    vi.advanceTimersByTime(60);
+                    field.value = "Latest edit";
+                    field.dispatchEvent(new Event("input", { bubbles: true }));
+                    vi.advanceTimersByTime(99);
+                    expect(submitted).toEqual([]);
+                    vi.advanceTimersByTime(1);
+                    expect(value("instructions")).toBe("Latest edit");
+                }
+                expect(submitted).toEqual([
+                    { location: "sandbox", network: "none" },
+                ]);
+                expect(value("network")).toBe("restricted");
+                expect(
+                    root.querySelector<HTMLInputElement>(
+                        '[name="location"][value="host"]',
+                    )!.checked,
+                ).toBe(true);
+            },
+        );
+
+        test.each(["location", "destroy"])(
+            "%s cancels autosave before it can reach a different conversation",
+            (cause) => {
+                vi.useFakeTimers();
+                const submit = vi.fn();
+                root.querySelector<HTMLFormElement>("form")!.requestSubmit =
+                    submit;
+                edit();
+                if (cause === "location")
+                    island.reconcile?.({
+                        cause: "location",
+                        detail: {
+                            url: "/conversations/another",
+                            cause: "link-navigation",
+                        },
+                    });
+                else island.destroy?.();
+                vi.runAllTimers();
+                expect(submit).not.toHaveBeenCalled();
+            },
+        );
 
         test.each(["read", "edit"])(
             "a queued %s revocation survives the earlier save response",

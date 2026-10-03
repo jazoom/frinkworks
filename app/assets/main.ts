@@ -2049,7 +2049,7 @@ listenForRequestSettled((detail) => {
             requestedPanel.showPopover();
         const destination =
             requestedPanel.querySelector<HTMLElement>(
-                "[data-execution-switch]:not([hidden]), [data-preset-preview], #conversation-preset-save:not([hidden]), #conversation-directory-consent",
+                "[data-execution-actions]:not([hidden]) [data-execution-switch]:not([hidden]), #settings-presets:not([hidden]) :is([data-preset-preview], #conversation-preset-save:not([hidden])), #conversation-directory-consent",
             ) ??
             (requestedPanel.dataset.directoriesOpen === "true"
                 ? document.getElementById("conversation-directory-heading")

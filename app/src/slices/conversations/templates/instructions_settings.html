@@ -37,12 +37,15 @@
       class="text-error mt-2 text-sm"
       hidden
     ></p>
-    <p data-instructions-status role="status" class="text-quiet mt-2 text-sm">
+    <p
+      data-instructions-status
+      role="status"
+      class="text-quiet mt-2 text-sm"
+      {% if !self.is_new() && error.is_empty() %}hidden{% endif %}
+    >
       {% if self.is_new() %}
         Draft · saved with your first message.
-      {% else if error.is_empty() %}
-        Saved
-      {% else %}
+      {% else if !error.is_empty() %}
         Changes are not saved.
       {% endif %}
     </p>

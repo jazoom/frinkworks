@@ -55,7 +55,14 @@ export function initConversation(
     let submittedSettings: typeof unsavedSettings;
     let ordinarySavePending = false;
     let ordinarySaveQueued = false;
+    let ordinarySaveTimer: ReturnType<typeof setTimeout> | undefined;
+    let ordinaryStatusTimer: ReturnType<typeof setTimeout> | undefined;
+    let ordinarySaveSlow = false;
     let ordinaryFailure = "";
+    function cancelOrdinarySaveTimer() {
+        clearTimeout(ordinarySaveTimer);
+        ordinarySaveTimer = undefined;
+    }
     function ordinaryValues() {
         const form = modelForm();
         return JSON.stringify(
@@ -71,6 +78,17 @@ export function initConversation(
     }
     let savedOrdinary = ordinaryValues();
     function syncSettingsStatus() {
+        if (!ordinarySavePending && !ordinarySaveQueued) {
+            clearTimeout(ordinaryStatusTimer);
+            ordinaryStatusTimer = undefined;
+            ordinarySaveSlow = false;
+        } else if (ordinaryStatusTimer === undefined && !ordinarySaveSlow) {
+            ordinaryStatusTimer = setTimeout(() => {
+                ordinaryStatusTimer = undefined;
+                ordinarySaveSlow = true;
+                syncSettingsStatus();
+            }, 500);
+        }
         const status = root.querySelector<HTMLElement>(
             "[data-instructions-status]",
         );
@@ -84,12 +102,15 @@ export function initConversation(
                 ? "Draft retained. The instructions need correction."
                 : "Draft · saved with your first message."
             : ordinaryFailure ||
-              (ordinarySavePending
-                  ? "Save in progress"
-                  : invalid || ordinaryValues() !== savedOrdinary
-                    ? "Unsaved changes"
-                    : "Saved");
+              (invalid
+                  ? "Unsaved changes"
+                  : ordinarySaveSlow
+                    ? ordinarySavePending
+                        ? "Save in progress"
+                        : "Unsaved changes"
+                    : "");
         if (status.textContent !== text) status.textContent = text;
+        status.hidden = !text;
     }
     function syncEnableTools() {
         const toggle = root.querySelector<HTMLInputElement>(
@@ -199,6 +220,7 @@ export function initConversation(
     }
 
     function queueOrdinarySave() {
+        cancelOrdinarySaveTimer();
         if (draftSettings) return;
         const form = root.querySelector<HTMLFormElement>(
             "#conversation-settings-form",
@@ -212,6 +234,7 @@ export function initConversation(
             return;
         if (ordinarySavePending || commandBlockReason()) {
             ordinarySaveQueued = true;
+            syncSettingsStatus();
             return;
         }
         retainSettings();
@@ -284,6 +307,16 @@ export function initConversation(
             ) {
                 retainSettings();
                 syncSettingsStatus();
+                if (
+                    !draftSettings &&
+                    field instanceof HTMLTextAreaElement &&
+                    ordinaryNames.includes(field.name) &&
+                    field.form === modelForm()
+                ) {
+                    cancelOrdinarySaveTimer();
+                    if (!(event instanceof InputEvent && event.isComposing))
+                        ordinarySaveTimer = setTimeout(queueOrdinarySave, 100);
+                }
             }
             if (
                 event.target instanceof HTMLInputElement &&
@@ -294,6 +327,10 @@ export function initConversation(
         },
         { signal },
     );
+
+    root.addEventListener("compositionstart", cancelOrdinarySaveTimer, {
+        signal,
+    });
 
     root.addEventListener(
         "change",
@@ -383,6 +420,7 @@ export function initConversation(
                 if (context.detail.form.id === "conversation-settings-form") {
                     ordinarySavePending = false;
                     ordinarySaveQueued = false;
+                    cancelOrdinarySaveTimer();
                     ordinaryFailure =
                         "Save result unknown. Further changes are blocked.";
                     syncSettingsStatus();
@@ -406,8 +444,10 @@ export function initConversation(
                     ordinaryResponse && context.detail.status !== 200
                         ? "Changes are not saved. Resolve the error before another change."
                         : "";
-                if (ordinaryFailure) ordinarySaveQueued = false;
-                else savedOrdinary = ordinaryValues();
+                if (ordinaryFailure) {
+                    ordinarySaveQueued = false;
+                    cancelOrdinarySaveTimer();
+                } else savedOrdinary = ordinaryValues();
             }
             const settingsResponse =
                 (context.cause === "patch" &&
@@ -422,6 +462,7 @@ export function initConversation(
                     context.detail.form.id === "conversation-composer" &&
                     draftSettings);
             if (context.cause === "location") {
+                cancelOrdinarySaveTimer();
                 unsavedSettings = undefined;
                 submittedSettings = undefined;
                 ordinarySaveQueued = false;
@@ -547,6 +588,9 @@ export function initConversation(
             }
             syncSettingsStatus();
         },
-        destroy() {},
+        destroy() {
+            cancelOrdinarySaveTimer();
+            clearTimeout(ordinaryStatusTimer);
+        },
     };
 }
