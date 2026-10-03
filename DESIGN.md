@@ -160,7 +160,7 @@ Host consent uses a native modal above Setup with a dimmed backdrop. Its content
 
 ## Shapes
 
-Controls retain DaisyUI primitives. Workspace controls use seven-pixel corners. Navigation links use five-pixel corners. User messages retain three-pixel corners. The composer uses nine-pixel corners.
+Controls retain DaisyUI primitives. Workspace controls and navigation links use seven-pixel corners. User messages retain three-pixel corners. The composer uses nine-pixel corners.
 
 The Frinkworks symbol depicts Frink inside a pale circular badge. His skin is warm yellow (`#f2cc69`), with dark olive outlines (`#293218`) and a green bow tie (`#b3d153`). The circle, lenses and coat use off-white (`#fff8e7`).
 
@@ -174,7 +174,7 @@ The favicon crops the approved Frink artwork from the glasses through the mouth 
 
 `app/public/images/wordmark.svg` supplies the Bree Serif wordmark and retains the accessible name Frinkworks. It uses olive-grey on light backgrounds and off-white on dark backgrounds.
 
-The sidebar pairs its 171-pixel wordmark with a 15-pixel logo gap. The connection page retains a 162-pixel wordmark. The mobile header uses 148 pixels, or 138 pixels below a viewport width of 361 pixels. Logo boxes retain their existing dimensions.
+The sidebar pairs its 171-pixel wordmark with a 44-pixel logo and a 15-pixel gap. The connection page retains a 162-pixel wordmark. The mobile header uses 148 pixels, or 138 pixels below a viewport width of 361 pixels. Other logo boxes retain their existing dimensions.
 
 The wordmark retains the shared `0 0 970 154` viewBox. A uniform transform centres the approved outlines without a change to their proportions.
 
@@ -210,7 +210,13 @@ Back and Forward restore the catalogue content position after a fresh response. 
 
 ### Navigation
 
-New conversation remains prominent. The index contains navigation only, with primary destinations above Resources. Providers and Settings occupy the bottom group. Short viewports scroll the navigation as one region.
+New conversation uses a quiet outline and subtle cover tint instead of a filled accent. Its full-width target, plus icon and visible label remain at the top of the index.
+
+The 300-pixel index groups navigation under Your work and Resources. Providers and Settings occupy the bottom group without another divider. Short viewports scroll the navigation as one region.
+
+The index uses 20-pixel navigation gutters and 12-pixel gaps between icons and labels. Navigation rows retain a 44-pixel minimum height. Group headings use muted 13-pixel text.
+
+Resource symbols occupy 18 pixels inside aligned 20-pixel icon boxes. A larger gap and a thin rule separate Resources from Your work. The active destination uses a tint and semibold text.
 
 The Conversations page owns history and title search. It lists the most recently updated conversations first, with directory filters and pagination. The sidebar contains no recent list or search field.
 

@@ -5,7 +5,7 @@
   <div class="app-frame" data-island="workspace">
     <aside class="app-index" aria-label="Product index" id="workspace-index">
       <div class="workspace-menu-head">
-        <p class="workspace-menu-title" id="workspace-menu-title">Your work</p>
+        <p class="workspace-menu-title" id="workspace-menu-title">Navigation</p>
         <button
           type="button"
           class="btn btn-ghost btn-sm workspace-menu-close"
@@ -20,8 +20,8 @@
         <img
           src="/static/images/logo.svg"
           alt=""
-          width="48"
-          height="48"
+          width="44"
+          height="44"
           class="frinkworks-mark"
         />
         {% include "layout/wordmark.html" %}
@@ -29,12 +29,13 @@
       <a
         href="/conversations/new"
         data-graft
-        class="btn btn-primary workspace-new"
+        class="btn btn-outline workspace-new"
         ><svg class="workspace-icon" aria-hidden="true">
           <use href="/static/images/workspace-icons.svg#plus" /></svg
         >New conversation</a
       >
-      <nav class="workspace-navigation mt-4" aria-label="Primary navigation">
+      <nav class="workspace-navigation mt-7" aria-label="Primary navigation">
+        <h2 class="workspace-navigation-heading">Your work</h2>
         <a href="/attention" data-graft data-attention-link
           ><svg class="workspace-icon" aria-hidden="true">
             <use href="/static/images/workspace-icons.svg#bell" /></svg
@@ -65,8 +66,8 @@
         >
           <input type="hidden" name="index" value="true" />
         </form>
-        <div class="workspace-resources mt-6 mb-4">
-          <p class="workspace-resources-heading">Resources</p>
+        <div class="workspace-resources mt-8">
+          <h2 class="workspace-navigation-heading">Resources</h2>
           <a href="/environments" data-graft
             ><svg class="workspace-icon" aria-hidden="true">
               <use href="/static/images/workspace-icons.svg#database" /></svg

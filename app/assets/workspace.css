@@ -227,15 +227,15 @@ body {
     color: var(--workspace-cover-text);
 }
 .app-brand {
-    min-height: 90px;
+    min-height: 96px;
     gap: 15px;
     border: 0;
-    padding: 24px 32px;
+    padding: 24px;
     color: var(--workspace-cover-text);
 }
 .app-brand .frinkworks-mark {
-    width: 48px;
-    height: 48px;
+    width: 44px;
+    height: 44px;
 }
 .app-brand .frinkworks-mark,
 .workspace-mobile-brand .frinkworks-mark {
@@ -247,6 +247,7 @@ body {
 }
 .attention-count {
     display: inline-grid;
+    flex-shrink: 0;
     place-items: center;
     min-width: 20px;
     height: 20px;
@@ -301,18 +302,37 @@ body {
     height: 100dvh;
 }
 .app-frame .btn.workspace-new {
-    margin: 12px 16px 0;
+    margin: 0 20px;
     padding: 10px 16px;
-    gap: 16px;
-    font-size: 17px;
+    gap: 12px;
+    font-size: 16px;
     justify-content: flex-start;
-    width: calc(100% - 32px);
-    min-height: 46px;
+    width: calc(100% - 40px);
+    min-height: 48px;
     border-radius: 7px;
+    border-color: color-mix(
+        in srgb,
+        var(--workspace-cover-text) 24%,
+        transparent
+    );
+    background: color-mix(in srgb, var(--workspace-cover-text) 6%, transparent);
+    color: var(--workspace-cover-text);
+}
+.app-frame .btn.workspace-new:hover {
+    border-color: color-mix(
+        in srgb,
+        var(--workspace-cover-text) 36%,
+        transparent
+    );
+    background: color-mix(
+        in srgb,
+        var(--workspace-cover-text) 12%,
+        transparent
+    );
 }
 .workspace-new .workspace-icon {
-    width: 24px;
-    height: 24px;
+    width: 20px;
+    height: 20px;
 }
 .workspace-menu-head {
     display: none;
@@ -333,7 +353,7 @@ body {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 0 16px 24px;
+    padding: 0 20px 24px;
     font-size: 16px;
 }
 .workspace-navigation > a,
@@ -341,24 +361,25 @@ body {
 .workspace-local a {
     display: flex;
     align-items: center;
-    gap: 16px;
-    min-height: 40px;
-    padding: 8px 12px;
-    border-radius: 5px;
+    gap: 12px;
+    min-height: 44px;
+    padding: 10px 12px;
+    border-radius: 7px;
     text-decoration: none;
 }
-.workspace-navigation > a {
-    min-height: 44px;
-}
 .workspace-navigation .workspace-icon {
-    width: 24px;
-    height: 24px;
+    width: 20px;
+    height: 20px;
     color: var(--workspace-cover-text);
+}
+.workspace-resources .workspace-icon {
+    padding: 1px;
+    color: var(--workspace-cover-muted);
 }
 .app-frame .workspace-local [data-supervised-development] .btn {
     min-height: 44px;
     font-size: inherit;
-    border-radius: 5px;
+    border-radius: 7px;
 }
 .app-frame
     .workspace-local
@@ -367,6 +388,9 @@ body {
 .workspace-navigation a:hover,
 .workspace-navigation a[aria-current="page"] {
     background: color-mix(in srgb, var(--workspace-cover-text) 8%, transparent);
+}
+.workspace-navigation a[aria-current="page"] {
+    font-weight: 600;
 }
 .history-row:hover {
     background: var(--color-base-200);
@@ -523,17 +547,19 @@ body:has(.workspace-catalogue) .app-frame {
     margin-top: 17px;
 }
 .workspace-resources {
-    padding-top: 12px;
+    padding-top: 20px;
     border-top: 1px solid var(--workspace-cover-rule);
 }
-.workspace-resources-heading {
-    padding: 4px 12px;
+.workspace-navigation-heading {
+    margin-bottom: 8px;
+    padding-inline: 12px;
     color: var(--workspace-cover-muted);
-    font-size: 15px;
+    font-size: 13px;
+    font-weight: 600;
 }
 .workspace-local {
-    padding-top: 12px;
-    border-top: 1px solid var(--workspace-cover-rule);
+    padding-top: 24px;
+    font-size: 15px;
 }
 .workspace-menu {
     display: none;
