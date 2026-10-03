@@ -135,7 +135,9 @@ async fn the_initial_document_renders_the_saved_theme_and_selection() {
         .0;
     assert!(root.contains("data-theme=\"evergreen-terrace\""));
     assert!(text.contains("data-active-theme=\"evergreen-terrace\""));
-    assert_eq!(text.matches("selected").count(), 1);
+    let selector = text.split_once("data-active-theme=").unwrap().1;
+    let selector = selector.split_once("</fieldset>").unwrap().0;
+    assert_eq!(selector.matches("checked").count(), 1);
 }
 
 #[tokio::test]
@@ -153,7 +155,7 @@ async fn a_theme_patch_persists_and_returns_the_authoritative_selector() {
     let text = String::from_utf8(body.to_vec()).unwrap();
     assert!(text.contains("operation=\"children\" target=\"theme-setting\""));
     assert!(text.contains("data-active-theme=\"sector-7-g\""));
-    assert_eq!(text.matches("selected").count(), 1);
+    assert_eq!(text.matches("checked").count(), 1);
 }
 
 #[tokio::test]

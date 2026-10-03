@@ -78,7 +78,7 @@ The conversation and workflow setup share the companion structure. Catalogue aut
 
 Springfield uses pale paper and lime actions. Thin rules separate the transcript, companion and controls.
 
-The default setting follows the system preference. Light mode uses Springfield. Dark mode uses Sector 7-G.
+The default setting follows the system preference. Light mode uses Springfield. Dark mode uses Stonecutters.
 
 An explicit theme choice overrides the system preference. The Settings selector can restore the system preference.
 
@@ -94,7 +94,11 @@ All themes separate control borders from surface rules. Unchecked controls retai
 
 Cover controls use a local hover tint and visible focus against the sidebar colour. Sector 7-G shares these control states and stronger field borders without a palette change.
 
-Settings contains the only theme selector. The approved palettes replace the originals under the same names. Development builds contain no comparison variants or sidebar selector.
+Settings contains the only theme selector. Six radio choices show miniature workspaces with the actual theme colours. The grid uses three columns on wider screens and two on narrow screens. A border and tick identify the selected theme. Keyboard focus outlines the whole choice.
+
+System preference shows one workspace with a diagonal colour boundary. Springfield occupies the upper-left half and Stonecutters occupies the lower-right half. Both halves share the same layout. Selection applies immediately and persists locally. Hover leaves the current theme unchanged.
+
+The approved palettes replace the originals under the same names. Development builds contain no comparison variants or sidebar selector.
 
 `app/assets/themes.css` defines each palette once, including system light and dark defaults. `app/assets/workspace.css` maps palette values to material tokens and supplies shared control states. `app/assets/input.css` retains shared controls and catalogue styles.
 

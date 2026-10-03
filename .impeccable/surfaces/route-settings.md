@@ -20,9 +20,13 @@ The same page offers a confirmed local data reset. Reset records a request. The 
 
 ## Content and constraints
 
-Theme is the first setting. The selector offers System preference and five colour themes.
+Theme is the first setting. Six radio choices show miniature workspaces with the actual theme colours. The selector offers System preference and five colour themes.
 
-System preference is the default. It uses Springfield for light mode and Sector 7-G for dark mode. An explicit theme choice overrides the system preference.
+The grid uses three columns on wider screens and two on narrow screens. A border and tick identify the selected theme. Keyboard focus outlines the whole choice. Selection applies immediately. Hover leaves the current theme unchanged.
+
+System preference is the default. Its preview shows one workspace with a diagonal colour boundary. Springfield occupies the upper-left half and Stonecutters occupies the lower-right half. Both halves share the same layout.
+
+System preference uses Springfield for light mode and Stonecutters for dark mode. An explicit theme choice overrides the system preference.
 
 Presets and Environments have direct sidebar links. Settings contains no resource catalogue or generic return link to conversations.
 

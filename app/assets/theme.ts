@@ -1,4 +1,4 @@
-import type { IslandInstance } from "hypergraft/browser";
+import { commandBlockReason, type IslandInstance } from "hypergraft/browser";
 
 export const DEFAULT_THEME = "system";
 
@@ -47,28 +47,28 @@ export function initThemeSelector(root: HTMLElement): IslandInstance {
     const applyAuthoritativeTheme = () => {
         const theme = activeTheme(root);
         applyTheme(page, theme);
-        const select = root.querySelector<HTMLSelectElement>(
-            "[data-theme-select]",
+        root.querySelectorAll<HTMLInputElement>("[data-theme-choice]").forEach(
+            (choice) => {
+                choice.checked = choice.value === theme;
+            },
         );
-        if (select !== null) {
-            select.value = theme;
-        }
     };
     applyAuthoritativeTheme();
 
     const onChange = (event: Event) => {
-        const select = event.target;
+        const choice = event.target;
         if (
-            !(select instanceof HTMLSelectElement) ||
-            !select.matches("[data-theme-select]")
+            !(choice instanceof HTMLInputElement) ||
+            !choice.matches("[data-theme-choice]") ||
+            !choice.checked
         ) {
             return;
         }
-        if (!isTheme(select.value)) {
+        if (!isTheme(choice.value) || commandBlockReason()) {
             applyAuthoritativeTheme();
             return;
         }
-        applyTheme(page, select.value);
+        applyTheme(page, choice.value);
         root.requestSubmit();
     };
 

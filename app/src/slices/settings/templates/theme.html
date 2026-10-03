@@ -1,21 +1,88 @@
+{% macro preview(name) %}
+  <span
+    data-theme="{{ name }}"
+    class="bg-base-100 text-base-content flex h-28 min-w-0 flex-1 overflow-hidden"
+  >
+    <span
+      class="flex w-1/4 shrink-0 flex-col gap-2 bg-(--workspace-cover) p-2 text-(--workspace-cover-muted)"
+    >
+      <span
+        class="mb-2 h-2 w-2 rounded-full bg-(--workspace-cover-text)"
+      ></span>
+      <span class="h-1 w-full rounded bg-current"></span>
+      <span class="h-1 w-2/3 rounded bg-current opacity-60"></span>
+      <span class="h-1 w-3/4 rounded bg-current opacity-60"></span>
+    </span>
+    <span class="flex min-w-0 flex-1 flex-col gap-2 p-3">
+      <span class="text-lg leading-none font-semibold">Aa</span>
+      <span class="bg-base-content h-1 w-3/4 rounded opacity-60"></span>
+      <span class="bg-base-content h-1 w-1/2 rounded opacity-30"></span>
+      <span
+        class="border-base-300 mt-auto flex h-6 items-center justify-end rounded border p-1"
+      >
+        <span
+          class="bg-primary text-primary-content flex h-4 w-6 items-center justify-center rounded-sm"
+        >
+          <svg class="workspace-icon h-3! w-3!" aria-hidden="true">
+            <use href="/static/images/workspace-icons.svg#check" />
+          </svg>
+        </span>
+      </span>
+    </span>
+  </span>
+{% endmacro %}
+
 {% if let Some(message) = error %}
   <p class="text-error text-sm" role="alert">{{ message }}</p>
 {% endif %}
-<div class="settings-control max-w-xs" data-active-theme="{{ theme }}">
-  <select
-    id="theme-select"
-    name="theme"
-    class="select"
-    data-theme-select
-    aria-labelledby="settings-appearance"
-  >
-    {% for option in themes %}
-      <option
+<fieldset
+  class="grid w-full max-w-3xl min-w-0 grid-cols-2 gap-3 sm:grid-cols-3"
+  data-active-theme="{{ theme }}"
+  aria-labelledby="settings-appearance"
+  aria-describedby="theme-system-note"
+>
+  {% for option in themes %}
+    <label
+      class="theme-choice relative min-w-0 cursor-pointer overflow-hidden rounded-[7px]"
+    >
+      <input
+        id="theme-{{ option.as_str() }}"
+        type="radio"
+        name="theme"
         value="{{ option.as_str() }}"
-        {% if theme == option.as_str() %}selected{% endif %}
+        class="radio sr-only"
+        data-theme-choice
+        {% if theme == option.as_str() %}checked{% endif %}
+      />
+      <span class="flex overflow-hidden" aria-hidden="true">
+        {% if option.as_str() == "system" %}
+          <span class="relative flex min-w-0 flex-1">
+            {{ preview("springfield") }}
+            <span
+              class="absolute inset-0 flex [clip-path:polygon(100%_0,100%_100%,0_100%)]"
+            >
+              {{ preview("stonecutters") }}
+            </span>
+          </span>
+        {% else %}
+          {{ preview(option.as_str()) }}
+        {% endif %}
+      </span>
+      <span
+        class="flex min-h-12 items-center justify-between gap-2 px-3 py-2 text-sm font-semibold"
       >
-        {{ option.label() }}
-      </option>
-    {% endfor %}
-  </select>
-</div>
+        <span>{{ option.label() }}</span>
+        <svg
+          class="workspace-icon theme-choice-check shrink-0"
+          aria-hidden="true"
+        >
+          <use href="/static/images/workspace-icons.svg#check" />
+        </svg>
+      </span>
+    </label>
+  {% endfor %}
+</fieldset>
+<p id="theme-system-note" class="text-quiet max-w-3xl text-sm">
+  System preference uses Springfield in light mode and Stonecutters in dark
+  mode.
+</p>

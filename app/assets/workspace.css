@@ -456,6 +456,31 @@ body:has(.workspace-catalogue) .app-frame {
     gap: 16px;
     width: 100%;
 }
+.theme-choice {
+    border: 2px solid var(--color-base-300);
+    background: var(--color-base-100);
+}
+.theme-choice:hover {
+    border-color: var(--workspace-control-border);
+}
+.theme-choice:has(:checked) {
+    border-color: var(--workspace-primary-edge);
+    background: var(--workspace-selected);
+}
+.theme-choice:has(:focus-visible) {
+    outline: 2px solid var(--frinkworks-focus);
+    outline-offset: 3px;
+}
+.theme-choice:has(:disabled) {
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+.theme-choice-check {
+    visibility: hidden;
+}
+.theme-choice:has(:checked) .theme-choice-check {
+    visibility: visible;
+}
 .status-pill {
     display: inline-block;
     padding: 5px 8px;

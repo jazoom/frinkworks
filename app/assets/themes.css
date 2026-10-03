@@ -3,8 +3,8 @@
         springfield --default,
         evergreen-terrace,
         leftorium,
-        stonecutters,
-        sector-7-g --prefersdark;
+        stonecutters --prefersdark,
+        sector-7-g;
     logs: false;
 }
 
@@ -136,7 +136,7 @@
 @plugin "daisyui/theme" {
     name: "stonecutters";
     default: false;
-    prefersdark: false;
+    prefersdark: true;
     color-scheme: dark;
     --frinkworks-mark: url("/images/logo-dark.svg");
     --workspace-cover-mark: url("/images/logo-dark.svg");
@@ -175,7 +175,7 @@
 @plugin "daisyui/theme" {
     name: "sector-7-g";
     default: false;
-    prefersdark: true;
+    prefersdark: false;
     color-scheme: dark;
     --frinkworks-mark: url("/images/logo-dark.svg");
     --workspace-cover-mark: url("/images/logo-dark.svg");
