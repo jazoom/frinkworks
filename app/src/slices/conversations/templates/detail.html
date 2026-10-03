@@ -346,6 +346,30 @@
                 Ask a question or describe a change.
               </p>
 
+              {% if prepared_run.is_empty() && fork.is_none() %}
+                <div class="mt-5 text-sm">
+                  {% if !presets.is_empty() %}
+                    <button
+                      type="button"
+                      class="btn btn-outline min-h-11"
+                      popovertarget="conversation-settings"
+                      popovertargetaction="show"
+                      data-settings-section="conversation-preset-heading"
+                    >
+                      Use a preset…
+                    </button>
+                  {% else %}
+                    <p class="text-quiet">
+                      Presets reuse your settings and directory permissions.
+                    </p>
+                    <p class="text-quiet mt-2">
+                      You can save a preset from an existing conversation in
+                      <strong>Setup → Presets</strong>.
+                    </p>
+                  {% endif %}
+                </div>
+              {% endif %}
+
               {% if !self.draft_access_note().is_empty() %}
                 <p class="text-quiet mt-4 text-sm">
                   {{ self.draft_access_note() }}

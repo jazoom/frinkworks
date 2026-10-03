@@ -31,7 +31,7 @@ Model selection keeps the picker open. The selected row offers Set default when 
 
 The paperclip uses automatic upload for images and UTF-8 plain text files, regardless of extension. Its label reads Attach files. Document previews show filenames and sizes with download and Remove controls. The slash picker groups built-in Commands, Skills and Prompts. Composer help retains file references and command explanations.
 
-Setup includes a Conversation section with an inline title field and an independent draft copy. Delete confirmation expands in place without replacement of the other actions.
+Setup includes a Conversation section with an inline title field. Delete confirmation expands in place without replacement of the other actions.
 
 Eligible conversations also expose Compact context. This section omits future defaults.
 
@@ -83,11 +83,19 @@ The user chose recorded instruction sources, not a preview. The list describes t
 
 ## Presets setup
 
+New conversations offer Use a preset directly. Without presets, a quiet explanation introduces reusable settings and directory permissions. It identifies Setup → Presets in an existing conversation as the place to save one.
+
+New conversations contain no preset save form or conversation chooser. Existing conversations retain Save this setup as a preset.
+
+Preset replacement retains the default conversation title and unsent message. It copies no transcript or runtime consent.
+
+The source conversation no longer offers New conversation with the same setup.
+
 The preview compares current and replacement values before an explicit command.
 
 Each setting labels two value columns within the approved companion width. The save panel shows a name field and an independent snapshot.
 
-The user chose stored settings for saved snapshots. Unreviewed execution changes and unsaved edits stay excluded. Drafts supply their current choices.
+The user chose stored settings for saved snapshots. Unreviewed execution changes and unsaved edits stay excluded.
 
 Preview and save retain uncommitted edits. Successful replacement supersedes them but keeps the unsent message. Directory permissions carry across. Sensitive-directory consent and host consent remain separate.
 

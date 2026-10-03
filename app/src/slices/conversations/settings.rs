@@ -904,62 +904,6 @@ pub(super) async fn apply_preset(
     }
 }
 
-pub(super) async fn save_draft_preset(
-    State(state): State<AppState>,
-    session: RequiredSession,
-    _graft: PatchGraft,
-    Form(form): Form<super::new::NewForm>,
-) -> AppResult<Response> {
-    let result = super::new::settings_snapshot(&state, session.0, &form)
-        .and_then(|model| model.ok_or("Choose conversation settings first."));
-    let status;
-    let error;
-    if let Ok(configuration) = result {
-        let Ok(_permit) = state.local_data.begin_host_path_mutation().await else {
-            return render_draft_preset(
-                &state,
-                session.0,
-                form,
-                PatchStatus::Conflict,
-                crate::local_data::HOST_PATH_RESET_PENDING,
-            );
-        };
-        let name = if form.preset_name.trim().is_empty() {
-            crate::presets::suggested_name(&configuration.settings)
-        } else {
-            form.preset_name.clone()
-        };
-        match state.presets.create(
-            &name,
-            configuration.settings,
-            crate::presets::PresetProvenance::Draft,
-        ) {
-            Ok(_) => {
-                status = PatchStatus::Ok;
-                error = "";
-            }
-            Err(store_error) => {
-                status = PatchStatus::UnprocessableEntity;
-                error = store_error.message();
-            }
-        }
-    } else {
-        status = PatchStatus::UnprocessableEntity;
-        error = result
-            .err()
-            .unwrap_or("Choose conversation settings first.");
-    }
-    let name = form.preset_name.clone();
-    let mut view = super::page::ConversationDetailView::from_new(&state, session.0, form, error)
-        .open_settings();
-    view.preset_name = name;
-    view.preset_save_open = status != PatchStatus::Ok;
-    if status == PatchStatus::Ok {
-        view.notice = "Preset saved with directory permissions. Sensitive directories and host access need separate consent.";
-    }
-    super::render_detail(&state, session.0, GraftRequest::Patch, status, view)
-}
-
 pub(super) async fn preview_draft_preset(
     State(state): State<AppState>,
     session: RequiredSession,
@@ -1020,11 +964,6 @@ pub(super) async fn apply_draft_preset(
         }
     };
     apply_settings_to_draft(&mut form, &preset);
-    form.consent_reference.clear();
-    form.consent_request.clear();
-    form.pending_directory.clear();
-    form.host_consent_request.clear();
-    form.consent_existing.clear();
     let mut view =
         super::page::ConversationDetailView::from_new(&state, session.0, form, "").open_settings();
     view.notice = "Preset applied with directory permissions. Sensitive directories and host access need separate consent.";
@@ -1040,6 +979,11 @@ pub(super) async fn apply_draft_preset(
 fn apply_settings_to_draft(form: &mut super::new::NewForm, preset: &crate::presets::PresetRecord) {
     form.preset = preset.id.as_hex();
     copy_settings_to_draft(form, &preset.settings);
+    form.consent_reference.clear();
+    form.consent_request.clear();
+    form.pending_directory.clear();
+    form.host_consent_request.clear();
+    form.consent_existing.clear();
 }
 
 pub(super) fn copy_settings_to_draft(

@@ -552,41 +552,6 @@ async fn saved_preset_snapshot_is_revision_bound_and_ignores_unreviewed_fields()
 }
 
 #[tokio::test]
-async fn draft_preset_save_retains_validation_and_creates_no_conversation() {
-    let state = test_state();
-    let token = connected(&state);
-    let path = "/conversations/new/settings/presets/save";
-    let base = format!(
-        "provider=xai&model=grok-4.6&environment={}&instructions=Draft%20instructions&message=Unsent%20message",
-        super::super::default_environment(&state).unwrap()
-    );
-    let invalid = format!("{base}&preset_name=Invalid%01name");
-    let response = app(&state)
-        .oneshot(command(path, &token, &invalid))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
-    let body = text(response).await;
-    assert!(body.contains("Draft instructions"));
-    assert!(body.contains("Unsent message"));
-    assert!(state.presets.list().is_empty());
-    let response = app(&state)
-        .oneshot(command(
-            path,
-            &token,
-            &format!("{base}&preset_name=Draft%20snapshot"),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    let preset = state.presets.list().pop().unwrap();
-    assert_eq!(preset.name, "Draft snapshot");
-    assert_eq!(preset.settings.instructions, "Draft instructions");
-    assert!(preset.settings.tools.is_empty());
-    assert!(state.conversations.list().is_empty());
-}
-
-#[tokio::test]
 async fn draft_preset_replacement_retains_its_reference_without_creating_a_conversation() {
     let state = test_state();
     let token = connected(&state);

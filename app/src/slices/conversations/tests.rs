@@ -149,6 +149,45 @@ pub(super) fn command(path: &str, token: &str, body: &str) -> Request<Body> {
         .expect("request")
 }
 
+pub(super) async fn save_and_apply_preset(
+    state: &AppState,
+    token: &str,
+    record: &crate::conversations::ConversationRecord,
+) -> axum::response::Response {
+    let saved = app(state)
+        .oneshot(command(
+            &format!("/conversations/{}/settings/presets/save", record.id),
+            token,
+            &format!("revision={}&name=Preset+fixture", record.revision),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(saved.status(), StatusCode::OK);
+    let preset = state.presets.list().into_iter().find(|preset| {
+        matches!(preset.provenance, crate::presets::PresetProvenance::Conversation { id, .. } if id == record.id)
+    }).unwrap();
+    let form = super::new::NewForm {
+        preset: preset.id.as_hex(),
+        ..Default::default()
+    };
+    let preview = state
+        .presets
+        .preview(
+            session_id(token),
+            preset.id,
+            crate::presets::PresetDestination::Draft(form.consent_nonce()),
+        )
+        .unwrap();
+    app(state)
+        .oneshot(command(
+            "/conversations/new/settings/presets/apply",
+            token,
+            &format!("preset={}&preset_preview={}", preset.id, preview.token),
+        ))
+        .await
+        .unwrap()
+}
+
 pub(super) async fn text(response: axum::response::Response) -> String {
     String::from_utf8(
         to_bytes(response.into_body(), usize::MAX)
@@ -496,7 +535,7 @@ async fn rename_and_delete_reject_stale_revisions_without_state_change() {
 }
 
 #[tokio::test]
-async fn conversation_actions_bind_commands_and_draft_copy_to_the_record() {
+async fn conversation_actions_bind_commands_to_the_record() {
     let state = test_state();
     let token = connected(&state);
     let record = state
@@ -514,9 +553,6 @@ async fn conversation_actions_bind_commands_and_draft_copy_to_the_record() {
         .find("id=\"conversation-actions\"")
         .expect("actions menu");
     let actions = body[actions_start..].split("</section>").next().unwrap();
-    // The draft copy carries source identity in Conversation actions, not Plans.
-    let draft = format!("/conversations/new?source={}", record.id.as_hex());
-    assert!(actions.contains(&draft));
     for action in ["rename", "delete"] {
         let form = actions
             .split("<form")
@@ -1210,13 +1246,7 @@ async fn deprecated_saved_models_keep_identity_and_remain_valid_for_dispatch() {
         .unwrap();
     let body = text(response).await;
     assert!(body.contains("You can continue while the provider accepts it."));
-    let response = app(&state)
-        .oneshot(document(
-            &format!("/conversations/new?source={}", record.id),
-            &token,
-        ))
-        .await
-        .unwrap();
+    let response = save_and_apply_preset(&state, &token, &record).await;
     assert_eq!(response.status(), StatusCode::OK);
     let draft = normalised(&text(response).await);
     assert!(draft.contains("Choose an available model before you start this conversation."));

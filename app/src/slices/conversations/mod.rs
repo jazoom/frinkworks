@@ -107,10 +107,6 @@ pub(super) fn router() -> Router<AppState> {
         )
         .route("/conversations/models/default", post(model_defaults::save))
         .route(
-            "/conversations/new/settings/presets/save",
-            post(settings::save_draft_preset),
-        )
-        .route(
             "/conversations/new/settings/presets/preview",
             post(settings::preview_draft_preset),
         )

@@ -1842,7 +1842,9 @@ document.addEventListener("click", (event) => {
         const field = document.getElementById("conversation-preset-name");
         if (field) revealConversationSetting(field);
     } else if (
-        event.target.closest("[data-preset-save-cancel], [data-preset-cancel]")
+        event.target.closest(
+            '[data-preset-save-cancel], [data-preset-cancel], [data-settings-section="conversation-preset-heading"]',
+        )
     ) {
         // Cancellation grants no authority and sends no command.
         document.querySelector("[data-preset-preview]")?.remove();

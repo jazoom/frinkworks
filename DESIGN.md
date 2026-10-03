@@ -367,7 +367,7 @@ New drafts omit the transcript toolbar. Saved conversations retain its controls.
 
 The header offers Setup as its only permanent action.
 
-The Conversation section in Setup contains an inline title field and an independent draft copy. Compact context remains available when eligible.
+The Conversation section in Setup contains an inline title field. Compact context remains available when eligible.
 
 Deletion expands its confirmation in place. The title field and other actions remain visible. Cancel closes only the confirmation.
 
@@ -430,7 +430,13 @@ The visible sections are:
 
 The Conversation section omits Save as future defaults. Its commands retain the source identity and revision.
 
-The Presets section offers a preview for each preset and a separate Save this setup as a preset action.
+The Presets section offers a preview for each preset. Existing conversations also offer Save this setup as a preset.
+
+New conversations offer Use a preset directly. Without presets, a quiet explanation introduces reusable settings and directory permissions. It identifies Setup → Presets in an existing conversation as the place to save one.
+
+New conversations contain no preset save form or conversation chooser. Preset replacement retains the default conversation title and unsent message.
+
+The source conversation no longer offers New conversation with the same setup.
 
 Replacement hides the list and shows current and preset values. Each setting labels two value columns within the existing companion width.
 
@@ -440,7 +446,7 @@ Cancel returns to the list without a command. Apply replacement remains explicit
 
 The save panel contains a name field and a settings summary. A separate disclosure contains the instructions. Back to presets retains the name.
 
-Saved snapshots show stored settings only, even when execution changes await review. Draft snapshots show current choices. Both retain the unsent message.
+Saved snapshots show stored settings only, even when execution changes await review. The save command retains the unsent message.
 
 The name accepts up to 80 UTF-8 bytes without control characters. An empty name uses the existing suggestion. Validation retains the entered name.
 

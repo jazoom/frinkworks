@@ -8,7 +8,6 @@ pub(super) struct NewForm {
     pub(super) thinking: String,
     pub(super) preset: String,
     pub(super) preset_preview: String,
-    pub(super) preset_name: String,
     pub(super) instructions: String,
     pub(super) tool_list: String,
     pub(super) tool_read: String,
@@ -60,7 +59,6 @@ pub(super) struct NewForm {
 #[derive(Default, Deserialize)]
 #[serde(default)]
 pub(super) struct NewQuery {
-    source: String,
     prompt: String,
 }
 
@@ -70,9 +68,7 @@ pub(super) async fn show(
     graft: GraftRequest,
     Query(query): Query<NewQuery>,
 ) -> AppResult<Response> {
-    // Genuinely new drafts start with every tool selected. Copied drafts
-    // below overwrite these fields from the source, and validation failures
-    // re-render the submitted form, so an explicit empty choice survives.
+    // Validation re-renders the submitted form, so an explicit empty tool choice survives.
     let initial = crate::slices::execution_settings::page::initial_tool_ids();
     let selected = |id: crate::agents::ToolId| {
         if initial.contains(&id) {
@@ -117,8 +113,7 @@ pub(super) async fn show(
         form.model = provider.model;
     }
     let mut model_notice = String::new();
-    if query.source.is_empty()
-        && let Some(provider) = ProviderKind::parse(&form.provider)
+    if let Some(provider) = ProviderKind::parse(&form.provider)
         && state.vault.contains(provider)
     {
         let preferred = state
@@ -145,19 +140,6 @@ pub(super) async fn show(
             .effective_effort(provider, &form.model, thinking.as_ref())
             .map(|effort| effort.as_str().to_owned())
             .unwrap_or_default();
-    }
-    if !query.source.is_empty() {
-        let Some(source) = load_conversation(&state, &query.source) else {
-            return Ok(responses::request_navigation(graft, "/conversations"));
-        };
-        // Copy values only. Runtime consent and unfinished work belong to the source.
-        form = NewForm {
-            draft_nonce: form.draft_nonce,
-            ..NewForm::default()
-        };
-        if let Some(configuration) = &source.model {
-            super::settings::copy_settings_to_draft(&mut form, &configuration.settings);
-        }
     }
     let mut error = "";
     if !query.prompt.is_empty() {

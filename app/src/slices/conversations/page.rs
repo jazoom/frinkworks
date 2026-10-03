@@ -718,16 +718,12 @@ impl ConversationDetailView {
                     description: preset_summary(&preset.settings),
                 })
                 .collect(),
-            preset_source: String::new(),
-            preset_name: if form.preset_name.trim().is_empty() {
-                draft_directories
-                    .first()
-                    .and_then(|grant| grant.host_path.file_name())
-                    .map(|name| name.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "Untitled preset".to_owned())
-            } else {
-                form.preset_name.clone()
-            },
+            preset_source: state
+                .presets
+                .applied_draft(session, &form.preset_preview)
+                .map(|preset| format!("{} · Independent copy", preset.name))
+                .unwrap_or_default(),
+            preset_name: String::new(),
             preset_preview: None,
             preset_setup,
             preset_save_open: false,
@@ -859,13 +855,6 @@ impl ConversationDetailView {
                     .to_string()
             },
             |directory| directory.host_path.clone(),
-        )
-    }
-
-    fn fresh_draft_href(&self) -> String {
-        self.saved().map_or_else(
-            || "/conversations/new".to_owned(),
-            |saved| format!("/conversations/new?source={}", saved.id),
         )
     }
 

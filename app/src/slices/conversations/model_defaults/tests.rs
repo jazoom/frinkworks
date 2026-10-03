@@ -194,14 +194,6 @@ async fn normalised_defaults_persist_independently_without_changes_to_saved_conv
         }
         assert_eq!(state.conversations.get(&record.id), Some(record.clone()));
     }
-    let response = app(&state)
-        .oneshot(document(
-            &format!("/conversations/new?source={}", record.id),
-            &token,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(hidden_named(&text(response).await, "model"), "grok-4.6");
     assert_eq!(state.conversations.list().len(), 1);
 }
 
