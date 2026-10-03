@@ -2,20 +2,20 @@
 name: Frinkworks
 description: A local conversation workspace with an optional work companion.
 colors:
-    canvas: "#f5f5ed"
-    paper: "#fefcf6"
-    paperGreen: "#eeeee5"
-    cover: "#28321f"
-    coverText: "#f5f6ef"
-    coverMuted: "#c4c8bc"
-    ink: "#171a16"
+    canvas: "#f4f5ed"
+    paper: "#fdfcf6"
+    paperGreen: "#eeefe5"
+    cover: "#2d3725"
+    coverText: "#f2f4e9"
+    coverMuted: "#bfc8b3"
+    ink: "#262d22"
     brandInk: "#565c4e"
     brandReverse: "#f5f2eb"
-    quietInk: "#65695f"
-    rule: "#d9dad2"
-    action: "#b3f04e"
+    quietInk: "#616b57"
+    rule: "#d3d7c9"
+    action: "#b9df6a"
     actionInk: "#18210c"
-    error: "#a63b32"
+    error: "#a13f35"
 typography:
     title:
         fontFamily: "IBM Plex Sans, ui-sans-serif, system-ui, sans-serif"
@@ -82,15 +82,21 @@ The default setting follows the system preference. Light mode uses Springfield. 
 
 An explicit theme choice overrides the system preference. The Settings selector can restore the system preference.
 
-The five themes retain distinct palettes:
+The five themes use the approved palettes:
 
-- Springfield uses olive and pale green.
-- Evergreen Terrace uses deep teal and marigold.
-- Leftorium uses light neutral surfaces.
-- Stonecutters uses deep blue and cool blue actions.
-- Sector 7-G uses deep violet and lime actions.
+- Springfield pairs olive and pale paper with light lime actions and dark text.
+- Evergreen Terrace pairs forest surfaces with yellow actions. Supporting controls retain sage tones.
+- Leftorium pairs ivory and a pale sage index with deep green actions.
+- Stonecutters uses slate surfaces and muted amber (`#dcb77a`) actions. Warm selection fills and user messages contrast with neutral tool records.
+- Sector 7-G retains its deep violet surfaces and lime actions.
 
-`app/assets/workspace.css` supplies the workspace palette and maps it to the existing material tokens. `app/assets/input.css` retains shared controls and catalogue styles.
+All themes separate control borders from surface rules. Unchecked controls retain a neutral outline and empty interior. Checked controls use the action colour. Springfield adds a darker edge to light action fills.
+
+Cover controls use a local hover tint and visible focus against the sidebar colour. Sector 7-G shares these control states and stronger field borders without a palette change.
+
+Settings contains the only theme selector. The approved palettes replace the originals under the same names. Development builds contain no comparison variants or sidebar selector.
+
+`app/assets/themes.css` defines each palette once, including system light and dark defaults. `app/assets/workspace.css` maps palette values to material tokens and supplies shared control states. `app/assets/input.css` retains shared controls and catalogue styles.
 
 Diff additions and removals retain their explicit markers. Colour supplements those markers and never replaces them.
 
@@ -188,7 +194,9 @@ Decorative icons use `aria-hidden="true"`. Icon-only buttons carry an accessible
 
 ### Focus behaviour
 
-Keyboard navigation retains visible focus. Programmatic focus restoration and non-interactive section destinations use `focusQuietly` in `app/assets/main.ts`.
+Keyboard navigation retains visible focus. All focus rings use a shared token derived from the control border and text colours. DaisyUI controls and custom focus containers use the same colour. Sidebar controls use contrasting cover text.
+
+Programmatic focus restoration and non-interactive section destinations use `focusQuietly` in `app/assets/main.ts`.
 
 Window and tab changes do not reset that state. The next navigation key restores the normal focus indication.
 
@@ -259,7 +267,7 @@ Directory actions retain transparent backgrounds on hover. Button text has no ho
 
 The paperclip uses a continuous diagonal stroke. The help icon uses a centred question mark and a separate dot. Both retain labelled controls.
 
-User messages use a tinted, ruled surface. Assistant messages identify Frinkworks with its mark.
+User messages use an accent-tinted surface with an accent border. Their avatars use the solid theme accent. Assistant messages identify Frinkworks with its mark.
 
 Model thoughts use muted 14-pixel text and a left rule without a filled background. Their width follows the content, up to 70 characters.
 
@@ -279,7 +287,9 @@ A neutral summary above the composer shows recorded conversation totals, cache h
 
 Both timers pause for questions and approvals. Completed durations persist. Earlier replies without recorded durations show no invented time.
 
-Tool results use bordered disclosures with the actual tool label. Unfinished tools show their recorded name without an inferred path or result. Tool disclosures expose recorded call IDs and arguments when available. Separate calls retain separate records, even when their arguments match.
+Code blocks use a quiet shaded surface without a border. They fill the message width while prose retains its 70-character measure.
+
+Tool results use bordered disclosures with a tinted header and a tool icon. The header separates the recorded status from the actual tool label. Unfinished tools show their recorded name without an inferred path or result. Tool disclosures expose recorded call IDs and arguments when available. Separate calls retain separate records, even when their arguments match.
 
 The retained-output control reveals the full record in place. It leaves the browser address unchanged and appears only when the retained record holds more text than the preview.
 
@@ -305,7 +315,7 @@ The paperclip opens image selection. Selection uploads automatically. The slash 
 
 Send uses an accessible Send message label. An empty composer disables Send unless it contains an attachment or prepared-change handoff.
 
-Effective directory access appears below the composer. Empty and selected summaries share label geometry, so one-line state changes do not move the composer. The empty label stays transparent.
+Effective directory access appears below the composer. Directory pills use the neutral theme surface rather than the accent selection fill. Empty and selected summaries share label geometry, so one-line state changes do not move the composer. The empty label stays transparent.
 
 The empty access summary offers Add a directory. Without recent or selected directories, it opens the native picker directly. Otherwise, it opens the manager.
 

@@ -59,7 +59,7 @@
       <p>{{ message.error }}</p>
     </div>
   {% endif %}
-  {% if message.revisable || message.forkable || message.copy.is_some() || !message.details.is_empty() %}
+  {% if message.revisable || message.forkable || message.copy.is_some() || (!message.streaming && !message.details.is_empty()) %}
     <footer class="chat-message-actions mt-2 flex flex-wrap items-center gap-2">
       {% if message.revisable %}
         <a
@@ -112,7 +112,7 @@
           >
         </div>
       {% endif %}
-      {% if !message.details.is_empty() %}
+      {% if !message.streaming && !message.details.is_empty() %}
         <button
           type="button"
           class="btn btn-ghost btn-sm btn-square"
@@ -129,7 +129,7 @@
       {% endif %}
     </footer>
   {% endif %}
-  {% if !message.details.is_empty() %}
+  {% if !message.streaming && !message.details.is_empty() %}
     <div
       id="{{ message.id }}-details"
       class="chat-message-details bg-base-100 text-base-content rounded-box border-base-300 border p-5 text-sm shadow-lg"

@@ -38,8 +38,7 @@
         </span>
       {% else %}
         {% for directory in directories %}
-          <span
-            class="directory-access-label {% if directory.available && !directory.pending_approval && !location_host %}directory-access-approved{% endif %} break-all"
+          <span class="directory-access-label break-all"
             >{{ directory.name }} ·
             {% if location_host %}Work location{% else %}{{ directory.access_label }}{% endif %}{% if !directory.available %}
               · Cannot access directory

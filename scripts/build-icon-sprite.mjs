@@ -49,6 +49,7 @@ const icons = {
     "tokens-total": "sigma",
     "turn-time": "timer",
     "total-time": "clock",
+    tool: "wrench",
     trash: "trash-2",
     workflow: "workflow",
 };

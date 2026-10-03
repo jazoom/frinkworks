@@ -2,7 +2,7 @@
   {% for block in blocks %}
     {% if block.kind == "response" %}
       <div
-        class="chat-prose"
+        class="chat-prose max-w-none! [&>:not(pre)]:max-w-[70ch]"
         {% if block.active %}data-streaming-text="{{ id }}-block-{{ loop.index0 }}"{% endif %}
       >
         {{ block.html|safe }}
@@ -41,25 +41,32 @@
         class="chat-tool-record collapse-arrow border-base-300 collapse rounded-sm border"
       >
         <summary class="collapse-title min-h-11 py-3">
-          <span class="text-quiet">Tool result · </span
-          ><span class="font-mono break-words">{{ block.label }}</span>
-          {% if let Some(command) = block.command %}
-            <span
-              class="ml-2 inline-flex flex-wrap items-center gap-1 align-middle"
-            >
-              {% if command.error %}
-                <span class="badge badge-error badge-sm" role="status"
-                  >Error</span
-                >
-              {% endif %}
-              <span
-                class="{% if command.error %}text-error{% else %}text-quiet{% endif %} text-xs font-medium"
-                >{{ command.status }}</span
-              >
+          <span
+            class="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm"
+          >
+            <span class="inline-flex items-center gap-2 font-medium">
+              <svg class="workspace-icon" aria-hidden="true">
+                <use href="/static/images/workspace-icons.svg#tool" />
+              </svg>
+              Tool result
             </span>
-          {% endif %}
+            {% if let Some(command) = block.command %}
+              <span class="inline-flex flex-wrap items-center gap-2">
+                {% if command.error %}
+                  <span class="badge badge-error badge-sm" role="status"
+                    >Error</span
+                  >
+                {% endif %}
+                <span
+                  class="{% if command.error %}text-error{% else %}text-quiet{% endif %} text-xs font-medium"
+                  >{{ command.status }}</span
+                >
+              </span>
+            {% endif %}
+          </span>
+          <span class="block font-mono break-words">{{ block.label }}</span>
         </summary>
-        <div class="collapse-content">
+        <div class="collapse-content pt-4">
           {% include "conversations/templates/tool_call.html" %}
           {% if let Some(command) = block.command %}
             {% if let Some(reference) = command.reference %}
@@ -127,22 +134,26 @@
         class="chat-tool-record collapse-arrow border-base-300 collapse rounded-sm border"
       >
         <summary class="collapse-title min-h-11 py-3">
-          {% if block.active %}
-            <span
-              class="loading loading-dots loading-xs motion-reduce:hidden"
-              aria-hidden="true"
-            ></span>
-          {% endif %}
           <span
-            >{% if block.active %}
-              Tool call in progress
-            {% else %}
-              Tool call · No result
-            {% endif %}</span
+            class="mb-2 flex flex-wrap items-center gap-2 text-sm font-medium"
           >
-          <span class="font-mono break-all">{{ block.label }}</span>
+            <svg class="workspace-icon" aria-hidden="true">
+              <use href="/static/images/workspace-icons.svg#tool" />
+            </svg>
+            {% if block.active %}
+              <span
+                class="loading loading-dots loading-xs motion-reduce:hidden"
+                aria-hidden="true"
+              ></span>
+            {% endif %}
+            <span
+              >{% if block.active %}Tool call in progress{% else %}Tool call ·
+              No result{% endif %}</span
+            >
+          </span>
+          <span class="block font-mono break-all">{{ block.label }}</span>
         </summary>
-        <div class="collapse-content">
+        <div class="collapse-content pt-4">
           {% include "conversations/templates/tool_call.html" %}
         </div>
       </details>

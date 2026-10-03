@@ -1,119 +1,12 @@
 /* The approved workspace keeps the composer outside both independent scroll areas. */
 :root,
-[data-theme="springfield"] {
-    --frinkworks-mark: url("/images/logo.svg");
-    --workspace-cover-mark: url("/images/logo-dark.svg");
-    --workspace-cover-mark-ink: #f5f2eb;
-    --color-base-100: #fefcf6;
-    --color-base-200: #eeeee5;
-    --color-base-300: #d9dad2;
-    --color-base-content: #171a16;
-    --color-primary: #b3f04e;
-    --color-primary-content: #18210c;
-    --color-error: #a63b32;
-    --workspace-canvas: #f5f5ed;
-    --workspace-cover: #28321f;
-    --workspace-cover-text: #f5f6ef;
-    --workspace-cover-muted: #c4c8bc;
-    --workspace-muted: #65695f;
-    --workspace-selected: #e9f2d5;
-    --workspace-cover-rule: #49523f;
-}
-[data-theme="evergreen-terrace"] {
-    --frinkworks-mark: url("/images/logo-dark.svg");
-    --color-base-100: #142826;
-    --color-base-200: #1b3531;
-    --color-base-300: #35514b;
-    --color-base-content: #eaf0e5;
-    --color-primary: #edce51;
-    --color-primary-content: #263226;
-    --color-error: #f3a293;
-    --workspace-canvas: #101f1e;
-    --workspace-cover: #0b1816;
-    --workspace-cover-text: #eaf0e5;
-    --workspace-cover-muted: #b2c2b3;
-    --workspace-muted: #b0c0b2;
-    --workspace-selected: #294136;
-    --workspace-cover-rule: #30473c;
-}
-@media (prefers-color-scheme: dark) {
-    :root:not([data-theme]) {
-        --frinkworks-mark: url("/images/logo-dark.svg");
-        --color-base-100: #2c263e;
-        --color-base-200: #39304e;
-        --color-base-300: #584e6c;
-        --color-base-content: #f1edf6;
-        --color-primary: #d3e767;
-        --color-primary-content: #29311d;
-        --color-error: #f5ad9e;
-        --workspace-canvas: #242032;
-        --workspace-cover: #1c1828;
-        --workspace-cover-text: #f1edf6;
-        --workspace-cover-muted: #c3b7d1;
-        --workspace-muted: #c2b7cf;
-        --workspace-selected: #453957;
-        --workspace-cover-rule: #483c5d;
-    }
-}
-[data-theme="leftorium"] {
-    --workspace-cover-mark: url("/images/logo.svg");
-    --workspace-cover-mark-ink: #565c4e;
-    --color-base-100: #fcfbf8;
-    --color-base-200: #efeee8;
-    --color-base-300: #d7d6cc;
-    --color-base-content: #36382f;
-    --color-error: #a63b32;
-    --color-error-content: #fcfbf8;
-    --workspace-canvas: #f5f4f0;
-    --workspace-cover: #e9e8df;
-    --workspace-cover-text: #35392e;
-    --workspace-cover-muted: #565c4e;
-    --workspace-muted: #696e60;
-    --workspace-selected: #e5e8d8;
-    --workspace-cover-rule: #cdcec1;
-}
-[data-theme="stonecutters"] {
-    --frinkworks-mark: url("/images/logo-dark.svg");
-    --color-base-100: #1a2a3a;
-    --color-base-200: #24374a;
-    --color-base-300: #42576b;
-    --color-base-content: #edf0f5;
-    --color-primary: #a3c9ec;
-    --color-primary-content: #152536;
-    --color-error: #f5ad9e;
-    --workspace-canvas: #15212f;
-    --workspace-cover: #101b29;
-    --workspace-cover-text: #edf0f5;
-    --workspace-cover-muted: #b5c3d1;
-    --workspace-muted: #b2c2d2;
-    --workspace-selected: #2c4358;
-    --workspace-cover-rule: #34475c;
-}
-[data-theme="sector-7-g"] {
-    --frinkworks-mark: url("/images/logo-dark.svg");
-    --color-base-100: #2c263e;
-    --color-base-200: #39304e;
-    --color-base-300: #584e6c;
-    --color-base-content: #f1edf6;
-    --color-primary: #d3e767;
-    --color-primary-content: #29311d;
-    --color-error: #f5ad9e;
-    --workspace-canvas: #242032;
-    --workspace-cover: #1c1828;
-    --workspace-cover-text: #f1edf6;
-    --workspace-cover-muted: #c3b7d1;
-    --workspace-muted: #c2b7cf;
-    --workspace-selected: #453957;
-    --workspace-cover-rule: #483c5d;
-}
-:root,
 [data-theme] {
     --frinkworks-paper: var(--color-base-100);
     --frinkworks-paper-green: var(--color-base-200);
     --frinkworks-control: var(--color-base-100);
     --frinkworks-ink: var(--color-base-content);
     --frinkworks-rule: var(--color-base-300);
-    --frinkworks-strong-rule: var(--color-base-300);
+    --frinkworks-strong-rule: var(--workspace-control-border);
     --frinkworks-cover: var(--workspace-cover);
     --frinkworks-on-cover: var(--workspace-cover-text);
     --frinkworks-on-cover-bright: var(--workspace-cover-text);
@@ -127,10 +20,46 @@
     --frinkworks-composer: var(--color-base-100);
     --frinkworks-composer-quiet: var(--workspace-muted);
 }
-.input,
-.select,
-.textarea {
-    --input-color: var(--color-base-300);
+/* Control boundaries stay distinct without stronger rules across every surface. */
+:root :is(.app-frame, .connect-frame) :is(.input, .select, .textarea) {
+    --input-color: var(--workspace-control-border);
+}
+:root :is(.app-frame, .connect-frame) .select:not([aria-invalid="true"]),
+:root
+    :is(.app-frame, .connect-frame)
+    :is(.checkbox, .radio):not(:checked, :indeterminate) {
+    border-color: var(--workspace-control-border);
+    background-color: var(--color-base-100);
+}
+/* A light action fill needs a darker boundary on paper surfaces. */
+:root :is(.app-frame, .connect-frame) .btn-primary:not(:disabled) {
+    border-color: var(--workspace-primary-edge);
+}
+:root :is(.app-frame, .connect-frame) .checkbox:is(:checked, :indeterminate) {
+    border-color: var(--workspace-primary-edge);
+    background-color: var(--color-primary);
+    color: var(--color-primary-content);
+}
+:root :is(.app-frame, .connect-frame) .radio:checked {
+    border-color: var(--workspace-primary-edge);
+    color: var(--workspace-primary-edge);
+}
+/* DaisyUI controls and custom focus containers must use the same colour. */
+:focus-visible {
+    outline-color: var(--frinkworks-focus);
+}
+:root
+    :is(
+        .app-index,
+        .connect-intro,
+        .app-file:has(#conversation-detail) .app-file-bar
+    ) {
+    --frinkworks-focus: var(--workspace-cover-text);
+    --workspace-selected: color-mix(
+        in srgb,
+        var(--workspace-cover-text) 12%,
+        transparent
+    );
 }
 body {
     background: var(--workspace-canvas);
@@ -484,7 +413,7 @@ body:has(.workspace-catalogue) .app-frame {
     background: var(--color-error);
 }
 .workflow-catalogue summary:focus-visible {
-    outline: 2px solid var(--color-primary);
+    outline: 2px solid var(--frinkworks-focus);
     outline-offset: 3px;
 }
 .page-description {
@@ -962,9 +891,23 @@ body:has(.workspace-catalogue) .app-frame {
         padding: 16px;
     }
 }
-#transcript .chat-tool-record {
+#transcript .chat-prose pre {
+    border: 0;
     background: var(--color-base-100);
+}
+#transcript .chat-tool-record {
+    background: transparent;
     font-size: 15px;
+}
+#transcript .chat-tool-record > summary {
+    background: var(--color-base-200);
+    transition: none;
+}
+#transcript .chat-tool-record:has(> summary:hover) {
+    border-color: var(--workspace-control-border);
+}
+#transcript .chat-tool-record[open] > summary {
+    border-block-end: 1px solid var(--color-base-300);
 }
 #transcript .chat-thinking {
     width: fit-content;
@@ -989,10 +932,24 @@ body:has(.workspace-catalogue) .app-frame {
     background: none;
     padding: 0;
 }
+#transcript .chat-turn-user .chat-turn-avatar {
+    background: var(--color-primary);
+    color: var(--color-primary-content);
+    font-weight: 600;
+}
 #transcript .chat-turn-user .chat-prose {
-    border: 1px solid var(--color-base-300);
+    border: 1px solid
+        color-mix(
+            in srgb,
+            var(--workspace-primary-edge) 55%,
+            var(--color-base-300)
+        );
     border-radius: 3px;
-    background: var(--color-base-200);
+    background: color-mix(
+        in srgb,
+        var(--color-primary) 18%,
+        var(--color-base-100)
+    );
     padding: 14px 16px;
 }
 .empty-conversation {
@@ -1152,7 +1109,7 @@ body:has(.workspace-catalogue) .app-frame {
     background: var(--color-base-200);
 }
 .workspace-context-details > summary:focus-visible {
-    outline: 2px solid var(--color-primary);
+    outline: 2px solid var(--frinkworks-focus);
     outline-offset: -3px;
 }
 .workspace-work-content .workspace-phase dd {
@@ -1730,9 +1687,6 @@ body:has(.workspace-catalogue) .app-frame {
     font-size: 14px;
     color: var(--color-base-content);
 }
-.directory-access-approved {
-    background: var(--workspace-selected);
-}
 .workspace-effective .directory-access-empty {
     background: transparent;
     color: inherit;
@@ -2082,7 +2036,7 @@ body:has(.workspace-catalogue) .app-frame {
     background: var(--color-base-200);
 }
 .choice-row:focus-visible {
-    outline: 2px solid var(--color-primary);
+    outline: 2px solid var(--frinkworks-focus);
     outline-offset: 2px;
 }
 .choice-row strong {
@@ -2115,7 +2069,7 @@ body:has(.workspace-catalogue) .app-frame {
     font-weight: 600;
 }
 .segmented label:focus-within {
-    outline: 2px solid var(--color-primary);
+    outline: 2px solid var(--frinkworks-focus);
     outline-offset: 2px;
 }
 .workflow-progress li[aria-current="step"] {
@@ -2141,7 +2095,7 @@ body:has(.workspace-catalogue) .app-frame {
     background: var(--workspace-selected);
 }
 #workflow-launch .choice-row:focus-within {
-    outline: 2px solid var(--color-primary);
+    outline: 2px solid var(--frinkworks-focus);
     outline-offset: -2px;
 }
 #workflow-launch .choice-row small {

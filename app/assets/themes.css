@@ -1,0 +1,212 @@
+@plugin "daisyui" {
+    themes:
+        springfield --default,
+        evergreen-terrace,
+        leftorium,
+        stonecutters,
+        sector-7-g --prefersdark;
+    logs: false;
+}
+
+@plugin "daisyui/theme" {
+    name: "springfield";
+    default: true;
+    prefersdark: false;
+    color-scheme: light;
+    --frinkworks-mark: url("/images/logo.svg");
+    --workspace-cover-mark: url("/images/logo-dark.svg");
+    --workspace-cover-mark-ink: #f5f2eb;
+    --color-base-100: #fdfcf6;
+    --color-base-200: #eeefe5;
+    --color-base-300: #d3d7c9;
+    --color-base-content: #262d22;
+    --color-primary: #b9df6a;
+    --color-primary-content: #18210c;
+    --workspace-primary-edge: var(--color-accent);
+    --color-secondary: #dae3cf;
+    --color-secondary-content: #303d29;
+    --color-accent: #496735;
+    --color-accent-content: #fafbf4;
+    --color-neutral: var(--workspace-cover);
+    --color-neutral-content: var(--workspace-cover-text);
+    --color-success: #476c40;
+    --color-success-content: #fafbf4;
+    --color-warning: #89621d;
+    --color-warning-content: #fff9ec;
+    --color-info: #416978;
+    --color-info-content: #f7fbfc;
+    --color-error: #a13f35;
+    --color-error-content: #fff8f5;
+    --workspace-canvas: #f4f5ed;
+    --workspace-cover: #2d3725;
+    --workspace-cover-text: #f2f4e9;
+    --workspace-cover-muted: #bfc8b3;
+    --workspace-cover-rule: #4e5944;
+    --workspace-muted: #616b57;
+    --workspace-selected: #e3ead6;
+    --workspace-control-border: #818c73;
+    --radius-selector: 0.125rem;
+    --radius-field: 0.125rem;
+    --radius-box: 0.125rem;
+    --size-selector: 0.25rem;
+    --size-field: 0.25rem;
+    --border: 1px;
+    --depth: 0;
+    --noise: 0;
+}
+
+@plugin "daisyui/theme" {
+    name: "evergreen-terrace";
+    default: false;
+    prefersdark: false;
+    color-scheme: dark;
+    --frinkworks-mark: url("/images/logo-dark.svg");
+    --workspace-cover-mark: url("/images/logo-dark.svg");
+    --workspace-cover-mark-ink: #f5f2eb;
+    --color-base-100: #202e28;
+    --color-base-200: #2c3b32;
+    --color-base-300: #46594b;
+    --color-base-content: #e6ece1;
+    --color-primary: #edce51;
+    --color-primary-content: #302510;
+    --workspace-primary-edge: var(--color-primary);
+    --color-secondary: #aac3b7;
+    --color-secondary-content: #1d3028;
+    --color-accent: #edce51;
+    --color-accent-content: #302510;
+    --color-neutral: var(--workspace-cover);
+    --color-neutral-content: var(--workspace-cover-text);
+    --color-success: #a7c69a;
+    --color-success-content: #202e1b;
+    --color-warning: #dfc18a;
+    --color-warning-content: #332914;
+    --color-info: #a7c9cb;
+    --color-info-content: #193135;
+    --color-error: #e4a394;
+    --color-error-content: #371e18;
+    --workspace-canvas: #1a251f;
+    --workspace-cover: #141e19;
+    --workspace-cover-text: #e6ece1;
+    --workspace-cover-muted: #b2bfaa;
+    --workspace-cover-rule: #394b3e;
+    --workspace-muted: #b0bfaa;
+    --workspace-selected: #344934;
+    --workspace-control-border: #7d8d79;
+}
+
+@plugin "daisyui/theme" {
+    name: "leftorium";
+    default: false;
+    prefersdark: false;
+    color-scheme: light;
+    --frinkworks-mark: url("/images/logo.svg");
+    --workspace-cover-mark: url("/images/logo.svg");
+    --workspace-cover-mark-ink: #565c4e;
+    --color-base-100: #fdfcf9;
+    --color-base-200: #eeede7;
+    --color-base-300: #d3d5cc;
+    --color-base-content: #2a3430;
+    --color-primary: #3e6657;
+    --color-primary-content: #f7faf6;
+    --workspace-primary-edge: var(--color-primary);
+    --color-secondary: #dde6df;
+    --color-secondary-content: #304b3f;
+    --color-accent: #376451;
+    --color-accent-content: #f7faf6;
+    --color-neutral: var(--workspace-cover);
+    --color-neutral-content: var(--workspace-cover-text);
+    --color-success: #406944;
+    --color-success-content: #f7faf6;
+    --color-warning: #86601e;
+    --color-warning-content: #fff9ee;
+    --color-info: #406977;
+    --color-info-content: #f7fbfc;
+    --color-error: #a13f35;
+    --color-error-content: #fff8f5;
+    --workspace-canvas: #f6f5f0;
+    --workspace-cover: #e3e8df;
+    --workspace-cover-text: #2e4035;
+    --workspace-cover-muted: #536552;
+    --workspace-cover-rule: #bcc8b7;
+    --workspace-muted: #626e63;
+    --workspace-selected: #dce8dd;
+    --workspace-control-border: #7b8b7d;
+}
+
+@plugin "daisyui/theme" {
+    name: "stonecutters";
+    default: false;
+    prefersdark: false;
+    color-scheme: dark;
+    --frinkworks-mark: url("/images/logo-dark.svg");
+    --workspace-cover-mark: url("/images/logo-dark.svg");
+    --workspace-cover-mark-ink: #f5f2eb;
+    --color-base-100: #252e39;
+    --color-base-200: #303c4a;
+    --color-base-300: #4a596c;
+    --color-base-content: #e4e9ee;
+    --color-primary: #dcb77a;
+    --color-primary-content: #34291b;
+    --workspace-primary-edge: var(--color-primary);
+    --color-secondary: #adc8ca;
+    --color-secondary-content: #233437;
+    --color-accent: var(--color-primary);
+    --color-accent-content: var(--color-primary-content);
+    --color-neutral: var(--workspace-cover);
+    --color-neutral-content: var(--workspace-cover-text);
+    --color-success: #a7c6ad;
+    --color-success-content: #1f3224;
+    --color-warning: #dfc18b;
+    --color-warning-content: #342915;
+    --color-info: #a5cbd5;
+    --color-info-content: #1e323b;
+    --color-error: #e5a799;
+    --color-error-content: #391f19;
+    --workspace-canvas: #1e2630;
+    --workspace-cover: #17202a;
+    --workspace-cover-text: #e4e9ee;
+    --workspace-cover-muted: #b0bfce;
+    --workspace-cover-rule: #39495a;
+    --workspace-muted: #b3bfce;
+    --workspace-selected: #4c4132;
+    --workspace-control-border: #8292a4;
+}
+
+@plugin "daisyui/theme" {
+    name: "sector-7-g";
+    default: false;
+    prefersdark: true;
+    color-scheme: dark;
+    --frinkworks-mark: url("/images/logo-dark.svg");
+    --workspace-cover-mark: url("/images/logo-dark.svg");
+    --workspace-cover-mark-ink: #f5f2eb;
+    --color-base-100: #2c263e;
+    --color-base-200: #39304e;
+    --color-base-300: #584e6c;
+    --color-base-content: #f1edf6;
+    --color-primary: #d3e767;
+    --color-primary-content: #29311d;
+    --workspace-primary-edge: var(--color-primary);
+    --color-secondary: oklch(72% 0.12 195);
+    --color-secondary-content: oklch(12% 0.03 285);
+    --color-accent: oklch(76% 0.14 190);
+    --color-accent-content: oklch(11% 0.03 285);
+    --color-neutral: oklch(10% 0.03 300);
+    --color-neutral-content: oklch(94% 0.03 110);
+    --color-warning: oklch(82% 0.15 85);
+    --color-warning-content: oklch(12% 0.03 300);
+    --color-info: oklch(76% 0.14 190);
+    --color-info-content: oklch(11% 0.03 285);
+    --color-success: oklch(80% 0.18 130);
+    --color-success-content: oklch(10% 0.025 300);
+    --color-error: #f5ad9e;
+    --color-error-content: oklch(12% 0.03 300);
+    --workspace-canvas: #242032;
+    --workspace-cover: #1c1828;
+    --workspace-cover-text: #f1edf6;
+    --workspace-cover-muted: #c3b7d1;
+    --workspace-muted: #c2b7cf;
+    --workspace-selected: #453957;
+    --workspace-cover-rule: #483c5d;
+    --workspace-control-border: #9688a5;
+}
